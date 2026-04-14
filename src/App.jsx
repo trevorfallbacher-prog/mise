@@ -4,6 +4,9 @@ import Home from "./components/Home";
 import CookMode from "./components/CookMode";
 import Cookbook from "./components/Cookbook";
 import Pantry from "./components/Pantry";
+import SignIn from "./components/SignIn";
+import { useAuth, signOut } from "./lib/useAuth";
+import { useProfile } from "./lib/useProfile";
 
 const NAV = [
   { id:"home",     emoji:"🏠", label:"Home"     },
@@ -12,18 +15,80 @@ const NAV = [
   { id:"pantry",   emoji:"🥫", label:"Pantry"   },
 ];
 
-export default function App() {
-  const [profile, setProfile] = useState(null);
-  const [tab, setTab] = useState("home");
+const pageShell = {
+  minHeight: "100vh",
+  background: "#111",
+  color: "#f5f5f0",
+  maxWidth: 480,
+  margin: "0 auto",
+};
 
-  if (!profile) return (
-    <div style={{ minHeight:"100vh", background:"#111", color:"#f5f5f0", maxWidth:480, margin:"0 auto", backgroundImage:"radial-gradient(ellipse at 30% 0%,#1e1408 0%,transparent 60%)" }}>
-      <Onboarding onComplete={setProfile} />
+function LoadingSplash() {
+  return (
+    <div style={{ ...pageShell, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <div style={{ fontSize: 40, animation: "pulse 1.2s ease-in-out infinite" }}>👨‍🍳</div>
+      <style>{`@keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }`}</style>
     </div>
   );
+}
 
+export default function App() {
+  const { user, loading: authLoading } = useAuth();
+  const { profile, loading: profileLoading, upsert: upsertProfile } =
+    useProfile(user?.id);
+  const [tab, setTab] = useState("home");
+
+  // Auth check still in flight
+  if (authLoading) return <LoadingSplash />;
+
+  // Not signed in
+  if (!user) {
+    return (
+      <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 30% 0%,#1e1408 0%,transparent 60%)" }}>
+        <SignIn />
+      </div>
+    );
+  }
+
+  // Signed in but we haven't heard back from the profiles table yet
+  if (profileLoading) return <LoadingSplash />;
+
+  // Signed in but no profile row yet → run onboarding, then persist it
+  if (!profile) {
+    return (
+      <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 30% 0%,#1e1408 0%,transparent 60%)" }}>
+        <Onboarding
+          onComplete={async (answers) => {
+            await upsertProfile({
+              dietary:     answers.dietary,
+              vegan_style: answers.veganStyle || null,
+              level:       answers.level,
+              goal:        answers.goal,
+            });
+          }}
+        />
+      </div>
+    );
+  }
+
+  // Fully signed in + onboarded
   return (
-    <div style={{ minHeight:"100vh", background:"#111", color:"#f5f5f0", maxWidth:480, margin:"0 auto", backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
+    <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
+      {/* Temporary sign-out affordance — replace with a real settings screen later */}
+      <button
+        onClick={signOut}
+        title="Sign out"
+        style={{
+          position: "fixed", top: 12, right: 12, zIndex: 50,
+          background: "#161616", border: "1px solid #2a2a2a",
+          borderRadius: 20, padding: "4px 10px",
+          fontFamily: "'DM Mono',monospace", fontSize: 9,
+          color: "#666", letterSpacing: "0.1em", cursor: "pointer",
+        }}
+      >
+        SIGN OUT
+      </button>
+
       <div style={{ paddingBottom:80 }}>
         {tab === "home"     && <Home profile={profile} />}
         {tab === "cook"     && <CookMode onDone={() => setTab("cookbook")} />}
