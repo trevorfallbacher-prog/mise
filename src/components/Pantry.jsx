@@ -222,8 +222,17 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
                     </div>
                   </div>
                   {editingIdx === idx ? (
-                    <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
-                      <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} onBlur={()=>setEditingIdx(null)} autoFocus
+                    <div
+                      style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}
+                      onBlur={e => {
+                        // Only close when focus leaves the entire editor — otherwise
+                        // tapping the unit select kills the editor before it registers.
+                        if (!e.currentTarget.contains(e.relatedTarget)) {
+                          setEditingIdx(null);
+                        }
+                      }}
+                    >
+                      <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} autoFocus
                         style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
                       {canon ? (
                         <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
@@ -790,14 +799,24 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
                         <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
                         {isEditing ? (
-                          <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+                          <div
+                            style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}
+                            // Close the editor only when focus leaves the whole
+                            // container — otherwise tabbing from the number
+                            // input to the unit select kills the editor before
+                            // the select can even open.
+                            onBlur={e => {
+                              if (!e.currentTarget.contains(e.relatedTarget)) {
+                                setEditingItemId(null);
+                              }
+                            }}
+                          >
                             <input
                               type="number"
                               inputMode="decimal"
                               value={item.amount}
                               autoFocus
                               onChange={e => updatePantryItem(item.id, { amount: parseFloat(e.target.value) || 0 })}
-                              onBlur={() => setEditingItemId(null)}
                               onKeyDown={e => { if (e.key === "Enter") setEditingItemId(null); }}
                               style={{ width:56, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }}
                             />

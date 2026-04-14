@@ -107,13 +107,71 @@ export const INGREDIENTS = [
 
   // ── meat / pork ─────────────────────────────────────────────────────────
   {
-    id: "chicken", name: "Chicken", emoji: "🍗", category: "meat",
+    id: "chicken", name: "Chicken (whole)", emoji: "🍗", category: "meat",
     units: [
       { id: "lb", label: "lb", toBase: 453.6 },
       { id: "oz", label: "oz", toBase: 28.35 },
       { id: "kg", label: "kg", toBase: 1000 },
     ],
     defaultUnit: "lb",
+  },
+  {
+    // Cut-based units feel more natural for recipes ("4 breasts") than weight.
+    // Average boneless/skinless breast ~200g, but we expose lb/oz too for the
+    // weight-minded and for items the user bought by weight (family packs).
+    id: "chicken_breast", name: "Chicken Breast", emoji: "🍗", category: "meat",
+    units: [
+      { id: "count", label: "breasts", toBase: 200 },
+      { id: "lb",    label: "lb",      toBase: 453.6 },
+      { id: "oz",    label: "oz",      toBase: 28.35 },
+      { id: "kg",    label: "kg",      toBase: 1000 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "chicken_thigh", name: "Chicken Thighs", emoji: "🍗", category: "meat",
+    units: [
+      { id: "count", label: "thighs", toBase: 120 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "chicken_leg", name: "Chicken Legs", emoji: "🍗", category: "meat",
+    units: [
+      { id: "count", label: "legs", toBase: 150 },
+      { id: "lb",    label: "lb",   toBase: 453.6 },
+      { id: "oz",    label: "oz",   toBase: 28.35 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "chicken_wing", name: "Chicken Wings", emoji: "🍗", category: "meat",
+    units: [
+      { id: "count", label: "wings", toBase: 50 },
+      { id: "lb",    label: "lb",    toBase: 453.6 },
+      { id: "oz",    label: "oz",    toBase: 28.35 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "pork_chop", name: "Pork Chops", emoji: "🥩", category: "meat",
+    units: [
+      { id: "count", label: "chops", toBase: 200 },
+      { id: "lb",    label: "lb",    toBase: 453.6 },
+      { id: "oz",    label: "oz",    toBase: 28.35 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "sausage", name: "Sausage", emoji: "🌭", category: "meat",
+    units: [
+      { id: "count", label: "links", toBase: 85 },
+      { id: "lb",    label: "lb",    toBase: 453.6 },
+      { id: "oz",    label: "oz",    toBase: 28.35 },
+    ],
+    defaultUnit: "count",
   },
   {
     id: "bacon", name: "Bacon / Pancetta", emoji: "🥓", category: "meat",
