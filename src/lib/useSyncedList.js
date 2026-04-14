@@ -14,18 +14,24 @@ import { supabase } from "./supabase";
  *   - `id` — client-generated uuid (use `crypto.randomUUID()` on new items)
  *
  * Params:
- *   table   — Supabase table name
- *   userId  — the owning user
- *   toDb    — (item) => row, for camelCase → snake_case conversion
- *   fromDb  — (row)  => item, the inverse
+ *   table      — Supabase table name
+ *   userId     — the owning user (used to tag new inserts; reads rely on RLS)
+ *   toDb       — (item) => row, for camelCase → snake_case conversion
+ *   fromDb     — (row)  => item, the inverse
+ *   refreshKey — optional value; changing it triggers a reload (used to pick
+ *                up newly-shared family rows after a connection is accepted)
+ *   selfOnly   — when true, filter loads to the current user's rows only.
+ *                Use for lists that shouldn't be shared even though RLS may
+ *                allow broader access elsewhere (defaults to false — let RLS
+ *                decide, so family members' rows come through).
  *
  * Returns [items, setItems, loading]
  */
-export function useSyncedList({ table, userId, toDb, fromDb }) {
+export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnly = false }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // Initial load
+  // Initial load (re-fires whenever refreshKey changes)
   useEffect(() => {
     let alive = true;
     if (!userId) {
@@ -35,10 +41,9 @@ export function useSyncedList({ table, userId, toDb, fromDb }) {
     }
     setLoading(true);
     (async () => {
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq("user_id", userId);
+      let q = supabase.from(table).select("*");
+      if (selfOnly) q = q.eq("user_id", userId);
+      const { data, error } = await q;
       if (!alive) return;
       if (error) {
         console.error(`[${table}] load failed:`, error);
@@ -49,7 +54,7 @@ export function useSyncedList({ table, userId, toDb, fromDb }) {
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [table, userId, fromDb]);
+  }, [table, userId, fromDb, refreshKey, selfOnly]);
 
   // Diff-based setter. Accepts a value or functional updater, just like useState.
   const setList = useCallback(

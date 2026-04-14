@@ -12,6 +12,8 @@ function fromDb(row) {
     source: row.source,
     // Last-paid unit price, integer cents. Nullable.
     priceCents: row.price_cents ?? null,
+    // user_id of the family member who added this row (or the current user).
+    ownerId: row.user_id,
   };
 }
 
@@ -31,7 +33,10 @@ function toDb(item) {
 /**
  * Returns [shoppingList, setShoppingList, loading]. Persists to Supabase
  * transparently; components write to it with the usual useState setter API.
+ *
+ * Pass `familyKey` (from useRelationships) so new family members' shopping
+ * items appear without a page reload.
  */
-export function useShoppingList(userId) {
-  return useSyncedList({ table: "shopping_list_items", userId, toDb, fromDb });
+export function useShoppingList(userId, familyKey) {
+  return useSyncedList({ table: "shopping_list_items", userId, toDb, fromDb, refreshKey: familyKey });
 }

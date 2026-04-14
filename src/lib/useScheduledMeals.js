@@ -18,7 +18,7 @@ import { supabase } from "./supabase";
  *
  * Meals are kept sorted by scheduled_for ascending.
  */
-export function useScheduledMeals(userId, { fromISO, toISO } = {}) {
+export function useScheduledMeals(userId, { fromISO, toISO, familyKey } = {}) {
   const [meals, setMeals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -30,7 +30,9 @@ export function useScheduledMeals(userId, { fromISO, toISO } = {}) {
       return;
     }
     setLoading(true);
-    let q = supabase.from("scheduled_meals").select("*").eq("user_id", userId);
+    // No user_id filter — RLS decides what rows the caller can see, so
+    // family members' scheduled meals are included automatically.
+    let q = supabase.from("scheduled_meals").select("*");
     if (fromISO) q = q.gte("scheduled_for", fromISO);
     if (toISO)   q = q.lte("scheduled_for", toISO);
     const { data, error: e } = await q.order("scheduled_for", { ascending: true });
@@ -39,7 +41,9 @@ export function useScheduledMeals(userId, { fromISO, toISO } = {}) {
     setLoading(false);
   }, [userId, fromISO, toISO]);
 
-  useEffect(() => { load(); }, [load]);
+  // Re-query whenever the family connection set changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load, familyKey]);
 
   const schedule = useCallback(
     async ({ recipeSlug, scheduledFor, notificationSettings = {}, note = null }) => {
