@@ -650,7 +650,8 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // any of its items match.
   const grouped = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const matchesSearch = (text) => !q || text.toLowerCase().includes(q);
+    // Null-safe: legacy rows may have null category/name fields.
+    const matchesSearch = (text) => !q || (text && String(text).toLowerCase().includes(q));
 
     const groups = new Map(); // hubId → { hub, items }
     const loose = [];
@@ -904,7 +905,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
               )}
             </div>
             <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
-              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{(item.category || "").toUpperCase()}</span>
               {item.priceCents != null && (
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }} title="Last paid price">
                   {formatPrice(item.priceCents)}
