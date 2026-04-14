@@ -8,7 +8,8 @@ import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
 import { useAuth, signOut } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
-import { INITIAL_PANTRY } from "./data";
+import { usePantry } from "./lib/usePantry";
+import { useShoppingList } from "./lib/useShoppingList";
 
 const NAV = [
   { id:"home",     emoji:"🏠",   label:"Home"     },
@@ -52,8 +53,8 @@ export default function App() {
   const { profile, loading: profileLoading, upsert: upsertProfile } =
     useProfile(user?.id);
   const [tab, setTab] = useState("home");
-  const [pantry, setPantry] = useState(INITIAL_PANTRY);
-  const [shoppingList, setShoppingList] = useState([]);
+  const [pantry, setPantry] = usePantry(user?.id);
+  const [shoppingList, setShoppingList] = useShoppingList(user?.id);
   const [pantryView, setPantryView] = useState("stock"); // "stock" | "shopping"
 
   // On first sign-in (or if an older account has no name yet), save whatever

@@ -211,7 +211,7 @@ export default function CookMode({
         if (existing.has(name.toLowerCase())) return;
         existing.add(name.toLowerCase());
         next.push({
-          id: Date.now() + Math.random(),
+          id: crypto.randomUUID(),
           name,
           emoji: row?.emoji || ing.emoji || "🥫",
           amount: 1,

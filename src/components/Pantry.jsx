@@ -216,7 +216,7 @@ function AddItemModal({ target, onClose, onAdd }) {
     if (!canSave) return;
     const amt = parseFloat(amount) || 0;
     onAdd({
-      id: Date.now() + Math.random(),
+      id: crypto.randomUUID(),
       name: name.trim(),
       emoji: emoji.trim() || "🥫",
       amount: amt,
@@ -316,7 +316,7 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
       items.forEach(s => {
         const ex = updated.find(p => p.name.toLowerCase() === s.name.toLowerCase());
         if (ex) { ex.amount = Math.min(ex.amount + s.amount, ex.max); }
-        else updated.push({ id:Date.now()+Math.random(), name:s.name, emoji:s.emoji, amount:s.amount, unit:s.unit, max:s.amount*2, category:s.category, lowThreshold:s.amount*0.25 });
+        else updated.push({ id:crypto.randomUUID(), name:s.name, emoji:s.emoji, amount:s.amount, unit:s.unit, max:s.amount*2, category:s.category, lowThreshold:s.amount*0.25 });
       });
       return updated;
     });
@@ -339,7 +339,7 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
       const toAdd = lowItems
         .filter(l => !existingNames.has(l.name.toLowerCase()))
         .map(l => ({
-          id: Date.now() + Math.random(),
+          id: crypto.randomUUID(),
           name: l.name,
           emoji: l.emoji,
           amount: Math.max(l.max - l.amount, 1),
@@ -362,7 +362,7 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
           : p);
       }
       return [...prev, {
-        id: Date.now() + Math.random(),
+        id: crypto.randomUUID(),
         name: sItem.name,
         emoji: sItem.emoji || "🥫",
         amount: sItem.amount,
