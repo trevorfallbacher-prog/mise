@@ -453,9 +453,10 @@ function AddItemModal({ target, onClose, onAdd }) {
   // in the sheet is what actually promotes it to `picked`.
   const [detailIngredient, setDetailIngredient] = useState(null);
 
-  // Custom-mode fields (only used when mode === "custom")
+  // Custom-mode fields (only used when mode === "custom"). Custom items
+  // always get the generic 🥫 emoji — the on-screen emoji input was a bad
+  // affordance on mobile keyboards and rarely produced anything sensible.
   const [customName, setCustomName] = useState("");
-  const [customEmoji, setCustomEmoji] = useState("🥫");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
 
@@ -526,7 +527,7 @@ function AddItemModal({ target, onClose, onAdd }) {
           id: crypto.randomUUID(),
           ingredientId: null,
           name: customName.trim(),
-          emoji: customEmoji.trim() || "🥫",
+          emoji: "🥫",
           amount: amt,
           unit: customUnit.trim(),
           max: Math.max(amt * 2, 1),
@@ -774,20 +775,15 @@ function AddItemModal({ target, onClose, onAdd }) {
           </>
         ) : (
           <>
-            {/* Custom mode */}
-            <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-              <input
-                value={customEmoji}
-                onChange={e => setCustomEmoji(e.target.value)}
-                maxLength={4}
-                placeholder="🥫"
-                style={{ width:56, textAlign:"center", padding:"12px 0", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:22, color:"#f0ece4", outline:"none" }}
-              />
+            {/* Custom mode — emoji is auto-assigned (🥫) since the picker
+                rarely worked on iOS keyboards anyway. Users can change the
+                name freely; the emoji stays consistent for custom items. */}
+            <div style={{ marginBottom:12 }}>
               <input
                 value={customName}
                 onChange={e => setCustomName(e.target.value)}
                 placeholder="Name (e.g. Capers)"
-                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none" }}
+                style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
               />
             </div>
 
@@ -944,7 +940,23 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // they match — otherwise we just bump to the larger amount and let the user
   // sort it out in the UI. Last-paid priceCents is always overwritten with
   // the freshest receipt price.
-  const addScannedItems = (items, meta = {}) => {
+  const addScannedItems = async (items, meta = {}) => {
+    // Persist the receipt FIRST (and await it) so the DB-side suppression
+    // window in notify_family_pantry() is open before the per-item pantry
+    // inserts land. Otherwise a 12-item receipt would fan out 12 individual
+    // "Trevor added X" notifications on top of the receipt summary one.
+    if (userId) {
+      const { error } = await supabase.from("receipts").insert({
+        user_id: userId,
+        store_name: meta.store || null,
+        receipt_date: meta.date || null,
+        total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
+        item_count: items.length,
+      });
+      if (error) console.warn("[receipts] insert failed:", error.message);
+      else setSpendRefresh(k => k + 1);
+    }
+
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
@@ -979,21 +991,6 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       });
       return next;
     });
-
-    // Persist the receipt as its own record. Fire-and-forget — if it fails
-    // we swallow it (the pantry update is the important part).
-    if (userId) {
-      supabase.from("receipts").insert({
-        user_id: userId,
-        store_name: meta.store || null,
-        receipt_date: meta.date || null,
-        total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
-        item_count: items.length,
-      }).then(({ error }) => {
-        if (error) console.warn("[receipts] insert failed:", error.message);
-        else setSpendRefresh(k => k + 1);
-      });
-    }
 
     setScanning(false);
   };
