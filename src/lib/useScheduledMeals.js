@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 
 /**
@@ -48,6 +48,10 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
 
   useEffect(() => { load(); }, [load, familyKey]);
 
+  // Keep onRealtime in a ref so identity changes don't tear down the channel.
+  const onRealtimeRef = useRef(onRealtime);
+  useEffect(() => { onRealtimeRef.current = onRealtime; }, [onRealtime]);
+
   // Realtime. Same approach as useSyncedList — merge other-user events and
   // reconcile our own writes.
   useEffect(() => {
@@ -79,13 +83,15 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
           return prev;
         });
 
-        if (fromOther && onRealtime) {
-          onRealtime(payload.eventType, row, oldRow);
-        }
+        const cb = onRealtimeRef.current;
+        if (fromOther && cb) cb(payload.eventType, row, oldRow);
       })
-      .subscribe();
+      .subscribe((status) => {
+        // eslint-disable-next-line no-console
+        console.log(`[rt:scheduled_meals] ${status}`);
+      });
     return () => { supabase.removeChannel(ch); };
-  }, [userId, onRealtime]);
+  }, [userId]);
 
   const schedule = useCallback(
     async ({ recipeSlug, scheduledFor, notificationSettings = {}, note = null, cookId, isRequest = false }) => {

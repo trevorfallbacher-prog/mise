@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 
 /**
@@ -56,6 +56,14 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
     return () => { alive = false; };
   }, [table, userId, fromDb, refreshKey, selfOnly]);
 
+  // Keep the latest onRealtime / fromDb in refs so we don't tear down the
+  // subscription on every render. (onRealtime typically closes over
+  // relationships.family which gets a new array reference on reload.)
+  const onRealtimeRef = useRef(onRealtime);
+  const fromDbRef = useRef(fromDb);
+  useEffect(() => { onRealtimeRef.current = onRealtime; }, [onRealtime]);
+  useEffect(() => { fromDbRef.current = fromDb; }, [fromDb]);
+
   // Realtime subscription — merges in changes from other users, and
   // reconciles our own changes against what the DB ultimately stored.
   useEffect(() => {
@@ -63,7 +71,8 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
     const ch = supabase
       .channel(`rt:${table}:${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
-        const newRow = payload.new && Object.keys(payload.new).length ? fromDb(payload.new) : null;
+        const mapRow = fromDbRef.current;
+        const newRow = payload.new && Object.keys(payload.new).length ? mapRow(payload.new) : null;
         const oldRow = payload.old && Object.keys(payload.old).length ? payload.old : null;
         const fromOther =
           (payload.new && payload.new.user_id && payload.new.user_id !== userId) ||
@@ -86,13 +95,17 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
           return prev;
         });
 
-        if (fromOther && onRealtime) {
-          onRealtime(payload.eventType, newRow, oldRow);
-        }
+        const cb = onRealtimeRef.current;
+        if (fromOther && cb) cb(payload.eventType, newRow, oldRow);
       })
-      .subscribe();
+      .subscribe((status) => {
+        // Log so we can see in the browser console whether the channel
+        // actually made it to SUBSCRIBED (vs. CHANNEL_ERROR / TIMED_OUT).
+        // eslint-disable-next-line no-console
+        console.log(`[rt:${table}] ${status}`);
+      });
     return () => { supabase.removeChannel(ch); };
-  }, [table, userId, fromDb, onRealtime]);
+  }, [table, userId]);
 
   // Diff-based setter. Accepts a value or functional updater, just like useState.
   const setList = useCallback(
