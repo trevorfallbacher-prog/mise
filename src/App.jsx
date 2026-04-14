@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import Onboarding from "./components/Onboarding";
 import Home from "./components/Home";
 import Cook from "./components/Cook";
+import Plan from "./components/Plan";
 import Cookbook from "./components/Cookbook";
 import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
@@ -9,10 +10,11 @@ import { useAuth, signOut } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
 
 const NAV = [
-  { id:"home",     emoji:"🏠", label:"Home"     },
+  { id:"home",     emoji:"🏠",   label:"Home"     },
   { id:"cook",     emoji:"🧑‍🍳", label:"Cook"     },
-  { id:"cookbook", emoji:"📖", label:"Cookbook" },
-  { id:"pantry",   emoji:"🥫", label:"Pantry"   },
+  { id:"plan",     emoji:"📅",   label:"Plan"     },
+  { id:"cookbook", emoji:"📖",   label:"Cookbook" },
+  { id:"pantry",   emoji:"🥫",   label:"Pantry"   },
 ];
 
 const pageShell = {
@@ -117,6 +119,7 @@ export default function App() {
       <div style={{ paddingBottom:80 }}>
         {tab === "home"     && <Home profile={profile} />}
         {tab === "cook"     && <Cook profile={profile} onCooked={() => setTab("cookbook")} />}
+        {tab === "plan"     && <Plan profile={profile} userId={user.id} />}
         {tab === "cookbook" && <Cookbook />}
         {tab === "pantry"   && <Pantry />}
       </div>

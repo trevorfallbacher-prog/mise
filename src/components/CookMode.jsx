@@ -157,7 +157,7 @@ function Timer({ seconds, onDone }) {
   );
 }
 
-export default function CookMode({ recipe, onDone, onExit }) {
+export default function CookMode({ recipe, onDone, onExit, onSchedule }) {
   const [view, setView] = useState("overview");
   const [activeStep, setActiveStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState(new Set());
@@ -215,9 +215,35 @@ export default function CookMode({ recipe, onDone, onExit }) {
           ))}
         </div>
       </div>
-      <button onClick={() => setView("cook")} style={{ width:"100%", marginTop:32, padding:"18px 24px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", boxShadow:"0 0 40px #f5c84233" }}>
-        START COOKING →
-      </button>
+      <div style={{ display:"flex", gap:10, marginTop:32 }}>
+        {onSchedule && (
+          <button
+            onClick={onSchedule}
+            style={{
+              flex:1, padding:"18px 12px",
+              background:"#1a1a1a", color:"#bbb",
+              border:"1px solid #2a2a2a", borderRadius:14,
+              fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600,
+              letterSpacing:"0.06em", cursor:"pointer",
+            }}
+          >
+            SCHEDULE
+          </button>
+        )}
+        <button
+          onClick={() => setView("cook")}
+          style={{
+            flex:2, padding:"18px 24px",
+            background:"#f5c842", color:"#111",
+            border:"none", borderRadius:14,
+            fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600,
+            letterSpacing:"0.08em", cursor:"pointer",
+            boxShadow:"0 0 40px #f5c84233",
+          }}
+        >
+          START COOKING →
+        </button>
+      </div>
     </div>
   );
 

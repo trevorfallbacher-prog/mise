@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import CookMode from "./CookMode";
+import SchedulePicker from "./SchedulePicker";
+import { useScheduledMeals } from "../lib/useScheduledMeals";
 import {
   RECIPES,
   CUISINES,
@@ -87,8 +89,10 @@ export default function Cook({ profile, onCooked }) {
   const [route, setRoute]     = useState("plan");   // "plan" | "learn"
   const [cuisine, setCuisine] = useState("all");    // "all" | "italian" | "french" | ...
   const [openRecipe, setOpenRecipe] = useState(null);
+  const [schedulingRecipe, setSchedulingRecipe] = useState(null);
 
   const skillLevels = profile?.skill_levels || {};
+  const { schedule } = useScheduledMeals(profile?.id);
 
   const list = useMemo(() => {
     const filtered = RECIPES.filter(r =>
@@ -111,16 +115,34 @@ export default function Cook({ profile, onCooked }) {
   }, [cuisine, list]);
 
   // If a recipe is open, render CookMode instead of the browser.
+  // Schedule picker can layer on top when the user taps "Schedule".
   if (openRecipe) {
     return (
-      <CookMode
-        recipe={openRecipe}
-        onExit={() => setOpenRecipe(null)}
-        onDone={() => {
-          setOpenRecipe(null);
-          onCooked?.(openRecipe);
-        }}
-      />
+      <>
+        <CookMode
+          recipe={openRecipe}
+          onExit={() => setOpenRecipe(null)}
+          onSchedule={() => setSchedulingRecipe(openRecipe)}
+          onDone={() => {
+            setOpenRecipe(null);
+            onCooked?.(openRecipe);
+          }}
+        />
+        {schedulingRecipe && (
+          <SchedulePicker
+            recipe={schedulingRecipe}
+            onClose={() => setSchedulingRecipe(null)}
+            onSave={async ({ scheduledFor, notificationSettings, note }) => {
+              await schedule({
+                recipeSlug: schedulingRecipe.slug,
+                scheduledFor,
+                notificationSettings,
+                note,
+              });
+            }}
+          />
+        )}
+      </>
     );
   }
 
