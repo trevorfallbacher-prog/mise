@@ -72,12 +72,25 @@ function buildPrompt(ingredients: CanonicalIngredient[]): string {
 For each item, try to match it to one of the canonical ingredients listed
 below. When there's a clear match:
   - set ingredientId to the canonical id (exact string)
-  - use a unit from that ingredient's valid units list
+  - use a unit from that ingredient's valid units list (prefer the one that
+    matches how the item was sold — gallon for milk, dozen for eggs, lb for
+    bulk meat, etc.)
   - use the canonical name and its typical emoji
 
 If there's no clear canonical match (e.g. "Greek yogurt", "rice", "capers"):
   - set ingredientId to null
   - invent a reasonable name, emoji, amount, unit, and category
+
+CRITICAL: the big number next to an item on a receipt is almost always the
+PRICE in USD ($6.53, $3.99, etc.), NOT the quantity. Do NOT put the price in
+the amount field. If the receipt doesn't clearly show a quantity, use 1.
+
+Reading examples:
+  - "MILK 2% GAL 4.29"      → amount: 1,    unit: "gallon"  (4.29 is price)
+  - "EGGS LG 18CT 6.53"     → amount: 18,   unit: "count"   (or 1.5 dozen)
+  - "BANANAS 2.14 LB @ .59" → amount: 2.14, unit: "lb"
+  - "NY STRIP 1.10 LB 15.67"→ amount: 1.10, unit: "lb"      (15.67 is price)
+  - "BUTTER QTRS 4.99"      → amount: 1,    unit: "lb"      (no quantity shown → 1)
 
 Categories (use for non-canonical items): dairy, produce, dry, meat, pantry, frozen
 
@@ -87,7 +100,9 @@ ${registry}
 Return ONLY a JSON array — no markdown fences, no prose, no trailing commentary.
 Example output:
 [
-  {"ingredientId":"butter","name":"Unsalted Butter","emoji":"🧈","amount":2,"unit":"stick","category":"dairy"},
+  {"ingredientId":"butter","name":"Unsalted Butter","emoji":"🧈","amount":1,"unit":"stick","category":"dairy"},
+  {"ingredientId":"milk","name":"Milk","emoji":"🥛","amount":1,"unit":"gallon","category":"dairy"},
+  {"ingredientId":"eggs","name":"Eggs","emoji":"🥚","amount":18,"unit":"count","category":"dairy"},
   {"ingredientId":null,"name":"Greek Yogurt","emoji":"🥛","amount":32,"unit":"oz","category":"dairy"}
 ]
 

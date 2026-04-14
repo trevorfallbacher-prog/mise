@@ -208,7 +208,8 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
                           ))}
                         </select>
                       ) : (
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.unit}</span>
+                        <input value={item.unit || ""} onChange={e=>updateUnit(idx,e.target.value)} placeholder="unit"
+                          style={{ width:60, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none" }} />
                       )}
                     </div>
                   ) : (
@@ -485,6 +486,9 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   const [showDeduction, setShowDeduction] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [addingTo, setAddingTo] = useState(null); // "pantry" | "shopping" | null
+  // Inline amount+unit editor on a pantry card. Null when nothing is being
+  // edited; otherwise holds the id of the row the user tapped.
+  const [editingItemId, setEditingItemId] = useState(null);
 
   const lowItems = pantry.filter(isLow);
   const filtered = pantry.filter(item => filter === "all" || item.category === filter);
@@ -596,6 +600,19 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   const removeShoppingItem = id => setShoppingList(prev => prev.filter(i => i.id !== id));
   const removePantryItem = id => setPantry(prev => prev.filter(i => i.id !== id));
 
+  // Patch a pantry row in place. Also bump `max` up if the user set an amount
+  // bigger than the current max (otherwise the progress bar caps at 100% and
+  // lies about how much they have).
+  const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
+    if (p.id !== id) return p;
+    const next = { ...p, ...patch };
+    if (typeof patch.amount === "number") {
+      next.max = Math.max(p.max, next.amount);
+      next.lowThreshold = Math.max(next.max * 0.25, 0.25);
+    }
+    return next;
+  }));
+
   if (scanning) return <ReceiptScanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
@@ -702,39 +719,87 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
 
           {/* Items */}
           <div style={{ padding:"14px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
-            {filtered.map(item => (
-              <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                  <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4" }}>{item.name}</span>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item) }}>{fmt(item)}</span>
+            {filtered.map(item => {
+              const canon = findIngredient(item.ingredientId);
+              const isEditing = editingItemId === item.id;
+              return (
+                <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                    <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                        <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
+                        {isEditing ? (
+                          <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              value={item.amount}
+                              autoFocus
+                              onChange={e => updatePantryItem(item.id, { amount: parseFloat(e.target.value) || 0 })}
+                              onBlur={() => setEditingItemId(null)}
+                              onKeyDown={e => { if (e.key === "Enter") setEditingItemId(null); }}
+                              style={{ width:56, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }}
+                            />
+                            {canon ? (
+                              <select
+                                value={item.unit}
+                                onChange={e => updatePantryItem(item.id, { unit: e.target.value })}
+                                style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 4px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}
+                              >
+                                {canon.units.map(u => (
+                                  <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                value={item.unit}
+                                onChange={e => updatePantryItem(item.id, { unit: e.target.value })}
+                                placeholder="unit"
+                                style={{ width:60, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none" }}
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setEditingItemId(item.id)}
+                            aria-label={`Edit amount of ${item.name}`}
+                            style={{ background:"transparent", border:"1px dashed #2a2a2a", borderRadius:8, padding:"2px 8px", fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item), cursor:"pointer", flexShrink:0 }}
+                          >
+                            {fmt(item)}
+                          </button>
+                        )}
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
+                        {!item.ingredientId && (
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", background:"#1a1a1a", padding:"1px 6px", borderRadius:4 }} title="Not linked to the canonical ingredient list — won't match recipes">
+                            FREE TEXT
+                          </span>
+                        )}
+                        {isLow(item) && (
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
+                            {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
-                      {isLow(item) && (
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
-                          {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
-                        </span>
-                      )}
-                    </div>
+                    <button
+                      onClick={() => removePantryItem(item.id)}
+                      aria-label={`Remove ${item.name}`}
+                      style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
+                      onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
+                      onMouseOut={e => e.currentTarget.style.color = "#333"}
+                    >
+                      ✕
+                    </button>
                   </div>
-                  <button
-                    onClick={() => removePantryItem(item.id)}
-                    aria-label={`Remove ${item.name}`}
-                    style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
-                    onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
-                    onMouseOut={e => e.currentTarget.style.color = "#333"}
-                  >
-                    ✕
-                  </button>
+                  <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
+                    <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
+                  </div>
                 </div>
-                <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-                  <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
