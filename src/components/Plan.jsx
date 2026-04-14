@@ -416,7 +416,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNo
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, onMealChange, hasFamily, family = [] }) {
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [] }) {
   // Show a rolling 14-day window so next week is visible without scrolling mechanics.
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
@@ -435,11 +435,13 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
     return d;
   }, [today]);
 
+  // No onRealtime here — the App-level useMealEvents handles toasts globally
+  // so they fire from any tab. Plan's subscription just keeps its local state
+  // in sync.
   const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
     fromISO: today.toISOString(),
     toISO:   windowEnd.toISOString(),
     familyKey,
-    onRealtime: onMealChange,
   });
 
   // UI state

@@ -12,6 +12,7 @@ import { useProfile } from "./lib/useProfile";
 import { usePantry } from "./lib/usePantry";
 import { useShoppingList } from "./lib/useShoppingList";
 import { useRelationships } from "./lib/useRelationships";
+import { useMealEvents } from "./lib/useMealEvents";
 import { ToastProvider, useToast } from "./lib/toast";
 
 const NAV = [
@@ -174,6 +175,9 @@ function AuthedApp({ user, profile, upsertProfile }) {
 
   const [pantry, setPantry] = usePantry(user?.id, familyKey, onPantryChange);
   const [shoppingList, setShoppingList] = useShoppingList(user?.id, familyKey, onShoppingChange);
+  // Mounted at App level so meal-event toasts fire from any tab (not just Plan).
+  // Plan itself still uses useScheduledMeals for its own state & writes.
+  useMealEvents(user?.id, onMealChange);
   const [pantryView, setPantryView] = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen] = useState(false);
   const incomingCount = relationships.incoming.length;
@@ -220,7 +224,6 @@ function AuthedApp({ user, profile, upsertProfile }) {
             userId={user.id}
             familyKey={familyKey}
             nameFor={nameFor}
-            onMealChange={onMealChange}
             hasFamily={relationships.family.length > 0}
             family={relationships.family}
           />
