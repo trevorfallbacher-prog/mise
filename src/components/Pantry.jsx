@@ -8,6 +8,7 @@ import {
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
+import { defaultLocationForCategory } from "../lib/usePantry";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -73,8 +74,48 @@ const formatPrice = cents =>
     ? `$${(cents / 100).toFixed(2)}`
     : "";
 
-// ── Receipt Scanner ───────────────────────────────────────────────────────────
-function ReceiptScanner({ onItemsScanned, onClose }) {
+// One scanner, three contexts. The user picks an icon at the top — that
+// determines (a) the label/copy shown throughout the flow, (b) the location
+// new items will land in (fridge / pantry / freezer), and (c) which edge
+// function we'll eventually invoke. For this chunk every mode still routes
+// to scan-receipt; the dedicated scan-shelf function lands in a follow-up.
+const SCAN_MODES = [
+  {
+    id: "fridge",
+    icon: "🥬",
+    label: "Fridge",
+    location: "fridge",
+    title: "What's in the fridge?",
+    blurb: "Snap a shot of the open fridge — we'll catalog what we see.",
+    cta: "SCAN FRIDGE →",
+    badge: "FRIDGE SCAN",
+  },
+  {
+    id: "pantry",
+    icon: "🥫",
+    label: "Pantry",
+    location: "pantry",
+    title: "What's on the shelf?",
+    blurb: "Photo of a pantry shelf or open cabinet — we'll count what's there.",
+    cta: "SCAN SHELF →",
+    badge: "PANTRY SCAN",
+  },
+  {
+    id: "receipt",
+    icon: "🧾",
+    label: "Receipt",
+    // null → fall back to category-based default per item.
+    location: null,
+    title: "Got groceries?",
+    blurb: "Photo your receipt and we'll stock your pantry automatically.",
+    cta: "SCAN RECEIPT →",
+    badge: "RECEIPT SCAN",
+  },
+];
+
+// ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
+function Scanner({ onItemsScanned, onClose }) {
+  const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
   const [imageData, setImageData] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -83,6 +124,7 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef();
+  const activeMode = SCAN_MODES.find(m => m.id === mode) || SCAN_MODES[2];
 
   const handleFile = file => {
     if (!file) return;
@@ -95,16 +137,19 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  const scanReceipt = async () => {
+  const runScan = async () => {
     setPhase("scanning"); setError(null);
     try {
       // Server-side call: Supabase forwards the caller's JWT, and the Edge
       // Function holds ANTHROPIC_API_KEY so it never ships to the browser.
+      // For now all three modes call scan-receipt — when scan-shelf ships
+      // we'll branch on activeMode.id here.
       const { data, error: fnError } = await supabase.functions.invoke("scan-receipt", {
         body: {
           image: imageData.base64,
           mediaType: imageData.mediaType,
           ingredients: INGREDIENTS_FOR_SCAN,
+          mode: activeMode.id,
         },
       });
       if (fnError) throw fnError;
@@ -129,11 +174,17 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       // category and replace a nonsense "count" with oz/lb/fl_oz as appropriate.
       const normalized = items.map((item, i) => {
         const canon = findIngredient(item.ingredientId);
+        const cat = canon ? canon.category : (item.category || "pantry");
+        // Fridge/pantry scans force every item to that physical location.
+        // Receipt scans don't know — fall back to a category default
+        // (dairy/produce/meat → fridge, frozen → freezer, else pantry).
+        const location = activeMode.location || defaultLocationForCategory(cat);
         const base = {
           ...item,
           name: canon ? canon.name : item.name,
           emoji: canon ? canon.emoji : (item.emoji || "🥫"),
-          category: canon ? canon.category : (item.category || "pantry"),
+          category: cat,
+          location,
           priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
           id: i,
           selected: true,
@@ -165,15 +216,46 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       </div>
       <div style={{ padding:"20px 20px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <button onClick={onClose} style={{ background:"none", border:"none", color:"#555", fontSize:20, cursor:"pointer" }}>←</button>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em" }}>SCAN RECEIPT</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em" }}>{activeMode.badge}</div>
         <div style={{ width:28 }} />
       </div>
 
       {(phase === "upload" || phase === "ready") && (
         <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"24px 20px 40px" }}>
+          {/* Mode picker — picking an icon determines what we're scanning,
+              where the items will land, and (eventually) which prompt the
+              edge function uses. Disabled while a photo is queued so the
+              user can't accidentally re-bucket what they already lined up. */}
+          <div style={{ display:"flex", gap:10, marginBottom:22 }}>
+            {SCAN_MODES.map(m => {
+              const active = m.id === mode;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => setMode(m.id)}
+                  disabled={!!imagePreview}
+                  style={{
+                    flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+                    padding:"14px 6px",
+                    background: active ? "#1e1a0e" : "#0f0f0f",
+                    border: `1px solid ${active ? "#f5c842" : "#1e1e1e"}`,
+                    borderRadius:14,
+                    cursor: imagePreview ? "not-allowed" : "pointer",
+                    opacity: imagePreview && !active ? 0.4 : 1,
+                    transition:"all 0.2s",
+                  }}
+                >
+                  <span style={{ fontSize:26 }}>{m.icon}</span>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.08em", color: active ? "#f5c842" : "#666" }}>
+                    {m.label.toUpperCase()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <div style={{ marginBottom:28 }}>
-            <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:32, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>Got groceries?</h2>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666" }}>Photo your receipt and we'll stock your pantry automatically.</p>
+            <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:32, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>{activeMode.title}</h2>
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666" }}>{activeMode.blurb}</p>
           </div>
           <div onClick={() => fileRef.current?.click()} style={{ flex:1, border:`2px dashed ${imagePreview?"#f5c84255":"#2a2a2a"}`, borderRadius:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background: imagePreview?"#0f0d08":"#0f0f0f", overflow:"hidden", position:"relative", minHeight:280, transition:"all 0.3s" }}>
             {imagePreview ? (
@@ -183,16 +265,18 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
               </>
             ) : (
               <>
-                <div style={{ fontSize:48, marginBottom:16 }}>🧾</div>
-                <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>Tap to upload receipt</div>
+                <div style={{ fontSize:48, marginBottom:16 }}>{activeMode.icon}</div>
+                <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>
+                  Tap to upload {activeMode.id === "receipt" ? "receipt" : "photo"}
+                </div>
                 <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>Photo or screenshot works</div>
               </>
             )}
           </div>
           <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e=>handleFile(e.target.files[0])} />
           {error && <div style={{ marginTop:12, padding:"12px 14px", background:"#1a0f0f", border:"1px solid #3a1a1a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f87171" }}>{error}</div>}
-          <button onClick={imagePreview ? scanReceipt : ()=>fileRef.current?.click()} style={{ marginTop:20, width:"100%", padding:"16px", background: imagePreview?"#f5c842":"#1a1a1a", color: imagePreview?"#111":"#444", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", transition:"all 0.3s", boxShadow: imagePreview?"0 0 30px #f5c84233":"none" }}>
-            {imagePreview ? "SCAN WITH AI →" : "CHOOSE PHOTO"}
+          <button onClick={imagePreview ? runScan : ()=>fileRef.current?.click()} style={{ marginTop:20, width:"100%", padding:"16px", background: imagePreview?"#f5c842":"#1a1a1a", color: imagePreview?"#111":"#444", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", transition:"all 0.3s", boxShadow: imagePreview?"0 0 30px #f5c84233":"none" }}>
+            {imagePreview ? activeMode.cta : "CHOOSE PHOTO"}
           </button>
         </div>
       )}
@@ -201,14 +285,18 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
         <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40, textAlign:"center" }}>
           {imagePreview && (
             <div style={{ width:120, height:160, borderRadius:12, overflow:"hidden", marginBottom:28, position:"relative", border:"1px solid #2a2a2a" }}>
-              <img src={imagePreview} alt="Receipt" style={{ width:"100%", height:"100%", objectFit:"cover", filter:"brightness(0.4)" }} />
+              <img src={imagePreview} alt="Scan" style={{ width:"100%", height:"100%", objectFit:"cover", filter:"brightness(0.4)" }} />
               <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <div style={{ width:40, height:40, borderRadius:"50%", border:"3px solid #f5c842", borderTopColor:"transparent", animation:"spin 0.8s linear infinite" }} />
               </div>
             </div>
           )}
-          <div style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontStyle:"italic", marginBottom:8 }}>Reading your receipt...</div>
-          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#555" }}>Claude is scanning every item</div>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontStyle:"italic", marginBottom:8 }}>
+            {activeMode.id === "receipt" ? "Reading your receipt..." : `Reading your ${activeMode.label.toLowerCase()}...`}
+          </div>
+          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#555" }}>
+            {activeMode.id === "receipt" ? "Claude is scanning every item" : "Claude is cataloging what's in the photo"}
+          </div>
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>
       )}
@@ -1215,7 +1303,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     );
   };
 
-  if (scanning) return <ReceiptScanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
+  if (scanning) return <Scanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
@@ -1295,12 +1383,15 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             </div>
           )}
 
-          {/* Scan CTA */}
+          {/* Scan CTA — opens the unified scanner. The user picks fridge,
+              pantry, or receipt at the top of that flow. */}
           <div onClick={()=>setScanning(true)} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
-            <div style={{ fontSize:36 }}>🧾</div>
+            <div style={{ fontSize:36, display:"flex", gap:2 }}>
+              <span>🥬</span><span>🥫</span><span>🧾</span>
+            </div>
             <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan a receipt</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Photo your grocery receipt → pantry auto-stocks</div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan something</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Fridge, pantry shelf, or grocery receipt</div>
             </div>
             <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
           </div>
