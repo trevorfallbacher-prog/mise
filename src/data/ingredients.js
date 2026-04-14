@@ -64,7 +64,8 @@ export const INGREDIENTS = [
     defaultUnit: "pint",
   },
   {
-    id: "parmesan", name: "Parmesan", emoji: "🧀", category: "dairy",
+    id: "parmesan", name: "Parmesan", shortName: "Parmesan",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",          toBase: 28.35 },
       { id: "wedge", label: "wedges",      toBase: 226 }, // ~8oz wedge
@@ -75,7 +76,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "pecorino", name: "Pecorino Romano", emoji: "🧀", category: "dairy",
+    id: "pecorino", name: "Pecorino Romano", shortName: "Pecorino",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",          toBase: 28.35 },
       { id: "wedge", label: "wedges",      toBase: 226 },
@@ -85,7 +87,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "gruyere", name: "Gruyère", emoji: "🧀", category: "dairy",
+    id: "gruyere", name: "Gruyère", shortName: "Gruyère",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",          toBase: 28.35 },
       { id: "block", label: "blocks",      toBase: 226 },
@@ -95,7 +98,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "mozzarella", name: "Fresh Mozzarella", emoji: "🧀", category: "dairy",
+    id: "mozzarella", name: "Fresh Mozzarella", shortName: "Mozzarella",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",    toBase: 28.35 },
       { id: "ball",  label: "balls", toBase: 226 }, // 8oz ball
@@ -105,7 +109,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "cheddar", name: "Cheddar", emoji: "🧀", category: "dairy",
+    id: "cheddar", name: "Cheddar", shortName: "Cheddar",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",          toBase: 28.35 },
       { id: "block", label: "blocks",      toBase: 226 },
@@ -116,7 +121,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "feta", name: "Feta", emoji: "🧀", category: "dairy",
+    id: "feta", name: "Feta", shortName: "Feta",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",   toBase: 28.35 },
       { id: "block", label: "blocks", toBase: 170 }, // 6oz tub
@@ -125,7 +131,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "goat_cheese", name: "Goat Cheese", emoji: "🧀", category: "dairy",
+    id: "goat_cheese", name: "Goat Cheese", shortName: "Goat",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",  label: "oz",  toBase: 28.35 },
       { id: "log", label: "logs", toBase: 113 }, // 4oz log
@@ -134,7 +141,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "cream_cheese", name: "Cream Cheese", emoji: "🧀", category: "dairy",
+    id: "cream_cheese", name: "Cream Cheese", shortName: "Cream",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",    toBase: 28.35 },
       { id: "block", label: "blocks", toBase: 226 }, // 8oz brick
@@ -144,7 +152,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "brie", name: "Brie", emoji: "🧀", category: "dairy",
+    id: "brie", name: "Brie", shortName: "Brie",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",    label: "oz",    toBase: 28.35 },
       { id: "wheel", label: "wheels", toBase: 226 },
@@ -155,7 +164,8 @@ export const INGREDIENTS = [
   {
     // Catch-all for Alouette, Boursin, Rondelé, etc. — the stuff sold in a
     // small tub that doesn't fit the hard/semi-hard cheese buckets.
-    id: "spreadable_cheese", name: "Spreadable Cheese", emoji: "🧀", category: "dairy",
+    id: "spreadable_cheese", name: "Spreadable Cheese", shortName: "Spreadable",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: [
       { id: "oz",   label: "oz",   toBase: 28.35 },
       { id: "tub",  label: "tubs", toBase: 198 }, // typical 6.5oz tub
@@ -236,7 +246,8 @@ export const INGREDIENTS = [
 
   // ── meat / pork / seafood ───────────────────────────────────────────────
   {
-    id: "chicken", name: "Chicken (whole)", emoji: "🍗", category: "meat",
+    id: "chicken", name: "Chicken (whole)", shortName: "Whole",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
     units: [
       { id: "lb", label: "lb", toBase: 453.6 },
       { id: "oz", label: "oz", toBase: 28.35 },
@@ -248,7 +259,8 @@ export const INGREDIENTS = [
     // Cut-based units feel more natural for recipes ("4 breasts") than weight.
     // Average boneless/skinless breast ~200g, but we expose lb/oz too for the
     // weight-minded and for items the user bought by weight (family packs).
-    id: "chicken_breast", name: "Chicken Breast", emoji: "🍗", category: "meat",
+    id: "chicken_breast", name: "Chicken Breast", shortName: "Breast",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
     units: [
       { id: "count", label: "breasts", toBase: 200 },
       { id: "lb",    label: "lb",      toBase: 453.6 },
@@ -258,7 +270,8 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
-    id: "chicken_thigh", name: "Chicken Thighs", emoji: "🍗", category: "meat",
+    id: "chicken_thigh", name: "Chicken Thighs", shortName: "Thighs",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
     units: [
       { id: "count", label: "thighs", toBase: 120 },
       { id: "lb",    label: "lb",     toBase: 453.6 },
@@ -267,7 +280,8 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
-    id: "chicken_leg", name: "Chicken Legs", emoji: "🍗", category: "meat",
+    id: "chicken_leg", name: "Chicken Legs", shortName: "Legs",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
     units: [
       { id: "count", label: "legs", toBase: 150 },
       { id: "lb",    label: "lb",   toBase: 453.6 },
@@ -276,7 +290,8 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
-    id: "chicken_wing", name: "Chicken Wings", emoji: "🍗", category: "meat",
+    id: "chicken_wing", name: "Chicken Wings", shortName: "Wings",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
     units: [
       { id: "count", label: "wings", toBase: 50 },
       { id: "lb",    label: "lb",    toBase: 453.6 },
@@ -926,6 +941,59 @@ const byId = new Map(INGREDIENTS.map(i => [i.id, i]));
 
 export function findIngredient(id) {
   return id ? byId.get(id) || null : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ingredient hubs — group related ingredients under one searchable parent so
+// the Add flow is "pick Chicken → pick cut" instead of scrolling 400 items,
+// and so the Pantry list can collapse 20 kinds of cheese into one card.
+//
+// `aggregateUnit` is what we sum the group into for the pantry summary.
+// (We can always convert each member to grams/ml via toBase, then back out.)
+// ─────────────────────────────────────────────────────────────────────────────
+export const HUBS = [
+  {
+    id: "chicken_hub",
+    name: "Chicken",
+    emoji: "🍗",
+    category: "meat",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6, // grams per aggregate unit
+  },
+  {
+    id: "cheese_hub",
+    name: "Cheese",
+    emoji: "🧀",
+    category: "dairy",
+    aggregateUnit: "oz",
+    aggregateLabel: "oz",
+    aggregateBase: 28.35,
+  },
+];
+
+const hubsById = new Map(HUBS.map(h => [h.id, h]));
+
+export function findHub(id) {
+  return id ? hubsById.get(id) || null : null;
+}
+
+// Return the hub an ingredient belongs to, or null if it's a standalone.
+export function hubForIngredient(ingredientOrId) {
+  const ing = typeof ingredientOrId === "string"
+    ? findIngredient(ingredientOrId)
+    : ingredientOrId;
+  return ing?.parentId ? hubsById.get(ing.parentId) || null : null;
+}
+
+// Members (children) of a hub, in registry order.
+export function membersOfHub(hubId) {
+  return INGREDIENTS.filter(i => i.parentId === hubId);
+}
+
+// Ingredients that are NOT in any hub — shown alongside hub tiles in pickers.
+export function standaloneIngredients() {
+  return INGREDIENTS.filter(i => !i.parentId);
 }
 
 export function unitLabel(ingredient, unitId) {
