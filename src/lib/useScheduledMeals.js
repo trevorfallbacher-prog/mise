@@ -41,8 +41,7 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey } = {}) {
     setLoading(false);
   }, [userId, fromISO, toISO]);
 
-  // Re-query whenever the family connection set changes.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Re-query whenever `load` (userId/date window) or the family set changes.
   useEffect(() => { load(); }, [load, familyKey]);
 
   const schedule = useCallback(
