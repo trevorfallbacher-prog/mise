@@ -137,6 +137,7 @@ export default function App() {
         {tab === "cookbook" && <Cookbook />}
         {tab === "pantry"   && (
           <Pantry
+            userId={user.id}
             pantry={pantry}
             setPantry={setPantry}
             shoppingList={shoppingList}

@@ -10,6 +10,8 @@ function fromDb(row) {
     unit: row.unit,
     category: row.category,
     source: row.source,
+    // Last-paid unit price, integer cents. Nullable.
+    priceCents: row.price_cents ?? null,
   };
 }
 
@@ -22,6 +24,7 @@ function toDb(item) {
     unit: item.unit,
     category: item.category,
     source: item.source || "manual",
+    price_cents: item.priceCents ?? null,
   };
 }
 

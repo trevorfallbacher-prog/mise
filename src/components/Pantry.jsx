@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo } from "react";
 import { INGREDIENTS, findIngredient, unitLabel } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
+import { useMonthlySpend } from "../lib/useMonthlySpend";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -54,12 +55,19 @@ const fmt = item => {
   return `${Math.round(v * 10) / 10} ${displayUnit(item)}`;
 };
 
+// Small price formatter: 429 → "$4.29", null → "".
+const formatPrice = cents =>
+  typeof cents === "number" && Number.isFinite(cents)
+    ? `$${(cents / 100).toFixed(2)}`
+    : "";
+
 // ── Receipt Scanner ───────────────────────────────────────────────────────────
 function ReceiptScanner({ onItemsScanned, onClose }) {
   const [phase, setPhase] = useState("upload");
   const [imageData, setImageData] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [scannedItems, setScannedItems] = useState([]);
+  const [receiptMeta, setReceiptMeta] = useState({ store: null, date: null, totalCents: null });
   const [editingIdx, setEditingIdx] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef();
@@ -93,6 +101,12 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       const items = Array.isArray(data?.items) ? data.items : [];
       if (!items.length) { setError("No grocery items found. Try a clearer photo."); setPhase("ready"); return; }
 
+      setReceiptMeta({
+        store: data?.store ?? null,
+        date: data?.date ?? null,
+        totalCents: typeof data?.totalCents === "number" ? data.totalCents : null,
+      });
+
       // If the model matched a canonical ingredient, overlay the registry's
       // name/emoji/category so the confirm UI is consistent with the rest of
       // the app (and we know the unit is one of the valid ids).
@@ -103,6 +117,7 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
           name: canon ? canon.name : item.name,
           emoji: canon ? canon.emoji : (item.emoji || "🥫"),
           category: canon ? canon.category : (item.category || "pantry"),
+          priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
           id: i,
           selected: true,
         };
@@ -180,6 +195,13 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#4ade80", letterSpacing:"0.15em", marginBottom:6 }}>✓ FOUND {scannedItems.length} ITEMS</div>
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300, fontStyle:"italic", color:"#f0ece4" }}>Look right?</h2>
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>Deselect anything wrong. Tap amounts to edit.</p>
+            {(receiptMeta.store || receiptMeta.date || receiptMeta.totalCents != null) && (
+              <div style={{ marginTop:10, padding:"8px 12px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:8, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                {receiptMeta.store && <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{receiptMeta.store}</span>}
+                {receiptMeta.date && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{receiptMeta.date}</span>}
+                {receiptMeta.totalCents != null && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", marginLeft:"auto" }}>{formatPrice(receiptMeta.totalCents)}</span>}
+              </div>
+            )}
           </div>
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8, minHeight:0, WebkitOverflowScrolling:"touch" }}>
             {scannedItems.map((item, idx) => {
@@ -194,7 +216,10 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
                       <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
                       {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}>MATCHED</span>}
                     </div>
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.category}</div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", display:"flex", gap:8 }}>
+                      <span>{item.category}</span>
+                      {item.priceCents != null && <span style={{ color:"#7ec87e" }}>{formatPrice(item.priceCents)}</span>}
+                    </div>
                   </div>
                   {editingIdx === idx ? (
                     <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
@@ -226,7 +251,7 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
               {scannedItems.filter(i=>i.selected).length} items will be added to your pantry
             </span>
           </div>
-          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected)); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
+          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected), receiptMeta); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
             STOCK MY PANTRY →
           </button>
         </div>
@@ -480,7 +505,7 @@ function AddItemModal({ target, onClose, onAdd }) {
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Pantry({ pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
+export default function Pantry({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState("all");
   const [showDeduction, setShowDeduction] = useState(false);
@@ -489,6 +514,9 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   // Inline amount+unit editor on a pantry card. Null when nothing is being
   // edited; otherwise holds the id of the row the user tapped.
   const [editingItemId, setEditingItemId] = useState(null);
+  // Bumped after each successful scan so the monthly-spend banner re-queries.
+  const [spendRefresh, setSpendRefresh] = useState(0);
+  const monthlySpend = useMonthlySpend(userId, spendRefresh);
 
   const lowItems = pantry.filter(isLow);
   const filtered = pantry.filter(item => filter === "all" || item.category === filter);
@@ -497,8 +525,9 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   // ingredient we merge by ingredientId (so "2 sticks butter" stacks with an
   // existing butter row even if the other has id null). Units only add when
   // they match — otherwise we just bump to the larger amount and let the user
-  // sort it out in the UI.
-  const addScannedItems = items => {
+  // sort it out in the UI. Last-paid priceCents is always overwritten with
+  // the freshest receipt price.
+  const addScannedItems = (items, meta = {}) => {
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
@@ -515,6 +544,7 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
           }
           // Backfill ingredientId if the existing row was free-text.
           if (!ex.ingredientId && s.ingredientId) ex.ingredientId = s.ingredientId;
+          if (s.priceCents != null) ex.priceCents = s.priceCents;
         } else {
           next.push({
             id: crypto.randomUUID(),
@@ -526,11 +556,28 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
             max: Math.max(s.amount * 2, 1),
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
+            priceCents: s.priceCents ?? null,
           });
         }
       });
       return next;
     });
+
+    // Persist the receipt as its own record. Fire-and-forget — if it fails
+    // we swallow it (the pantry update is the important part).
+    if (userId) {
+      supabase.from("receipts").insert({
+        user_id: userId,
+        store_name: meta.store || null,
+        receipt_date: meta.date || null,
+        total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
+        item_count: items.length,
+      }).then(({ error }) => {
+        if (error) console.warn("[receipts] insert failed:", error.message);
+        else setSpendRefresh(k => k + 1);
+      });
+    }
+
     setScanning(false);
   };
 
@@ -638,6 +685,19 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
           </div>
         </div>
       </div>
+
+      {/* Monthly groceries — only when there's been any spend recorded */}
+      {!monthlySpend.loading && monthlySpend.cents > 0 && (
+        <div style={{ margin:"14px 20px 0", padding:"10px 14px", background:"#0f140f", border:"1px solid #1e3a1e", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", letterSpacing:"0.12em" }}>GROCERIES THIS MONTH</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", marginTop:2 }}>{monthlySpend.receiptCount} receipt{monthlySpend.receiptCount === 1 ? "" : "s"}</div>
+          </div>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:"#7ec87e", fontStyle:"italic" }}>
+            ${(monthlySpend.cents / 100).toFixed(2)}
+          </div>
+        </div>
+      )}
 
       {/* View toggle */}
       <div style={{ display:"flex", gap:0, margin:"18px 20px 0", padding:4, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:12 }}>
@@ -772,6 +832,11 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
                       </div>
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
                         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
+                        {item.priceCents != null && (
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }} title="Last paid price">
+                            {formatPrice(item.priceCents)}
+                          </span>
+                        )}
                         {!item.ingredientId && (
                           <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", background:"#1a1a1a", padding:"1px 6px", borderRadius:4 }} title="Not linked to the canonical ingredient list — won't match recipes">
                             FREE TEXT

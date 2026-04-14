@@ -13,6 +13,8 @@ function fromDb(row) {
     max: Number(row.max),
     category: row.category,
     lowThreshold: Number(row.low_threshold),
+    // Last-paid unit price, integer cents. Nullable — manual adds have none.
+    priceCents: row.price_cents ?? null,
   };
 }
 
@@ -26,6 +28,7 @@ function toDb(item) {
     max: item.max,
     category: item.category,
     low_threshold: item.lowThreshold,
+    price_cents: item.priceCents ?? null,
   };
 }
 

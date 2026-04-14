@@ -97,17 +97,33 @@ Categories (use for non-canonical items): dairy, produce, dry, meat, pantry, fro
 Canonical ingredient registry:
 ${registry}
 
-Return ONLY a JSON array — no markdown fences, no prose, no trailing commentary.
-Example output:
-[
-  {"ingredientId":"butter","name":"Unsalted Butter","emoji":"🧈","amount":1,"unit":"stick","category":"dairy"},
-  {"ingredientId":"milk","name":"Milk","emoji":"🥛","amount":1,"unit":"gallon","category":"dairy"},
-  {"ingredientId":"eggs","name":"Eggs","emoji":"🥚","amount":18,"unit":"count","category":"dairy"},
-  {"ingredientId":null,"name":"Greek Yogurt","emoji":"🥛","amount":32,"unit":"oz","category":"dairy"}
-]
+For every item also include:
+  - priceCents: the USD price shown next to it, in integer cents. "4.29" →
+    429. If a price isn't legible, use null.
+
+Additionally, look at the receipt header / footer and return receipt metadata:
+  - store:    the store name if visible (e.g. "Trader Joe's", "Safeway", "Wegmans"); null if not.
+  - date:     the transaction date in YYYY-MM-DD if visible; null if not.
+  - totalCents: the receipt TOTAL in integer cents if visible; null if not.
+    (Use the "TOTAL" line, not subtotal or tax line.)
+
+Return ONLY a JSON object — no markdown fences, no prose, no trailing commentary —
+with this shape:
+
+{
+  "store": "Trader Joe's" | null,
+  "date": "2026-04-14" | null,
+  "totalCents": 4523 | null,
+  "items": [
+    {"ingredientId":"butter","name":"Unsalted Butter","emoji":"🧈","amount":1,"unit":"stick","category":"dairy","priceCents":499},
+    {"ingredientId":"milk","name":"Milk","emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429},
+    {"ingredientId":"eggs","name":"Eggs","emoji":"🥚","amount":18,"unit":"count","category":"dairy","priceCents":653},
+    {"ingredientId":null,"name":"Greek Yogurt","emoji":"🥛","amount":32,"unit":"oz","category":"dairy","priceCents":599}
+  ]
+}
 
 If the image clearly is not a grocery receipt or you can't read any items,
-return an empty array: []`;
+return {"store":null,"date":null,"totalCents":null,"items":[]}.`;
 }
 
 Deno.serve(async (req) => {
@@ -201,12 +217,12 @@ Deno.serve(async (req) => {
   }
 
   const data = await anthropicResp.json();
-  const raw = data?.content?.[0]?.text ?? "[]";
+  const raw = data?.content?.[0]?.text ?? "{}";
   const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
 
-  let items: unknown;
+  let parsed: unknown;
   try {
-    items = JSON.parse(cleaned);
+    parsed = JSON.parse(cleaned);
   } catch {
     return new Response(
       JSON.stringify({
@@ -217,12 +233,30 @@ Deno.serve(async (req) => {
     );
   }
 
-  if (!Array.isArray(items)) {
+  // Accept either the new object shape {store,date,totalCents,items}
+  // or the legacy bare array (in case the model regresses to the old style).
+  let payload: {
+    store: string | null;
+    date: string | null;
+    totalCents: number | null;
+    items: unknown[];
+  };
+  if (Array.isArray(parsed)) {
+    payload = { store: null, date: null, totalCents: null, items: parsed };
+  } else if (parsed && typeof parsed === "object" && Array.isArray((parsed as any).items)) {
+    const p = parsed as any;
+    payload = {
+      store: typeof p.store === "string" ? p.store : null,
+      date: typeof p.date === "string" ? p.date : null,
+      totalCents: Number.isFinite(p.totalCents) ? p.totalCents : null,
+      items: p.items,
+    };
+  } else {
     return new Response(
-      JSON.stringify({ error: "model returned non-array", raw }),
+      JSON.stringify({ error: "model returned unexpected shape", raw }),
       { status: 502, headers: JSON_HEADERS },
     );
   }
 
-  return new Response(JSON.stringify({ items }), { headers: JSON_HEADERS });
+  return new Response(JSON.stringify(payload), { headers: JSON_HEADERS });
 });
