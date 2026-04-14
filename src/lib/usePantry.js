@@ -41,9 +41,9 @@ function toDb(item) {
  * `useState`'s setter — all changes are persisted to Supabase behind the scenes.
  *
  * Pass `familyKey` (from useRelationships) so the hook re-queries whenever a
- * family connection is added or removed — that's how newly-shared pantry
- * rows flow in without a page reload.
+ * family connection is added or removed. `onRealtime(evt, row, old)` fires
+ * for every change coming from another user (used to surface toasts).
  */
-export function usePantry(userId, familyKey) {
-  return useSyncedList({ table: "pantry_items", userId, toDb, fromDb, refreshKey: familyKey });
+export function usePantry(userId, familyKey, onRealtime) {
+  return useSyncedList({ table: "pantry_items", userId, toDb, fromDb, refreshKey: familyKey, onRealtime });
 }

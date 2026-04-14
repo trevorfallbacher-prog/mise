@@ -136,7 +136,7 @@ function RecipePickerModal({ onPick, onClose }) {
 // Scheduled meal detail drawer (shown when tapping an existing meal)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
+function MealDetailDrawer({ meal, recipe, userId, nameFor, onCookNow, onClaim, onUnclaim, onDelete, onClose }) {
   const [confirming, setConfirming] = useState(false);
   if (!recipe) {
     return (
@@ -187,9 +187,33 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
           </div>
         </div>
 
+        {/* Attribution: who scheduled it and who's cooking / requesting. */}
+        {(() => {
+          const creatorName = nameFor ? nameFor(meal.user_id) : null;
+          const isRequest   = meal.cook_id == null;
+          const cookName    = !isRequest && nameFor ? nameFor(meal.cook_id) : null;
+          return (
+            <div style={{
+              marginTop: 14, padding: "10px 12px",
+              background: isRequest ? "#1e1408" : "#0f0f0f",
+              border: `1px solid ${isRequest ? "#3a2a15" : "#1e1e1e"}`,
+              borderRadius: 10, display: "flex", alignItems: "center", gap: 8,
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb",
+            }}>
+              <span style={{ fontSize: 16 }}>{isRequest ? "🙋" : "🧑‍🍳"}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {isRequest
+                  ? <><b style={{ color:"#d9b877" }}>{creatorName}</b> is hoping someone will cook this</>
+                  : <>Scheduled by <b style={{ color:"#eee" }}>{creatorName}</b>{cookName && cookName !== creatorName ? <> · Cooking: <b style={{ color:"#a3d977" }}>{cookName}</b></> : null}</>
+                }
+              </span>
+            </div>
+          );
+        })()}
+
         {meal.note && (
           <div style={{
-            marginTop: 14, padding: "10px 12px",
+            marginTop: 10, padding: "10px 12px",
             background: "#161616", border: "1px solid #2a2a2a",
             borderRadius: 10, fontFamily: "'DM Sans',sans-serif",
             fontSize: 13, color: "#ccc", fontStyle: "italic",
@@ -211,7 +235,40 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+        {/* Cook/request action — only when not in "confirming delete" mode. */}
+        {!confirming && (meal.cook_id == null || meal.cook_id === userId) && (
+          <div style={{ marginTop: 14 }}>
+            {meal.cook_id == null ? (
+              <button
+                onClick={onClaim}
+                style={{
+                  width: "100%", padding: "12px",
+                  background: "#1a2015", border: "1px solid #2a3a1e",
+                  color: "#a3d977", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                🙋 I'LL COOK THIS
+              </button>
+            ) : (
+              <button
+                onClick={onUnclaim}
+                style={{
+                  width: "100%", padding: "12px",
+                  background: "#1a1a1a", border: "1px solid #2a2a2a",
+                  color: "#d9b877", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                ↩ ASK FAMILY INSTEAD
+              </button>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           {confirming ? (
             <>
               <button
@@ -288,7 +345,7 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey }) {
+export default function Plan({ profile, userId, familyKey, nameFor, onMealChange, hasFamily }) {
   // Show a rolling 14-day window so next week is visible without scrolling mechanics.
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
@@ -307,15 +364,17 @@ export default function Plan({ profile, userId, familyKey }) {
     return d;
   }, [today]);
 
-  const { meals, loading, schedule, cancel } = useScheduledMeals(userId, {
+  const { meals, loading, schedule, cancel, claim, unclaim } = useScheduledMeals(userId, {
     fromISO: today.toISOString(),
     toISO:   windowEnd.toISOString(),
     familyKey,
+    onRealtime: onMealChange,
   });
 
   // UI state
   const [addingForDay, setAddingForDay] = useState(null);       // Date picked via "+"
   const [recipeToSchedule, setRecipeToSchedule] = useState(null); // Recipe picked from modal
+  const [isRequesting, setIsRequesting] = useState(false);       // "Request" mode vs. "I'll cook"
   const [openMeal, setOpenMeal] = useState(null);                // Meal tapped to view
   const [cookingRecipe, setCookingRecipe] = useState(null);      // Recipe now in CookMode
 
@@ -342,7 +401,9 @@ export default function Plan({ profile, userId, familyKey }) {
       scheduledFor,
       notificationSettings,
       note,
+      isRequest: isRequesting,
     });
+    setIsRequesting(false);
   };
 
   const firstName = profile?.name?.trim().split(/\s+/)[0];
@@ -383,17 +444,33 @@ export default function Plan({ profile, userId, familyKey }) {
                     {dateLabel}
                   </div>
                 </div>
-                <button
-                  onClick={() => setAddingForDay(d)}
-                  style={{
-                    background: "#1a1a1a", border: "1px solid #2a2a2a",
-                    borderRadius: 20, padding: "4px 12px",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: "#888", letterSpacing: "0.08em", cursor: "pointer",
-                  }}
-                >
-                  + ADD
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {hasFamily && (
+                    <button
+                      onClick={() => { setIsRequesting(true); setAddingForDay(d); }}
+                      title="Ask family to cook something"
+                      style={{
+                        background: "#1a1a1a", border: "1px solid #2a2a2a",
+                        borderRadius: 20, padding: "4px 10px",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#d9b877", letterSpacing: "0.08em", cursor: "pointer",
+                      }}
+                    >
+                      🙋 REQUEST
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setIsRequesting(false); setAddingForDay(d); }}
+                    style={{
+                      background: "#1a1a1a", border: "1px solid #2a2a2a",
+                      borderRadius: 20, padding: "4px 12px",
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#888", letterSpacing: "0.08em", cursor: "pointer",
+                    }}
+                  >
+                    + ADD
+                  </button>
+                </div>
               </div>
 
               {dayMeals.length === 0 && !isToday && (
@@ -406,14 +483,20 @@ export default function Plan({ profile, userId, familyKey }) {
                 {dayMeals.map(meal => {
                   const recipe = findRecipe(meal.recipe_slug);
                   const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
+                  const isRequest = meal.cook_id == null;
+                  const cookLabel = isRequest
+                    ? `Requested by ${nameFor ? nameFor(meal.user_id) : "someone"}`
+                    : `Cooking: ${nameFor ? nameFor(meal.cook_id) : ""}`;
                   return (
                     <button
                       key={meal.id}
                       onClick={() => setOpenMeal(meal)}
                       style={{
                         display: "flex", alignItems: "center", gap: 12,
-                        padding: "12px 14px", background: "#0f0f0f",
-                        border: "1px solid #1e1e1e", borderRadius: 12,
+                        padding: "12px 14px",
+                        background: isRequest ? "#1e1408" : "#0f0f0f",
+                        border: `1px solid ${isRequest ? "#3a2a15" : "#1e1e1e"}`,
+                        borderRadius: 12,
                         cursor: "pointer", textAlign: "left",
                       }}
                     >
@@ -427,8 +510,9 @@ export default function Plan({ profile, userId, familyKey }) {
                             {fmtTime(meal.scheduled_for)}
                           </span>
                         </div>
-                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.05em", marginTop: 3 }}>
-                          {recipe && `${totalTimeMin(recipe)} MIN`}
+                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
+                          {isRequest && "🙋 "}{cookLabel}
+                          {recipe && ` · ${totalTimeMin(recipe)} MIN`}
                           {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
                           {meal.note && " · 📝"}
                         </div>
@@ -471,11 +555,21 @@ export default function Plan({ profile, userId, familyKey }) {
         <MealDetailDrawer
           meal={openMeal}
           recipe={findRecipe(openMeal.recipe_slug)}
+          userId={userId}
+          nameFor={nameFor}
           onClose={() => setOpenMeal(null)}
           onCookNow={() => {
             const r = findRecipe(openMeal.recipe_slug);
             setOpenMeal(null);
             if (r) setCookingRecipe(r);
+          }}
+          onClaim={async () => {
+            const updated = await claim(openMeal.id);
+            setOpenMeal(updated);
+          }}
+          onUnclaim={async () => {
+            const updated = await unclaim(openMeal.id);
+            setOpenMeal(updated);
           }}
           onDelete={async (id) => {
             await cancel(id);
