@@ -101,14 +101,14 @@ export default function App() {
   // the hooks that hang off of user data (usePantry's realtime callback etc.).
   return (
     <ToastProvider>
-      <AuthedApp user={user} profile={profile} />
+      <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
     </ToastProvider>
   );
 }
 
 // The authenticated app tree. Lives inside ToastProvider so realtime
 // callbacks can raise toasts.
-function AuthedApp({ user, profile }) {
+function AuthedApp({ user, profile, upsertProfile }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
 
@@ -228,6 +228,7 @@ function AuthedApp({ user, profile }) {
         <Settings
           profile={profile}
           relationships={relationships}
+          upsertProfile={upsertProfile}
           onClose={() => setSettingsOpen(false)}
         />
       )}
