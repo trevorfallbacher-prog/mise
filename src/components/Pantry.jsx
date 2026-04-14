@@ -1,11 +1,36 @@
 import { useState, useRef, useMemo } from "react";
-import { INGREDIENTS, findIngredient, unitLabel } from "../data/ingredients";
+import {
+  INGREDIENTS, HUBS,
+  findIngredient, findHub, hubForIngredient,
+  membersOfHub, standaloneIngredients,
+  unitLabel, inferUnitsForScanned, toBase,
+  estimatePriceCents, getIngredientInfo,
+} from "../data/ingredients";
+import { supabase } from "../lib/supabase";
+import { useMonthlySpend } from "../lib/useMonthlySpend";
 
-const CATEGORIES = [
-  { id:"all", label:"All" }, { id:"dairy", label:"🥛 Dairy" },
-  { id:"produce", label:"🥬 Produce" }, { id:"dry", label:"🌾 Dry" },
-  { id:"pantry", label:"🫙 Pantry" },
-];
+// Compact registry shape we send to the scan-receipt Edge Function. The model
+// needs just enough to emit correct `ingredientId` + unit values; units are
+// stringified to their ids only (the Claude prompt doesn't need toBase math).
+const INGREDIENTS_FOR_SCAN = INGREDIENTS.map(i => ({
+  id: i.id,
+  name: i.name,
+  category: i.category,
+  units: i.units.map(u => u.id),
+}));
+
+// Order in which category sections appear in the picker's hub grid.
+const CATEGORY_ORDER = ["meat", "dairy", "produce", "pantry", "dry", "frozen"];
+// Display labels — raw category IDs aren't always friendly ("produce" →
+// "Fruits & Veggies"). Falls back to the uppercased id.
+const CATEGORY_LABELS = {
+  meat:    "MEAT",
+  dairy:   "DAIRY",
+  produce: "FRUITS & VEGGIES",
+  pantry:  "PANTRY",
+  dry:     "DRY",
+  frozen:  "FROZEN",
+};
 
 // Category options used in the "Add item" form.
 const ADD_CATEGORIES = [
@@ -42,12 +67,19 @@ const fmt = item => {
   return `${Math.round(v * 10) / 10} ${displayUnit(item)}`;
 };
 
+// Small price formatter: 429 → "$4.29", null → "".
+const formatPrice = cents =>
+  typeof cents === "number" && Number.isFinite(cents)
+    ? `$${(cents / 100).toFixed(2)}`
+    : "";
+
 // ── Receipt Scanner ───────────────────────────────────────────────────────────
 function ReceiptScanner({ onItemsScanned, onClose }) {
   const [phase, setPhase] = useState("upload");
   const [imageData, setImageData] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [scannedItems, setScannedItems] = useState([]);
+  const [receiptMeta, setReceiptMeta] = useState({ store: null, date: null, totalCents: null });
   const [editingIdx, setEditingIdx] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef();
@@ -66,42 +98,68 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
   const scanReceipt = async () => {
     setPhase("scanning"); setError(null);
     try {
-      const apiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type:"image", source:{ type:"base64", media_type:imageData.mediaType, data:imageData.base64 } },
-              { type:"text", text:`Read this grocery receipt. Extract every food/grocery item. Return ONLY a JSON array, no markdown:
-[{"name":"Unsalted Butter","emoji":"🧈","amount":2,"unit":"sticks","category":"dairy"}]
-Categories: dairy, produce, dry, meat, pantry, frozen
-Use practical kitchen units. If unclear, make a reasonable guess.` }
-            ]
-          }]
-        })
+      // Server-side call: Supabase forwards the caller's JWT, and the Edge
+      // Function holds ANTHROPIC_API_KEY so it never ships to the browser.
+      const { data, error: fnError } = await supabase.functions.invoke("scan-receipt", {
+        body: {
+          image: imageData.base64,
+          mediaType: imageData.mediaType,
+          ingredients: INGREDIENTS_FOR_SCAN,
+        },
       });
-      const data = await response.json();
-      const text = data.content?.[0]?.text || "[]";
-      const items = JSON.parse(text.replace(/```json|```/g, "").trim());
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      const items = Array.isArray(data?.items) ? data.items : [];
       if (!items.length) { setError("No grocery items found. Try a clearer photo."); setPhase("ready"); return; }
-      setScannedItems(items.map((item, i) => ({ ...item, id: i, selected: true })));
+
+      setReceiptMeta({
+        store: data?.store ?? null,
+        date: data?.date ?? null,
+        totalCents: typeof data?.totalCents === "number" ? data.totalCents : null,
+      });
+
+      // If the model matched a canonical ingredient, overlay the registry's
+      // name/emoji/category so the confirm UI is consistent with the rest of
+      // the app (and we know the unit is one of the valid ids).
+      //
+      // For items that DIDN'T match, the model sometimes falls back to
+      // "1 count" for things that should be weighed (cheese, deli meat, etc.).
+      // We lean on inferUnitsForScanned to pick sane units from emoji +
+      // category and replace a nonsense "count" with oz/lb/fl_oz as appropriate.
+      const normalized = items.map((item, i) => {
+        const canon = findIngredient(item.ingredientId);
+        const base = {
+          ...item,
+          name: canon ? canon.name : item.name,
+          emoji: canon ? canon.emoji : (item.emoji || "🥫"),
+          category: canon ? canon.category : (item.category || "pantry"),
+          priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
+          id: i,
+          selected: true,
+        };
+        if (!canon) {
+          const inferred = inferUnitsForScanned(base);
+          const validIds = inferred.units.map(u => u.id);
+          // Keep the model's unit if it's in our inferred list; otherwise use default.
+          if (!validIds.includes(base.unit)) base.unit = inferred.defaultUnit;
+        }
+        return base;
+      });
+      setScannedItems(normalized);
       setPhase("confirm");
     } catch (err) {
-      setError("Couldn't read the receipt. Check your API key in .env and try again.");
+      setError(err?.message || "Couldn't read the receipt. Try again.");
       setPhase("ready");
     }
   };
 
   const toggleItem = idx => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,selected:!item.selected} : item));
   const updateAmount = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,amount:parseFloat(val)||0} : item));
+  const updateUnit = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,unit:val} : item));
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column" }}>
+    <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
       <div style={{ height:2, background:"#1a1a1a" }}>
         <div style={{ height:"100%", background:"#f5c842", width:`${({upload:5,ready:20,scanning:60,confirm:90,done:100}[phase]||5)}%`, transition:"width 0.4s ease" }} />
       </div>
@@ -156,41 +214,80 @@ Use practical kitchen units. If unclear, make a reasonable guess.` }
       )}
 
       {phase === "confirm" && (
-        <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"20px 20px 40px" }}>
-          <div style={{ marginBottom:20 }}>
+        <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"20px 20px 40px", minHeight:0 }}>
+          <div style={{ marginBottom:20, flexShrink:0 }}>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#4ade80", letterSpacing:"0.15em", marginBottom:6 }}>✓ FOUND {scannedItems.length} ITEMS</div>
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300, fontStyle:"italic", color:"#f0ece4" }}>Look right?</h2>
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>Deselect anything wrong. Tap amounts to edit.</p>
-          </div>
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8 }}>
-            {scannedItems.map((item, idx) => (
-              <div key={idx} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected?"#2a2a2a":"#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s" }}>
-                <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
-                <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</div>
-                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.category}</div>
-                </div>
-                {editingIdx === idx ? (
-                  <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
-                    <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} onBlur={()=>setEditingIdx(null)} autoFocus
-                      style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.unit}</span>
-                  </div>
-                ) : (
-                  <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", flexShrink:0 }}>
-                    {item.amount} {item.unit}
-                  </button>
-                )}
+            {(receiptMeta.store || receiptMeta.date || receiptMeta.totalCents != null) && (
+              <div style={{ marginTop:10, padding:"8px 12px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:8, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                {receiptMeta.store && <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{receiptMeta.store}</span>}
+                {receiptMeta.date && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{receiptMeta.date}</span>}
+                {receiptMeta.totalCents != null && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", marginLeft:"auto" }}>{formatPrice(receiptMeta.totalCents)}</span>}
               </div>
-            ))}
+            )}
           </div>
-          <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10 }}>
+          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8, minHeight:0, WebkitOverflowScrolling:"touch" }}>
+            {scannedItems.map((item, idx) => {
+              const canon = findIngredient(item.ingredientId);
+              const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
+              return (
+                <div key={idx} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected?"#2a2a2a":"#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s" }}>
+                  <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
+                      {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}>MATCHED</span>}
+                    </div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", display:"flex", gap:8 }}>
+                      <span>{item.category}</span>
+                      {item.priceCents != null && <span style={{ color:"#7ec87e" }}>{formatPrice(item.priceCents)}</span>}
+                    </div>
+                  </div>
+                  {editingIdx === idx ? (
+                    <div
+                      style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}
+                      onBlur={e => {
+                        // Only close when focus leaves the entire editor — otherwise
+                        // tapping the unit select kills the editor before it registers.
+                        if (!e.currentTarget.contains(e.relatedTarget)) {
+                          setEditingIdx(null);
+                        }
+                      }}
+                    >
+                      <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} autoFocus
+                        style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
+                      {(() => {
+                        // Canonical items use their registry units; everything
+                        // else gets category/emoji-inferred units so the user
+                        // actually has something to pick from.
+                        const units = canon ? canon.units : inferUnitsForScanned(item).units;
+                        return (
+                          <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
+                            style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}>
+                            {units.map(u => (
+                              <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", flexShrink:0 }}>
+                      {item.amount} {unitDisplay}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, flexShrink:0 }}>
             <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#7ec87e" }}>
               {scannedItems.filter(i=>i.selected).length} items will be added to your pantry
             </span>
           </div>
-          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected)); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer" }}>
+          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected), receiptMeta); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
             STOCK MY PANTRY →
           </button>
         </div>
@@ -210,6 +307,121 @@ Use practical kitchen units. If unclear, make a reasonable guess.` }
   );
 }
 
+// Single-row picker button used in the AddItem modal's ingredient lists.
+// `useShortName` is set when we're inside a hub drill so the row reads
+// "Breast" / "Thigh" instead of "Chicken Breast" / "Chicken Thighs".
+function IngredientRow({ ing, onPick, useShortName = false }) {
+  const label = useShortName && ing.shortName ? ing.shortName : ing.name;
+  return (
+    <button
+      onClick={() => onPick(ing)}
+      style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"transparent", border:"none", borderBottom:"1px solid #1a1a1a", textAlign:"left", cursor:"pointer", color:"#ddd" }}
+    >
+      <span style={{ fontSize:20 }}>{ing.emoji}</span>
+      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, flex:1 }}>{label}</span>
+      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.08em" }}>{ing.category.toUpperCase()}</span>
+    </button>
+  );
+}
+
+// Full-height sheet shown when the user taps an ingredient from a drill-down.
+// Gives them a chance to read up (description, flavor, pairings, recipes)
+// before committing to add it. The yellow CTA at the bottom is the "pick"
+// action — we promote detailIngredient → picked in the parent modal.
+function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
+  const info = getIngredientInfo(ingredient);
+  const hasContent = info && (info.description || info.flavorProfile || info.winePairings.length || info.recipes.length);
+  return (
+    <div
+      onClick={onClose}
+      style={{ position:"fixed", inset:0, background:"#000000e6", zIndex:180, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 32px", maxHeight:"90vh", overflowY:"auto", display:"flex", flexDirection:"column" }}
+      >
+        <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 20px", flexShrink:0 }} />
+        <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:18 }}>
+          <span style={{ fontSize:52 }}>{ingredient.emoji}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            {ingredient.subcategory && (
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:4 }}>
+                {ingredient.subcategory.toUpperCase()}
+              </div>
+            )}
+            <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, color:"#f0ece4", fontWeight:300, fontStyle:"italic", margin:0 }}>
+              {ingredient.name}
+            </h2>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"#666", fontSize:24, cursor:"pointer", padding:0, lineHeight:1 }}>×</button>
+        </div>
+
+        <div style={{ flex:1, overflowY:"auto", marginBottom:16 }}>
+          {info?.description && (
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#bbb", lineHeight:1.55, marginTop:0, marginBottom:18 }}>
+              {info.description}
+            </p>
+          )}
+
+          {info?.flavorProfile && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                FLAVOR PROFILE
+              </div>
+              <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#ccc", lineHeight:1.5, margin:0 }}>
+                {info.flavorProfile}
+              </p>
+            </div>
+          )}
+
+          {info?.winePairings?.length > 0 && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                WINE PAIRINGS
+              </div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {info.winePairings.map(w => (
+                  <span key={w} style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#e7c9b0", background:"#2a1e18", border:"1px solid #3d2a20", borderRadius:20, padding:"5px 11px" }}>
+                    🍷 {w}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {info?.recipes?.length > 0 && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                POPULAR RECIPES
+              </div>
+              <ul style={{ listStyle:"none", padding:0, margin:0, display:"flex", flexDirection:"column", gap:6 }}>
+                {info.recipes.map(r => (
+                  <li key={r} style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#ccc", padding:"8px 12px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:8 }}>
+                    {r}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {!hasContent && (
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", fontStyle:"italic", textAlign:"center", padding:"20px 0" }}>
+              No details yet — but you can still add it to your pantry.
+            </p>
+          )}
+        </div>
+
+        <button
+          onClick={() => onAdd(ingredient)}
+          style={{ width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}
+        >
+          + ADD TO PANTRY
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Add Item Modal ────────────────────────────────────────────────────────────
 // Two modes:
 //   1. Canonical (default): pick a known ingredient from a searchable list.
@@ -221,9 +433,25 @@ Use practical kitchen units. If unclear, make a reasonable guess.` }
 function AddItemModal({ target, onClose, onAdd }) {
   const [mode, setMode] = useState("canonical"); // "canonical" | "custom"
   const [search, setSearch] = useState("");
+  // When the user taps a hub (Chicken, Cheese, …) we drill into it and show
+  // just its members. `drillHub` is null on the top-level tile grid.
+  const [drillHub, setDrillHub] = useState(null);
   const [picked, setPicked] = useState(null); // ingredient from registry
   const [unitId, setUnitId] = useState("");
   const [amount, setAmount] = useState("");
+  // Which subcategory tiles are expanded inside the drill view. Drill-downs
+  // with lots of members (cheese has 75+) are overwhelming as a flat list, so
+  // we show one tile per subcategory and only reveal its ingredients on tap.
+  const [expandedSubs, setExpandedSubs] = useState(() => new Set());
+  const toggleSub = (key) => setExpandedSubs(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+  // An ingredient the user tapped (not picked yet) — shows the detail sheet
+  // with description, flavor profile, wine pairings, recipes. `Add to Pantry`
+  // in the sheet is what actually promotes it to `picked`.
+  const [detailIngredient, setDetailIngredient] = useState(null);
 
   // Custom-mode fields (only used when mode === "custom")
   const [customName, setCustomName] = useState("");
@@ -231,11 +459,29 @@ function AddItemModal({ target, onClose, onAdd }) {
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
 
-  const filtered = useMemo(() => {
+  // Top-level picker view. If the user has typed a search, flatten everything
+  // so "cheddar" still finds cheddar even though it's hidden under Cheese.
+  // Otherwise show hub tiles + standalone ingredients as their own rows.
+  const pickerView = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return INGREDIENTS;
-    return INGREDIENTS.filter(i => i.name.toLowerCase().includes(q));
-  }, [search]);
+    if (drillHub) {
+      const members = membersOfHub(drillHub.id);
+      return {
+        kind: "drill",
+        hub: drillHub,
+        members: q ? members.filter(m => m.name.toLowerCase().includes(q)) : members,
+      };
+    }
+    if (q) {
+      // Flat search across all ingredients AND hub names.
+      const matchedHubs = HUBS.filter(h => h.name.toLowerCase().includes(q));
+      const matchedIngredients = INGREDIENTS.filter(i =>
+        i.name.toLowerCase().includes(q) || (i.shortName && i.shortName.toLowerCase().includes(q))
+      );
+      return { kind: "search", hubs: matchedHubs, ingredients: matchedIngredients };
+    }
+    return { kind: "top", hubs: HUBS, ingredients: standaloneIngredients() };
+  }, [search, drillHub]);
 
   const pickIngredient = (ing) => {
     setPicked(ing);
@@ -245,6 +491,16 @@ function AddItemModal({ target, onClose, onAdd }) {
   const canSaveCanonical = picked && amount !== "" && unitId;
   const canSaveCustom = customName.trim() && amount !== "" && customUnit.trim();
   const canSave = mode === "canonical" ? canSaveCanonical : canSaveCustom;
+
+  // Live price estimate based on the picked ingredient's estCentsPerBase
+  // (or the category fallback). Shown below the amount/unit inputs so the
+  // user can see what manual entries will contribute to monthly spend.
+  const estCents = useMemo(() => {
+    if (mode !== "canonical" || !picked || !amount || !unitId) return null;
+    const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt <= 0) return null;
+    return estimatePriceCents({ amount: amt, unit: unitId, ingredient: picked });
+  }, [mode, picked, amount, unitId]);
 
   const save = () => {
     if (!canSave) return;
@@ -261,6 +517,10 @@ function AddItemModal({ target, onClose, onAdd }) {
           max: Math.max(amt * 2, 1),
           category: picked.category,
           lowThreshold: Math.max(amt * 0.25, 0.25),
+          // Manually-added items don't have a receipt price — estimate from
+          // the ingredient's typical $/base-unit so they still show up in
+          // spend totals and the monthly view.
+          priceCents: estCents,
         }
       : {
           id: crypto.randomUUID(),
@@ -323,55 +583,193 @@ function AddItemModal({ target, onClose, onAdd }) {
               </div>
             ) : (
               <>
+                {/* Breadcrumb when drilled into a hub */}
+                {drillHub && (
+                  <button
+                    onClick={() => { setDrillHub(null); setSearch(""); setExpandedSubs(new Set()); }}
+                    style={{ display:"flex", alignItems:"center", gap:6, background:"transparent", border:"none", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:"0.08em", cursor:"pointer", marginBottom:10, padding:0 }}
+                  >
+                    ← ALL INGREDIENTS
+                  </button>
+                )}
+
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="Search ingredients…"
+                  placeholder={drillHub ? `Filter ${drillHub.name.toLowerCase()}…` : "Search ingredients…"}
                   autoFocus
                   style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", marginBottom:10, boxSizing:"border-box" }}
                 />
-                <div style={{ maxHeight:220, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
-                  {filtered.length === 0 ? (
-                    <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
-                      No match. Try Custom →
+
+                {/* Top-level view: each category gets its own section with
+                    hub tiles up top and loose ingredients as rows below. */}
+                {pickerView.kind === "top" && (
+                  <div style={{ marginBottom:14 }}>
+                    {CATEGORY_ORDER.map(cat => {
+                      const hubs = pickerView.hubs.filter(h => h.category === cat);
+                      const loose = pickerView.ingredients.filter(i => i.category === cat);
+                      if (hubs.length === 0 && loose.length === 0) return null;
+                      return (
+                        <div key={cat} style={{ marginBottom:18 }}>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                            {CATEGORY_LABELS[cat] || cat.toUpperCase()}
+                          </div>
+                          {hubs.length > 0 && (
+                            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom: loose.length > 0 ? 8 : 0 }}>
+                              {hubs.map(h => (
+                                <button
+                                  key={h.id}
+                                  onClick={() => setDrillHub(h)}
+                                  style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, padding:"14px 6px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, cursor:"pointer" }}
+                                >
+                                  <span style={{ fontSize:26 }}>{h.emoji}</span>
+                                  <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{h.name}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>{membersOfHub(h.id).length} types</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {loose.length > 0 && (
+                            <div style={{ border:"1px solid #1e1e1e", borderRadius:10 }}>
+                              {loose.map(i => (
+                                <IngredientRow key={i.id} ing={i} onPick={pickIngredient} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Drilled into a specific hub. If the hub's members carry a
+                    `subcategory` (Cheese does — Fresh / Soft Ripened / Blue /
+                    etc.), group them under those headers; otherwise show a
+                    flat list. */}
+                {pickerView.kind === "drill" && (() => {
+                  if (pickerView.members.length === 0) {
+                    return (
+                      <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
+                        No match in {pickerView.hub.name.toLowerCase()}.
+                      </div>
+                    );
+                  }
+                  const hasSubs = pickerView.members.some(m => m.subcategory);
+                  // When the user is typing a filter, flatten — they're
+                  // looking for something specific, not browsing categories.
+                  const q = search.trim().toLowerCase();
+                  if (!hasSubs || q) {
+                    return (
+                      <div style={{ maxHeight:340, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
+                        {pickerView.members.map(m => (
+                          <IngredientRow key={m.id} ing={m} onPick={setDetailIngredient} useShortName />
+                        ))}
+                      </div>
+                    );
+                  }
+                  // Group by subcategory, preserving registry order.
+                  const groups = [];
+                  const bySub = new Map();
+                  for (const m of pickerView.members) {
+                    const key = m.subcategory || "Other";
+                    if (!bySub.has(key)) {
+                      bySub.set(key, []);
+                      groups.push(key);
+                    }
+                    bySub.get(key).push(m);
+                  }
+                  return (
+                    <div style={{ maxHeight:420, overflowY:"auto", marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
+                      {groups.map(sub => {
+                        const members = bySub.get(sub);
+                        const open = expandedSubs.has(sub);
+                        const sample = members.slice(0, 3).map(m => m.emoji).join(" ");
+                        return (
+                          <div key={sub} style={{ border:`1px solid ${open?"#2a2a2a":"#1e1e1e"}`, borderRadius:12, background:"#141414", overflow:"hidden" }}>
+                            <button
+                              onClick={() => toggleSub(sub)}
+                              style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"14px 14px", background: open?"#1a1a1a":"transparent", border:"none", textAlign:"left", cursor:"pointer", color:"#ddd" }}
+                            >
+                              <span style={{ fontSize:22, flexShrink:0 }}>{sample}</span>
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f0ece4", fontWeight:400 }}>{sub}</div>
+                                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>
+                                  {members.length} {members.length === 1 ? "type" : "types"}
+                                </div>
+                              </div>
+                              <span style={{ color:"#f5c842", fontSize:16, transition:"transform 0.15s", transform: open?"rotate(90deg)":"rotate(0deg)" }}>›</span>
+                            </button>
+                            {open && (
+                              <div style={{ borderTop:"1px solid #1e1e1e" }}>
+                                {members.map(m => (
+                                  <IngredientRow key={m.id} ing={m} onPick={setDetailIngredient} useShortName />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-                  ) : filtered.map(i => (
-                    <button
-                      key={i.id}
-                      onClick={() => pickIngredient(i)}
-                      style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"transparent", border:"none", borderBottom:"1px solid #1a1a1a", textAlign:"left", cursor:"pointer", color:"#ddd" }}
-                    >
-                      <span style={{ fontSize:20 }}>{i.emoji}</span>
-                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, flex:1 }}>{i.name}</span>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.08em" }}>{i.category.toUpperCase()}</span>
-                    </button>
-                  ))}
-                </div>
+                  );
+                })()}
+
+                {/* Free-text search across everything (including hub children) */}
+                {pickerView.kind === "search" && (
+                  <div style={{ maxHeight:260, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
+                    {pickerView.hubs.map(h => (
+                      <button
+                        key={h.id}
+                        onClick={() => { setDrillHub(h); setSearch(""); }}
+                        style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"transparent", border:"none", borderBottom:"1px solid #1a1a1a", textAlign:"left", cursor:"pointer", color:"#ddd" }}
+                      >
+                        <span style={{ fontSize:20 }}>{h.emoji}</span>
+                        <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, flex:1 }}>{h.name}</span>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.08em" }}>{membersOfHub(h.id).length} TYPES →</span>
+                      </button>
+                    ))}
+                    {pickerView.ingredients.map(i => (
+                      <IngredientRow key={i.id} ing={i} onPick={pickIngredient} />
+                    ))}
+                    {pickerView.hubs.length === 0 && pickerView.ingredients.length === 0 && (
+                      <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
+                        No match. Try Custom →
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
 
             {/* Amount + Unit (only visible once an ingredient is picked) */}
             {picked && (
-              <div style={{ display:"flex", gap:10, marginBottom:20 }}>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  placeholder="Amount"
-                  autoFocus
-                  style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
-                />
-                <select
-                  value={unitId}
-                  onChange={e => setUnitId(e.target.value)}
-                  style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", appearance:"none", cursor:"pointer" }}
-                >
-                  {unitOptions.map(u => (
-                    <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
-                  ))}
-                </select>
-              </div>
+              <>
+                <div style={{ display:"flex", gap:10, marginBottom:10 }}>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="Amount"
+                    autoFocus
+                    style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+                  />
+                  <select
+                    value={unitId}
+                    onChange={e => setUnitId(e.target.value)}
+                    style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", appearance:"none", cursor:"pointer" }}
+                  >
+                    {unitOptions.map(u => (
+                      <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {estCents != null && (
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.08em", marginBottom:20 }}>
+                    EST. ${(estCents/100).toFixed(2)} — typical retail
+                  </div>
+                )}
+                {estCents == null && <div style={{ marginBottom:20 }} />}
+              </>
             )}
           </>
         ) : (
@@ -439,31 +837,164 @@ function AddItemModal({ target, onClose, onAdd }) {
           </button>
         </div>
       </div>
+
+      {/* Detail sheet sits on top of the picker modal. "+ Add to Pantry" here
+          promotes the ingredient to `picked` so the amount/unit step appears
+          behind it when the sheet closes. */}
+      {detailIngredient && (
+        <IngredientDetailSheet
+          ingredient={detailIngredient}
+          onClose={() => setDetailIngredient(null)}
+          onAdd={(ing) => { pickIngredient(ing); setDetailIngredient(null); }}
+        />
+      )}
     </div>
   );
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Pantry({ pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
+export default function Pantry({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
   const [scanning, setScanning] = useState(false);
-  const [filter, setFilter] = useState("all");
+  // Search replaces the old category filter pills — one input searches item
+  // names, hub names, and categories.
+  const [search, setSearch] = useState("");
+  // Hub rows collapse by default; track which ones the user has opened.
+  const [expandedHubs, setExpandedHubs] = useState(() => new Set());
+  const toggleHub = id => setExpandedHubs(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
   const [showDeduction, setShowDeduction] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [addingTo, setAddingTo] = useState(null); // "pantry" | "shopping" | null
+  // Inline amount+unit editor on a pantry card. Null when nothing is being
+  // edited; otherwise holds the id of the row the user tapped.
+  const [editingItemId, setEditingItemId] = useState(null);
+  // Bumped after each successful scan so the monthly-spend banner re-queries.
+  const [spendRefresh, setSpendRefresh] = useState(0);
+  const monthlySpend = useMonthlySpend(userId, spendRefresh);
 
   const lowItems = pantry.filter(isLow);
-  const filtered = pantry.filter(item => filter === "all" || item.category === filter);
 
-  const addScannedItems = items => {
+  // Group pantry items under their ingredient hub (Chicken, Cheese, …) when
+  // they have one — otherwise they render as standalone rows. `search` filters
+  // both the hub name and each item's name. A hub shows if its name matches OR
+  // any of its items match.
+  const grouped = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    // Null-safe: legacy rows may have null category/name fields.
+    const matchesSearch = (text) => !q || (text && String(text).toLowerCase().includes(q));
+
+    const groups = new Map(); // hubId → { hub, items }
+    const loose = [];
+
+    for (const item of pantry) {
+      const ing = findIngredient(item.ingredientId);
+      const hub = hubForIngredient(ing);
+      if (hub) {
+        if (!groups.has(hub.id)) groups.set(hub.id, { hub, items: [] });
+        groups.get(hub.id).items.push(item);
+      } else {
+        loose.push(item);
+      }
+    }
+
+    const out = [];
+    for (const { hub, items } of groups.values()) {
+      const hubMatches = matchesSearch(hub.name);
+      const matchedItems = items.filter(i => matchesSearch(i.name));
+      if (hubMatches || matchedItems.length > 0) {
+        // When the hub name matches, include all items; otherwise just matches.
+        const shown = hubMatches ? items : matchedItems;
+        // Sum member amounts in grams via toBase, so we can show a single
+        // "2.4 lb" or "14 oz" header regardless of each item's unit.
+        let totalBase = 0;
+        let totalCents = 0;
+        let totalCount = 0;
+        for (const item of items) {
+          const ing = findIngredient(item.ingredientId);
+          const b = ing ? toBase({ amount: item.amount, unit: item.unit }, ing) : NaN;
+          if (Number.isFinite(b)) totalBase += b;
+          if (typeof item.priceCents === "number") totalCents += item.priceCents;
+          totalCount += 1;
+        }
+        out.push({
+          type: "hub",
+          hub,
+          items: shown,
+          totalBase,
+          totalCents,
+          totalCount,
+          anyLow: items.some(isLow),
+        });
+      }
+    }
+    for (const item of loose) {
+      if (matchesSearch(item.name) || matchesSearch(item.category)) {
+        out.push({ type: "item", item });
+      }
+    }
+    return out;
+  }, [pantry, search]);
+
+  // Merge scanned items into the pantry. When the scanner matched a canonical
+  // ingredient we merge by ingredientId (so "2 sticks butter" stacks with an
+  // existing butter row even if the other has id null). Units only add when
+  // they match — otherwise we just bump to the larger amount and let the user
+  // sort it out in the UI. Last-paid priceCents is always overwritten with
+  // the freshest receipt price.
+  const addScannedItems = (items, meta = {}) => {
     setPantry(prev => {
-      const updated = [...prev];
+      const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
-        const ex = updated.find(p => p.name.toLowerCase() === s.name.toLowerCase());
-        if (ex) { ex.amount = Math.min(ex.amount + s.amount, ex.max); }
-        else updated.push({ id:crypto.randomUUID(), name:s.name, emoji:s.emoji, amount:s.amount, unit:s.unit, max:s.amount*2, category:s.category, lowThreshold:s.amount*0.25 });
+        const ex = s.ingredientId
+          ? next.find(p => p.ingredientId === s.ingredientId)
+          : next.find(p => p.name.toLowerCase() === s.name.toLowerCase());
+        if (ex) {
+          if (ex.unit === s.unit) {
+            ex.amount = ex.amount + s.amount;
+            ex.max = Math.max(ex.max, ex.amount);
+          } else {
+            // Unit mismatch — keep the receipt's fresher amount if larger.
+            ex.amount = Math.max(ex.amount, s.amount);
+          }
+          // Backfill ingredientId if the existing row was free-text.
+          if (!ex.ingredientId && s.ingredientId) ex.ingredientId = s.ingredientId;
+          if (s.priceCents != null) ex.priceCents = s.priceCents;
+        } else {
+          next.push({
+            id: crypto.randomUUID(),
+            ingredientId: s.ingredientId || null,
+            name: s.name,
+            emoji: s.emoji,
+            amount: s.amount,
+            unit: s.unit,
+            max: Math.max(s.amount * 2, 1),
+            category: s.category,
+            lowThreshold: Math.max(s.amount * 0.25, 0.25),
+            priceCents: s.priceCents ?? null,
+          });
+        }
       });
-      return updated;
+      return next;
     });
+
+    // Persist the receipt as its own record. Fire-and-forget — if it fails
+    // we swallow it (the pantry update is the important part).
+    if (userId) {
+      supabase.from("receipts").insert({
+        user_id: userId,
+        store_name: meta.store || null,
+        receipt_date: meta.date || null,
+        total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
+        item_count: items.length,
+      }).then(({ error }) => {
+        if (error) console.warn("[receipts] insert failed:", error.message);
+        else setSpendRefresh(k => k + 1);
+      });
+    }
+
     setScanning(false);
   };
 
@@ -533,6 +1064,157 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   const removeShoppingItem = id => setShoppingList(prev => prev.filter(i => i.id !== id));
   const removePantryItem = id => setPantry(prev => prev.filter(i => i.id !== id));
 
+  // Patch a pantry row in place. Also bump `max` up if the user set an amount
+  // bigger than the current max (otherwise the progress bar caps at 100% and
+  // lies about how much they have).
+  const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
+    if (p.id !== id) return p;
+    const next = { ...p, ...patch };
+    if (typeof patch.amount === "number") {
+      next.max = Math.max(p.max, next.amount);
+      next.lowThreshold = Math.max(next.max * 0.25, 0.25);
+    }
+    return next;
+  }));
+
+  // Render one pantry-item row. Used both for standalone items and for items
+  // nested inside an expanded hub card.
+  const renderItemCard = item => {
+    const canon = findIngredient(item.ingredientId);
+    const isEditing = editingItemId === item.id;
+    // Inside a hub we already know the "family" (🍗 Chicken), so show the
+    // ingredient's short name ("Breast") instead of the full "Chicken Breast".
+    const displayName = canon?.shortName && canon.parentId ? canon.shortName : item.name;
+    return (
+      <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+          <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+              <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{displayName}</span>
+              {isEditing ? (
+                <div
+                  style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}
+                  onBlur={e => {
+                    if (!e.currentTarget.contains(e.relatedTarget)) {
+                      setEditingItemId(null);
+                    }
+                  }}
+                >
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={item.amount}
+                    autoFocus
+                    onChange={e => updatePantryItem(item.id, { amount: parseFloat(e.target.value) || 0 })}
+                    onKeyDown={e => { if (e.key === "Enter") setEditingItemId(null); }}
+                    style={{ width:56, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }}
+                  />
+                  {(() => {
+                    const units = canon ? canon.units : inferUnitsForScanned(item).units;
+                    const hasCurrent = units.some(u => u.id === item.unit);
+                    const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
+                    return (
+                      <select
+                        value={item.unit}
+                        onChange={e => updatePantryItem(item.id, { unit: e.target.value })}
+                        style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 4px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}
+                      >
+                        {opts.map(u => (
+                          <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                        ))}
+                      </select>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <button
+                  onClick={() => setEditingItemId(item.id)}
+                  aria-label={`Edit amount of ${item.name}`}
+                  style={{ background:"transparent", border:"1px dashed #2a2a2a", borderRadius:8, padding:"2px 8px", fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item), cursor:"pointer", flexShrink:0 }}
+                >
+                  {fmt(item)}
+                </button>
+              )}
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{(item.category || "").toUpperCase()}</span>
+              {item.priceCents != null && (
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }} title="Last paid price">
+                  {formatPrice(item.priceCents)}
+                </span>
+              )}
+              {!item.ingredientId && (
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", background:"#1a1a1a", padding:"1px 6px", borderRadius:4 }} title="Not linked to the canonical ingredient list — won't match recipes">
+                  FREE TEXT
+                </span>
+              )}
+              {isLow(item) && (
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
+                  {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => removePantryItem(item.id)}
+            aria-label={`Remove ${item.name}`}
+            style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
+            onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
+            onMouseOut={e => e.currentTarget.style.color = "#333"}
+          >
+            ✕
+          </button>
+        </div>
+        <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
+          <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
+        </div>
+      </div>
+    );
+  };
+
+  // Render a hub group card: tap to expand and show its items. The summary row
+  // shows combined weight (in the hub's aggregateUnit) + summed last-paid
+  // prices so the user can see "I have 14 oz of cheese worth $28" at a glance.
+  const renderHubCard = ({ hub, items, totalBase, totalCents, totalCount, anyLow }) => {
+    const expanded = expandedHubs.has(hub.id) || search.trim() !== "";
+    const totalInUnit = hub.aggregateBase ? (totalBase / hub.aggregateBase) : NaN;
+    const totalDisplay = Number.isFinite(totalInUnit)
+      ? `${totalInUnit < 10 ? totalInUnit.toFixed(1) : Math.round(totalInUnit)} ${hub.aggregateLabel}`
+      : `${totalCount} item${totalCount === 1 ? "" : "s"}`;
+    return (
+      <div key={hub.id} style={{ background:"#141414", border:`1px solid ${anyLow?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"12px 14px", display:"flex", flexDirection:"column", gap:10 }}>
+        <button
+          onClick={() => toggleHub(hub.id)}
+          style={{ display:"flex", alignItems:"center", gap:12, background:"transparent", border:"none", cursor:"pointer", padding:0, color:"inherit", textAlign:"left" }}
+        >
+          <span style={{ fontSize:28, flexShrink:0 }}>{hub.emoji}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+              <span style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontStyle:"italic" }}>{hub.name}</span>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842" }}>{totalDisplay}</span>
+            </div>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:2 }}>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666" }}>{totalCount} TYPE{totalCount === 1 ? "" : "S"}</span>
+              {totalCents > 0 && (
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }}>{formatPrice(totalCents)}</span>
+              )}
+              {anyLow && (
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f59e0b", background:"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>SOMETHING LOW</span>
+              )}
+              <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#555" }}>{expanded ? "▾" : "▸"}</span>
+            </div>
+          </div>
+        </button>
+        {expanded && (
+          <div style={{ display:"flex", flexDirection:"column", gap:8, borderTop:"1px solid #1e1e1e", paddingTop:10 }}>
+            {items.map(renderItemCard)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   if (scanning) return <ReceiptScanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
@@ -558,6 +1240,19 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
           </div>
         </div>
       </div>
+
+      {/* Monthly groceries — only when there's been any spend recorded */}
+      {!monthlySpend.loading && monthlySpend.cents > 0 && (
+        <div style={{ margin:"14px 20px 0", padding:"10px 14px", background:"#0f140f", border:"1px solid #1e3a1e", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+          <div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", letterSpacing:"0.12em" }}>GROCERIES THIS MONTH</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", marginTop:2 }}>{monthlySpend.receiptCount} receipt{monthlySpend.receiptCount === 1 ? "" : "s"}</div>
+          </div>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:"#7ec87e", fontStyle:"italic" }}>
+            ${(monthlySpend.cents / 100).toFixed(2)}
+          </div>
+        </div>
+      )}
 
       {/* View toggle */}
       <div style={{ display:"flex", gap:0, margin:"18px 20px 0", padding:4, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:12 }}>
@@ -630,48 +1325,27 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>TRY IT →</div>
           </div>
 
-          {/* Filters */}
-          <div style={{ display:"flex", gap:8, padding:"18px 20px 0", overflowX:"auto", scrollbarWidth:"none" }}>
-            {CATEGORIES.map(c => (
-              <button key={c.id} onClick={()=>setFilter(c.id)} style={{ background: filter===c.id?"#f5c842":"#161616", border:`1px solid ${filter===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 14px", whiteSpace:"nowrap", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: filter===c.id?"#111":"#888", cursor:"pointer", transition:"all 0.2s", flexShrink:0 }}>{c.label}</button>
-            ))}
+          {/* Search — replaces the old category filter pills. Matches item
+              names, category, and hub names, so "cheese" finds every cheese. */}
+          <div style={{ padding:"18px 20px 0" }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search your pantry…"
+              style={{ width:"100%", padding:"11px 14px", background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+            />
           </div>
 
-          {/* Items */}
+          {/* Items — grouped under hubs where applicable */}
           <div style={{ padding:"14px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
-            {filtered.map(item => (
-              <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-                  <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
-                  <div style={{ flex:1 }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4" }}>{item.name}</span>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item) }}>{fmt(item)}</span>
-                    </div>
-                    <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
-                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
-                      {isLow(item) && (
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
-                          {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => removePantryItem(item.id)}
-                    aria-label={`Remove ${item.name}`}
-                    style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
-                    onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
-                    onMouseOut={e => e.currentTarget.style.color = "#333"}
-                  >
-                    ✕
-                  </button>
-                </div>
-                <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-                  <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
-                </div>
+            {grouped.length === 0 && pantry.length > 0 && (
+              <div style={{ padding:"18px", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
+                Nothing matches "{search}".
               </div>
-            ))}
+            )}
+            {grouped.map(g =>
+              g.type === "hub" ? renderHubCard(g) : renderItemCard(g.item)
+            )}
           </div>
         </>
       )}

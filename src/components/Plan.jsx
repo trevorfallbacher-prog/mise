@@ -288,7 +288,7 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId }) {
+export default function Plan({ profile, userId, familyKey }) {
   // Show a rolling 14-day window so next week is visible without scrolling mechanics.
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
@@ -310,6 +310,7 @@ export default function Plan({ profile, userId }) {
   const { meals, loading, schedule, cancel } = useScheduledMeals(userId, {
     fromISO: today.toISOString(),
     toISO:   windowEnd.toISOString(),
+    familyKey,
   });
 
   // UI state

@@ -6,10 +6,12 @@ import Plan from "./components/Plan";
 import Cookbook from "./components/Cookbook";
 import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
-import { useAuth, signOut } from "./lib/useAuth";
+import Settings from "./components/Settings";
+import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
 import { usePantry } from "./lib/usePantry";
 import { useShoppingList } from "./lib/useShoppingList";
+import { useRelationships } from "./lib/useRelationships";
 
 const NAV = [
   { id:"home",     emoji:"🏠",   label:"Home"     },
@@ -53,9 +55,16 @@ export default function App() {
   const { profile, loading: profileLoading, upsert: upsertProfile } =
     useProfile(user?.id);
   const [tab, setTab] = useState("home");
-  const [pantry, setPantry] = usePantry(user?.id);
-  const [shoppingList, setShoppingList] = useShoppingList(user?.id);
+  // Family/friends graph. `familyKey` drives re-queries on pantry + shopping
+  // list + calendar when a new family member is accepted or removed.
+  const relationships = useRelationships(user?.id);
+  const { familyKey } = relationships;
+  const [pantry, setPantry] = usePantry(user?.id, familyKey);
+  const [shoppingList, setShoppingList] = useShoppingList(user?.id, familyKey);
   const [pantryView, setPantryView] = useState("stock"); // "stock" | "shopping"
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Count of incoming pending invites — drives a dot on the settings button.
+  const incomingCount = relationships.incoming.length;
 
   // On first sign-in (or if an older account has no name yet), save whatever
   // the provider gave us so Home can personalise greetings.
@@ -106,19 +115,25 @@ export default function App() {
   // Fully signed in + onboarded
   return (
     <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
-      {/* Temporary sign-out affordance — replace with a real settings screen later */}
+      {/* Settings entry point — replaces the old inline sign-out. Shows a
+          small yellow dot when there are incoming invites waiting. */}
       <button
-        onClick={signOut}
-        title="Sign out"
+        onClick={() => setSettingsOpen(true)}
+        title="Settings"
         style={{
           position: "fixed", top: 12, right: 12, zIndex: 50,
           background: "#161616", border: "1px solid #2a2a2a",
-          borderRadius: 20, padding: "4px 10px",
-          fontFamily: "'DM Mono',monospace", fontSize: 9,
-          color: "#666", letterSpacing: "0.1em", cursor: "pointer",
+          borderRadius: 20, width: 36, height: 36,
+          color: "#aaa", fontSize: 18, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
         }}
       >
-        SIGN OUT
+        ⚙
+        {incomingCount > 0 && (
+          <span style={{ position:"absolute", top:-2, right:-2, width:14, height:14, borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {incomingCount}
+          </span>
+        )}
       </button>
 
       <div style={{ paddingBottom:80 }}>
@@ -133,10 +148,11 @@ export default function App() {
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
           />
         )}
-        {tab === "plan"     && <Plan profile={profile} userId={user.id} />}
+        {tab === "plan"     && <Plan profile={profile} userId={user.id} familyKey={familyKey} />}
         {tab === "cookbook" && <Cookbook />}
         {tab === "pantry"   && (
           <Pantry
+            userId={user.id}
             pantry={pantry}
             setPantry={setPantry}
             shoppingList={shoppingList}
@@ -146,6 +162,14 @@ export default function App() {
           />
         )}
       </div>
+
+      {settingsOpen && (
+        <Settings
+          profile={profile}
+          relationships={relationships}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
 
       {/* Bottom nav */}
       <div style={{ position:"fixed", bottom:0, left:0, right:0, maxWidth:480, margin:"0 auto", background:"#0f0f0f", borderTop:"1px solid #1e1e1e", display:"flex", padding:"12px 0 20px" }}>

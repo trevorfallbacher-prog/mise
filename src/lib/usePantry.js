@@ -13,6 +13,12 @@ function fromDb(row) {
     max: Number(row.max),
     category: row.category,
     lowThreshold: Number(row.low_threshold),
+    // Last-paid unit price, integer cents. Nullable — manual adds have none.
+    priceCents: row.price_cents ?? null,
+    // Which user owns this row. When you share a pantry with family, their
+    // rows come through via the family-select RLS policy; ownerId lets the
+    // UI tag them ("+added by Alice") so it's clear who stocked what.
+    ownerId: row.user_id,
   };
 }
 
@@ -26,13 +32,18 @@ function toDb(item) {
     max: item.max,
     category: item.category,
     low_threshold: item.lowThreshold,
+    price_cents: item.priceCents ?? null,
   };
 }
 
 /**
  * Returns [pantry, setPantry, loading]. `setPantry` has the same signature as
  * `useState`'s setter — all changes are persisted to Supabase behind the scenes.
+ *
+ * Pass `familyKey` (from useRelationships) so the hook re-queries whenever a
+ * family connection is added or removed — that's how newly-shared pantry
+ * rows flow in without a page reload.
  */
-export function usePantry(userId) {
-  return useSyncedList({ table: "pantry_items", userId, toDb, fromDb });
+export function usePantry(userId, familyKey) {
+  return useSyncedList({ table: "pantry_items", userId, toDb, fromDb, refreshKey: familyKey });
 }
