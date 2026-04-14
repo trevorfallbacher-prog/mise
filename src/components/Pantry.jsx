@@ -1,5 +1,16 @@
 import { useState, useRef, useMemo } from "react";
 import { INGREDIENTS, findIngredient, unitLabel } from "../data/ingredients";
+import { supabase } from "../lib/supabase";
+
+// Compact registry shape we send to the scan-receipt Edge Function. The model
+// needs just enough to emit correct `ingredientId` + unit values; units are
+// stringified to their ids only (the Claude prompt doesn't need toBase math).
+const INGREDIENTS_FOR_SCAN = INGREDIENTS.map(i => ({
+  id: i.id,
+  name: i.name,
+  category: i.category,
+  units: i.units.map(u => u.id),
+}));
 
 const CATEGORIES = [
   { id:"all", label:"All" }, { id:"dairy", label:"🥛 Dairy" },
@@ -66,39 +77,46 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
   const scanReceipt = async () => {
     setPhase("scanning"); setError(null);
     try {
-      const apiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type:"image", source:{ type:"base64", media_type:imageData.mediaType, data:imageData.base64 } },
-              { type:"text", text:`Read this grocery receipt. Extract every food/grocery item. Return ONLY a JSON array, no markdown:
-[{"name":"Unsalted Butter","emoji":"🧈","amount":2,"unit":"sticks","category":"dairy"}]
-Categories: dairy, produce, dry, meat, pantry, frozen
-Use practical kitchen units. If unclear, make a reasonable guess.` }
-            ]
-          }]
-        })
+      // Server-side call: Supabase forwards the caller's JWT, and the Edge
+      // Function holds ANTHROPIC_API_KEY so it never ships to the browser.
+      const { data, error: fnError } = await supabase.functions.invoke("scan-receipt", {
+        body: {
+          image: imageData.base64,
+          mediaType: imageData.mediaType,
+          ingredients: INGREDIENTS_FOR_SCAN,
+        },
       });
-      const data = await response.json();
-      const text = data.content?.[0]?.text || "[]";
-      const items = JSON.parse(text.replace(/```json|```/g, "").trim());
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      const items = Array.isArray(data?.items) ? data.items : [];
       if (!items.length) { setError("No grocery items found. Try a clearer photo."); setPhase("ready"); return; }
-      setScannedItems(items.map((item, i) => ({ ...item, id: i, selected: true })));
+
+      // If the model matched a canonical ingredient, overlay the registry's
+      // name/emoji/category so the confirm UI is consistent with the rest of
+      // the app (and we know the unit is one of the valid ids).
+      const normalized = items.map((item, i) => {
+        const canon = findIngredient(item.ingredientId);
+        return {
+          ...item,
+          name: canon ? canon.name : item.name,
+          emoji: canon ? canon.emoji : (item.emoji || "🥫"),
+          category: canon ? canon.category : (item.category || "pantry"),
+          id: i,
+          selected: true,
+        };
+      });
+      setScannedItems(normalized);
       setPhase("confirm");
     } catch (err) {
-      setError("Couldn't read the receipt. Check your API key in .env and try again.");
+      setError(err?.message || "Couldn't read the receipt. Try again.");
       setPhase("ready");
     }
   };
 
   const toggleItem = idx => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,selected:!item.selected} : item));
   const updateAmount = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,amount:parseFloat(val)||0} : item));
+  const updateUnit = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,unit:val} : item));
 
   return (
     <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column" }}>
@@ -163,27 +181,43 @@ Use practical kitchen units. If unclear, make a reasonable guess.` }
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>Deselect anything wrong. Tap amounts to edit.</p>
           </div>
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8 }}>
-            {scannedItems.map((item, idx) => (
-              <div key={idx} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected?"#2a2a2a":"#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s" }}>
-                <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
-                <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</div>
-                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.category}</div>
-                </div>
-                {editingIdx === idx ? (
-                  <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
-                    <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} onBlur={()=>setEditingIdx(null)} autoFocus
-                      style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.unit}</span>
+            {scannedItems.map((item, idx) => {
+              const canon = findIngredient(item.ingredientId);
+              const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
+              return (
+                <div key={idx} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected?"#2a2a2a":"#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s" }}>
+                  <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
+                      {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}>MATCHED</span>}
+                    </div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.category}</div>
                   </div>
-                ) : (
-                  <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", flexShrink:0 }}>
-                    {item.amount} {item.unit}
-                  </button>
-                )}
-              </div>
-            ))}
+                  {editingIdx === idx ? (
+                    <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+                      <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} onBlur={()=>setEditingIdx(null)} autoFocus
+                        style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
+                      {canon ? (
+                        <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
+                          style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}>
+                          {canon.units.map(u => (
+                            <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{item.unit}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", flexShrink:0 }}>
+                      {item.amount} {unitDisplay}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10 }}>
             <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#7ec87e" }}>
@@ -454,15 +488,43 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   const lowItems = pantry.filter(isLow);
   const filtered = pantry.filter(item => filter === "all" || item.category === filter);
 
+  // Merge scanned items into the pantry. When the scanner matched a canonical
+  // ingredient we merge by ingredientId (so "2 sticks butter" stacks with an
+  // existing butter row even if the other has id null). Units only add when
+  // they match — otherwise we just bump to the larger amount and let the user
+  // sort it out in the UI.
   const addScannedItems = items => {
     setPantry(prev => {
-      const updated = [...prev];
+      const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
-        const ex = updated.find(p => p.name.toLowerCase() === s.name.toLowerCase());
-        if (ex) { ex.amount = Math.min(ex.amount + s.amount, ex.max); }
-        else updated.push({ id:crypto.randomUUID(), name:s.name, emoji:s.emoji, amount:s.amount, unit:s.unit, max:s.amount*2, category:s.category, lowThreshold:s.amount*0.25 });
+        const ex = s.ingredientId
+          ? next.find(p => p.ingredientId === s.ingredientId)
+          : next.find(p => p.name.toLowerCase() === s.name.toLowerCase());
+        if (ex) {
+          if (ex.unit === s.unit) {
+            ex.amount = ex.amount + s.amount;
+            ex.max = Math.max(ex.max, ex.amount);
+          } else {
+            // Unit mismatch — keep the receipt's fresher amount if larger.
+            ex.amount = Math.max(ex.amount, s.amount);
+          }
+          // Backfill ingredientId if the existing row was free-text.
+          if (!ex.ingredientId && s.ingredientId) ex.ingredientId = s.ingredientId;
+        } else {
+          next.push({
+            id: crypto.randomUUID(),
+            ingredientId: s.ingredientId || null,
+            name: s.name,
+            emoji: s.emoji,
+            amount: s.amount,
+            unit: s.unit,
+            max: Math.max(s.amount * 2, 1),
+            category: s.category,
+            lowThreshold: Math.max(s.amount * 0.25, 0.25),
+          });
+        }
       });
-      return updated;
+      return next;
     });
     setScanning(false);
   };
