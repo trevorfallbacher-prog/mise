@@ -126,12 +126,12 @@ export const RECIPE = {
   time: "22 min", difficulty: "Easy", serves: 2,
   tools: ["Large pot","12\" skillet","Tongs","Grater","Measuring cups"],
   ingredients: [
-    { amount: "8 oz",   item: "spaghetti or bucatini" },
-    { amount: "4 tbsp", item: "unsalted butter" },
-    { amount: "1 cup",  item: "Parmesan, finely grated" },
-    { amount: "1 tsp",  item: "cracked black pepper" },
-    { amount: "1 tsp",  item: "kosher salt" },
-    { amount: "½ cup",  item: "pasta water (reserve)" },
+    { amount: "8 oz",   item: "spaghetti or bucatini",     match: "spaghetti",        emoji: "🍝" },
+    { amount: "4 tbsp", item: "unsalted butter",           match: "unsalted butter",  emoji: "🧈" },
+    { amount: "1 cup",  item: "Parmesan, finely grated",   match: "parmesan",         emoji: "🧀" },
+    { amount: "1 tsp",  item: "cracked black pepper",      match: "black pepper",     emoji: "🌶" },
+    { amount: "1 tsp",  item: "kosher salt",               match: "salt",             emoji: "🧂" },
+    { amount: "½ cup",  item: "pasta water (reserve)",     match: null,               emoji: "💧" }, // reserved from cooking, not a pantry item
   ],
   steps: [
     { id:1, title:"Boil the water",   instruction:"Fill your pot with water. Salt it until it tastes like the sea. Bring to a rolling boil.", icon:"💧", animation:"boil", timer:null,    tip:"Well-salted water = seasoned pasta from the inside out." },

@@ -7,6 +7,7 @@ import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
 import { useAuth, signOut } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
+import { INITIAL_PANTRY } from "./data";
 
 const NAV = [
   { id:"home",     emoji:"🏠", label:"Home"     },
@@ -37,6 +38,9 @@ export default function App() {
   const { profile, loading: profileLoading, upsert: upsertProfile } =
     useProfile(user?.id);
   const [tab, setTab] = useState("home");
+  const [pantry, setPantry] = useState(INITIAL_PANTRY);
+  const [shoppingList, setShoppingList] = useState([]);
+  const [pantryView, setPantryView] = useState("stock"); // "stock" | "shopping"
 
   // Auth check still in flight
   if (authLoading) return <LoadingSplash />;
@@ -91,9 +95,26 @@ export default function App() {
 
       <div style={{ paddingBottom:80 }}>
         {tab === "home"     && <Home profile={profile} />}
-        {tab === "cook"     && <CookMode onDone={() => setTab("cookbook")} />}
+        {tab === "cook"     && (
+          <CookMode
+            onDone={() => setTab("cookbook")}
+            pantry={pantry}
+            shoppingList={shoppingList}
+            setShoppingList={setShoppingList}
+            onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
+          />
+        )}
         {tab === "cookbook" && <Cookbook />}
-        {tab === "pantry"   && <Pantry />}
+        {tab === "pantry"   && (
+          <Pantry
+            pantry={pantry}
+            setPantry={setPantry}
+            shoppingList={shoppingList}
+            setShoppingList={setShoppingList}
+            view={pantryView}
+            setView={setPantryView}
+          />
+        )}
       </div>
 
       {/* Bottom nav */}

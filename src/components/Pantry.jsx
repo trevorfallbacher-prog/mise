@@ -1,10 +1,19 @@
 import { useState, useRef } from "react";
-import { INITIAL_PANTRY } from "../data";
 
 const CATEGORIES = [
   { id:"all", label:"All" }, { id:"dairy", label:"🥛 Dairy" },
   { id:"produce", label:"🥬 Produce" }, { id:"dry", label:"🌾 Dry" },
   { id:"pantry", label:"🫙 Pantry" },
+];
+
+// Category options used in the "Add item" form.
+const ADD_CATEGORIES = [
+  { id:"dairy",   label:"🥛 Dairy"   },
+  { id:"produce", label:"🥬 Produce" },
+  { id:"dry",     label:"🌾 Dry"     },
+  { id:"pantry",  label:"🫙 Pantry"  },
+  { id:"meat",    label:"🍗 Meat"    },
+  { id:"frozen",  label:"🧊 Frozen"  },
 ];
 
 const DEDUCTION_EXAMPLE = {
@@ -193,14 +202,110 @@ Use practical kitchen units. If unclear, make a reasonable guess.` }
   );
 }
 
+// ── Add Item Modal ────────────────────────────────────────────────────────────
+function AddItemModal({ target, onClose, onAdd }) {
+  const [name, setName] = useState("");
+  const [emoji, setEmoji] = useState("🥫");
+  const [amount, setAmount] = useState("");
+  const [unit, setUnit] = useState("");
+  const [category, setCategory] = useState("pantry");
+
+  const canSave = name.trim() && amount !== "" && unit.trim();
+
+  const save = () => {
+    if (!canSave) return;
+    const amt = parseFloat(amount) || 0;
+    onAdd({
+      id: Date.now() + Math.random(),
+      name: name.trim(),
+      emoji: emoji.trim() || "🥫",
+      amount: amt,
+      unit: unit.trim(),
+      max: Math.max(amt * 2, 1),
+      category,
+      lowThreshold: Math.max(amt * 0.25, 0.25),
+    });
+    onClose();
+  };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:160, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}>
+      <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 40px" }}>
+        <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 20px" }} />
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6 }}>
+          {target === "shopping" ? "+ TO SHOPPING LIST" : "+ TO PANTRY"}
+        </div>
+        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:18 }}>
+          Add an ingredient
+        </h3>
+
+        <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+          <input
+            value={emoji}
+            onChange={e => setEmoji(e.target.value)}
+            maxLength={4}
+            placeholder="🥫"
+            style={{ width:56, textAlign:"center", padding:"12px 0", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:22, color:"#f0ece4", outline:"none" }}
+          />
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Name (e.g. Tomatoes)"
+            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none" }}
+          />
+        </div>
+
+        <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            placeholder="Amount"
+            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
+          />
+          <input
+            value={unit}
+            onChange={e => setUnit(e.target.value)}
+            placeholder="Unit (oz, cup…)"
+            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
+          />
+        </div>
+
+        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:20 }}>
+          {ADD_CATEGORIES.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setCategory(c.id)}
+              style={{ background: category===c.id?"#f5c842":"#1a1a1a", border:`1px solid ${category===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 12px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: category===c.id?"#111":"#888", cursor:"pointer" }}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display:"flex", gap:10 }}>
+          <button onClick={onClose} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer", letterSpacing:"0.08em" }}>CANCEL</button>
+          <button
+            onClick={save}
+            disabled={!canSave}
+            style={{ flex:2, padding:"14px", background: canSave?"#f5c842":"#1a1a1a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: canSave?"#111":"#444", cursor: canSave?"pointer":"not-allowed", letterSpacing:"0.08em" }}
+          >
+            ADD →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Pantry() {
-  const [pantry, setPantry] = useState(INITIAL_PANTRY);
+export default function Pantry({ pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState("all");
   const [showDeduction, setShowDeduction] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
-  const [addedToList, setAddedToList] = useState(false);
+  const [addingTo, setAddingTo] = useState(null); // "pantry" | "shopping" | null
 
   const lowItems = pantry.filter(isLow);
   const filtered = pantry.filter(item => filter === "all" || item.category === filter);
@@ -227,6 +332,52 @@ export default function Pantry() {
     setShowDeduction(false);
   };
 
+  // Push low-stock items onto the shopping list, skipping duplicates by name.
+  const addLowStockToList = () => {
+    setShoppingList(prev => {
+      const existingNames = new Set(prev.map(i => i.name.toLowerCase()));
+      const toAdd = lowItems
+        .filter(l => !existingNames.has(l.name.toLowerCase()))
+        .map(l => ({
+          id: Date.now() + Math.random(),
+          name: l.name,
+          emoji: l.emoji,
+          amount: Math.max(l.max - l.amount, 1),
+          unit: l.unit,
+          category: l.category,
+          source: "low-stock",
+        }));
+      return [...prev, ...toAdd];
+    });
+    setAlertDismissed(true);
+  };
+
+  // "Got it" on a shopping list item → move to pantry and remove from list.
+  const checkOffShoppingItem = sItem => {
+    setPantry(prev => {
+      const ex = prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
+      if (ex) {
+        return prev.map(p => p.id === ex.id
+          ? { ...p, amount: Math.min(p.amount + sItem.amount, Math.max(p.max, p.amount + sItem.amount)) }
+          : p);
+      }
+      return [...prev, {
+        id: Date.now() + Math.random(),
+        name: sItem.name,
+        emoji: sItem.emoji || "🥫",
+        amount: sItem.amount,
+        unit: sItem.unit,
+        max: Math.max(sItem.amount * 2, 1),
+        category: sItem.category || "pantry",
+        lowThreshold: Math.max(sItem.amount * 0.25, 0.25),
+      }];
+    });
+    setShoppingList(prev => prev.filter(i => i.id !== sItem.id));
+  };
+
+  const removeShoppingItem = id => setShoppingList(prev => prev.filter(i => i.id !== id));
+  const removePantryItem = id => setPantry(prev => prev.filter(i => i.id !== id));
+
   if (scanning) return <ReceiptScanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
@@ -234,94 +385,216 @@ export default function Pantry() {
       <div style={{ padding:"24px 20px 0" }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em", marginBottom:6 }}>YOUR</div>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
-          <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:38, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.03em" }}>Pantry</h1>
+          <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:38, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.03em" }}>
+            {view === "shopping" ? "Shopping" : "Pantry"}
+          </h1>
           <div style={{ textAlign:"right" }}>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{pantry.filter(i=>pct(i)>50).length}/{pantry.length}</div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>STOCKED</div>
+            {view === "shopping" ? (
+              <>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{shoppingList.length}</div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>TO BUY</div>
+              </>
+            ) : (
+              <>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{pantry.filter(i=>pct(i)>50).length}/{pantry.length}</div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>STOCKED</div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Low stock */}
-      {!alertDismissed && lowItems.length > 0 && (
-        <div style={{ margin:"12px 20px 0", padding:"14px 16px", background:"#1a0f00", border:"1px solid #f59e0b44", borderRadius:14 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f59e0b", letterSpacing:"0.12em" }}>⚠ RUNNING LOW</div>
-            <button onClick={()=>setAlertDismissed(true)} style={{ background:"none", border:"none", color:"#555", fontSize:14, cursor:"pointer" }}>×</button>
+      {/* View toggle */}
+      <div style={{ display:"flex", gap:0, margin:"18px 20px 0", padding:4, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:12 }}>
+        <button
+          onClick={() => setView && setView("stock")}
+          style={{ flex:1, padding:"10px", background: view==="stock"?"#1e1e1e":"transparent", border:"none", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color: view==="stock"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em", transition:"all 0.2s" }}
+        >
+          IN STOCK
+        </button>
+        <button
+          onClick={() => setView && setView("shopping")}
+          style={{ flex:1, padding:"10px", background: view==="shopping"?"#1e1e1e":"transparent", border:"none", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color: view==="shopping"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em", transition:"all 0.2s", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}
+        >
+          SHOPPING LIST
+          {shoppingList.length > 0 && (
+            <span style={{ background:"#f5c842", color:"#111", borderRadius:10, padding:"1px 7px", fontSize:10, fontWeight:700 }}>{shoppingList.length}</span>
+          )}
+        </button>
+      </div>
+
+      {view === "stock" && (
+        <>
+          {/* Low stock */}
+          {!alertDismissed && lowItems.length > 0 && (
+            <div style={{ margin:"12px 20px 0", padding:"14px 16px", background:"#1a0f00", border:"1px solid #f59e0b44", borderRadius:14 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f59e0b", letterSpacing:"0.12em" }}>⚠ RUNNING LOW</div>
+                <button onClick={()=>setAlertDismissed(true)} style={{ background:"none", border:"none", color:"#555", fontSize:14, cursor:"pointer" }}>×</button>
+              </div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
+                {lowItems.map(item => (
+                  <span key={item.id} style={{ display:"inline-flex", alignItems:"center", gap:4, background:"#241a00", border:"1px solid #f59e0b33", borderRadius:20, padding:"4px 10px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f59e0b" }}>
+                    {item.emoji} {item.name}
+                  </span>
+                ))}
+              </div>
+              <button onClick={addLowStockToList} style={{ width:"100%", padding:"10px", background:"#f59e0b22", border:"1px solid #f59e0b44", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f59e0b", cursor:"pointer", letterSpacing:"0.08em" }}>
+                ADD ALL TO SHOPPING LIST →
+              </button>
+            </div>
+          )}
+
+          {/* Scan CTA */}
+          <div onClick={()=>setScanning(true)} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
+            <div style={{ fontSize:36 }}>🧾</div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan a receipt</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Photo your grocery receipt → pantry auto-stocks</div>
+            </div>
+            <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
           </div>
-          <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-            {lowItems.map(item => (
-              <span key={item.id} style={{ display:"inline-flex", alignItems:"center", gap:4, background:"#241a00", border:"1px solid #f59e0b33", borderRadius:20, padding:"4px 10px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f59e0b" }}>
-                {item.emoji} {item.name}
-              </span>
+
+          {/* Manual add CTA */}
+          <div onClick={() => setAddingTo("pantry")} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
+            <div style={{ fontSize:24 }}>➕</div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Add an ingredient</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Manually track what you have</div>
+            </div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842" }}>ADD →</div>
+          </div>
+
+          {/* Deduction CTA */}
+          <div onClick={()=>setShowDeduction(true)} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
+            <div style={{ fontSize:28 }}>🍝</div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Just finished cooking?</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Log it and we'll deduct ingredients</div>
+            </div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>TRY IT →</div>
+          </div>
+
+          {/* Filters */}
+          <div style={{ display:"flex", gap:8, padding:"18px 20px 0", overflowX:"auto", scrollbarWidth:"none" }}>
+            {CATEGORIES.map(c => (
+              <button key={c.id} onClick={()=>setFilter(c.id)} style={{ background: filter===c.id?"#f5c842":"#161616", border:`1px solid ${filter===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 14px", whiteSpace:"nowrap", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: filter===c.id?"#111":"#888", cursor:"pointer", transition:"all 0.2s", flexShrink:0 }}>{c.label}</button>
             ))}
           </div>
-          <button onClick={()=>{setAddedToList(true);setAlertDismissed(true);}} style={{ width:"100%", padding:"10px", background:"#f59e0b22", border:"1px solid #f59e0b44", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f59e0b", cursor:"pointer", letterSpacing:"0.08em" }}>
-            ADD ALL TO SHOPPING LIST →
-          </button>
-        </div>
-      )}
 
-      {addedToList && (
-        <div style={{ margin:"8px 20px 0", padding:"10px 14px", background:"#0f1a0f", border:"1px solid #22c55e44", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#4ade80" }}>
-          ✓ Added to your Reminders shopping list
-        </div>
-      )}
-
-      {/* Scan CTA */}
-      <div onClick={()=>setScanning(true)} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
-        <div style={{ fontSize:36 }}>🧾</div>
-        <div style={{ flex:1 }}>
-          <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan a receipt</div>
-          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Photo your grocery receipt → pantry auto-stocks</div>
-        </div>
-        <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
-      </div>
-
-      {/* Deduction CTA */}
-      <div onClick={()=>setShowDeduction(true)} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
-        <div style={{ fontSize:28 }}>🍝</div>
-        <div style={{ flex:1 }}>
-          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Just finished cooking?</div>
-          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Log it and we'll deduct ingredients</div>
-        </div>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>TRY IT →</div>
-      </div>
-
-      {/* Filters */}
-      <div style={{ display:"flex", gap:8, padding:"18px 20px 0", overflowX:"auto", scrollbarWidth:"none" }}>
-        {CATEGORIES.map(c => (
-          <button key={c.id} onClick={()=>setFilter(c.id)} style={{ background: filter===c.id?"#f5c842":"#161616", border:`1px solid ${filter===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 14px", whiteSpace:"nowrap", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: filter===c.id?"#111":"#888", cursor:"pointer", transition:"all 0.2s", flexShrink:0 }}>{c.label}</button>
-        ))}
-      </div>
-
-      {/* Items */}
-      <div style={{ padding:"14px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
-        {filtered.map(item => (
-          <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-              <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
-              <div style={{ flex:1 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4" }}>{item.name}</span>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item) }}>{fmt(item)}</span>
+          {/* Items */}
+          <div style={{ padding:"14px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
+            {filtered.map(item => (
+              <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+                  <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
+                  <div style={{ flex:1 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4" }}>{item.name}</span>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item) }}>{fmt(item)}</span>
+                    </div>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
+                      {isLow(item) && (
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
+                          {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removePantryItem(item.id)}
+                    aria-label={`Remove ${item.name}`}
+                    style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
+                    onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
+                    onMouseOut={e => e.currentTarget.style.color = "#333"}
+                  >
+                    ✕
+                  </button>
                 </div>
-                <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{item.category.toUpperCase()}</span>
-                  {isLow(item) && (
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
-                      {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
-                    </span>
-                  )}
+                <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
+                  <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
                 </div>
               </div>
-            </div>
-            <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-              <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
-            </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </>
+      )}
+
+      {view === "shopping" && (
+        <>
+          {/* Manual add CTA */}
+          <div onClick={() => setAddingTo("shopping")} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
+            <div style={{ fontSize:32 }}>➕</div>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Add to list</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Need something? Jot it down.</div>
+            </div>
+            <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
+          </div>
+
+          {shoppingList.length === 0 ? (
+            <div style={{ margin:"30px 20px 0", padding:"40px 20px", textAlign:"center", background:"#0f0f0f", border:"1px dashed #222", borderRadius:16 }}>
+              <div style={{ fontSize:40, marginBottom:12, opacity:0.6 }}>🛒</div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#888", marginBottom:6 }}>Your list is empty</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#555", lineHeight:1.5 }}>
+                Add items manually, or tap a recipe to add missing ingredients automatically.
+              </div>
+            </div>
+          ) : (
+            <div style={{ padding:"18px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
+              {shoppingList.map(item => (
+                <div key={item.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:"#141414", border:"1px solid #1e1e1e", borderRadius:14 }}>
+                  <button
+                    onClick={() => checkOffShoppingItem(item)}
+                    aria-label={`Mark ${item.name} as bought`}
+                    style={{ width:26, height:26, borderRadius:8, flexShrink:0, border:"2px solid #333", background:"transparent", cursor:"pointer", transition:"all 0.2s", display:"flex", alignItems:"center", justifyContent:"center", color:"#4ade80", fontSize:14, fontWeight:900 }}
+                    onMouseOver={e => { e.currentTarget.style.borderColor = "#4ade80"; e.currentTarget.style.background = "#4ade8022"; }}
+                    onMouseOut={e => { e.currentTarget.style.borderColor = "#333"; e.currentTarget.style.background = "transparent"; }}
+                  >
+                    ✓
+                  </button>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji || "🥫"}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", marginTop:2 }}>
+                      {item.amount} {item.unit}
+                      {item.source === "low-stock" && <span style={{ color:"#f59e0b", marginLeft:8 }}>• LOW STOCK</span>}
+                      {item.source === "recipe" && <span style={{ color:"#7eb8d4", marginLeft:8 }}>• FROM RECIPE</span>}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => removeShoppingItem(item.id)}
+                    aria-label={`Remove ${item.name}`}
+                    style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
+                    onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
+                    onMouseOut={e => e.currentTarget.style.color = "#333"}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <div style={{ marginTop:8, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", textAlign:"center", letterSpacing:"0.08em" }}>
+                TAP ✓ WHEN YOU'VE PICKED IT UP — IT'LL MOVE TO YOUR PANTRY
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {addingTo && (
+        <AddItemModal
+          target={addingTo}
+          onClose={() => setAddingTo(null)}
+          onAdd={item => {
+            if (addingTo === "shopping") {
+              setShoppingList(prev => [...prev, { ...item, source: "manual" }]);
+            } else {
+              setPantry(prev => [...prev, item]);
+            }
+          }}
+        />
+      )}
 
       {/* Deduction modal */}
       {showDeduction && (

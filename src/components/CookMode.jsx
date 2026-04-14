@@ -157,13 +157,63 @@ function Timer({ seconds, onDone }) {
   );
 }
 
-export default function CookMode({ onDone }) {
+// Match a recipe ingredient against the pantry. `ing.match` is the canonical
+// lookup keyword; fall back to the item string. Returns the pantry row, or null.
+function findInPantry(ing, pantry) {
+  if (!pantry || !ing.match) return null;
+  const key = ing.match.toLowerCase();
+  return pantry.find(p => p.name.toLowerCase().includes(key)) || null;
+}
+
+export default function CookMode({ onDone, pantry = [], shoppingList = [], setShoppingList, onGoToShopping }) {
   const [view, setView] = useState("overview");
   const [activeStep, setActiveStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState(new Set());
+  const [justAdded, setJustAdded] = useState(0);
   const step = RECIPE.steps[activeStep];
   const AnimComp = AnimationMap[step?.animation];
   const progress = (completedSteps.size / RECIPE.steps.length) * 100;
+
+  // Bucket recipe ingredients by pantry status.
+  const ingredientStatus = RECIPE.ingredients.map(ing => {
+    if (!ing.match) return { ing, status: "skip" }; // pasta water, etc.
+    const row = findInPantry(ing, pantry);
+    if (!row)                    return { ing, status: "missing", row: null };
+    if (row.amount <= 0)         return { ing, status: "missing", row };
+    if (row.amount <= row.lowThreshold) return { ing, status: "low",    row };
+    return { ing, status: "ok", row };
+  });
+  const missingIngs = ingredientStatus.filter(s => s.status === "missing");
+  const lowIngs     = ingredientStatus.filter(s => s.status === "low");
+  const okCount     = ingredientStatus.filter(s => s.status === "ok").length;
+  const trackedCount = ingredientStatus.filter(s => s.status !== "skip").length;
+
+  const addMissingToShoppingList = () => {
+    if (!setShoppingList) return;
+    const toAdd = [...missingIngs, ...lowIngs];
+    if (toAdd.length === 0) return;
+    setShoppingList(prev => {
+      const existing = new Set(prev.map(i => i.name.toLowerCase()));
+      const next = [...prev];
+      toAdd.forEach(({ ing, row }) => {
+        const name = row?.name || ing.match.replace(/\b\w/g, c => c.toUpperCase());
+        if (existing.has(name.toLowerCase())) return;
+        existing.add(name.toLowerCase());
+        next.push({
+          id: Date.now() + Math.random(),
+          name,
+          emoji: row?.emoji || ing.emoji || "🥫",
+          amount: 1,
+          unit: row?.unit || "unit",
+          category: row?.category || "pantry",
+          source: "recipe",
+        });
+      });
+      return next;
+    });
+    setJustAdded(toAdd.length);
+    setTimeout(() => setJustAdded(0), 3500);
+  };
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
@@ -186,14 +236,79 @@ export default function CookMode({ onDone }) {
         ))}
       </div>
       <div style={{ marginTop:28 }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em", marginBottom:14 }}>INGREDIENTS</div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em" }}>INGREDIENTS</div>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color: missingIngs.length===0?"#4ade80":"#f59e0b", letterSpacing:"0.12em" }}>
+            PANTRY {okCount}/{trackedCount}
+          </div>
+        </div>
+
+        {/* Pantry availability summary */}
+        {trackedCount > 0 && (
+          <div style={{
+            marginBottom:14, padding:"12px 14px", borderRadius:12,
+            background: missingIngs.length===0 ? "#0f1a0f" : "#1a0f00",
+            border: `1px solid ${missingIngs.length===0 ? "#22c55e44" : "#f59e0b44"}`,
+          }}>
+            {missingIngs.length === 0 && lowIngs.length === 0 ? (
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#4ade80" }}>
+                ✓ You have everything you need. Let's cook.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color: missingIngs.length>0 ? "#f59e0b" : "#eab308", marginBottom: (missingIngs.length + lowIngs.length) > 0 ? 10 : 0 }}>
+                  {missingIngs.length > 0 && <>⚠ Missing {missingIngs.length} ingredient{missingIngs.length>1?"s":""}</>}
+                  {missingIngs.length > 0 && lowIngs.length > 0 && " • "}
+                  {lowIngs.length > 0 && <>{lowIngs.length} running low</>}
+                </div>
+                <button
+                  onClick={addMissingToShoppingList}
+                  style={{ width:"100%", padding:"10px", background:"#f59e0b22", border:"1px solid #f59e0b66", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f59e0b", cursor:"pointer", letterSpacing:"0.08em", fontWeight:600 }}
+                >
+                  ADD MISSING TO SHOPPING LIST →
+                </button>
+                {justAdded > 0 && (
+                  <div style={{ marginTop:10, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#4ade80", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                    <span>✓ Added {justAdded} item{justAdded>1?"s":""} to shopping list</span>
+                    {onGoToShopping && (
+                      <button onClick={onGoToShopping} style={{ background:"none", border:"none", color:"#4ade80", fontFamily:"'DM Mono',monospace", fontSize:10, cursor:"pointer", letterSpacing:"0.08em", textDecoration:"underline" }}>
+                        VIEW →
+                      </button>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
         <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, overflow:"hidden" }}>
-          {RECIPE.ingredients.map((ing,i)=>(
-            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: i<RECIPE.ingredients.length-1?"1px solid #222":"none" }}>
-              <span style={{ color:"#bbb", fontSize:14 }}>{ing.item}</span>
-              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
-            </div>
-          ))}
+          {ingredientStatus.map(({ ing, status, row }, i) => {
+            const badge = status === "ok"     ? { label:"IN PANTRY",    color:"#4ade80", bg:"#0f1a0f" }
+                        : status === "low"    ? { label:"LOW",          color:"#f59e0b", bg:"#1a0f00" }
+                        : status === "missing"? { label:"MISSING",      color:"#ef4444", bg:"#1a0a0a" }
+                        :                       null;
+            return (
+              <div key={i} style={{ padding:"12px 16px", borderBottom: i<ingredientStatus.length-1?"1px solid #222":"none" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <span style={{ color:"#bbb", fontSize:14 }}>{ing.item}</span>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
+                </div>
+                {badge && (
+                  <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:badge.color, background:badge.bg, border:`1px solid ${badge.color}44`, padding:"2px 7px", borderRadius:4, letterSpacing:"0.08em" }}>
+                      {badge.label}
+                    </span>
+                    {row && (
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>
+                        have {Math.round(row.amount*10)/10} {row.unit}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
       <button onClick={() => setView("cook")} style={{ width:"100%", marginTop:32, padding:"18px 24px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", boxShadow:"0 0 40px #f5c84233" }}>
