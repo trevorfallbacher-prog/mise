@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Onboarding from "./components/Onboarding";
 import Home from "./components/Home";
 import CookMode from "./components/CookMode";
@@ -32,11 +32,35 @@ function LoadingSplash() {
   );
 }
 
+// Best-effort name from whatever the auth provider gave us.
+// Google returns full_name / given_name / family_name; magic-link gives nothing.
+function nameFromAuth(user) {
+  const md = user?.user_metadata || {};
+  return (
+    md.full_name ||
+    md.name ||
+    [md.given_name, md.family_name].filter(Boolean).join(" ") ||
+    null
+  );
+}
+
 export default function App() {
   const { user, loading: authLoading } = useAuth();
   const { profile, loading: profileLoading, upsert: upsertProfile } =
     useProfile(user?.id);
   const [tab, setTab] = useState("home");
+
+  // On first sign-in (or if an older account has no name yet), save whatever
+  // the provider gave us so Home can personalise greetings.
+  useEffect(() => {
+    if (!user || profileLoading) return;
+    const googleName = nameFromAuth(user);
+    if (!profile) {
+      upsertProfile({ name: googleName }).catch(console.error);
+    } else if (!profile.name && googleName) {
+      upsertProfile({ name: googleName }).catch(console.error);
+    }
+  }, [user, profile, profileLoading, upsertProfile]);
 
   // Auth check still in flight
   if (authLoading) return <LoadingSplash />;
@@ -53,8 +77,9 @@ export default function App() {
   // Signed in but we haven't heard back from the profiles table yet
   if (profileLoading) return <LoadingSplash />;
 
-  // Signed in but no profile row yet → run onboarding, then persist it
-  if (!profile) {
+  // Signed in but onboarding isn't done yet (no dietary preference saved).
+  // The profile row may already exist with just a name from the effect above.
+  if (!profile || !profile.dietary) {
     return (
       <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 30% 0%,#1e1408 0%,transparent 60%)" }}>
         <Onboarding
