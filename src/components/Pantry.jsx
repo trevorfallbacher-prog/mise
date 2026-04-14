@@ -531,18 +531,56 @@ function AddItemModal({ target, onClose, onAdd }) {
                   </div>
                 )}
 
-                {/* Drilled into a specific hub */}
-                {pickerView.kind === "drill" && (
-                  <div style={{ maxHeight:280, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
-                    {pickerView.members.length === 0 ? (
-                      <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
+                {/* Drilled into a specific hub. If the hub's members carry a
+                    `subcategory` (Cheese does — Fresh / Soft Ripened / Blue /
+                    etc.), group them under those headers; otherwise show a
+                    flat list. */}
+                {pickerView.kind === "drill" && (() => {
+                  if (pickerView.members.length === 0) {
+                    return (
+                      <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
                         No match in {pickerView.hub.name.toLowerCase()}.
                       </div>
-                    ) : pickerView.members.map(m => (
-                      <IngredientRow key={m.id} ing={m} onPick={pickIngredient} useShortName />
-                    ))}
-                  </div>
-                )}
+                    );
+                  }
+                  const hasSubs = pickerView.members.some(m => m.subcategory);
+                  if (!hasSubs) {
+                    return (
+                      <div style={{ maxHeight:280, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
+                        {pickerView.members.map(m => (
+                          <IngredientRow key={m.id} ing={m} onPick={pickIngredient} useShortName />
+                        ))}
+                      </div>
+                    );
+                  }
+                  // Group by subcategory, preserving registry order.
+                  const groups = [];
+                  const bySub = new Map();
+                  for (const m of pickerView.members) {
+                    const key = m.subcategory || "Other";
+                    if (!bySub.has(key)) {
+                      bySub.set(key, []);
+                      groups.push(key);
+                    }
+                    bySub.get(key).push(m);
+                  }
+                  return (
+                    <div style={{ maxHeight:340, overflowY:"auto", marginBottom:14 }}>
+                      {groups.map(sub => (
+                        <div key={sub} style={{ marginBottom:12 }}>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6, padding:"0 2px" }}>
+                            {sub.toUpperCase()}
+                          </div>
+                          <div style={{ border:"1px solid #1e1e1e", borderRadius:10 }}>
+                            {bySub.get(sub).map(m => (
+                              <IngredientRow key={m.id} ing={m} onPick={pickIngredient} useShortName />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {/* Free-text search across everything (including hub children) */}
                 {pickerView.kind === "search" && (

@@ -30,11 +30,13 @@ const CHEESE_STANDARD_UNITS = [
 
 // Compact builder for the cheese hub. Tuples are:
 //   [id, name, shortName, defaultUnit, estCentsPerGram]
+// The `subcategory` label is threaded onto every member so the Cheese
+// drill-down can group them by tradition (Fresh / Soft Ripened / Blue /…).
 // estCentsPerGram lets the pantry estimate a $ total when the user adds
 // without a receipt — a rough retail-per-lb ÷ 453.6.
-function cheeseMembers(rows) {
+function cheeseMembers(subcategory, rows) {
   return rows.map(([id, name, shortName, defaultUnit, estCentsPerBase]) => ({
-    id, name, shortName,
+    id, name, shortName, subcategory,
     parentId: "cheese_hub", emoji: "🧀", category: "dairy",
     units: CHEESE_STANDARD_UNITS,
     defaultUnit,
@@ -246,8 +248,7 @@ export const INGREDIENTS = [
   // individual specialties (ricotta tubs, mozz balls) as-is above.
   // estCentsPerBase below is cents-per-gram. Rough retail math:
   //   $/lb ÷ 453.6 ≈ cents/g  (e.g. $10/lb ≈ 2.2, $20/lb ≈ 4.4, $30/lb ≈ 6.6)
-  ...cheeseMembers([
-    // Fresh / unaged
+  ...cheeseMembers("Fresh / Unaged", [
     ["burrata",         "Burrata",         "Burrata",         "oz",   3.1],
     ["ricotta",         "Ricotta",         "Ricotta",         "cup",  0.9],
     ["mascarpone",      "Mascarpone",      "Mascarpone",      "oz",   2.2],
@@ -256,14 +257,16 @@ export const INGREDIENTS = [
     ["fromage_blanc",   "Fromage Blanc",   "Fromage Blanc",   "oz",   1.8],
     ["quark",           "Quark",           "Quark",           "oz",   1.1],
     ["stracchino",      "Stracchino",      "Stracchino",      "oz",   3.3],
-    // Soft ripened
+  ]),
+  ...cheeseMembers("Soft Ripened", [
     ["camembert",       "Camembert",       "Camembert",       "oz",   2.6],
     ["coulommiers",     "Coulommiers",     "Coulommiers",     "oz",   3.5],
     ["brillat_savarin", "Brillat-Savarin", "Brillat-Savarin", "oz",   4.8],
     ["saint_andre",     "Saint-André",     "Saint-André",     "oz",   4.4],
     ["explorateur",     "Explorateur",     "Explorateur",     "oz",   5.3],
     ["humboldt_fog",    "Humboldt Fog",    "Humboldt Fog",    "oz",   6.2],
-    // Semi-soft
+  ]),
+  ...cheeseMembers("Semi-Soft", [
     ["havarti",         "Havarti",         "Havarti",         "oz",   1.8],
     ["fontina",         "Fontina",         "Fontina",         "oz",   2.4],
     ["muenster",        "Muenster",        "Muenster",        "oz",   1.3],
@@ -272,13 +275,15 @@ export const INGREDIENTS = [
     ["raclette",        "Raclette",        "Raclette",        "oz",   4.0],
     ["butterkase",      "Butterkäse",      "Butterkäse",      "oz",   2.0],
     ["tomme_savoie",    "Tomme de Savoie", "Tomme de Savoie", "oz",   3.5],
-    // Washed rind
+  ]),
+  ...cheeseMembers("Washed Rind", [
     ["limburger",       "Limburger",       "Limburger",       "oz",   2.4],
     ["epoisses",        "Époisses",        "Époisses",        "oz",   6.6],
     ["langres",         "Langres",         "Langres",         "oz",   5.7],
     ["vacherin_mdor",   "Vacherin Mont d'Or","Vacherin MdO",   "oz",   7.7],
     ["stinking_bishop", "Stinking Bishop", "Stinking Bishop", "oz",   6.2],
-    // Semi-hard
+  ]),
+  ...cheeseMembers("Semi-Hard", [
     ["gouda",           "Gouda",           "Gouda",           "oz",   1.8],
     ["edam",            "Edam",            "Edam",            "oz",   2.0],
     ["comte",           "Comté",           "Comté",           "oz",   4.8],
@@ -288,7 +293,8 @@ export const INGREDIENTS = [
     ["colby",           "Colby",           "Colby",           "oz",   1.3],
     ["monterey_jack",   "Monterey Jack",   "Monterey Jack",   "oz",   1.3],
     ["emmental",        "Emmental",        "Emmental",        "oz",   2.9],
-    // Hard / aged
+  ]),
+  ...cheeseMembers("Hard / Aged", [
     ["parmigiano",      "Parmigiano-Reggiano", "Parm-Reggiano","oz",  4.8],
     ["aged_cheddar",    "Aged Cheddar",    "Aged Cheddar",    "oz",   3.1],
     ["aged_gouda",      "Aged Gouda",      "Aged Gouda",      "oz",   4.4],
@@ -297,7 +303,8 @@ export const INGREDIENTS = [
     ["mimolette",       "Mimolette",       "Mimolette",       "oz",   4.4],
     ["piave",           "Piave",           "Piave",           "oz",   4.8],
     ["sbrinz",          "Sbrinz",          "Sbrinz",          "oz",   5.3],
-    // Blue
+  ]),
+  ...cheeseMembers("Blue", [
     ["gorgonzola",      "Gorgonzola",      "Gorgonzola",      "oz",   3.1],
     ["roquefort",       "Roquefort",       "Roquefort",       "oz",   5.3],
     ["stilton",         "Stilton",         "Stilton",         "oz",   4.4],
@@ -306,18 +313,21 @@ export const INGREDIENTS = [
     ["bleu_dauvergne",  "Bleu d'Auvergne", "Bleu d'Auvergne", "oz",   4.0],
     ["cambozola",       "Cambozola",       "Cambozola",       "oz",   3.1],
     ["cashel_blue",     "Cashel Blue",     "Cashel Blue",     "oz",   4.4],
-    // Smoked
+  ]),
+  ...cheeseMembers("Smoked", [
     ["smoked_gouda",    "Smoked Gouda",    "Smoked Gouda",    "oz",   2.2],
     ["smoked_mozz",     "Smoked Mozzarella","Smoked Mozz",    "oz",   2.2],
     ["scamorza",        "Scamorza",        "Scamorza",        "oz",   2.4],
     ["smoked_cheddar",  "Smoked Cheddar",  "Smoked Cheddar",  "oz",   2.2],
     ["idiazabal",       "Idiazábal",       "Idiazábal",       "oz",   4.8],
-    // Alpine
+  ]),
+  ...cheeseMembers("Alpine", [
     ["appenzeller",     "Appenzeller",     "Appenzeller",     "oz",   4.4],
     ["beaufort",        "Beaufort",        "Beaufort",        "oz",   6.2],
     ["abondance",       "Abondance",       "Abondance",       "oz",   4.8],
     ["vacherin_frib",   "Vacherin Fribourgeois","Vacherin Frib","oz",  4.8],
-    // American originals
+  ]),
+  ...cheeseMembers("American Originals", [
     ["pepper_jack",     "Pepper Jack",     "Pepper Jack",     "oz",   1.3],
     ["brick_cheese",    "Brick",           "Brick",           "oz",   1.8],
     ["teleme",          "Teleme",          "Teleme",          "oz",   3.3],
@@ -1432,6 +1442,27 @@ const PRICE_HINTS = {
 for (const ing of INGREDIENTS) {
   if (PRICE_HINTS[ing.id] != null && ing.estCentsPerBase == null) {
     ing.estCentsPerBase = PRICE_HINTS[ing.id];
+  }
+}
+
+// Sub-category tags for the legacy cheese entries (the ones declared inline
+// above, which have bespoke unit ladders and weren't generated via
+// cheeseMembers). Keeps the Cheese drill-down neatly grouped.
+const CHEESE_LEGACY_SUBCATEGORY = {
+  parmesan:          "Hard / Aged",
+  pecorino:          "Hard / Aged",
+  gruyere:           "Alpine",
+  mozzarella:        "Fresh / Unaged",
+  cheddar:           "Semi-Hard",
+  feta:              "Fresh / Unaged",
+  goat_cheese:       "Fresh / Unaged",
+  cream_cheese:      "Fresh / Unaged",
+  brie:              "Soft Ripened",
+  spreadable_cheese: "Fresh / Unaged",
+};
+for (const ing of INGREDIENTS) {
+  if (CHEESE_LEGACY_SUBCATEGORY[ing.id] && !ing.subcategory) {
+    ing.subcategory = CHEESE_LEGACY_SUBCATEGORY[ing.id];
   }
 }
 
