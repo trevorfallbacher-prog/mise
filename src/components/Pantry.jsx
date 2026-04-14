@@ -74,6 +74,19 @@ const formatPrice = cents =>
     ? `$${(cents / 100).toFixed(2)}`
     : "";
 
+// Color + label + ordering for the confidence tag a scanned item carries.
+// Receipts get treated as "high" by default — OCR is deterministic enough
+// that we don't want every receipt row screaming for review. Shelf scans
+// (scan-shelf) supply their own tag per item, since opaque containers and
+// frosted-over labels are exactly the kinds of things the user needs to
+// double-check.
+const CONFIDENCE_STYLES = {
+  high:   { label: "HIGH",  color: "#4ade80", bg: "#0f1a0f", border: "#1e3a1e", order: 2 },
+  medium: { label: "MED",   color: "#f5c842", bg: "#1a1608", border: "#3a2f10", order: 1 },
+  low:    { label: "LOW",   color: "#f59e0b", bg: "#1a0f00", border: "#3a2810", order: 0 },
+};
+const confidenceStyle = c => CONFIDENCE_STYLES[c] || CONFIDENCE_STYLES.medium;
+
 // One scanner, three contexts. The user picks an icon at the top — that
 // determines (a) the label/copy shown throughout the flow, (b) the location
 // new items will land in (fridge / pantry / freezer), and (c) which edge
@@ -190,12 +203,21 @@ function Scanner({ onItemsScanned, onClose }) {
         // Receipt scans don't know — fall back to a category default
         // (dairy/produce/meat → fridge, frozen → freezer, else pantry).
         const location = activeMode.location || defaultLocationForCategory(cat);
+        // Confidence comes off the wire for scan-shelf; receipts don't carry
+        // it (OCR is deterministic enough), so we treat them as "high" so the
+        // confirm UI doesn't ask the user to second-guess every receipt row.
+        const rawConf = item.confidence;
+        const confidence =
+          rawConf === "high" || rawConf === "medium" || rawConf === "low"
+            ? rawConf
+            : (activeMode.id === "receipt" ? "high" : "medium");
         const base = {
           ...item,
           name: canon ? canon.name : item.name,
           emoji: canon ? canon.emoji : (item.emoji || "🥫"),
           category: cat,
           location,
+          confidence,
           priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
           id: i,
           selected: true,
@@ -312,12 +334,27 @@ function Scanner({ onItemsScanned, onClose }) {
         </div>
       )}
 
-      {phase === "confirm" && (
+      {phase === "confirm" && (() => {
+        // Sort: low confidence first → medium → high. The user lands on the
+        // rows that most need their attention without scrolling. Stable
+        // within a confidence bucket so the receipt's natural order survives.
+        const orderedItems = scannedItems
+          .map((item, originalIdx) => ({ item, originalIdx }))
+          .sort((a, b) => confidenceStyle(a.item.confidence).order - confidenceStyle(b.item.confidence).order);
+        const lowCount = scannedItems.filter(i => i.confidence === "low").length;
+        const medCount = scannedItems.filter(i => i.confidence === "medium").length;
+        return (
         <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"20px 20px 40px", minHeight:0 }}>
           <div style={{ marginBottom:20, flexShrink:0 }}>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#4ade80", letterSpacing:"0.15em", marginBottom:6 }}>✓ FOUND {scannedItems.length} ITEMS</div>
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300, fontStyle:"italic", color:"#f0ece4" }}>Look right?</h2>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>Deselect anything wrong. Tap amounts to edit.</p>
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>
+              {lowCount > 0
+                ? `${lowCount} item${lowCount === 1 ? "" : "s"} need a closer look — start at the top.`
+                : medCount > 0
+                  ? "Yellow rows are best-guesses — tap to fix amount or unit."
+                  : "Deselect anything wrong. Tap amounts to edit."}
+            </p>
             {(receiptMeta.store || receiptMeta.date || receiptMeta.totalCents != null) && (
               <div style={{ marginTop:10, padding:"8px 12px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:8, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                 {receiptMeta.store && <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{receiptMeta.store}</span>}
@@ -325,19 +362,54 @@ function Scanner({ onItemsScanned, onClose }) {
                 {receiptMeta.totalCents != null && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", marginLeft:"auto" }}>{formatPrice(receiptMeta.totalCents)}</span>}
               </div>
             )}
+            {/* Inline legend so users learn what the colors mean without us
+                having to spell it out in copy on every row. */}
+            <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+              {(["high","medium","low"]).map(level => {
+                const s = confidenceStyle(level);
+                const count = scannedItems.filter(i => (i.confidence || "medium") === level).length;
+                if (count === 0) return null;
+                return (
+                  <span key={level} style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"3px 8px", background:s.bg, border:`1px solid ${s.border}`, borderRadius:20, fontFamily:"'DM Mono',monospace", fontSize:9, color:s.color, letterSpacing:"0.08em" }}>
+                    <span style={{ width:6, height:6, borderRadius:"50%", background:s.color, display:"inline-block" }} />
+                    {count} {s.label}
+                  </span>
+                );
+              })}
+            </div>
           </div>
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8, minHeight:0, WebkitOverflowScrolling:"touch" }}>
-            {scannedItems.map((item, idx) => {
+            {orderedItems.map(({ item, originalIdx }) => {
+              const idx = originalIdx;
               const canon = findIngredient(item.ingredientId);
               const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
+              const conf = confidenceStyle(item.confidence);
               return (
-                <div key={idx} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected?"#2a2a2a":"#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s" }}>
+                <div key={idx} style={{ display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden" }}>
+                  {/* Confidence accent stripe — reads at a glance whether to
+                      trust the row, even before you read the name. */}
+                  <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
+                  <div style={{ flex:1, display:"flex", alignItems:"center", gap:12, padding:"12px 14px", minWidth:0 }}>
                   <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
                   <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                       <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
                       {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}>MATCHED</span>}
+                      {/* Confidence chip — same color as the stripe so the
+                          relationship between them is obvious. */}
+                      <span
+                        title={
+                          item.confidence === "low"
+                            ? "Low confidence — please double-check"
+                            : item.confidence === "medium"
+                              ? "Medium confidence — verify if needed"
+                              : "High confidence"
+                        }
+                        style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:conf.color, background:conf.bg, border:`1px solid ${conf.border}`, borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}
+                      >
+                        {conf.label}
+                      </span>
                     </div>
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", display:"flex", gap:8 }}>
                       <span>{item.category}</span>
@@ -377,6 +449,7 @@ function Scanner({ onItemsScanned, onClose }) {
                       {item.amount} {unitDisplay}
                     </button>
                   )}
+                  </div>
                 </div>
               );
             })}
@@ -390,7 +463,8 @@ function Scanner({ onItemsScanned, onClose }) {
             STOCK MY PANTRY →
           </button>
         </div>
-      )}
+        );
+      })()}
 
       {phase === "done" && (
         <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40, textAlign:"center" }}>
