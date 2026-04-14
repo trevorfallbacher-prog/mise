@@ -465,41 +465,44 @@ function AddItemModal({ target, onClose, onAdd }) {
                   style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", marginBottom:10, boxSizing:"border-box" }}
                 />
 
-                {/* Top-level view: hub tiles grouped by category + standalones below */}
+                {/* Top-level view: each category gets its own section with
+                    hub tiles up top and loose ingredients as rows below. */}
                 {pickerView.kind === "top" && (
                   <div style={{ marginBottom:14 }}>
                     {CATEGORY_ORDER.map(cat => {
                       const hubs = pickerView.hubs.filter(h => h.category === cat);
-                      if (hubs.length === 0) return null;
+                      const loose = pickerView.ingredients.filter(i => i.category === cat);
+                      if (hubs.length === 0 && loose.length === 0) return null;
                       return (
-                        <div key={cat} style={{ marginBottom:14 }}>
+                        <div key={cat} style={{ marginBottom:18 }}>
                           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
                             {cat.toUpperCase()}
                           </div>
-                          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8 }}>
-                            {hubs.map(h => (
-                              <button
-                                key={h.id}
-                                onClick={() => setDrillHub(h)}
-                                style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, padding:"14px 6px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, cursor:"pointer" }}
-                              >
-                                <span style={{ fontSize:26 }}>{h.emoji}</span>
-                                <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{h.name}</span>
-                                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>{membersOfHub(h.id).length} types</span>
-                              </button>
-                            ))}
-                          </div>
+                          {hubs.length > 0 && (
+                            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom: loose.length > 0 ? 8 : 0 }}>
+                              {hubs.map(h => (
+                                <button
+                                  key={h.id}
+                                  onClick={() => setDrillHub(h)}
+                                  style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, padding:"14px 6px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, cursor:"pointer" }}
+                                >
+                                  <span style={{ fontSize:26 }}>{h.emoji}</span>
+                                  <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{h.name}</span>
+                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>{membersOfHub(h.id).length} types</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {loose.length > 0 && (
+                            <div style={{ border:"1px solid #1e1e1e", borderRadius:10 }}>
+                              {loose.map(i => (
+                                <IngredientRow key={i.id} ing={i} onPick={pickIngredient} />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
-                      OTHER
-                    </div>
-                    <div style={{ maxHeight:220, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10 }}>
-                      {pickerView.ingredients.map(i => (
-                        <IngredientRow key={i.id} ing={i} onPick={pickIngredient} />
-                      ))}
-                    </div>
                   </div>
                 )}
 
