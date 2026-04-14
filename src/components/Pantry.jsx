@@ -15,7 +15,8 @@ const INGREDIENTS_FOR_SCAN = INGREDIENTS.map(i => ({
 const CATEGORIES = [
   { id:"all", label:"All" }, { id:"dairy", label:"🥛 Dairy" },
   { id:"produce", label:"🥬 Produce" }, { id:"dry", label:"🌾 Dry" },
-  { id:"pantry", label:"🫙 Pantry" },
+  { id:"meat", label:"🍗 Meat" }, { id:"pantry", label:"🫙 Pantry" },
+  { id:"frozen", label:"🧊 Frozen" },
 ];
 
 // Category options used in the "Add item" form.
@@ -119,7 +120,7 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
   const updateUnit = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,unit:val} : item));
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column" }}>
+    <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
       <div style={{ height:2, background:"#1a1a1a" }}>
         <div style={{ height:"100%", background:"#f5c842", width:`${({upload:5,ready:20,scanning:60,confirm:90,done:100}[phase]||5)}%`, transition:"width 0.4s ease" }} />
       </div>
@@ -174,13 +175,13 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       )}
 
       {phase === "confirm" && (
-        <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"20px 20px 40px" }}>
-          <div style={{ marginBottom:20 }}>
+        <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"20px 20px 40px", minHeight:0 }}>
+          <div style={{ marginBottom:20, flexShrink:0 }}>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#4ade80", letterSpacing:"0.15em", marginBottom:6 }}>✓ FOUND {scannedItems.length} ITEMS</div>
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300, fontStyle:"italic", color:"#f0ece4" }}>Look right?</h2>
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>Deselect anything wrong. Tap amounts to edit.</p>
           </div>
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8 }}>
+          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8, minHeight:0, WebkitOverflowScrolling:"touch" }}>
             {scannedItems.map((item, idx) => {
               const canon = findIngredient(item.ingredientId);
               const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
@@ -219,12 +220,12 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
               );
             })}
           </div>
-          <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10 }}>
+          <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, flexShrink:0 }}>
             <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#7ec87e" }}>
               {scannedItems.filter(i=>i.selected).length} items will be added to your pantry
             </span>
           </div>
-          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected)); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer" }}>
+          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected)); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
             STOCK MY PANTRY →
           </button>
         </div>

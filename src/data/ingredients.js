@@ -95,7 +95,7 @@ export const INGREDIENTS = [
 
   // ── meat / pork ─────────────────────────────────────────────────────────
   {
-    id: "chicken", name: "Chicken", emoji: "🍗", category: "dairy",
+    id: "chicken", name: "Chicken", emoji: "🍗", category: "meat",
     units: [
       { id: "lb", label: "lb", toBase: 453.6 },
       { id: "oz", label: "oz", toBase: 28.35 },
@@ -104,7 +104,7 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
-    id: "bacon", name: "Bacon / Pancetta", emoji: "🥓", category: "dairy",
+    id: "bacon", name: "Bacon / Pancetta", emoji: "🥓", category: "meat",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 14 },
@@ -113,7 +113,7 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "guanciale", name: "Guanciale", emoji: "🥓", category: "dairy",
+    id: "guanciale", name: "Guanciale", emoji: "🥓", category: "meat",
     units: [
       { id: "oz", label: "oz", toBase: 28.35 },
       { id: "g",  label: "g",  toBase: 1 },
@@ -122,12 +122,29 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "ham", name: "Ham", emoji: "🥩", category: "dairy",
+    id: "ham", name: "Ham", emoji: "🥩", category: "meat",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 15 },
     ],
     defaultUnit: "oz",
+  },
+  {
+    id: "steak", name: "Steak", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb",    label: "lb",       toBase: 453.6 },
+      { id: "oz",    label: "oz",       toBase: 28.35 },
+      { id: "count", label: "steaks",   toBase: 340 },  // ~12oz per steak
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "ground_beef", name: "Ground Beef", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
   },
 
   // ── produce ─────────────────────────────────────────────────────────────
