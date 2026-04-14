@@ -435,9 +435,10 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     return d;
   }, [today]);
 
-  // No onRealtime here — the App-level useMealEvents handles toasts globally
-  // so they fire from any tab. Plan's subscription just keeps its local state
-  // in sync.
+  // No onRealtime here — toast/inbox notifications are produced by a DB
+  // trigger (see migration 0010) and surfaced via App-level useNotifications,
+  // so they fire from any tab. Plan's subscription just keeps its local
+  // state in sync.
   const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
     fromISO: today.toISOString(),
     toISO:   windowEnd.toISOString(),

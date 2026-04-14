@@ -7,12 +7,13 @@ import Cookbook from "./components/Cookbook";
 import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
+import NotificationsPanel from "./components/NotificationsPanel";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
 import { usePantry } from "./lib/usePantry";
 import { useShoppingList } from "./lib/useShoppingList";
 import { useRelationships } from "./lib/useRelationships";
-import { useMealEvents } from "./lib/useMealEvents";
+import { useNotifications } from "./lib/useNotifications";
 import { ToastProvider, useToast } from "./lib/toast";
 
 const NAV = [
@@ -116,8 +117,9 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const relationships = useRelationships(user?.id);
   const { familyKey } = relationships;
 
-  // userId → display name lookup. Used for attribution in the UI
-  // ("+ Butter added by Alice") and for toast text.
+  // userId → display name lookup. Still useful for in-UI attribution
+  // ("+ Butter added by Alice") even though notification text is now
+  // pre-formatted server-side.
   const nameFor = useMemo(() => {
     const map = new Map();
     if (user?.id) map.set(user.id, profile?.name ? `${profile.name.split(/\s+/)[0]} (you)` : "You");
@@ -128,59 +130,42 @@ function AuthedApp({ user, profile, upsertProfile }) {
     return (id) => map.get(id) || "Someone";
   }, [user?.id, profile?.name, relationships.family, relationships.friends]);
 
-  // Realtime callbacks: fired by the hooks whenever an event from *another*
-  // user lands. We turn each into a toast so the current user learns about
-  // family activity without refreshing.
-  const onPantryChange = useCallback((evt, row, old) => {
-    const who = nameFor(row?.ownerId || old?.user_id);
-    if (evt === "INSERT")      pushToast(`${who} added ${row.emoji} ${row.name} to the pantry`, { emoji: "🥫", kind: "success" });
-    else if (evt === "UPDATE") pushToast(`${who} updated ${row.emoji} ${row.name}`, { emoji: "🥫" });
-    else if (evt === "DELETE") pushToast(`${who} removed an item from the pantry`, { emoji: "🥫", kind: "warn" });
-  }, [nameFor, pushToast]);
+  // Pantry + shopping list still subscribe to realtime so their UI updates
+  // when family edits land — but we no longer raise toasts from them. Toasts
+  // are now driven by the inbound notifications row (which the DB trigger
+  // produces), so all surfaces stay in sync with one another.
+  const [pantry, setPantry]               = usePantry(user?.id, familyKey);
+  const [shoppingList, setShoppingList]   = useShoppingList(user?.id, familyKey);
 
-  const onShoppingChange = useCallback((evt, row, old) => {
-    const who = nameFor(row?.ownerId || old?.user_id);
-    if (evt === "INSERT")      pushToast(`${who} added ${row.emoji} ${row.name} to the shopping list`, { emoji: "🛒", kind: "success" });
-    else if (evt === "UPDATE") pushToast(`${who} updated shopping list`, { emoji: "🛒" });
-    else if (evt === "DELETE") pushToast(`${who} removed an item from the shopping list`, { emoji: "🛒", kind: "warn" });
-  }, [nameFor, pushToast]);
-
-  const onMealChange = useCallback((evt, row, old) => {
-    const creator  = nameFor(row?.user_id || old?.user_id);
-    const dish     = (row?.recipe_slug || old?.recipe_slug || "").replace(/-/g, " ");
-    if (evt === "INSERT") {
-      if (row.cook_id == null) pushToast(`${creator} is asking if someone can cook ${dish}`, { emoji: "🙋", kind: "info", ttl: 8000 });
-      else if (row.cook_id === row.user_id) pushToast(`${creator} scheduled ${dish}`, { emoji: "📅" });
-      else pushToast(`${creator} scheduled ${dish} for ${nameFor(row.cook_id)} to cook`, { emoji: "📅" });
-    } else if (evt === "UPDATE") {
-      // Multi-field update — walk through the most meaningful transitions in
-      // priority order. First match wins so we don't spam.
-      if (old && old.cook_id == null && row.cook_id) {
-        pushToast(`${nameFor(row.cook_id)} is going to cook ${dish} 🍳`, { emoji: "✅", kind: "success" });
-      } else if (old && old.cook_id && row.cook_id == null) {
-        pushToast(`${nameFor(old.cook_id)} backed out of ${dish} — looking for a cook`, { emoji: "🙋", kind: "warn" });
-      } else if (old && old.cook_id && row.cook_id && old.cook_id !== row.cook_id) {
-        pushToast(`${nameFor(row.cook_id)} is cooking ${dish} now (was ${nameFor(old.cook_id)})`, { emoji: "🔄" });
-      } else if (old && old.servings != null && row.servings != null && old.servings !== row.servings) {
-        pushToast(`${creator} set ${dish} to ${row.servings} ${row.servings === 1 ? "person" : "people"}`, { emoji: "👥" });
-      } else if (old && old.scheduled_for !== row.scheduled_for) {
-        pushToast(`${creator} rescheduled ${dish}`, { emoji: "📅" });
-      } else {
-        pushToast(`${creator} updated ${dish}`, { emoji: "📅" });
-      }
-    } else if (evt === "DELETE") {
-      pushToast(`${creator} cancelled ${dish || "a planned meal"}`, { emoji: "🗑️", kind: "warn" });
+  // Persistent inbox + ephemeral toast + browser notification, all wired off
+  // a single inbound stream.
+  const onNewNotification = useCallback((row) => {
+    pushToast(row.msg, { emoji: row.emoji || "🔔", kind: row.kind || "info" });
+    // OS-level notification while the tab is hidden so users get pinged even
+    // when mise isn't the active tab. Permission is requested lazily on
+    // bell-click below; if it was never granted this is a silent no-op.
+    if (typeof document !== "undefined" && document.hidden &&
+        typeof Notification !== "undefined" && Notification.permission === "granted") {
+      try { new Notification("mise", { body: `${row.emoji || ""} ${row.msg}`.trim(), tag: row.id }); }
+      catch (e) { /* some browsers throw on Service-Worker-only contexts */ }
     }
-  }, [nameFor, pushToast]);
+  }, [pushToast]);
 
-  const [pantry, setPantry] = usePantry(user?.id, familyKey, onPantryChange);
-  const [shoppingList, setShoppingList] = useShoppingList(user?.id, familyKey, onShoppingChange);
-  // Mounted at App level so meal-event toasts fire from any tab (not just Plan).
-  // Plan itself still uses useScheduledMeals for its own state & writes.
-  useMealEvents(user?.id, onMealChange);
-  const [pantryView, setPantryView] = useState("stock"); // "stock" | "shopping"
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const notifications = useNotifications(user?.id, { onNew: onNewNotification });
+
+  const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
+  const [settingsOpen, setSettingsOpen]   = useState(false);
+  const [notifsOpen, setNotifsOpen]       = useState(false);
   const incomingCount = relationships.incoming.length;
+
+  // Lazy permission request — only on explicit bell click so we don't prompt
+  // on first paint.
+  const openNotifs = useCallback(() => {
+    setNotifsOpen(true);
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => { /* user declined */ });
+    }
+  }, []);
 
   return (
     <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
@@ -199,6 +184,25 @@ function AuthedApp({ user, profile, upsertProfile }) {
         {incomingCount > 0 && (
           <span style={{ position:"absolute", top:-2, right:-2, width:14, height:14, borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
             {incomingCount}
+          </span>
+        )}
+      </button>
+
+      <button
+        onClick={openNotifs}
+        title="Notifications"
+        style={{
+          position: "fixed", top: 12, right: 56, zIndex: 50,
+          background: "#161616", border: "1px solid #2a2a2a",
+          borderRadius: 20, width: 36, height: 36,
+          color: "#aaa", fontSize: 16, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >
+        🔔
+        {notifications.unreadCount > 0 && (
+          <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+            {notifications.unreadCount > 99 ? "99+" : notifications.unreadCount}
           </span>
         )}
       </button>
@@ -248,6 +252,18 @@ function AuthedApp({ user, profile, upsertProfile }) {
           relationships={relationships}
           upsertProfile={upsertProfile}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {notifsOpen && (
+        <NotificationsPanel
+          notifications={notifications.notifications}
+          loading={notifications.loading}
+          unreadCount={notifications.unreadCount}
+          markAllRead={notifications.markAllRead}
+          dismiss={notifications.dismiss}
+          clearAll={notifications.clearAll}
+          onClose={() => setNotifsOpen(false)}
         />
       )}
 
