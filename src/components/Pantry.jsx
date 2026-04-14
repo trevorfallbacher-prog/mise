@@ -142,21 +142,32 @@ function Scanner({ onItemsScanned, onClose }) {
     try {
       // Server-side call: Supabase forwards the caller's JWT, and the Edge
       // Function holds ANTHROPIC_API_KEY so it never ships to the browser.
-      // For now all three modes call scan-receipt — when scan-shelf ships
-      // we'll branch on activeMode.id here.
-      const { data, error: fnError } = await supabase.functions.invoke("scan-receipt", {
+      // Receipts go to scan-receipt (OCR + price extraction); fridge / pantry
+      // photos go to scan-shelf (vision-based inventory + confidence tags).
+      const fnName = activeMode.id === "receipt" ? "scan-receipt" : "scan-shelf";
+      const { data, error: fnError } = await supabase.functions.invoke(fnName, {
         body: {
           image: imageData.base64,
           mediaType: imageData.mediaType,
           ingredients: INGREDIENTS_FOR_SCAN,
-          mode: activeMode.id,
+          // scan-shelf branches its system prompt on this; scan-receipt
+          // ignores it but accepts it silently.
+          location: activeMode.location,
         },
       });
       if (fnError) throw fnError;
       if (data?.error) throw new Error(data.error);
 
       const items = Array.isArray(data?.items) ? data.items : [];
-      if (!items.length) { setError("No grocery items found. Try a clearer photo."); setPhase("ready"); return; }
+      if (!items.length) {
+        setError(
+          activeMode.id === "receipt"
+            ? "No grocery items found. Try a clearer photo."
+            : `Couldn't make out anything in the ${activeMode.label.toLowerCase()}. Try a brighter photo.`
+        );
+        setPhase("ready");
+        return;
+      }
 
       setReceiptMeta({
         store: data?.store ?? null,
