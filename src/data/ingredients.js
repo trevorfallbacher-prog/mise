@@ -1749,6 +1749,318 @@ export function inferUnitsForScanned({ emoji, category, unit }) {
 //              lowThreshold (also converted to base units)
 //   - ok:      plenty
 // ─────────────────────────────────────────────────────────────────────────────
+// Ingredient info — description, flavor profile, wine pairings, suggested
+// recipes. Drives the detail sheet the user sees when they tap an
+// ingredient row in the drill-down. We seed rich content for a couple
+// dozen popular items (cheeses + meats mostly) and fall back to a
+// subcategory-level blurb for everything else so nothing feels empty.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Per-cheese-subcategory defaults. Written so that even an obscure entry
+// like Piave or Stinking Bishop has a sensible profile until we curate it.
+const SUBCATEGORY_INFO = {
+  // Cheese subcategories
+  "Fresh / Unaged": {
+    description: "Young cheeses with high moisture and no rind. Milky and soft, meant to be eaten within days of production.",
+    flavorProfile: "Mild, milky, clean; light acidity",
+    winePairings: ["Prosecco", "Sauvignon Blanc", "Pinot Grigio", "Dry Rosé"],
+    recipes: ["Caprese salad", "Ricotta toast", "Stuffed pastas", "Fresh tomato & basil"],
+  },
+  "Soft Ripened": {
+    description: "Bloomy-rind cheeses ripened from the outside in. Soft, sometimes oozy paste under a velvety white rind.",
+    flavorProfile: "Buttery, mushroomy, creamy; earthy rind",
+    winePairings: ["Champagne", "Chardonnay", "Pinot Noir", "Beaujolais"],
+    recipes: ["Baked brie with honey", "Cheese boards", "Melted on crusty bread", "Fig & jam pairings"],
+  },
+  "Semi-Soft": {
+    description: "Cheeses with a pliable, sliceable paste — softer than a Gouda, firmer than a Brie. Great melters.",
+    flavorProfile: "Mild to savory; creamy, sometimes tangy",
+    winePairings: ["Riesling", "Pinot Gris", "Chardonnay", "Light reds"],
+    recipes: ["Grilled cheese", "Raclette night", "Quesadillas", "Pasta bakes"],
+  },
+  "Washed Rind": {
+    description: "Cheeses washed with brine, wine, or beer during aging. Sticky orange rinds, bold barnyard aromas.",
+    flavorProfile: "Pungent, meaty, funky; softer interior than the smell suggests",
+    winePairings: ["Gewürztraminer", "Alsatian Riesling", "Trappist ale", "Sauternes"],
+    recipes: ["Served at room temp on bread", "Melted into pasta", "Tartiflette", "With charcuterie"],
+  },
+  "Semi-Hard": {
+    description: "Pressed cheeses aged a few months — firm, sliceable, reliably melty. The workhorses of the cheese drawer.",
+    flavorProfile: "Nutty, mellow, balanced; slight sweetness",
+    winePairings: ["Cabernet Sauvignon", "Merlot", "Chardonnay", "Tempranillo"],
+    recipes: ["Grilled cheese", "Mac & cheese", "Cheeseburgers", "Fondue"],
+  },
+  "Hard / Aged": {
+    description: "Long-aged cheeses with low moisture and concentrated flavor. Shave, grate, or snack in thin slivers.",
+    flavorProfile: "Nutty, savory, umami; crystalline crunch",
+    winePairings: ["Barolo", "Chianti Classico", "Sangiovese", "Aged Amarone"],
+    recipes: ["Pasta finishing", "Risotto", "Caesar salad", "Shaved over roasted vegetables"],
+  },
+  "Blue": {
+    description: "Cheeses inoculated with Penicillium mold, producing blue-green veins throughout the paste.",
+    flavorProfile: "Salty, spicy, sharp; creamy or crumbly depending on age",
+    winePairings: ["Port", "Sauternes", "Late-harvest Riesling", "Zinfandel"],
+    recipes: ["Blue cheese burger", "Wedge salad", "Steak topping", "Pear & walnut salads"],
+  },
+  "Smoked": {
+    description: "Cheeses cold- or hot-smoked over wood to impart a distinct savory layer on top of the base cheese.",
+    flavorProfile: "Smoky, savory, often salty; base cheese profile still shows through",
+    winePairings: ["Zinfandel", "Syrah/Shiraz", "Smoky Rioja", "Amber ales"],
+    recipes: ["Smoked cheese board", "Stuffed burgers", "Mac & cheese", "Breakfast sandwiches"],
+  },
+  "Alpine": {
+    description: "Mountain cheeses from the Swiss/French Alps. Dense, nutty pastes made for melting in fondue or raclette.",
+    flavorProfile: "Nutty, brothy, slightly sweet; savory long finish",
+    winePairings: ["Savoie whites", "Chasselas", "Dry Riesling", "Light Pinot Noir"],
+    recipes: ["Classic fondue", "Raclette", "Croque monsieur", "French onion soup topping"],
+  },
+  "American Originals": {
+    description: "Cheeses developed in the United States — from factory classics to Pacific Northwest curios.",
+    flavorProfile: "Varies widely; generally approachable and melty",
+    winePairings: ["Zinfandel", "Cabernet Sauvignon", "Chardonnay", "Craft lagers"],
+    recipes: ["Grilled cheese", "Nachos", "Burgers", "Mac & cheese"],
+  },
+};
+
+// Rich per-ingredient info. Anything on the ingredient overrides the
+// subcategory fallback in `getIngredientInfo` below.
+const INGREDIENT_INFO = {
+  // ── popular cheeses ────────────────────────────────────────────────
+  parmesan: {
+    description: "Italian hard cheese made from cow's milk and aged 12-36 months. Granular, crystalline texture.",
+    flavorProfile: "Nutty, savory, sharp; intense umami finish",
+    winePairings: ["Barolo", "Chianti Classico", "Sangiovese", "Aged Chardonnay"],
+    recipes: ["Pasta carbonara", "Risotto alla Milanese", "Caesar salad", "Parmigiana"],
+  },
+  parmigiano: {
+    description: "The original 'Parmigiano-Reggiano' — a protected Italian cheese aged 24+ months in the Parma/Reggio region.",
+    flavorProfile: "Deeply nutty, fruity, salty; tyrosine crystals give it crunch",
+    winePairings: ["Barolo", "Brunello di Montalcino", "Lambrusco", "Vintage Champagne"],
+    recipes: ["Finish any pasta", "Risotto", "Shaved on prosciutto", "Eaten in chunks with balsamic"],
+  },
+  pecorino: {
+    description: "Italian sheep's milk cheese, saltier and sharper than Parmesan. Aged firm for grating or young for eating.",
+    flavorProfile: "Sharp, salty, tangy; pronounced sheep milk character",
+    winePairings: ["Chianti", "Vermentino", "Nero d'Avola", "Dry Rosé"],
+    recipes: ["Cacio e pepe", "Pasta alla gricia", "Shaved on fava beans", "With honey & pears"],
+  },
+  mozzarella: {
+    description: "Fresh Italian cheese, traditionally made from buffalo milk. Soft, stretchy, sold in balls packed in water.",
+    flavorProfile: "Milky, clean, lightly sweet; tender bite",
+    winePairings: ["Prosecco", "Pinot Grigio", "Falanghina", "Rosé"],
+    recipes: ["Caprese", "Pizza Margherita", "Fresh pasta", "Grilled on tomato toast"],
+  },
+  burrata: {
+    description: "A pouch of fresh mozzarella filled with stracciatella and cream. Cuts open to an oozing center.",
+    flavorProfile: "Rich, buttery, milky; silkier than mozzarella",
+    winePairings: ["Champagne", "Vermentino", "Gavi", "Chenin Blanc"],
+    recipes: ["On toast with olive oil & sea salt", "With ripe peaches & prosciutto", "On pizza after baking", "Over roasted tomatoes"],
+  },
+  cheddar: {
+    description: "English-origin pressed cow's milk cheese, 'cheddared' in slabs during production. Ranges from mild to extra sharp.",
+    flavorProfile: "Creamy, tangy, sharp; increases in complexity with age",
+    winePairings: ["Cabernet Sauvignon", "Zinfandel", "Aged Bordeaux", "Stout"],
+    recipes: ["Grilled cheese", "Mac & cheese", "Cheeseburger", "Ploughman's lunch"],
+  },
+  aged_cheddar: {
+    description: "Cheddar aged 2+ years. Drier, crumblier, and dotted with tyrosine crystals.",
+    flavorProfile: "Sharp, nutty, slightly sweet; crystalline crunch",
+    winePairings: ["Cabernet Sauvignon", "Vintage Port", "Amarone", "Barrel-aged stout"],
+    recipes: ["Cheese board with chutney", "Apple & cheddar pie", "Shaved on soups", "Paired with dark chocolate"],
+  },
+  gruyere: {
+    description: "Swiss Alpine cheese from the Gruyères region, pressed and aged 5-12 months. The fondue cheese.",
+    flavorProfile: "Nutty, brothy, earthy; savory long finish",
+    winePairings: ["Chasselas", "Dry Riesling", "Chardonnay", "Pinot Noir"],
+    recipes: ["Fondue", "French onion soup", "Croque monsieur", "Quiche Lorraine"],
+  },
+  comte: {
+    description: "French Alpine cheese from the Jura mountains, aged 6-24 months. Cousin to Gruyère with a longer finish.",
+    flavorProfile: "Nutty, fruity, caramelized; brown butter notes",
+    winePairings: ["Jura Chardonnay", "Vin Jaune", "Savagnin", "Pinot Noir"],
+    recipes: ["Cheese board", "Gougères", "Melted on baguette", "Grated over gratins"],
+  },
+  brie: {
+    description: "French bloomy-rind cheese, soft and oozy at room temperature. Most common cheese-board cheese.",
+    flavorProfile: "Buttery, mushroomy, mild; earthy rind",
+    winePairings: ["Champagne", "Chardonnay", "Pinot Noir", "Beaujolais"],
+    recipes: ["Baked brie with honey", "Brie + apple + prosciutto sandwich", "Cheese boards", "Melted into pasta"],
+  },
+  camembert: {
+    description: "Normandy cheese, a smaller and more assertive cousin of Brie. Sold in its iconic wooden box.",
+    flavorProfile: "Earthy, mushroomy, barnyard; softer paste than Brie",
+    winePairings: ["Normandy cider", "Chablis", "Pinot Noir", "Champagne"],
+    recipes: ["Baked in its box", "On crusty baguette", "With apple slices", "Cheese boards"],
+  },
+  feta: {
+    description: "Greek brine-cured cheese, traditionally made from sheep and goat milk. Crumbly and bright.",
+    flavorProfile: "Salty, tangy, sharp; crumbly texture",
+    winePairings: ["Assyrtiko", "Sauvignon Blanc", "Retsina", "Rosé"],
+    recipes: ["Greek salad", "Spanakopita", "Crumbled on watermelon", "Roasted with tomatoes & olives"],
+  },
+  goat_cheese: {
+    description: "Fresh chèvre — soft, spreadable cheese made from goat's milk. Often sold in small logs.",
+    flavorProfile: "Tangy, grassy, clean; slightly lemony",
+    winePairings: ["Sancerre", "Sauvignon Blanc", "Chenin Blanc", "Pouilly-Fumé"],
+    recipes: ["Beet & goat cheese salad", "Goat cheese tart", "Warm crostini with honey", "Stuffed dates"],
+  },
+  cream_cheese: {
+    description: "Fresh, soft American cheese made from cream + milk. The bagel cheese.",
+    flavorProfile: "Mild, tangy, rich; very smooth",
+    winePairings: ["Mimosas", "Off-dry Riesling", "Prosecco"],
+    recipes: ["Bagel & lox", "Cheesecake", "Cream-cheese frosting", "Rangoons & dips"],
+  },
+  gouda: {
+    description: "Dutch cow's milk cheese. Young gouda is mild and supple; aged versions turn butterscotchy.",
+    flavorProfile: "Buttery, slightly sweet; caramelly when aged",
+    winePairings: ["Chardonnay", "Merlot", "Pinot Noir", "Belgian ale"],
+    recipes: ["Grilled cheese", "Cheese board", "Melted in toasties", "Shaved on apples"],
+  },
+  aged_gouda: {
+    description: "Gouda aged 1-5 years. Dry, crystalline, deeply sweet-savory.",
+    flavorProfile: "Butterscotch, caramel, umami; snappy crystals",
+    winePairings: ["Vintage Port", "Madeira", "Amarone", "Old Ale"],
+    recipes: ["Cheese plates", "With dark chocolate", "Shaved on charcuterie", "In stroopwafel-cheese pairings"],
+  },
+  manchego: {
+    description: "Spanish sheep's milk cheese from La Mancha, pressed and aged 3-12+ months. Recognizable basket-weave rind.",
+    flavorProfile: "Nutty, buttery, grassy; tangy with age",
+    winePairings: ["Tempranillo", "Rioja Reserva", "Sherry (Amontillado)", "Cava"],
+    recipes: ["With membrillo (quince paste)", "Tapas boards", "Shaved on jamón", "Grilled on bread"],
+  },
+  mascarpone: {
+    description: "Italian triple-cream cheese. Thicker than crème fraîche, essentially a pourable cream cheese.",
+    flavorProfile: "Sweet, buttery, very rich; pillowy texture",
+    winePairings: ["Moscato d'Asti", "Vin Santo", "Prosecco", "Late-harvest Riesling"],
+    recipes: ["Tiramisu", "Pasta alla norcina", "Folded into risotto", "On toast with berries"],
+  },
+  ricotta: {
+    description: "Italian whey cheese, cooked and drained. Soft, pillowy, lightly sweet — not a true cheese by European rules.",
+    flavorProfile: "Mild, milky, subtly sweet; fluffy curds",
+    winePairings: ["Prosecco", "Pinot Grigio", "Orvieto", "Dry Rosé"],
+    recipes: ["Lasagna", "Stuffed shells", "Ricotta pancakes", "On toast with honey + lemon"],
+  },
+  gorgonzola: {
+    description: "Italian blue cheese. Dolce is young and creamy; piccante is aged and sharper.",
+    flavorProfile: "Creamy, tangy, spicy-sharp; buttery mouthfeel",
+    winePairings: ["Recioto", "Port", "Moscato d'Asti", "Amarone"],
+    recipes: ["Gorgonzola gnocchi", "On pear + walnut salad", "Risotto", "Pizza quattro formaggi"],
+  },
+  roquefort: {
+    description: "French sheep's milk blue, aged in the caves of Combalou. The original blue cheese.",
+    flavorProfile: "Intense, salty, sharp; creamy yet crumbly",
+    winePairings: ["Sauternes", "Tawny Port", "Monbazillac", "Gewürztraminer"],
+    recipes: ["Roquefort butter on steak", "Endive salad", "On crusty bread with honey", "Steak sauce"],
+  },
+  stilton: {
+    description: "English blue cheese from the Midlands, firm and crumbly with bold blue veining.",
+    flavorProfile: "Rich, tangy, savory; mellow compared to Roquefort",
+    winePairings: ["Vintage Port", "Madeira", "Late Bottled Port", "Stout"],
+    recipes: ["Christmas cheese board", "Stilton & pear tart", "Crumbled in soup", "With walnuts"],
+  },
+  humboldt_fog: {
+    description: "American artisan goat cheese (Cypress Grove, California) with a central ash line and bloomy rind.",
+    flavorProfile: "Tangy, lemony, floral; creamy-to-chalky texture",
+    winePairings: ["Sauvignon Blanc", "Sancerre", "Prosecco", "Dry Rosé"],
+    recipes: ["Cheese board centerpiece", "On beet salad", "With fig jam", "Crostini with honey"],
+  },
+  epoisses: {
+    description: "French Burgundy washed-rind cheese, washed with Marc de Bourgogne. Pungent, sticky, unforgettable.",
+    flavorProfile: "Barnyard, boozy, meaty; creamy spoon-able interior",
+    winePairings: ["Marc de Bourgogne", "Gewürztraminer", "Burgundy", "Trappist ale"],
+    recipes: ["Spooned onto toast", "Melted on baked potato", "With charcuterie", "Cheese course"],
+  },
+
+  // ── meats ──────────────────────────────────────────────────────────
+  chicken_breast: {
+    description: "Lean, boneless/skinless cut from the pectoral muscle. Quick to cook, easy to overcook.",
+    flavorProfile: "Mild, lightly savory; needs seasoning and fat",
+    winePairings: ["Chardonnay", "Sauvignon Blanc", "Pinot Noir", "Dry Riesling"],
+    recipes: ["Chicken piccata", "Chicken parmesan", "Grilled chicken salad", "Chicken marsala"],
+  },
+  chicken_thigh: {
+    description: "Dark-meat cut from the upper leg. More forgiving than breast, richer flavor.",
+    flavorProfile: "Rich, juicy, deeply savory; handles high heat",
+    winePairings: ["Pinot Noir", "Grenache", "Chardonnay", "Zinfandel"],
+    recipes: ["Chicken thighs with lemon & olives", "Chicken adobo", "Thai basil chicken", "Roasted with potatoes"],
+  },
+  chicken: {
+    description: "Whole bird — good for roasting, spatchcocking, or breaking down into parts yourself.",
+    flavorProfile: "Balanced light + dark meat; crispy skin is the prize",
+    winePairings: ["Chardonnay", "Pinot Noir", "Côtes du Rhône", "Beaujolais"],
+    recipes: ["Classic roast chicken", "Spatchcocked + grilled", "Chicken stock", "Coq au vin"],
+  },
+  ribeye: {
+    description: "Fatty, well-marbled steak cut from the rib primal. Considered the most flavorful beef cut.",
+    flavorProfile: "Rich, beefy, buttery; intense marbling renders into the meat",
+    winePairings: ["Cabernet Sauvignon", "Malbec", "Syrah/Shiraz", "Zinfandel"],
+    recipes: ["Cast-iron ribeye", "Grilled with compound butter", "Tomahawk for sharing", "Steak frites"],
+  },
+  ny_strip: {
+    description: "Tender cut from the short loin — firmer and less fatty than a ribeye, with a beefy chew.",
+    flavorProfile: "Beefy, moderately marbled; clean finish",
+    winePairings: ["Cabernet Sauvignon", "Bordeaux", "Tempranillo", "Chianti Classico"],
+    recipes: ["Pan-seared with rosemary butter", "Grilled NY strip", "Steak au poivre", "Steakhouse dinner"],
+  },
+  sirloin: {
+    description: "Leaner, firmer cut from the back of the cow. Great value for everyday steak dinners.",
+    flavorProfile: "Beefy, firm; less marbling than ribeye or strip",
+    winePairings: ["Malbec", "Cabernet Sauvignon", "Syrah", "Côtes du Rhône"],
+    recipes: ["Beef stir-fry", "Steak sandwiches", "Steak salad", "Pan-seared with chimichurri"],
+  },
+  brisket: {
+    description: "Tough, fatty cut from the breast. Needs long, slow cooking to break down into tender layers.",
+    flavorProfile: "Deeply beefy, fatty, smoky when BBQ'd",
+    winePairings: ["Zinfandel", "Malbec", "Syrah/Shiraz", "Barbera"],
+    recipes: ["Texas BBQ brisket", "Jewish braised brisket", "Beef pho", "Pastrami"],
+  },
+  ground_beef: {
+    description: "Coarsely or finely ground beef, usually 80/20 fat-to-lean for burgers and sauces.",
+    flavorProfile: "Savory, rich; texture depends on grind & fat ratio",
+    winePairings: ["Zinfandel", "Chianti", "Malbec", "Merlot"],
+    recipes: ["Cheeseburgers", "Bolognese", "Chili", "Meatballs"],
+  },
+  salmon: {
+    description: "Fatty, rich fish with bright pink-orange flesh. Wild or farmed, fillet or whole.",
+    flavorProfile: "Rich, buttery, clean; stands up to big flavors",
+    winePairings: ["Pinot Noir", "Chardonnay", "Dry Rosé", "Grüner Veltliner"],
+    recipes: ["Pan-seared with crispy skin", "Cedar-plank grilled", "Poached with herbs", "Lox/gravlax"],
+  },
+  shrimp: {
+    description: "Sweet, briny crustaceans sold by size (count per lb). Cook in 2-3 minutes — overcooking makes them rubbery.",
+    flavorProfile: "Sweet, briny, snappy; takes on surrounding flavors",
+    winePairings: ["Sauvignon Blanc", "Albariño", "Dry Rosé", "Grüner Veltliner"],
+    recipes: ["Shrimp scampi", "Shrimp & grits", "Garlic shrimp tapas", "Gambas al ajillo"],
+  },
+  bacon: {
+    description: "Cured and smoked pork belly, sliced thin. America's breakfast meat, Italy's pancetta is similar but unsmoked.",
+    flavorProfile: "Salty, smoky, fatty; savory long finish",
+    winePairings: ["Pinot Noir", "Zinfandel", "Sparkling wine with brunch", "Chardonnay"],
+    recipes: ["BLT", "Carbonara", "Bacon-wrapped anything", "Breakfast hash"],
+  },
+  prosciutto: {
+    description: "Italian dry-cured ham, aged 12-24 months. Sliced paper-thin, eaten without cooking.",
+    flavorProfile: "Salty, sweet, buttery; melts on the tongue",
+    winePairings: ["Prosecco", "Franciacorta", "Lambrusco", "Chianti"],
+    recipes: ["Prosciutto + melon", "Wrapped around asparagus", "On pizza after baking", "Antipasto platters"],
+  },
+};
+
+// Look up display info for an ingredient — ingredient-specific fields win,
+// subcategory fallback fills the gaps. Returns null-safe defaults.
+export function getIngredientInfo(ingredient) {
+  if (!ingredient) return null;
+  const sub = ingredient.subcategory ? SUBCATEGORY_INFO[ingredient.subcategory] : null;
+  const ing = INGREDIENT_INFO[ingredient.id] || null;
+  return {
+    description:    ing?.description    || sub?.description    || null,
+    flavorProfile:  ing?.flavorProfile  || sub?.flavorProfile  || null,
+    winePairings:   ing?.winePairings   || sub?.winePairings   || [],
+    recipes:        ing?.recipes        || sub?.recipes        || [],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Manual-entry price estimation.
 //
 // When the user types "milk, 1 gallon" into the Add modal (no receipt in

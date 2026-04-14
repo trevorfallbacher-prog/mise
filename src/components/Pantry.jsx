@@ -4,7 +4,7 @@ import {
   findIngredient, findHub, hubForIngredient,
   membersOfHub, standaloneIngredients,
   unitLabel, inferUnitsForScanned, toBase,
-  estimatePriceCents,
+  estimatePriceCents, getIngredientInfo,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -324,6 +324,104 @@ function IngredientRow({ ing, onPick, useShortName = false }) {
   );
 }
 
+// Full-height sheet shown when the user taps an ingredient from a drill-down.
+// Gives them a chance to read up (description, flavor, pairings, recipes)
+// before committing to add it. The yellow CTA at the bottom is the "pick"
+// action — we promote detailIngredient → picked in the parent modal.
+function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
+  const info = getIngredientInfo(ingredient);
+  const hasContent = info && (info.description || info.flavorProfile || info.winePairings.length || info.recipes.length);
+  return (
+    <div
+      onClick={onClose}
+      style={{ position:"fixed", inset:0, background:"#000000e6", zIndex:180, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 32px", maxHeight:"90vh", overflowY:"auto", display:"flex", flexDirection:"column" }}
+      >
+        <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 20px", flexShrink:0 }} />
+        <div style={{ display:"flex", alignItems:"center", gap:14, marginBottom:18 }}>
+          <span style={{ fontSize:52 }}>{ingredient.emoji}</span>
+          <div style={{ flex:1, minWidth:0 }}>
+            {ingredient.subcategory && (
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:4 }}>
+                {ingredient.subcategory.toUpperCase()}
+              </div>
+            )}
+            <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, color:"#f0ece4", fontWeight:300, fontStyle:"italic", margin:0 }}>
+              {ingredient.name}
+            </h2>
+          </div>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"#666", fontSize:24, cursor:"pointer", padding:0, lineHeight:1 }}>×</button>
+        </div>
+
+        <div style={{ flex:1, overflowY:"auto", marginBottom:16 }}>
+          {info?.description && (
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#bbb", lineHeight:1.55, marginTop:0, marginBottom:18 }}>
+              {info.description}
+            </p>
+          )}
+
+          {info?.flavorProfile && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                FLAVOR PROFILE
+              </div>
+              <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#ccc", lineHeight:1.5, margin:0 }}>
+                {info.flavorProfile}
+              </p>
+            </div>
+          )}
+
+          {info?.winePairings?.length > 0 && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                WINE PAIRINGS
+              </div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                {info.winePairings.map(w => (
+                  <span key={w} style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#e7c9b0", background:"#2a1e18", border:"1px solid #3d2a20", borderRadius:20, padding:"5px 11px" }}>
+                    🍷 {w}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {info?.recipes?.length > 0 && (
+            <div style={{ marginBottom:18 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
+                POPULAR RECIPES
+              </div>
+              <ul style={{ listStyle:"none", padding:0, margin:0, display:"flex", flexDirection:"column", gap:6 }}>
+                {info.recipes.map(r => (
+                  <li key={r} style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#ccc", padding:"8px 12px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:8 }}>
+                    {r}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {!hasContent && (
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", fontStyle:"italic", textAlign:"center", padding:"20px 0" }}>
+              No details yet — but you can still add it to your pantry.
+            </p>
+          )}
+        </div>
+
+        <button
+          onClick={() => onAdd(ingredient)}
+          style={{ width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}
+        >
+          + ADD TO PANTRY
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Add Item Modal ────────────────────────────────────────────────────────────
 // Two modes:
 //   1. Canonical (default): pick a known ingredient from a searchable list.
@@ -341,6 +439,19 @@ function AddItemModal({ target, onClose, onAdd }) {
   const [picked, setPicked] = useState(null); // ingredient from registry
   const [unitId, setUnitId] = useState("");
   const [amount, setAmount] = useState("");
+  // Which subcategory tiles are expanded inside the drill view. Drill-downs
+  // with lots of members (cheese has 75+) are overwhelming as a flat list, so
+  // we show one tile per subcategory and only reveal its ingredients on tap.
+  const [expandedSubs, setExpandedSubs] = useState(() => new Set());
+  const toggleSub = (key) => setExpandedSubs(prev => {
+    const next = new Set(prev);
+    next.has(key) ? next.delete(key) : next.add(key);
+    return next;
+  });
+  // An ingredient the user tapped (not picked yet) — shows the detail sheet
+  // with description, flavor profile, wine pairings, recipes. `Add to Pantry`
+  // in the sheet is what actually promotes it to `picked`.
+  const [detailIngredient, setDetailIngredient] = useState(null);
 
   // Custom-mode fields (only used when mode === "custom")
   const [customName, setCustomName] = useState("");
@@ -475,7 +586,7 @@ function AddItemModal({ target, onClose, onAdd }) {
                 {/* Breadcrumb when drilled into a hub */}
                 {drillHub && (
                   <button
-                    onClick={() => { setDrillHub(null); setSearch(""); }}
+                    onClick={() => { setDrillHub(null); setSearch(""); setExpandedSubs(new Set()); }}
                     style={{ display:"flex", alignItems:"center", gap:6, background:"transparent", border:"none", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:"0.08em", cursor:"pointer", marginBottom:10, padding:0 }}
                   >
                     ← ALL INGREDIENTS
@@ -544,11 +655,14 @@ function AddItemModal({ target, onClose, onAdd }) {
                     );
                   }
                   const hasSubs = pickerView.members.some(m => m.subcategory);
-                  if (!hasSubs) {
+                  // When the user is typing a filter, flatten — they're
+                  // looking for something specific, not browsing categories.
+                  const q = search.trim().toLowerCase();
+                  if (!hasSubs || q) {
                     return (
-                      <div style={{ maxHeight:280, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
+                      <div style={{ maxHeight:340, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
                         {pickerView.members.map(m => (
-                          <IngredientRow key={m.id} ing={m} onPick={pickIngredient} useShortName />
+                          <IngredientRow key={m.id} ing={m} onPick={setDetailIngredient} useShortName />
                         ))}
                       </div>
                     );
@@ -565,19 +679,36 @@ function AddItemModal({ target, onClose, onAdd }) {
                     bySub.get(key).push(m);
                   }
                   return (
-                    <div style={{ maxHeight:340, overflowY:"auto", marginBottom:14 }}>
-                      {groups.map(sub => (
-                        <div key={sub} style={{ marginBottom:12 }}>
-                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6, padding:"0 2px" }}>
-                            {sub.toUpperCase()}
+                    <div style={{ maxHeight:420, overflowY:"auto", marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
+                      {groups.map(sub => {
+                        const members = bySub.get(sub);
+                        const open = expandedSubs.has(sub);
+                        const sample = members.slice(0, 3).map(m => m.emoji).join(" ");
+                        return (
+                          <div key={sub} style={{ border:`1px solid ${open?"#2a2a2a":"#1e1e1e"}`, borderRadius:12, background:"#141414", overflow:"hidden" }}>
+                            <button
+                              onClick={() => toggleSub(sub)}
+                              style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"14px 14px", background: open?"#1a1a1a":"transparent", border:"none", textAlign:"left", cursor:"pointer", color:"#ddd" }}
+                            >
+                              <span style={{ fontSize:22, flexShrink:0 }}>{sample}</span>
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f0ece4", fontWeight:400 }}>{sub}</div>
+                                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>
+                                  {members.length} {members.length === 1 ? "type" : "types"}
+                                </div>
+                              </div>
+                              <span style={{ color:"#f5c842", fontSize:16, transition:"transform 0.15s", transform: open?"rotate(90deg)":"rotate(0deg)" }}>›</span>
+                            </button>
+                            {open && (
+                              <div style={{ borderTop:"1px solid #1e1e1e" }}>
+                                {members.map(m => (
+                                  <IngredientRow key={m.id} ing={m} onPick={setDetailIngredient} useShortName />
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <div style={{ border:"1px solid #1e1e1e", borderRadius:10 }}>
-                            {bySub.get(sub).map(m => (
-                              <IngredientRow key={m.id} ing={m} onPick={pickIngredient} useShortName />
-                            ))}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   );
                 })()}
@@ -706,6 +837,17 @@ function AddItemModal({ target, onClose, onAdd }) {
           </button>
         </div>
       </div>
+
+      {/* Detail sheet sits on top of the picker modal. "+ Add to Pantry" here
+          promotes the ingredient to `picked` so the amount/unit step appears
+          behind it when the sheet closes. */}
+      {detailIngredient && (
+        <IngredientDetailSheet
+          ingredient={detailIngredient}
+          onClose={() => setDetailIngredient(null)}
+          onAdd={(ing) => { pickIngredient(ing); setDetailIngredient(null); }}
+        />
+      )}
     </div>
   );
 }
