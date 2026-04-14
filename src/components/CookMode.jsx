@@ -1,0 +1,248 @@
+import { useState, useEffect } from "react";
+import { RECIPE } from "../data";
+
+// ── Animations ────────────────────────────────────────────────────────────────
+function BoilAnimation() {
+  return (
+    <div style={{ position:"relative", width:120, height:120, margin:"0 auto" }}>
+      <svg viewBox="0 0 120 120" style={{ width:"100%", height:"100%" }}>
+        <rect x="25" y="60" width="70" height="45" rx="6" fill="#2a2a2a" />
+        <rect x="20" y="58" width="80" height="10" rx="4" fill="#3a3a3a" />
+        <rect x="10" y="60" width="12" height="6" rx="3" fill="#444" />
+        <rect x="98" y="60" width="12" height="6" rx="3" fill="#444" />
+        <rect x="27" y="68" width="66" height="35" rx="4" fill="#1a6fa0" opacity="0.8" />
+        {[40,55,70,85].map((x,i) => (
+          <circle key={i} cx={x} cy={85} r={3} fill="#7dd3fc" opacity="0.7">
+            <animateMotion dur={`${1.2+i*0.2}s`} repeatCount="indefinite" path={`M0,0 Q${i%2===0?5:-5},${-15} 0,-30`} />
+          </circle>
+        ))}
+        {[45,60,75].map((x,i) => (
+          <path key={i} d={`M${x},58 Q${x+5},50 ${x},42 Q${x-5},34 ${x},26`} stroke="#e0e0e0" strokeWidth="2" fill="none" opacity="0.4"
+            style={{ animation:`steam 2s ${i*0.4}s infinite` }} />
+        ))}
+      </svg>
+      <style>{`@keyframes steam{0%,100%{opacity:0;transform:translateY(0)}50%{opacity:0.5;transform:translateY(-8px)}}`}</style>
+    </div>
+  );
+}
+
+function StirAnimation() {
+  const [angle, setAngle] = useState(0);
+  useEffect(() => { const id = setInterval(() => setAngle(a => (a+8)%360),40); return () => clearInterval(id); },[]);
+  const r=28, cx=60, cy=70, rad=(angle*Math.PI)/180;
+  const tipX=cx+r*Math.sin(rad), tipY=cy-r*Math.cos(rad)*0.4;
+  return (
+    <div style={{ width:120, height:120, margin:"0 auto" }}>
+      <svg viewBox="0 0 120 120">
+        <ellipse cx="60" cy="75" rx="40" ry="28" fill="#2a2a2a" />
+        <ellipse cx="60" cy="68" rx="38" ry="22" fill="#c9a96e" opacity="0.9" />
+        {[0,1,2,3].map(i=>(
+          <ellipse key={i} cx={55+i*4} cy={68} rx={8} ry={3} fill="#f5deb3" opacity="0.6"
+            style={{ transform:`rotate(${angle+i*45}deg)`, transformOrigin:"60px 68px" }} />
+        ))}
+        <line x1={cx} y1={cy} x2={tipX} y2={tipY} stroke="#888" strokeWidth="3" strokeLinecap="round" />
+        <line x1={cx} y1={cy} x2={cx+(cx-tipX)*0.3} y2={cy-25} stroke="#aaa" strokeWidth="4" strokeLinecap="round" />
+        <ellipse cx={tipX} cy={tipY} rx={5} ry={3.5} style={{ transform:`rotate(${angle}deg)`, transformOrigin:`${tipX}px ${tipY}px` }} fill="#999" />
+      </svg>
+    </div>
+  );
+}
+
+function BrownAnimation() {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => { const id = setInterval(() => setPhase(p=>(p+1)%100),80); return () => clearInterval(id); },[]);
+  const color=`hsl(${40-phase*0.15},${70+phase*0.3}%,${70-phase*0.35}%)`;
+  return (
+    <div style={{ width:120, height:120, margin:"0 auto" }}>
+      <svg viewBox="0 0 120 120">
+        <ellipse cx="60" cy="72" rx="48" ry="32" fill="#1a1a1a" />
+        <ellipse cx="60" cy="65" rx="42" ry="26" fill={color} />
+        {phase>20 && [35,50,70,82].map((x,i)=>(
+          <circle key={i} cx={x} cy={65+(i%2)*4} r={2.5} fill="white" opacity={0.3+(phase/200)}>
+            <animate attributeName="r" values="2;4;2" dur="1.5s" repeatCount="indefinite" />
+          </circle>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function BloomAnimation() {
+  return (
+    <div style={{ width:120, height:120, margin:"0 auto" }}>
+      <svg viewBox="0 0 120 120">
+        <ellipse cx="60" cy="72" rx="44" ry="28" fill="#2a1800" />
+        <ellipse cx="60" cy="65" rx="38" ry="20" fill="#6b3a0a" />
+        {[...Array(12)].map((_,i)=>{const a=(i/12)*Math.PI*2,r=14+(i%3)*4; return (
+          <circle key={i} cx={60+r*Math.cos(a)} cy={65+r*0.5*Math.sin(a)} r={2+(i%2)} fill="#1a0a00" opacity="0.8"
+            style={{ animation:`pepperPop 2s ${i*0.15}s infinite alternate` }} />
+        );})}
+        <style>{`@keyframes pepperPop{0%{opacity:0.4}100%{opacity:1}}`}</style>
+      </svg>
+    </div>
+  );
+}
+
+function TossAnimation() {
+  const [t, setT] = useState(0);
+  useEffect(() => { const id = setInterval(() => setT(p=>p+1),50); return () => clearInterval(id); },[]);
+  const wave=Math.sin(t/8)*6;
+  return (
+    <div style={{ width:120, height:120, margin:"0 auto" }}>
+      <svg viewBox="0 0 120 120">
+        <ellipse cx="60" cy="78" rx="44" ry="26" fill="#1a1a1a" />
+        {[...Array(8)].map((_,i)=>{const base=65+Math.sin((t+i*15)/8)*4,x=30+i*9; return (
+          <path key={i} d={`M${x},${base+wave*0.5} Q${x+4},${base-8+wave} ${x+8},${base+wave*0.5}`}
+            stroke="#f5deb3" strokeWidth="2.5" fill="none" opacity="0.85" strokeLinecap="round" />
+        );})}
+        {[40,55,70,82].map((x,i)=>(
+          <circle key={i} cx={x+Math.sin((t+i*20)/8)*3} cy={62+Math.cos((t+i*20)/8)*4} r={2} fill="#f0e68c" opacity="0.7" />
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+function PlateAnimation() {
+  return (
+    <div style={{ width:120, height:120, margin:"0 auto" }}>
+      <svg viewBox="0 0 120 120">
+        <circle cx="60" cy="68" r="44" fill="#f0ece4" />
+        <circle cx="60" cy="68" r="36" fill="#e8e2d8" />
+        {[...Array(6)].map((_,i)=>{const a=(i/6)*Math.PI*2; return (
+          <path key={i} d={`M60,68 Q${60+16*Math.cos(a-0.4)},${68+10*Math.sin(a-0.4)} ${60+20*Math.cos(a)},${68+12*Math.sin(a)}`}
+            stroke="#d4a853" strokeWidth="3" fill="none" strokeLinecap="round" opacity="0.8" />
+        );})}
+        <circle cx="60" cy="55" r="5" fill="#daa520" opacity="0.6" />
+      </svg>
+    </div>
+  );
+}
+
+const AnimationMap = { boil:BoilAnimation, stir:StirAnimation, brown:BrownAnimation, bloom:BloomAnimation, toss:TossAnimation, plate:PlateAnimation };
+
+function Timer({ seconds, onDone }) {
+  const [remaining, setRemaining] = useState(seconds);
+  const [running, setRunning] = useState(false);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    if (!running || remaining <= 0) return;
+    const id = setTimeout(() => setRemaining(r => { if(r<=1){setRunning(false);setDone(true);onDone?.();return 0;} return r-1; }), 1000);
+    return () => clearTimeout(id);
+  }, [running, remaining]);
+  const mins=Math.floor(remaining/60), secs=remaining%60;
+  const pct=((seconds-remaining)/seconds)*100;
+  return (
+    <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12 }}>
+      <div style={{ position:"relative", width:52, height:52 }}>
+        <svg viewBox="0 0 52 52" style={{ width:52, height:52, transform:"rotate(-90deg)" }}>
+          <circle cx="26" cy="26" r="22" fill="none" stroke="#333" strokeWidth="3" />
+          <circle cx="26" cy="26" r="22" fill="none" stroke={done?"#4ade80":"#f59e0b"} strokeWidth="3"
+            strokeDasharray={`${2*Math.PI*22}`} strokeDashoffset={`${2*Math.PI*22*(1-pct/100)}`}
+            strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear" }} />
+        </svg>
+        <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+          fontFamily:"'DM Mono',monospace", fontSize:10, color: done?"#4ade80":"#f5f5f0" }}>
+          {done ? "✓" : `${mins}:${String(secs).padStart(2,"0")}`}
+        </div>
+      </div>
+      {!done && (
+        <button onClick={() => setRunning(r=>!r)} style={{
+          background: running ? "#3f3f3f" : "#f59e0b", color: running ? "#f5f5f0" : "#1a1a1a",
+          border:"none", borderRadius:8, padding:"8px 16px", fontFamily:"'DM Mono',monospace",
+          fontSize:12, cursor:"pointer", fontWeight:600, letterSpacing:"0.05em", transition:"all 0.2s"
+        }}>{running ? "⏸ PAUSE" : remaining===seconds ? "▶ START" : "▶ RESUME"}</button>
+      )}
+    </div>
+  );
+}
+
+export default function CookMode({ onDone }) {
+  const [view, setView] = useState("overview");
+  const [activeStep, setActiveStep] = useState(0);
+  const [completedSteps, setCompletedSteps] = useState(new Set());
+  const step = RECIPE.steps[activeStep];
+  const AnimComp = AnimationMap[step?.animation];
+  const progress = (completedSteps.size / RECIPE.steps.length) * 100;
+
+  const markDone = () => {
+    setCompletedSteps(s => new Set([...s, activeStep]));
+    if (activeStep < RECIPE.steps.length - 1) setTimeout(() => setActiveStep(s=>s+1), 300);
+  };
+
+  if (view === "overview") return (
+    <div style={{ padding:"20px 24px 40px", maxWidth:480, margin:"0 auto" }}>
+      <div style={{ marginTop:24 }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>TONIGHT'S RECIPE</div>
+        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:42, fontWeight:300, lineHeight:1.05, letterSpacing:"-0.03em" }}>{RECIPE.title}</h1>
+        <p style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:18, color:"#888", marginTop:4 }}>{RECIPE.subtitle}</p>
+      </div>
+      <div style={{ display:"flex", gap:12, marginTop:24 }}>
+        {[["⏱",RECIPE.time],["📊",RECIPE.difficulty],["👥",`Serves ${RECIPE.serves}`]].map(([icon,val])=>(
+          <div key={val} style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
+            <div style={{ fontSize:18, marginBottom:4 }}>{icon}</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>{val}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop:28 }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em", marginBottom:14 }}>INGREDIENTS</div>
+        <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, overflow:"hidden" }}>
+          {RECIPE.ingredients.map((ing,i)=>(
+            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: i<RECIPE.ingredients.length-1?"1px solid #222":"none" }}>
+              <span style={{ color:"#bbb", fontSize:14 }}>{ing.item}</span>
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <button onClick={() => setView("cook")} style={{ width:"100%", marginTop:32, padding:"18px 24px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", boxShadow:"0 0 40px #f5c84233" }}>
+        START COOKING →
+      </button>
+    </div>
+  );
+
+  return (
+    <div style={{ padding:"16px 24px 40px", maxWidth:480, margin:"0 auto" }}>
+      <div style={{ height:3, background:"#222", borderRadius:2, marginTop:16, overflow:"hidden" }}>
+        <div style={{ height:"100%", background:"#f5c842", borderRadius:2, width:`${progress}%`, transition:"width 0.5s ease" }} />
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
+        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>STEP {activeStep+1} OF {RECIPE.steps.length}</span>
+        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{completedSteps.size} DONE</span>
+      </div>
+      <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"center" }}>
+        {RECIPE.steps.map((_,i)=>(
+          <button key={i} onClick={()=>setActiveStep(i)} style={{ width: completedSteps.has(i)||i===activeStep?24:8, height:8, borderRadius:4, border:"none", cursor:"pointer", background: completedSteps.has(i)?"#22c55e":i===activeStep?"#f5c842":"#333", transition:"all 0.3s" }} />
+        ))}
+      </div>
+      <div style={{ marginTop:28, background:"#161616", border:"1px solid #2a2a2a", borderRadius:20, padding:"28px 24px", display:"flex", flexDirection:"column", alignItems:"center" }}>
+        {AnimComp && <AnimComp />}
+        <div style={{ marginTop:20, textAlign:"center" }}>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>{step.icon} STEP {step.id}</div>
+          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, letterSpacing:"-0.02em" }}>{step.title}</h2>
+        </div>
+      </div>
+      <div style={{ marginTop:20, padding:"20px", background:"#141414", border:"1px solid #252525", borderRadius:14 }}>
+        <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>{step.instruction}</p>
+        {step.timer && <Timer seconds={step.timer} />}
+      </div>
+      <div style={{ marginTop:12, padding:"14px 16px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, display:"flex", gap:10 }}>
+        <span style={{ fontSize:14, flexShrink:0 }}>💡</span>
+        <p style={{ fontSize:13, color:"#7ec87e", lineHeight:1.5, fontStyle:"italic" }}>{step.tip}</p>
+      </div>
+      <div style={{ display:"flex", gap:12, marginTop:24 }}>
+        <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
+        {activeStep < RECIPE.steps.length-1 ? (
+          <button onClick={markDone} style={{ flex:2, padding:"14px", background: completedSteps.has(activeStep)?"#1a3a1a":"#f5c842", color: completedSteps.has(activeStep)?"#4ade80":"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.3s" }}>
+            {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
+          </button>
+        ) : (
+          <button onClick={onDone} style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", boxShadow:"0 0 30px #22c55e44" }}>
+            🍝 DONE! LOG IT →
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
