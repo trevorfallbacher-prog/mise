@@ -22,11 +22,11 @@ const recipe = {
 
   tools: ["Large pot", "12\" skillet", "Mixing bowl", "Tongs", "Microplane"],
   ingredients: [
-    { amount: "8 oz",   item: "spaghetti or rigatoni",            match: "spaghetti" },
-    { amount: "4 oz",   item: "guanciale, diced (pancetta if you must)" },
-    { amount: "3",      item: "egg yolks",                         match: "eggs" },
-    { amount: "1",      item: "whole egg",                         match: "eggs" },
-    { amount: "1 cup",  item: "Pecorino Romano, finely grated" },
+    { amount: "8 oz",   item: "spaghetti or rigatoni",            ingredientId: "spaghetti", qty: { amount: 8, unit: "oz" } },
+    { amount: "4 oz",   item: "guanciale, diced (pancetta if you must)", ingredientId: "guanciale", qty: { amount: 4, unit: "oz" } },
+    { amount: "3",      item: "egg yolks",                         ingredientId: "eggs",      qty: { amount: 3, unit: "count" } },
+    { amount: "1",      item: "whole egg",                         ingredientId: "eggs",      qty: { amount: 1, unit: "count" } },
+    { amount: "1 cup",  item: "Pecorino Romano, finely grated",    ingredientId: "pecorino",  qty: { amount: 1, unit: "cup" } },
     { amount: "1 tsp",  item: "coarse black pepper" },
     { amount: "to taste", item: "kosher salt (for pasta water only)" },
   ],

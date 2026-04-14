@@ -3,6 +3,7 @@ import { useSyncedList } from "./useSyncedList";
 function fromDb(row) {
   return {
     id: row.id,
+    ingredientId: row.ingredient_id || null,
     name: row.name,
     emoji: row.emoji,
     amount: Number(row.amount),
@@ -14,6 +15,7 @@ function fromDb(row) {
 
 function toDb(item) {
   return {
+    ingredient_id: item.ingredientId || null,
     name: item.name,
     emoji: item.emoji,
     amount: item.amount,

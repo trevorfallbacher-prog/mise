@@ -22,8 +22,8 @@ const recipe = {
 
   tools: ["8\" non-stick skillet", "Rubber spatula", "Bowl", "Fork"],
   ingredients: [
-    { amount: "3",      item: "large eggs",                      match: "eggs" },
-    { amount: "1 tbsp", item: "unsalted butter",                 match: "unsalted butter" },
+    { amount: "3",      item: "large eggs",        ingredientId: "eggs",   qty: { amount: 3, unit: "count" } },
+    { amount: "1 tbsp", item: "unsalted butter",   ingredientId: "butter", qty: { amount: 1, unit: "tbsp"  } },
     { amount: "2 tbsp", item: "fines herbes (parsley, chives, tarragon, chervil)" },
     { amount: "to taste", item: "salt & white pepper" },
   ],

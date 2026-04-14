@@ -22,12 +22,12 @@ const recipe = {
 
   tools: ["Small saucepan", "Whisk", "Sheet tray", "Baking parchment"],
   ingredients: [
-    { amount: "4",      item: "slices thick white bread (pain de mie)" },
-    { amount: "4 oz",   item: "ham, thinly sliced" },
-    { amount: "1½ cup", item: "Gruyère, grated" },
-    { amount: "2 tbsp", item: "butter",                           match: "unsalted butter" },
-    { amount: "2 tbsp", item: "flour",                            match: "flour" },
-    { amount: "1 cup",  item: "whole milk, warmed" },
+    { amount: "4",      item: "slices thick white bread (pain de mie)", ingredientId: "bread",   qty: { amount: 4,    unit: "slice" } },
+    { amount: "4 oz",   item: "ham, thinly sliced",                     ingredientId: "ham",     qty: { amount: 4,    unit: "oz"    } },
+    { amount: "1½ cup", item: "Gruyère, grated",                        ingredientId: "gruyere", qty: { amount: 1.5,  unit: "cup"   } },
+    { amount: "2 tbsp", item: "butter",                                 ingredientId: "butter",  qty: { amount: 2,    unit: "tbsp"  } },
+    { amount: "2 tbsp", item: "flour",                                  ingredientId: "flour",   qty: { amount: 2,    unit: "tbsp"  } },
+    { amount: "1 cup",  item: "whole milk, warmed",                     ingredientId: "milk",    qty: { amount: 1,    unit: "cup"   } },
     { amount: "¼ tsp",  item: "nutmeg, freshly grated" },
     { amount: "1 tsp",  item: "Dijon mustard" },
     { amount: "to taste", item: "salt & pepper" },

@@ -22,8 +22,8 @@ const recipe = {
 
   tools: ["Large pot", "12\" skillet", "Tongs", "Microplane or fine grater"],
   ingredients: [
-    { amount: "8 oz",   item: "tonnarelli or spaghetti", match: "spaghetti" },
-    { amount: "1½ cup", item: "Pecorino Romano, finely grated" },
+    { amount: "8 oz",   item: "tonnarelli or spaghetti",          ingredientId: "spaghetti", qty: { amount: 8,   unit: "oz"  } },
+    { amount: "1½ cup", item: "Pecorino Romano, finely grated",   ingredientId: "pecorino",  qty: { amount: 1.5, unit: "cup" } },
     { amount: "2 tsp",  item: "whole black peppercorns, coarsely cracked" },
     { amount: "to taste", item: "kosher salt" },
     { amount: "1 cup",  item: "pasta water (reserve)" },

@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
+import { INGREDIENTS, findIngredient, unitLabel } from "../data/ingredients";
 
 const CATEGORIES = [
   { id:"all", label:"All" }, { id:"dairy", label:"🥛 Dairy" },
@@ -29,9 +30,16 @@ const pct  = item => Math.min((item.amount / item.max) * 100, 100);
 const isLow      = item => item.amount <= item.lowThreshold;
 const isCritical = item => item.amount <= item.lowThreshold * 0.5;
 const barColor   = item => isCritical(item) ? "#ef4444" : isLow(item) ? "#f59e0b" : "#4ade80";
+// Render a human-friendly unit string. For canonical items (with ingredientId)
+// we map the stored unit id → label from the registry; for free-text items
+// the stored unit is already a label.
+const displayUnit = item => {
+  const ing = findIngredient(item.ingredientId);
+  return ing ? unitLabel(ing, item.unit) : item.unit;
+};
 const fmt = item => {
   const v = item.amount;
-  return `${Math.round(v * 10) / 10} ${item.unit}`;
+  return `${Math.round(v * 10) / 10} ${displayUnit(item)}`;
 };
 
 // ── Receipt Scanner ───────────────────────────────────────────────────────────
@@ -203,86 +211,222 @@ Use practical kitchen units. If unclear, make a reasonable guess.` }
 }
 
 // ── Add Item Modal ────────────────────────────────────────────────────────────
+// Two modes:
+//   1. Canonical (default): pick a known ingredient from a searchable list.
+//      Emoji/category auto-fill; the unit picker is the subset of units that
+//      actually make sense for this ingredient. Saved with ingredientId so
+//      recipes can match against it.
+//   2. Custom: free-text fallback for ingredients not in the registry. These
+//      save with ingredientId: null and won't be matched by any recipe.
 function AddItemModal({ target, onClose, onAdd }) {
-  const [name, setName] = useState("");
-  const [emoji, setEmoji] = useState("🥫");
+  const [mode, setMode] = useState("canonical"); // "canonical" | "custom"
+  const [search, setSearch] = useState("");
+  const [picked, setPicked] = useState(null); // ingredient from registry
+  const [unitId, setUnitId] = useState("");
   const [amount, setAmount] = useState("");
-  const [unit, setUnit] = useState("");
-  const [category, setCategory] = useState("pantry");
 
-  const canSave = name.trim() && amount !== "" && unit.trim();
+  // Custom-mode fields (only used when mode === "custom")
+  const [customName, setCustomName] = useState("");
+  const [customEmoji, setCustomEmoji] = useState("🥫");
+  const [customUnit, setCustomUnit] = useState("");
+  const [customCategory, setCustomCategory] = useState("pantry");
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return INGREDIENTS;
+    return INGREDIENTS.filter(i => i.name.toLowerCase().includes(q));
+  }, [search]);
+
+  const pickIngredient = (ing) => {
+    setPicked(ing);
+    setUnitId(ing.defaultUnit);
+  };
+
+  const canSaveCanonical = picked && amount !== "" && unitId;
+  const canSaveCustom = customName.trim() && amount !== "" && customUnit.trim();
+  const canSave = mode === "canonical" ? canSaveCanonical : canSaveCustom;
 
   const save = () => {
     if (!canSave) return;
     const amt = parseFloat(amount) || 0;
-    onAdd({
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      emoji: emoji.trim() || "🥫",
-      amount: amt,
-      unit: unit.trim(),
-      max: Math.max(amt * 2, 1),
-      category,
-      lowThreshold: Math.max(amt * 0.25, 0.25),
-    });
+
+    const item = mode === "canonical"
+      ? {
+          id: crypto.randomUUID(),
+          ingredientId: picked.id,
+          name: picked.name,
+          emoji: picked.emoji,
+          amount: amt,
+          unit: unitId,
+          max: Math.max(amt * 2, 1),
+          category: picked.category,
+          lowThreshold: Math.max(amt * 0.25, 0.25),
+        }
+      : {
+          id: crypto.randomUUID(),
+          ingredientId: null,
+          name: customName.trim(),
+          emoji: customEmoji.trim() || "🥫",
+          amount: amt,
+          unit: customUnit.trim(),
+          max: Math.max(amt * 2, 1),
+          category: customCategory,
+          lowThreshold: Math.max(amt * 0.25, 0.25),
+        };
+
+    onAdd(item);
     onClose();
   };
 
+  const unitOptions = picked?.units || [];
+
   return (
     <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:160, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}>
-      <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 40px" }}>
+      <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 40px", maxHeight:"85vh", overflowY:"auto" }}>
         <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 20px" }} />
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6 }}>
           {target === "shopping" ? "+ TO SHOPPING LIST" : "+ TO PANTRY"}
         </div>
-        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:18 }}>
+        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:14 }}>
           Add an ingredient
         </h3>
 
-        <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-          <input
-            value={emoji}
-            onChange={e => setEmoji(e.target.value)}
-            maxLength={4}
-            placeholder="🥫"
-            style={{ width:56, textAlign:"center", padding:"12px 0", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:22, color:"#f0ece4", outline:"none" }}
-          />
-          <input
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Name (e.g. Tomatoes)"
-            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none" }}
-          />
+        {/* Mode toggle */}
+        <div style={{ display:"flex", gap:0, padding:3, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:16 }}>
+          <button
+            onClick={() => setMode("canonical")}
+            style={{ flex:1, padding:"8px", background: mode==="canonical"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="canonical"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
+          >
+            FROM LIST
+          </button>
+          <button
+            onClick={() => setMode("custom")}
+            style={{ flex:1, padding:"8px", background: mode==="custom"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="custom"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
+          >
+            CUSTOM
+          </button>
         </div>
 
-        <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-          <input
-            type="number"
-            inputMode="decimal"
-            value={amount}
-            onChange={e => setAmount(e.target.value)}
-            placeholder="Amount"
-            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
-          />
-          <input
-            value={unit}
-            onChange={e => setUnit(e.target.value)}
-            placeholder="Unit (oz, cup…)"
-            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
-          />
-        </div>
+        {mode === "canonical" ? (
+          <>
+            {/* Search / picked ingredient */}
+            {picked ? (
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, marginBottom:12 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <span style={{ fontSize:24 }}>{picked.emoji}</span>
+                  <div>
+                    <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4" }}>{picked.name}</div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em" }}>{picked.category.toUpperCase()}</div>
+                  </div>
+                </div>
+                <button onClick={() => { setPicked(null); setUnitId(""); setSearch(""); }} style={{ background:"none", border:"none", color:"#666", fontSize:18, cursor:"pointer" }}>×</button>
+              </div>
+            ) : (
+              <>
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search ingredients…"
+                  autoFocus
+                  style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", marginBottom:10, boxSizing:"border-box" }}
+                />
+                <div style={{ maxHeight:220, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
+                  {filtered.length === 0 ? (
+                    <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
+                      No match. Try Custom →
+                    </div>
+                  ) : filtered.map(i => (
+                    <button
+                      key={i.id}
+                      onClick={() => pickIngredient(i)}
+                      style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"transparent", border:"none", borderBottom:"1px solid #1a1a1a", textAlign:"left", cursor:"pointer", color:"#ddd" }}
+                    >
+                      <span style={{ fontSize:20 }}>{i.emoji}</span>
+                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, flex:1 }}>{i.name}</span>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.08em" }}>{i.category.toUpperCase()}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
-        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:20 }}>
-          {ADD_CATEGORIES.map(c => (
-            <button
-              key={c.id}
-              onClick={() => setCategory(c.id)}
-              style={{ background: category===c.id?"#f5c842":"#1a1a1a", border:`1px solid ${category===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 12px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: category===c.id?"#111":"#888", cursor:"pointer" }}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
+            {/* Amount + Unit (only visible once an ingredient is picked) */}
+            {picked && (
+              <div style={{ display:"flex", gap:10, marginBottom:20 }}>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  placeholder="Amount"
+                  autoFocus
+                  style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+                />
+                <select
+                  value={unitId}
+                  onChange={e => setUnitId(e.target.value)}
+                  style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", appearance:"none", cursor:"pointer" }}
+                >
+                  {unitOptions.map(u => (
+                    <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* Custom mode */}
+            <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+              <input
+                value={customEmoji}
+                onChange={e => setCustomEmoji(e.target.value)}
+                maxLength={4}
+                placeholder="🥫"
+                style={{ width:56, textAlign:"center", padding:"12px 0", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:22, color:"#f0ece4", outline:"none" }}
+              />
+              <input
+                value={customName}
+                onChange={e => setCustomName(e.target.value)}
+                placeholder="Name (e.g. Capers)"
+                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none" }}
+              />
+            </div>
+
+            <div style={{ display:"flex", gap:10, marginBottom:12 }}>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={amount}
+                onChange={e => setAmount(e.target.value)}
+                placeholder="Amount"
+                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
+              />
+              <input
+                value={customUnit}
+                onChange={e => setCustomUnit(e.target.value)}
+                placeholder="Unit (oz, cup…)"
+                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
+              />
+            </div>
+
+            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:20 }}>
+              {ADD_CATEGORIES.map(c => (
+                <button
+                  key={c.id}
+                  onClick={() => setCustomCategory(c.id)}
+                  style={{ background: customCategory===c.id?"#f5c842":"#1a1a1a", border:`1px solid ${customCategory===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 12px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: customCategory===c.id?"#111":"#888", cursor:"pointer" }}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
+
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginBottom:16, fontStyle:"italic" }}>
+              Custom items won't match recipes — pick from the list when possible.
+            </p>
+          </>
+        )}
 
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={onClose} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer", letterSpacing:"0.08em" }}>CANCEL</button>
@@ -332,14 +476,16 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
     setShowDeduction(false);
   };
 
-  // Push low-stock items onto the shopping list, skipping duplicates by name.
+  // Push low-stock items onto the shopping list, preserving ingredientId so
+  // recipes still match; de-dupe by ingredientId when possible, else by name.
   const addLowStockToList = () => {
     setShoppingList(prev => {
-      const existingNames = new Set(prev.map(i => i.name.toLowerCase()));
+      const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
       const toAdd = lowItems
-        .filter(l => !existingNames.has(l.name.toLowerCase()))
+        .filter(l => !existing.has(l.ingredientId || l.name.toLowerCase()))
         .map(l => ({
           id: crypto.randomUUID(),
+          ingredientId: l.ingredientId || null,
           name: l.name,
           emoji: l.emoji,
           amount: Math.max(l.max - l.amount, 1),
@@ -353,16 +499,25 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
   };
 
   // "Got it" on a shopping list item → move to pantry and remove from list.
+  // Matches an existing pantry row by ingredientId when available (so the new
+  // "2 tbsp butter" merges into an existing "1.5 sticks" row), else by name.
   const checkOffShoppingItem = sItem => {
     setPantry(prev => {
-      const ex = prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
+      const ex = sItem.ingredientId
+        ? prev.find(p => p.ingredientId === sItem.ingredientId)
+        : prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
       if (ex) {
-        return prev.map(p => p.id === ex.id
-          ? { ...p, amount: Math.min(p.amount + sItem.amount, Math.max(p.max, p.amount + sItem.amount)) }
-          : p);
+        // If units match we can do a direct sum; if not, just keep the existing
+        // amount (the user can reconcile in the UI).
+        const sameUnit = ex.unit === sItem.unit;
+        const nextAmount = sameUnit
+          ? Math.min(ex.amount + sItem.amount, Math.max(ex.max, ex.amount + sItem.amount))
+          : ex.amount;
+        return prev.map(p => p.id === ex.id ? { ...p, amount: nextAmount } : p);
       }
       return [...prev, {
         id: crypto.randomUUID(),
+        ingredientId: sItem.ingredientId || null,
         name: sItem.name,
         emoji: sItem.emoji || "🥫",
         amount: sItem.amount,
@@ -558,7 +713,7 @@ export default function Pantry({ pantry, setPantry, shoppingList, setShoppingLis
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</div>
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", marginTop:2 }}>
-                      {item.amount} {item.unit}
+                      {item.amount} {displayUnit(item)}
                       {item.source === "low-stock" && <span style={{ color:"#f59e0b", marginLeft:8 }}>• LOW STOCK</span>}
                       {item.source === "recipe" && <span style={{ color:"#7eb8d4", marginLeft:8 }}>• FROM RECIPE</span>}
                     </div>

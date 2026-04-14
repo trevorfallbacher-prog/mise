@@ -22,12 +22,12 @@ const recipe = {
 
   tools: ["10\" oven-safe skillet", "Whisk", "Mixing bowl"],
   ingredients: [
-    { amount: "8",      item: "large eggs",                      match: "eggs" },
-    { amount: "¼ cup",  item: "whole milk or cream" },
-    { amount: "1 cup",  item: "Parmesan, grated",                match: "parmesan" },
-    { amount: "3 cups", item: "baby spinach" },
-    { amount: "1",      item: "shallot, minced" },
-    { amount: "2 tbsp", item: "olive oil",                       match: "olive oil" },
+    { amount: "8",      item: "large eggs",         ingredientId: "eggs",      qty: { amount: 8,    unit: "count" } },
+    { amount: "¼ cup",  item: "whole milk or cream",ingredientId: "milk",      qty: { amount: 0.25, unit: "cup"   } },
+    { amount: "1 cup",  item: "Parmesan, grated",   ingredientId: "parmesan",  qty: { amount: 1,    unit: "cup"   } },
+    { amount: "3 cups", item: "baby spinach",       ingredientId: "spinach",   qty: { amount: 3,    unit: "cup"   } },
+    { amount: "1",      item: "shallot, minced",    ingredientId: "shallot",   qty: { amount: 1,    unit: "count" } },
+    { amount: "2 tbsp", item: "olive oil",          ingredientId: "olive_oil", qty: { amount: 2,    unit: "tbsp"  } },
     { amount: "to taste", item: "salt & pepper" },
   ],
 

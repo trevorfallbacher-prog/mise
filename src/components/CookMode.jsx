@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
+import { findIngredient, unitLabel, compareQty } from "../data/ingredients";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -157,13 +158,34 @@ function Timer({ seconds, onDone }) {
   );
 }
 
-// Match a recipe ingredient against the pantry. `ing.match` is the canonical
-// lookup keyword. Returns the pantry row, or null. Ingredients without a
-// `match` field are treated as untrackable (e.g. pasta water, "to taste" salt).
+// Look up a recipe ingredient in the pantry by canonical ingredientId.
+// Ingredients without an ingredientId are treated as untrackable (pasta water,
+// "to taste" salt, herbs we don't model, etc).
 function findInPantry(ing, pantry) {
-  if (!pantry || !ing.match) return null;
-  const key = ing.match.toLowerCase();
-  return pantry.find(p => p.name.toLowerCase().includes(key)) || null;
+  if (!pantry || !ing.ingredientId) return null;
+  return pantry.find(p => p.ingredientId === ing.ingredientId) || null;
+}
+
+// Decide how a recipe ingredient shows up in the checklist. Does unit
+// conversion under the hood (e.g. "2 tbsp butter" vs "1.5 sticks in pantry").
+//   status: "skip"    — not tracked (no ingredientId)
+//   status: "missing" — not in pantry, or not enough on hand
+//   status: "low"     — have enough, but cooking will drain us below threshold
+//   status: "ok"      — plenty on hand
+function statusFor(ing, pantry) {
+  if (!ing.ingredientId) return { ing, status: "skip" };
+  const canonical = findIngredient(ing.ingredientId);
+  const row = findInPantry(ing, pantry);
+  if (!row || row.amount <= 0) return { ing, status: "missing", row: null };
+  if (!canonical || !ing.qty)  return { ing, status: "ok", row }; // can't compare; trust presence
+  const cmp = compareQty({
+    have: { amount: row.amount,       unit: row.unit },
+    need: ing.qty,
+    lowThreshold: row.lowThreshold,
+    ingredient: canonical,
+  });
+  if (cmp === "unknown") return { ing, status: "ok", row }; // mismatched units — trust presence
+  return { ing, status: cmp, row };
 }
 
 export default function CookMode({
@@ -183,17 +205,11 @@ export default function CookMode({
   const AnimComp = AnimationMap[step?.animation];
   const progress = steps.length ? (completedSteps.size / steps.length) * 100 : 0;
 
-  // Bucket recipe ingredients by pantry status. Only ingredients with a
-  // `match` field are checked — recipes without match keywords simply render
-  // the old plain ingredient list with no badges.
-  const ingredientStatus = (recipe.ingredients || []).map(ing => {
-    if (!ing.match) return { ing, status: "skip" }; // pasta water, etc.
-    const row = findInPantry(ing, pantry);
-    if (!row)                    return { ing, status: "missing", row: null };
-    if (row.amount <= 0)         return { ing, status: "missing", row };
-    if (row.amount <= row.lowThreshold) return { ing, status: "low",    row };
-    return { ing, status: "ok", row };
-  });
+  // Bucket recipe ingredients by pantry status. Ingredients tagged with an
+  // `ingredientId` (and usually a `qty`) get checked against the pantry with
+  // proper unit conversion; untagged ones (pasta water, "to taste" salt,
+  // decorative herbs) render without a badge.
+  const ingredientStatus = (recipe.ingredients || []).map(ing => statusFor(ing, pantry));
   const missingIngs = ingredientStatus.filter(s => s.status === "missing");
   const lowIngs     = ingredientStatus.filter(s => s.status === "low");
   const okCount     = ingredientStatus.filter(s => s.status === "ok").length;
@@ -204,19 +220,22 @@ export default function CookMode({
     const toAdd = [...missingIngs, ...lowIngs];
     if (toAdd.length === 0) return;
     setShoppingList(prev => {
-      const existing = new Set(prev.map(i => i.name.toLowerCase()));
+      // de-dupe by ingredientId when present, else by name
+      const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
       const next = [...prev];
       toAdd.forEach(({ ing, row }) => {
-        const name = row?.name || ing.match.replace(/\b\w/g, c => c.toUpperCase());
-        if (existing.has(name.toLowerCase())) return;
-        existing.add(name.toLowerCase());
+        const canonical = findIngredient(ing.ingredientId);
+        const key = ing.ingredientId || (row?.name || ing.item).toLowerCase();
+        if (existing.has(key)) return;
+        existing.add(key);
         next.push({
           id: crypto.randomUUID(),
-          name,
-          emoji: row?.emoji || ing.emoji || "🥫",
-          amount: 1,
-          unit: row?.unit || "unit",
-          category: row?.category || "pantry",
+          ingredientId: ing.ingredientId || null,
+          name: canonical?.name || row?.name || ing.item,
+          emoji: canonical?.emoji || row?.emoji || "🥫",
+          amount: ing.qty?.amount ?? 1,
+          unit: ing.qty?.unit ?? (row?.unit || "unit"),
+          category: canonical?.category || row?.category || "pantry",
           source: "recipe",
         });
       });
@@ -328,7 +347,7 @@ export default function CookMode({
                     </span>
                     {row && (
                       <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>
-                        have {Math.round(row.amount*10)/10} {row.unit}
+                        have {Math.round(row.amount*10)/10} {unitLabel(findIngredient(row.ingredientId), row.unit)}
                       </span>
                     )}
                   </div>

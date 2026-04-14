@@ -22,12 +22,12 @@ const recipe = {
 
   tools: ["Large pot", "12\" skillet", "Tongs", "Grater"],
   ingredients: [
-    { amount: "8 oz",   item: "spaghetti",                       match: "spaghetti" },
-    { amount: "¼ cup",  item: "good olive oil",                  match: "olive oil" },
-    { amount: "6",      item: "garlic cloves, thinly sliced",    match: "garlic" },
+    { amount: "8 oz",   item: "spaghetti",                       ingredientId: "spaghetti", qty: { amount: 8, unit: "oz" } },
+    { amount: "¼ cup",  item: "good olive oil",                  ingredientId: "olive_oil", qty: { amount: 0.25, unit: "cup" } },
+    { amount: "6",      item: "garlic cloves, thinly sliced",    ingredientId: "garlic",    qty: { amount: 6, unit: "clove" } },
     { amount: "½ tsp",  item: "red pepper flakes" },
-    { amount: "¼ cup",  item: "parsley, chopped" },
-    { amount: "½ cup",  item: "Parmesan, grated",                match: "parmesan" },
+    { amount: "¼ cup",  item: "parsley, chopped",                ingredientId: "parsley",   qty: { amount: 0.25, unit: "cup" } },
+    { amount: "½ cup",  item: "Parmesan, grated",                ingredientId: "parmesan",  qty: { amount: 0.5, unit: "cup" } },
     { amount: "to taste", item: "kosher salt" },
   ],
 
