@@ -21,12 +21,12 @@ const recipe = {
 
   tools: ["Knife", "Cutting board"],
   ingredients: [
-    { amount: "1",      item: "ciabatta roll or thick focaccia square" },
-    { amount: "4 oz",   item: "fresh mozzarella (ideally buffalo), sliced", ingredientId: "mozzarella", qty: { amount: 4, unit: "oz" } },
+    { amount: "1",      item: "ciabatta roll or thick focaccia square",     ingredientId: "ciabatta",   qty: { amount: 1, unit: "count" } },
+    { amount: "4 oz",   item: "fresh mozzarella (ideally buffalo), sliced", ingredientId: "mozzarella", qty: { amount: 4, unit: "oz"    } },
     { amount: "1",      item: "ripe tomato, sliced",                        ingredientId: "tomato",     qty: { amount: 1, unit: "count" } },
-    { amount: "6",      item: "basil leaves" },
-    { amount: "1 tbsp", item: "good olive oil",                             ingredientId: "olive_oil",  qty: { amount: 1, unit: "tbsp" } },
-    { amount: "1 tsp",  item: "balsamic vinegar (optional)" },
+    { amount: "6",      item: "basil leaves",                               ingredientId: "basil",      qty: { amount: 6, unit: "leaf"  } },
+    { amount: "1 tbsp", item: "good olive oil",                             ingredientId: "olive_oil",  qty: { amount: 1, unit: "tbsp"  } },
+    { amount: "1 tsp",  item: "balsamic vinegar (optional)",                ingredientId: "balsamic",   qty: { amount: 1, unit: "tsp"   } },
     { amount: "to taste", item: "flaky salt & cracked pepper" },
   ],
 

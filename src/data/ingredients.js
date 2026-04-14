@@ -184,8 +184,9 @@ export const INGREDIENTS = [
   {
     id: "basil", name: "Fresh Basil", emoji: "🌿", category: "produce",
     units: [
-      { id: "cup",   label: "cups leaves", toBase: 15 },
       { id: "bunch", label: "bunches",     toBase: 30 },
+      { id: "cup",   label: "cups leaves", toBase: 15 },
+      { id: "leaf",  label: "leaves",      toBase: 0.3 },
     ],
     defaultUnit: "bunch",
   },
@@ -263,6 +264,34 @@ export const INGREDIENTS = [
       { id: "count", label: "whole",  toBase: 20 },
     ],
     defaultUnit: "count",
+  },
+  {
+    id: "ciabatta", name: "Ciabatta / Focaccia", emoji: "🍞", category: "pantry",
+    units: [
+      { id: "count", label: "rolls",   toBase: 1 },
+      { id: "loaf",  label: "loaves",  toBase: 6 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "balsamic", name: "Balsamic Vinegar", emoji: "🍶", category: "pantry",
+    units: [
+      { id: "tsp",    label: "tsp",    toBase: 5 },
+      { id: "tbsp",   label: "tbsp",   toBase: 15 },
+      { id: "cup",    label: "cups",   toBase: 240 },
+      { id: "bottle", label: "bottles",toBase: 250 },
+      { id: "ml",     label: "ml",     toBase: 1 },
+    ],
+    defaultUnit: "tbsp",
+  },
+  {
+    id: "dijon", name: "Dijon Mustard", emoji: "🟡", category: "pantry",
+    units: [
+      { id: "tsp",  label: "tsp",  toBase: 5 },
+      { id: "tbsp", label: "tbsp", toBase: 15 },
+      { id: "jar",  label: "jars", toBase: 200 },
+    ],
+    defaultUnit: "tsp",
   },
   {
     id: "tomato_paste", name: "Tomato Paste", emoji: "🍅", category: "pantry",

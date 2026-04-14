@@ -29,7 +29,7 @@ const recipe = {
     { amount: "2 tbsp", item: "flour",                                  ingredientId: "flour",   qty: { amount: 2,    unit: "tbsp"  } },
     { amount: "1 cup",  item: "whole milk, warmed",                     ingredientId: "milk",    qty: { amount: 1,    unit: "cup"   } },
     { amount: "¼ tsp",  item: "nutmeg, freshly grated" },
-    { amount: "1 tsp",  item: "Dijon mustard" },
+    { amount: "1 tsp",  item: "Dijon mustard",                          ingredientId: "dijon",   qty: { amount: 1,    unit: "tsp"   } },
     { amount: "to taste", item: "salt & pepper" },
   ],
 
