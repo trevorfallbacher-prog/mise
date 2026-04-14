@@ -47,13 +47,17 @@ export const GOAL_OPTIONS = [
   { id: "explore",   label: "Explore cuisines",      emoji: "🌍", desc: "Travel through food" },
 ];
 
+// The 7 canonical skills. Per spec these are universal — every skill is always
+// visible and levelable. Unlock gating lives on individual recipes, not here.
+// Each skill has a maxLevel of 5 (novice → master).
 export const SKILL_TREE = [
-  { id: "knife", name: "Knife Skills",    emoji: "🔪", level: 2, maxLevel: 5, unlocked: true,  color: "#f5c842", unlocks: ["Salads","Stir Fry","Julienne"] },
-  { id: "heat",  name: "Heat Control",   emoji: "🔥", level: 1, maxLevel: 5, unlocked: true,  color: "#e07a3a", unlocks: ["Searing","Caramelizing","Brown Butter"] },
-  { id: "eggs",  name: "Egg Mastery",    emoji: "🥚", level: 3, maxLevel: 5, unlocked: true,  color: "#f0e68c", unlocks: ["Hollandaise","Frittata","Soufflé"] },
-  { id: "pasta", name: "Pasta & Dough",  emoji: "🍝", level: 0, maxLevel: 5, unlocked: false, color: "#c9a96e", unlocks: ["Fresh Pasta","Pizza","Bread"],   requiresLevel: "knife:2" },
-  { id: "sauce", name: "Sauces & Stocks",emoji: "🫕", level: 0, maxLevel: 5, unlocked: false, color: "#7eb8d4", unlocks: ["French Cuisine","Braises","Reductions"], requiresLevel: "heat:2" },
-  { id: "baking",name: "Baking",         emoji: "🧁", level: 0, maxLevel: 5, unlocked: false, color: "#d4a8c7", unlocks: ["Pastry","Bread","Tarts"],       requiresLevel: "eggs:2" },
+  { id: "knife",     name: "Knife Skills",    emoji: "🔪", maxLevel: 5, color: "#f5c842", unlocks: ["Chop","Julienne","Mince","Dice"] },
+  { id: "heat",      name: "Heat Control",    emoji: "🔥", maxLevel: 5, color: "#e07a3a", unlocks: ["Sear","Simmer","Brown Butter","Caramelize"] },
+  { id: "egg",       name: "Egg Mastery",     emoji: "🥚", maxLevel: 5, color: "#f0e68c", unlocks: ["Frittata","Hollandaise","Omelette","Soufflé"] },
+  { id: "sauce",     name: "Sauce Building",  emoji: "🫕", maxLevel: 5, color: "#7eb8d4", unlocks: ["Pan Sauce","Reduction","Emulsion"] },
+  { id: "dough",     name: "Dough",           emoji: "🥖", maxLevel: 5, color: "#c9a96e", unlocks: ["Fresh Pasta","Pizza","Bread"] },
+  { id: "seasoning", name: "Seasoning",       emoji: "🧂", maxLevel: 5, color: "#d4a8c7", unlocks: ["Balance","Layering","Finishing"] },
+  { id: "timing",    name: "Timing",          emoji: "⏱️", maxLevel: 5, color: "#a8d5a2", unlocks: ["Mise en place","Parallel prep","Pacing"] },
 ];
 
 export const UPCOMING_EVENTS = [
@@ -120,25 +124,5 @@ export const INITIAL_PANTRY = [
   { id: 10, name: "Lemons",          emoji: "🍋", amount: 1,   unit: "lemons", max: 4,  category: "produce", lowThreshold: 1    },
 ];
 
-export const RECIPE = {
-  title: "Brown Butter Pasta",
-  subtitle: "Cacio e Pepe adjacent",
-  time: "22 min", difficulty: "Easy", serves: 2,
-  tools: ["Large pot","12\" skillet","Tongs","Grater","Measuring cups"],
-  ingredients: [
-    { amount: "8 oz",   item: "spaghetti or bucatini" },
-    { amount: "4 tbsp", item: "unsalted butter" },
-    { amount: "1 cup",  item: "Parmesan, finely grated" },
-    { amount: "1 tsp",  item: "cracked black pepper" },
-    { amount: "1 tsp",  item: "kosher salt" },
-    { amount: "½ cup",  item: "pasta water (reserve)" },
-  ],
-  steps: [
-    { id:1, title:"Boil the water",   instruction:"Fill your pot with water. Salt it until it tastes like the sea. Bring to a rolling boil.", icon:"💧", animation:"boil", timer:null,    tip:"Well-salted water = seasoned pasta from the inside out." },
-    { id:2, title:"Cook the pasta",   instruction:"Drop pasta in. Stir immediately. Cook 2 minutes LESS than the box says — you'll finish it in the pan.", icon:"🍝", animation:"stir", timer:7*60, tip:"Before draining, scoop out ½ cup of starchy pasta water. This is liquid gold." },
-    { id:3, title:"Brown the butter", instruction:"Melt butter in your skillet over medium heat. Keep stirring. It'll foam, then go golden, then smell nutty. Pull off heat the moment it turns amber.", icon:"🧈", animation:"brown", timer:4*60, tip:"The difference between brown butter and burnt butter is about 30 seconds. Watch it." },
-    { id:4, title:"Crack the pepper", instruction:"Add pepper directly into the brown butter. Let it sizzle for 30 seconds to bloom the spice.", icon:"🌶", animation:"bloom", timer:30, tip:"Fresh cracked pepper only. Pre-ground won't cut it here." },
-    { id:5, title:"Build the sauce",  instruction:"Add drained pasta to the skillet. Splash in ¼ cup pasta water. Toss everything together. Add Parmesan in stages, tossing constantly.", icon:"🌀", animation:"toss", timer:null, tip:"If it looks dry, add more pasta water. If too loose, keep tossing — it'll tighten." },
-    { id:6, title:"Plate and finish", instruction:"Twist pasta into a bowl using your tongs. Shower with more Parmesan. Add a final crack of pepper. Eat immediately.", icon:"✨", animation:"plate", timer:null, tip:"This doesn't hold. It's best the second it hits the bowl." },
-  ],
-};
+// Recipes live in src/data/recipes/ — one file per recipe, registry at
+// src/data/recipes/index.js. Import from there.

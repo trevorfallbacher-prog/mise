@@ -10,18 +10,10 @@ function greetingForHour(hour) {
 
 // Take the static SKILL_TREE defs and overlay the user's actual levels from
 // profile.skill_levels. Skills the user hasn't touched yet default to level 0.
-// Unlock status is recomputed from the real levels so prereqs work correctly.
+// All skills are always visible and levelable — unlock gating lives on recipes.
 function computeSkillTree(userLevels) {
   const levels = userLevels || {};
-  const leveled = SKILL_TREE.map(s => ({ ...s, level: levels[s.id] ?? 0 }));
-  // Recompute `unlocked` for any skill with a requiresLevel prereq.
-  return leveled.map(s => {
-    if (!s.requiresLevel) return { ...s, unlocked: true };
-    const [depId, depLvl] = s.requiresLevel.split(":");
-    const depSkill = leveled.find(x => x.id === depId);
-    const unlocked = (depSkill?.level ?? 0) >= Number(depLvl);
-    return { ...s, unlocked };
-  });
+  return SKILL_TREE.map(s => ({ ...s, level: levels[s.id] ?? 0 }));
 }
 
 export default function Home({ profile }) {
@@ -94,18 +86,18 @@ export default function Home({ profile }) {
         </div>
         <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {skills.map(skill => (
-            <div key={skill.id} style={{ background: skill.unlocked ? "#161616" : "#0f0f0f", border:`1px solid ${skill.unlocked ? "#2a2a2a" : "#1a1a1a"}`, borderRadius:14, padding:"14px 16px", opacity: skill.unlocked ? 1 : 0.5, display:"flex", alignItems:"center", gap:14 }}>
-              <div style={{ fontSize:28, flexShrink:0 }}>{skill.unlocked ? skill.emoji : "🔒"}</div>
+            <div key={skill.id} style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:14, padding:"14px 16px", display:"flex", alignItems:"center", gap:14 }}>
+              <div style={{ fontSize:28, flexShrink:0 }}>{skill.emoji}</div>
               <div style={{ flex:1 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                  <div style={{ fontFamily:"'Fraunces', serif", fontSize:15, color: skill.unlocked ? "#f0ece4" : "#444", fontWeight:400 }}>{skill.name}</div>
-                  <div style={{ fontFamily:"'DM Mono', monospace", fontSize:10, color: skill.unlocked ? skill.color : "#333" }}>LVL {skill.level}/{skill.maxLevel}</div>
+                  <div style={{ fontFamily:"'Fraunces', serif", fontSize:15, color:"#f0ece4", fontWeight:400 }}>{skill.name}</div>
+                  <div style={{ fontFamily:"'DM Mono', monospace", fontSize:10, color: skill.color }}>LVL {skill.level}/{skill.maxLevel}</div>
                 </div>
                 <div style={{ height:3, background:"#222", borderRadius:2, overflow:"hidden" }}>
-                  <div style={{ height:"100%", borderRadius:2, background: skill.unlocked ? skill.color : "#333", width:`${(skill.level/skill.maxLevel)*100}%`, boxShadow: skill.unlocked ? `0 0 8px ${skill.color}88` : "none" }} />
+                  <div style={{ height:"100%", borderRadius:2, background: skill.color, width:`${(skill.level/skill.maxLevel)*100}%`, boxShadow: skill.level > 0 ? `0 0 8px ${skill.color}88` : "none" }} />
                 </div>
-                <div style={{ fontFamily:"'DM Sans', sans-serif", fontSize:11, color: skill.unlocked ? "#555" : "#444", marginTop:4 }}>
-                  {skill.unlocked ? `Unlocks: ${skill.unlocks.join(", ")}` : `Requires ${skill.requiresLevel?.replace(":", " level ")}`}
+                <div style={{ fontFamily:"'DM Sans', sans-serif", fontSize:11, color:"#555", marginTop:4 }}>
+                  Unlocks: {skill.unlocks.join(", ")}
                 </div>
               </div>
             </div>

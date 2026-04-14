@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { RECIPE } from "../data";
+import { difficultyLabel, totalTimeMin } from "../data/recipes";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -157,28 +157,47 @@ function Timer({ seconds, onDone }) {
   );
 }
 
-export default function CookMode({ onDone }) {
+export default function CookMode({ recipe, onDone, onExit }) {
   const [view, setView] = useState("overview");
   const [activeStep, setActiveStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState(new Set());
-  const step = RECIPE.steps[activeStep];
+
+  // Defensive: if no recipe was passed, render nothing. Parent owns selection.
+  if (!recipe) return null;
+
+  const steps    = recipe.steps || [];
+  const step     = steps[activeStep];
   const AnimComp = AnimationMap[step?.animation];
-  const progress = (completedSteps.size / RECIPE.steps.length) * 100;
+  const progress = steps.length ? (completedSteps.size / steps.length) * 100 : 0;
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
-    if (activeStep < RECIPE.steps.length - 1) setTimeout(() => setActiveStep(s=>s+1), 300);
+    if (activeStep < steps.length - 1) setTimeout(() => setActiveStep(s => s + 1), 300);
   };
+
+  const timeLabel = `${totalTimeMin(recipe)} min`;
+  const diffLabel = difficultyLabel(recipe.difficulty);
 
   if (view === "overview") return (
     <div style={{ padding:"20px 24px 40px", maxWidth:480, margin:"0 auto" }}>
-      <div style={{ marginTop:24 }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>TONIGHT'S RECIPE</div>
-        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:42, fontWeight:300, lineHeight:1.05, letterSpacing:"-0.03em" }}>{RECIPE.title}</h1>
-        <p style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:18, color:"#888", marginTop:4 }}>{RECIPE.subtitle}</p>
+      {/* Back out of the recipe to the browser */}
+      {onExit && (
+        <button onClick={onExit} style={{
+          background:"none", border:"none", color:"#666", fontSize:22,
+          cursor:"pointer", padding:0, marginBottom:4
+        }}>←</button>
+      )}
+      <div style={{ marginTop:12 }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
+          {(recipe.cuisine || "").toUpperCase()} · {(recipe.category || "").toUpperCase()}
+        </div>
+        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:42, fontWeight:300, lineHeight:1.05, letterSpacing:"-0.03em" }}>{recipe.title}</h1>
+        {recipe.subtitle && (
+          <p style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:18, color:"#888", marginTop:4 }}>{recipe.subtitle}</p>
+        )}
       </div>
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
-        {[["⏱",RECIPE.time],["📊",RECIPE.difficulty],["👥",`Serves ${RECIPE.serves}`]].map(([icon,val])=>(
+        {[["⏱", timeLabel],["📊", diffLabel],["👥",`Serves ${recipe.serves}`]].map(([icon,val])=>(
           <div key={val} style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
             <div style={{ fontSize:18, marginBottom:4 }}>{icon}</div>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>{val}</div>
@@ -188,8 +207,8 @@ export default function CookMode({ onDone }) {
       <div style={{ marginTop:28 }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em", marginBottom:14 }}>INGREDIENTS</div>
         <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, overflow:"hidden" }}>
-          {RECIPE.ingredients.map((ing,i)=>(
-            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: i<RECIPE.ingredients.length-1?"1px solid #222":"none" }}>
+          {recipe.ingredients.map((ing,i)=>(
+            <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"12px 16px", borderBottom: i<recipe.ingredients.length-1?"1px solid #222":"none" }}>
               <span style={{ color:"#bbb", fontSize:14 }}>{ing.item}</span>
               <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
             </div>
@@ -208,11 +227,11 @@ export default function CookMode({ onDone }) {
         <div style={{ height:"100%", background:"#f5c842", borderRadius:2, width:`${progress}%`, transition:"width 0.5s ease" }} />
       </div>
       <div style={{ display:"flex", justifyContent:"space-between", marginTop:8 }}>
-        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>STEP {activeStep+1} OF {RECIPE.steps.length}</span>
+        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>STEP {activeStep+1} OF {steps.length}</span>
         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{completedSteps.size} DONE</span>
       </div>
       <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"center" }}>
-        {RECIPE.steps.map((_,i)=>(
+        {steps.map((_,i)=>(
           <button key={i} onClick={()=>setActiveStep(i)} style={{ width: completedSteps.has(i)||i===activeStep?24:8, height:8, borderRadius:4, border:"none", cursor:"pointer", background: completedSteps.has(i)?"#22c55e":i===activeStep?"#f5c842":"#333", transition:"all 0.3s" }} />
         ))}
       </div>
@@ -233,7 +252,7 @@ export default function CookMode({ onDone }) {
       </div>
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
         <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
-        {activeStep < RECIPE.steps.length-1 ? (
+        {activeStep < steps.length-1 ? (
           <button onClick={markDone} style={{ flex:2, padding:"14px", background: completedSteps.has(activeStep)?"#1a3a1a":"#f5c842", color: completedSteps.has(activeStep)?"#4ade80":"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.3s" }}>
             {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
           </button>

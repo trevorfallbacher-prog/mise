@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import Onboarding from "./components/Onboarding";
 import Home from "./components/Home";
-import CookMode from "./components/CookMode";
+import Cook from "./components/Cook";
 import Cookbook from "./components/Cookbook";
 import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
@@ -116,7 +116,7 @@ export default function App() {
 
       <div style={{ paddingBottom:80 }}>
         {tab === "home"     && <Home profile={profile} />}
-        {tab === "cook"     && <CookMode onDone={() => setTab("cookbook")} />}
+        {tab === "cook"     && <Cook profile={profile} onCooked={() => setTab("cookbook")} />}
         {tab === "cookbook" && <Cookbook />}
         {tab === "pantry"   && <Pantry />}
       </div>
