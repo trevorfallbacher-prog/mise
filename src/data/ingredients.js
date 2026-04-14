@@ -16,6 +16,32 @@
 // Add a new ingredient here and it's automatically available in the AddItem
 // modal and can be referenced from any recipe.
 
+// Shared unit ladder for the long tail of cheese varieties. Specialty
+// cheeses we track individually (parmesan wedges, mozz balls, feta blocks,
+// cream cheese bricks, goat cheese logs) keep their bespoke units above —
+// this preset is just the "here's a hunk of cheese, price it by weight"
+// shape used by everything in `cheeseMembers(…)` below.
+const CHEESE_STANDARD_UNITS = [
+  { id: "oz",    label: "oz",     toBase: 28.35 },
+  { id: "lb",    label: "lb",     toBase: 453.6 },
+  { id: "wedge", label: "wedges", toBase: 226 },  // ~8oz wedge
+  { id: "g",     label: "g",      toBase: 1 },
+];
+
+// Compact builder for the cheese hub. Tuples are:
+//   [id, name, shortName, defaultUnit, estCentsPerGram]
+// estCentsPerGram lets the pantry estimate a $ total when the user adds
+// without a receipt — a rough retail-per-lb ÷ 453.6.
+function cheeseMembers(rows) {
+  return rows.map(([id, name, shortName, defaultUnit, estCentsPerBase]) => ({
+    id, name, shortName,
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
+    units: CHEESE_STANDARD_UNITS,
+    defaultUnit,
+    estCentsPerBase,
+  }));
+}
+
 export const INGREDIENTS = [
   // ── dairy / eggs ────────────────────────────────────────────────────────
   {
@@ -25,6 +51,7 @@ export const INGREDIENTS = [
       { id: "dozen", label: "dozen",  toBase: 12 },
     ],
     defaultUnit: "count",
+    estCentsPerBase: 45, // ~$5.40/dozen
   },
   {
     id: "butter", name: "Unsalted Butter", emoji: "🧈", category: "dairy",
@@ -36,6 +63,7 @@ export const INGREDIENTS = [
       { id: "g",     label: "g",      toBase: 1 },
     ],
     defaultUnit: "stick",
+    estCentsPerBase: 1.5, // ~$6.80/lb
   },
   {
     id: "milk", name: "Whole Milk", shortName: "Whole",
@@ -51,6 +79,7 @@ export const INGREDIENTS = [
       { id: "ml",          label: "ml",           toBase: 1 },
     ],
     defaultUnit: "gallon",
+    estCentsPerBase: 0.12, // ~$4.50/gallon
   },
   {
     id: "milk_2pct", name: "2% Milk", shortName: "2%",
@@ -63,6 +92,7 @@ export const INGREDIENTS = [
       { id: "cup",         label: "cups",         toBase: 240 },
     ],
     defaultUnit: "gallon",
+    estCentsPerBase: 0.12,
   },
   {
     id: "milk_skim", name: "Skim Milk", shortName: "Skim",
@@ -74,6 +104,7 @@ export const INGREDIENTS = [
       { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
     ],
     defaultUnit: "gallon",
+    estCentsPerBase: 0.12,
   },
   {
     id: "buttermilk", name: "Buttermilk", shortName: "Buttermilk",
@@ -109,6 +140,7 @@ export const INGREDIENTS = [
       { id: "lb",    label: "lb",          toBase: 453.6 },
     ],
     defaultUnit: "oz",
+    estCentsPerBase: 4.8, // ~$22/lb
   },
   {
     id: "pecorino", name: "Pecorino Romano", shortName: "Pecorino",
@@ -207,7 +239,90 @@ export const INGREDIENTS = [
       { id: "tbsp", label: "tbsp", toBase: 14 },
     ],
     defaultUnit: "oz",
+    estCentsPerBase: 3.3, // ~$15/lb — fancy spreadables (Boursin, Alouette)
   },
+  // Additional cheese_hub members — shared units preset, defined via helpers
+  // below so we don't repeat the same oz/lb/wedge/g ladder 60 times. Keep
+  // individual specialties (ricotta tubs, mozz balls) as-is above.
+  // estCentsPerBase below is cents-per-gram. Rough retail math:
+  //   $/lb ÷ 453.6 ≈ cents/g  (e.g. $10/lb ≈ 2.2, $20/lb ≈ 4.4, $30/lb ≈ 6.6)
+  ...cheeseMembers([
+    // Fresh / unaged
+    ["burrata",         "Burrata",         "Burrata",         "oz",   3.1],
+    ["ricotta",         "Ricotta",         "Ricotta",         "cup",  0.9],
+    ["mascarpone",      "Mascarpone",      "Mascarpone",      "oz",   2.2],
+    ["queso_fresco",    "Queso Fresco",    "Queso Fresco",    "oz",   1.3],
+    ["paneer",          "Paneer",          "Paneer",          "oz",   1.5],
+    ["fromage_blanc",   "Fromage Blanc",   "Fromage Blanc",   "oz",   1.8],
+    ["quark",           "Quark",           "Quark",           "oz",   1.1],
+    ["stracchino",      "Stracchino",      "Stracchino",      "oz",   3.3],
+    // Soft ripened
+    ["camembert",       "Camembert",       "Camembert",       "oz",   2.6],
+    ["coulommiers",     "Coulommiers",     "Coulommiers",     "oz",   3.5],
+    ["brillat_savarin", "Brillat-Savarin", "Brillat-Savarin", "oz",   4.8],
+    ["saint_andre",     "Saint-André",     "Saint-André",     "oz",   4.4],
+    ["explorateur",     "Explorateur",     "Explorateur",     "oz",   5.3],
+    ["humboldt_fog",    "Humboldt Fog",    "Humboldt Fog",    "oz",   6.2],
+    // Semi-soft
+    ["havarti",         "Havarti",         "Havarti",         "oz",   1.8],
+    ["fontina",         "Fontina",         "Fontina",         "oz",   2.4],
+    ["muenster",        "Muenster",        "Muenster",        "oz",   1.3],
+    ["taleggio",        "Taleggio",        "Taleggio",        "oz",   4.4],
+    ["port_salut",      "Port Salut",      "Port Salut",      "oz",   2.4],
+    ["raclette",        "Raclette",        "Raclette",        "oz",   4.0],
+    ["butterkase",      "Butterkäse",      "Butterkäse",      "oz",   2.0],
+    ["tomme_savoie",    "Tomme de Savoie", "Tomme de Savoie", "oz",   3.5],
+    // Washed rind
+    ["limburger",       "Limburger",       "Limburger",       "oz",   2.4],
+    ["epoisses",        "Époisses",        "Époisses",        "oz",   6.6],
+    ["langres",         "Langres",         "Langres",         "oz",   5.7],
+    ["vacherin_mdor",   "Vacherin Mont d'Or","Vacherin MdO",   "oz",   7.7],
+    ["stinking_bishop", "Stinking Bishop", "Stinking Bishop", "oz",   6.2],
+    // Semi-hard
+    ["gouda",           "Gouda",           "Gouda",           "oz",   1.8],
+    ["edam",            "Edam",            "Edam",            "oz",   2.0],
+    ["comte",           "Comté",           "Comté",           "oz",   4.8],
+    ["jarlsberg",       "Jarlsberg",       "Jarlsberg",       "oz",   2.6],
+    ["manchego",        "Manchego",        "Manchego",        "oz",   4.0],
+    ["provolone",       "Provolone",       "Provolone",       "oz",   1.8],
+    ["colby",           "Colby",           "Colby",           "oz",   1.3],
+    ["monterey_jack",   "Monterey Jack",   "Monterey Jack",   "oz",   1.3],
+    ["emmental",        "Emmental",        "Emmental",        "oz",   2.9],
+    // Hard / aged
+    ["parmigiano",      "Parmigiano-Reggiano", "Parm-Reggiano","oz",  4.8],
+    ["aged_cheddar",    "Aged Cheddar",    "Aged Cheddar",    "oz",   3.1],
+    ["aged_gouda",      "Aged Gouda",      "Aged Gouda",      "oz",   4.4],
+    ["asiago",          "Asiago",          "Asiago",          "oz",   3.1],
+    ["grana_padano",    "Grana Padano",    "Grana Padano",    "oz",   4.0],
+    ["mimolette",       "Mimolette",       "Mimolette",       "oz",   4.4],
+    ["piave",           "Piave",           "Piave",           "oz",   4.8],
+    ["sbrinz",          "Sbrinz",          "Sbrinz",          "oz",   5.3],
+    // Blue
+    ["gorgonzola",      "Gorgonzola",      "Gorgonzola",      "oz",   3.1],
+    ["roquefort",       "Roquefort",       "Roquefort",       "oz",   5.3],
+    ["stilton",         "Stilton",         "Stilton",         "oz",   4.4],
+    ["maytag_blue",     "Maytag Blue",     "Maytag Blue",     "oz",   4.8],
+    ["cabrales",        "Cabrales",        "Cabrales",        "oz",   6.2],
+    ["bleu_dauvergne",  "Bleu d'Auvergne", "Bleu d'Auvergne", "oz",   4.0],
+    ["cambozola",       "Cambozola",       "Cambozola",       "oz",   3.1],
+    ["cashel_blue",     "Cashel Blue",     "Cashel Blue",     "oz",   4.4],
+    // Smoked
+    ["smoked_gouda",    "Smoked Gouda",    "Smoked Gouda",    "oz",   2.2],
+    ["smoked_mozz",     "Smoked Mozzarella","Smoked Mozz",    "oz",   2.2],
+    ["scamorza",        "Scamorza",        "Scamorza",        "oz",   2.4],
+    ["smoked_cheddar",  "Smoked Cheddar",  "Smoked Cheddar",  "oz",   2.2],
+    ["idiazabal",       "Idiazábal",       "Idiazábal",       "oz",   4.8],
+    // Alpine
+    ["appenzeller",     "Appenzeller",     "Appenzeller",     "oz",   4.4],
+    ["beaufort",        "Beaufort",        "Beaufort",        "oz",   6.2],
+    ["abondance",       "Abondance",       "Abondance",       "oz",   4.8],
+    ["vacherin_frib",   "Vacherin Fribourgeois","Vacherin Frib","oz",  4.8],
+    // American originals
+    ["pepper_jack",     "Pepper Jack",     "Pepper Jack",     "oz",   1.3],
+    ["brick_cheese",    "Brick",           "Brick",           "oz",   1.8],
+    ["teleme",          "Teleme",          "Teleme",          "oz",   3.3],
+    ["cougar_gold",     "Cougar Gold",     "Cougar Gold",     "oz",   6.2],
+  ]),
   {
     id: "yogurt", name: "Plain Yogurt", shortName: "Plain",
     parentId: "yogurt_hub", emoji: "🥛", category: "dairy",
@@ -1256,6 +1371,70 @@ export const INGREDIENTS = [
 // Lookups & helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Price hints — rough retail cents-per-base-unit for each ingredient. Kept
+// in one table rather than sprinkled through INGREDIENTS so we can tune
+// prices without rewriting every ingredient entry. Mass items use cents/g,
+// volume items cents/ml, count items cents/each.
+//
+// Anything an ingredient already carries inline (e.g. the cheese_hub
+// members generated via cheeseMembers) wins — this map is a fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+const PRICE_HINTS = {
+  // ── meat ──────────────────────────────────────────
+  chicken: 0.66, chicken_breast: 1.1, chicken_thigh: 0.77,
+  chicken_leg: 0.55, chicken_wing: 0.88,
+  steak: 2.2, ribeye: 4.0, ny_strip: 3.7, sirloin: 2.2,
+  brisket: 1.8, chuck_roast: 1.5, ground_beef: 1.3,
+  pork_chop: 1.1, pork_loin: 0.88, pork_shoulder: 0.88, ground_pork: 1.1,
+  sausage: 1.3, bacon: 2.0, guanciale: 4.8, ham: 1.5,
+  prosciutto: 6.6, salami: 3.1,
+  ground_turkey: 1.1, deli_turkey: 2.2, turkey_breast: 1.5,
+  salmon: 3.1, tuna: 4.0, cod: 2.6, tilapia: 1.8, shrimp: 2.4, scallops: 4.4,
+  // ── dairy (non-cheese) ─────────────────────────────
+  heavy_cream: 0.6, sour_cream: 0.5, cottage_cheese: 0.6,
+  half_and_half: 0.4, buttermilk: 0.25,
+  oat_milk: 0.2, almond_milk: 0.15, oj: 0.15,
+  yogurt: 0.5, greek_yogurt: 0.9,
+  // cheeses not generated by cheeseMembers()
+  feta: 2.6, goat_cheese: 4.0, cream_cheese: 1.3, brie: 3.5,
+  mozzarella: 2.6, cheddar: 1.8, gruyere: 4.4, pecorino: 4.8,
+  // ── produce ───────────────────────────────────────
+  // count-based: cents per each
+  lemon: 75, lime: 50, apple: 100, banana: 35, orange: 125,
+  avocado: 150, yellow_onion: 80, shallot: 100, pearl_onion: 10,
+  carrot: 35, bell_pepper: 125, cucumber: 125, zucchini: 125,
+  potato: 80, sweet_potato: 150, tomato: 100,
+  // mass-based: cents per gram
+  mushroom: 1.1, spinach: 1.3, arugula: 1.8, kale: 1.1,
+  broccoli: 0.9, cauliflower: 0.8, lettuce: 0.7,
+  basil: 2.0, parsley: 1.0, cilantro: 1.0, ginger: 1.1,
+  strawberry: 1.1, blueberry: 2.2, garlic: 30,
+  // ── pantry ────────────────────────────────────────
+  flour: 0.3, sugar: 0.3, olive_oil: 2.5,
+  spaghetti: 0.4, penne: 0.4, rigatoni: 0.4, fettuccine: 0.4,
+  orzo: 0.5, lasagna: 0.5,
+  rice: 0.3, brown_rice: 0.4, jasmine_rice: 0.4,
+  basmati_rice: 0.5, arborio_rice: 0.9,
+  quinoa: 1.1, oats: 0.3,
+  black_beans: 0.5, chickpeas: 0.5, lentils: 0.5,
+  kidney_beans: 0.5, pinto_beans: 0.5, cannellini_beans: 0.5,
+  canned_tomatoes: 0.4, tomato_paste: 1.0,
+  chicken_stock: 0.4, beef_stock: 0.4,
+  red_wine: 1.3, white_wine: 1.3,
+  peanut_butter: 1.1, honey: 2.0, maple_syrup: 3.5,
+  coffee: 2.4, soy_sauce: 1.3, vinegar: 0.5, dijon: 1.5, balsamic: 2.5,
+  // bread members — base is "slice" (1 slice = 1 base unit)
+  bread: 15, sourdough: 50, baguette: 15, ciabatta: 200,
+  bagel: 75, english_muffin: 50,
+  tortillas: 15,
+};
+for (const ing of INGREDIENTS) {
+  if (PRICE_HINTS[ing.id] != null && ing.estCentsPerBase == null) {
+    ing.estCentsPerBase = PRICE_HINTS[ing.id];
+  }
+}
+
 const byId = new Map(INGREDIENTS.map(i => [i.id, i]));
 
 export function findIngredient(id) {
@@ -1538,6 +1717,28 @@ export function inferUnitsForScanned({ emoji, category, unit }) {
 //   - low:     have ≥ need, but leftover would be below the pantry item's
 //              lowThreshold (also converted to base units)
 //   - ok:      plenty
+// ─────────────────────────────────────────────────────────────────────────────
+// Manual-entry price estimation.
+//
+// When the user types "milk, 1 gallon" into the Add modal (no receipt in
+// play), we still want a reasonable dollar amount so monthly spend and the
+// pantry tile are useful. Each ingredient carries its own
+// `estCentsPerBase` (cents per 1 unit of its base — g for mass, ml for
+// volume, count for count). If an ingredient doesn't have one we return
+// null rather than pretending: a nonsense estimate is worse than none.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Returns an estimated integer cents for { amount, unit } of `ingredient`,
+// or null if the ingredient isn't priced yet or the inputs are nonsense.
+export function estimatePriceCents({ amount, unit, ingredient }) {
+  if (!ingredient || !amount) return null;
+  const rate = ingredient.estCentsPerBase;
+  if (rate == null) return null;
+  const baseQty = toBase({ amount, unit }, ingredient);
+  if (!Number.isFinite(baseQty) || baseQty <= 0) return null;
+  return Math.max(1, Math.round(baseQty * rate));
+}
+
 export function compareQty({ have, need, lowThreshold, ingredient }) {
   const haveBase = toBase(have, ingredient);
   const needBase = toBase(need, ingredient);

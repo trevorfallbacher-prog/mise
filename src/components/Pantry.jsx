@@ -4,6 +4,7 @@ import {
   findIngredient, findHub, hubForIngredient,
   membersOfHub, standaloneIngredients,
   unitLabel, inferUnitsForScanned, toBase,
+  estimatePriceCents,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -20,6 +21,16 @@ const INGREDIENTS_FOR_SCAN = INGREDIENTS.map(i => ({
 
 // Order in which category sections appear in the picker's hub grid.
 const CATEGORY_ORDER = ["meat", "dairy", "produce", "pantry", "dry", "frozen"];
+// Display labels — raw category IDs aren't always friendly ("produce" →
+// "Fruits & Veggies"). Falls back to the uppercased id.
+const CATEGORY_LABELS = {
+  meat:    "MEAT",
+  dairy:   "DAIRY",
+  produce: "FRUITS & VEGGIES",
+  pantry:  "PANTRY",
+  dry:     "DRY",
+  frozen:  "FROZEN",
+};
 
 // Category options used in the "Add item" form.
 const ADD_CATEGORIES = [
@@ -370,6 +381,16 @@ function AddItemModal({ target, onClose, onAdd }) {
   const canSaveCustom = customName.trim() && amount !== "" && customUnit.trim();
   const canSave = mode === "canonical" ? canSaveCanonical : canSaveCustom;
 
+  // Live price estimate based on the picked ingredient's estCentsPerBase
+  // (or the category fallback). Shown below the amount/unit inputs so the
+  // user can see what manual entries will contribute to monthly spend.
+  const estCents = useMemo(() => {
+    if (mode !== "canonical" || !picked || !amount || !unitId) return null;
+    const amt = parseFloat(amount);
+    if (!Number.isFinite(amt) || amt <= 0) return null;
+    return estimatePriceCents({ amount: amt, unit: unitId, ingredient: picked });
+  }, [mode, picked, amount, unitId]);
+
   const save = () => {
     if (!canSave) return;
     const amt = parseFloat(amount) || 0;
@@ -385,6 +406,10 @@ function AddItemModal({ target, onClose, onAdd }) {
           max: Math.max(amt * 2, 1),
           category: picked.category,
           lowThreshold: Math.max(amt * 0.25, 0.25),
+          // Manually-added items don't have a receipt price — estimate from
+          // the ingredient's typical $/base-unit so they still show up in
+          // spend totals and the monthly view.
+          priceCents: estCents,
         }
       : {
           id: crypto.randomUUID(),
@@ -476,7 +501,7 @@ function AddItemModal({ target, onClose, onAdd }) {
                       return (
                         <div key={cat} style={{ marginBottom:18 }}>
                           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
-                            {cat.toUpperCase()}
+                            {CATEGORY_LABELS[cat] || cat.toUpperCase()}
                           </div>
                           {hubs.length > 0 && (
                             <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom: loose.length > 0 ? 8 : 0 }}>
@@ -548,26 +573,34 @@ function AddItemModal({ target, onClose, onAdd }) {
 
             {/* Amount + Unit (only visible once an ingredient is picked) */}
             {picked && (
-              <div style={{ display:"flex", gap:10, marginBottom:20 }}>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  placeholder="Amount"
-                  autoFocus
-                  style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
-                />
-                <select
-                  value={unitId}
-                  onChange={e => setUnitId(e.target.value)}
-                  style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", appearance:"none", cursor:"pointer" }}
-                >
-                  {unitOptions.map(u => (
-                    <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
-                  ))}
-                </select>
-              </div>
+              <>
+                <div style={{ display:"flex", gap:10, marginBottom:10 }}>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="Amount"
+                    autoFocus
+                    style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+                  />
+                  <select
+                    value={unitId}
+                    onChange={e => setUnitId(e.target.value)}
+                    style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", appearance:"none", cursor:"pointer" }}
+                  >
+                    {unitOptions.map(u => (
+                      <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {estCents != null && (
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.08em", marginBottom:20 }}>
+                    EST. ${(estCents/100).toFixed(2)} — typical retail
+                  </div>
+                )}
+                {estCents == null && <div style={{ marginBottom:20 }} />}
+              </>
             )}
           </>
         ) : (
