@@ -230,6 +230,10 @@ function AuthedApp({ user, profile, upsertProfile }) {
             nameFor={nameFor}
             hasFamily={relationships.family.length > 0}
             family={relationships.family}
+            pantry={pantry}
+            shoppingList={shoppingList}
+            setShoppingList={setShoppingList}
+            onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
           />
         )}
         {tab === "cookbook" && <Cookbook />}
