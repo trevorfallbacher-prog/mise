@@ -16,6 +16,8 @@ import omeletteFinesHerbes from "./omelette-fines-herbes";
 import croqueMonsieur      from "./croque-monsieur";
 import soupeALoignon       from "./soupe-a-loignon";
 import coqAuVin            from "./coq-au-vin";
+import chickenFajitas      from "./chicken-fajitas";
+import steakTacos          from "./steak-tacos";
 
 export const RECIPES = [
   aglioEOlio,
@@ -27,6 +29,8 @@ export const RECIPES = [
   soupeALoignon,
   carbonara,
   coqAuVin,
+  chickenFajitas,
+  steakTacos,
 ];
 
 export const findRecipe = (slug) => RECIPES.find(r => r.slug === slug) || null;
