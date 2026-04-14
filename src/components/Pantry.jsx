@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo } from "react";
 import { INGREDIENTS, findIngredient, unitLabel } from "../data/ingredients";
+import { supabase } from "../lib/supabase";
 
 const CATEGORIES = [
   { id:"all", label:"All" }, { id:"dairy", label:"🥛 Dairy" },
@@ -66,33 +67,25 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
   const scanReceipt = async () => {
     setPhase("scanning"); setError(null);
     try {
-      const apiKey = process.env.REACT_APP_ANTHROPIC_API_KEY;
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          messages: [{
-            role: "user",
-            content: [
-              { type:"image", source:{ type:"base64", media_type:imageData.mediaType, data:imageData.base64 } },
-              { type:"text", text:`Read this grocery receipt. Extract every food/grocery item. Return ONLY a JSON array, no markdown:
-[{"name":"Unsalted Butter","emoji":"🧈","amount":2,"unit":"sticks","category":"dairy"}]
-Categories: dairy, produce, dry, meat, pantry, frozen
-Use practical kitchen units. If unclear, make a reasonable guess.` }
-            ]
-          }]
-        })
+      const { data, error: fnError } = await supabase.functions.invoke("scan-receipt", {
+        body: {
+          imageBase64: imageData.base64,
+          mediaType: imageData.mediaType,
+        },
       });
-      const data = await response.json();
-      const text = data.content?.[0]?.text || "[]";
-      const items = JSON.parse(text.replace(/```json|```/g, "").trim());
+      if (fnError) throw fnError;
+
+      const items = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.items)
+          ? data.items
+          : [];
+
       if (!items.length) { setError("No grocery items found. Try a clearer photo."); setPhase("ready"); return; }
       setScannedItems(items.map((item, i) => ({ ...item, id: i, selected: true })));
       setPhase("confirm");
     } catch (err) {
-      setError("Couldn't read the receipt. Check your API key in .env and try again.");
+      setError("Couldn't read the receipt right now. Please try again.");
       setPhase("ready");
     }
   };

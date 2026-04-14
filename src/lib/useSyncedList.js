@@ -25,6 +25,27 @@ export function useSyncedList({ table, userId, toDb, fromDb }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const loadFromDb = useCallback(async () => {
+    if (!userId) {
+      setItems([]);
+      return true;
+    }
+
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error(`[${table}] load failed:`, error);
+      setItems([]);
+      return false;
+    }
+
+    setItems((data || []).map(fromDb));
+    return true;
+  }, [table, userId, fromDb]);
+
   // Initial load
   useEffect(() => {
     let alive = true;
@@ -35,32 +56,29 @@ export function useSyncedList({ table, userId, toDb, fromDb }) {
     }
     setLoading(true);
     (async () => {
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq("user_id", userId);
       if (!alive) return;
-      if (error) {
-        console.error(`[${table}] load failed:`, error);
-        setItems([]);
-      } else {
-        setItems((data || []).map(fromDb));
-      }
+      await loadFromDb();
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [table, userId, fromDb]);
+  }, [userId, loadFromDb]);
 
   // Diff-based setter. Accepts a value or functional updater, just like useState.
   const setList = useCallback(
     (updater) => {
       setItems(prev => {
         const next = typeof updater === "function" ? updater(prev) : updater;
-        if (userId) persistDiff({ table, userId, toDb, prev, next });
+        if (userId) {
+          persistDiff({ table, userId, toDb, prev, next }).then((ok) => {
+            // If persistence fails, reload from DB so UI reflects true server state
+            // instead of stale optimistic local state.
+            if (!ok) loadFromDb();
+          });
+        }
         return next;
       });
     },
-    [table, userId, toDb]
+    [table, userId, toDb, loadFromDb]
   );
 
   return [items, setList, loading];
@@ -68,7 +86,7 @@ export function useSyncedList({ table, userId, toDb, fromDb }) {
 
 // Fire-and-forget: diff prev vs next by id, then issue INSERTs / UPDATEs / DELETEs.
 // Errors are logged; the local state is considered the source of truth.
-function persistDiff({ table, userId, toDb, prev, next }) {
+async function persistDiff({ table, userId, toDb, prev, next }) {
   const prevById = new Map(prev.map(i => [i.id, i]));
   const nextById = new Map(next.map(i => [i.id, i]));
 
@@ -88,21 +106,24 @@ function persistDiff({ table, userId, toDb, prev, next }) {
     if (!nextById.has(id)) toDelete.push(id);
   }
 
-  if (toInsert.length) {
-    supabase.from(table).insert(toInsert).then(({ error }) => {
-      if (error) console.error(`[${table}] insert failed:`, error);
-    });
-  }
+  const ops = [];
+  if (toInsert.length) ops.push(supabase.from(table).insert(toInsert));
   toUpdate.forEach(({ id, row }) => {
-    supabase.from(table).update(row).eq("id", id).then(({ error }) => {
-      if (error) console.error(`[${table}] update ${id} failed:`, error);
-    });
+    ops.push(supabase.from(table).update(row).eq("id", id));
   });
-  if (toDelete.length) {
-    supabase.from(table).delete().in("id", toDelete).then(({ error }) => {
-      if (error) console.error(`[${table}] delete failed:`, error);
-    });
-  }
+  if (toDelete.length) ops.push(supabase.from(table).delete().in("id", toDelete));
+
+  if (!ops.length) return true;
+
+  const results = await Promise.all(ops);
+  let ok = true;
+  results.forEach((result, idx) => {
+    if (result.error) {
+      ok = false;
+      console.error(`[${table}] sync op ${idx + 1} failed:`, result.error);
+    }
+  });
+  return ok;
 }
 
 function shallowEqual(a, b) {

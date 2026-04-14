@@ -53,8 +53,8 @@ export default function App() {
   const { profile, loading: profileLoading, upsert: upsertProfile } =
     useProfile(user?.id);
   const [tab, setTab] = useState("home");
-  const [pantry, setPantry] = usePantry(user?.id);
-  const [shoppingList, setShoppingList] = useShoppingList(user?.id);
+  const [pantry, setPantry, pantryLoading] = usePantry(user?.id);
+  const [shoppingList, setShoppingList, shoppingLoading] = useShoppingList(user?.id);
   const [pantryView, setPantryView] = useState("stock"); // "stock" | "shopping"
 
   // On first sign-in (or if an older account has no name yet), save whatever
@@ -83,6 +83,11 @@ export default function App() {
 
   // Signed in but we haven't heard back from the profiles table yet
   if (profileLoading) return <LoadingSplash />;
+
+  // Keep Pantry + Shopping List locked until their initial sync finishes.
+  // Without this, optimistic adds can appear and then get overwritten by the
+  // first DB load response if it arrives slightly later.
+  if (pantryLoading || shoppingLoading) return <LoadingSplash />;
 
   // Signed in but onboarding isn't done yet (no dietary preference saved).
   // The profile row may already exist with just a name from the effect above.
