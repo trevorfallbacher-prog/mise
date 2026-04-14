@@ -90,12 +90,35 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ profile, relationships, onClose }) {
+export default function Settings({ profile, relationships, upsertProfile, onClose }) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Name editor. Prefilled with whatever the profile has (or empty, which is
+  // the whole reason this editor exists — magic-link sign-ins have no name).
+  const [nameDraft, setNameDraft] = useState(profile?.name || "");
+  const [nameSaved, setNameSaved] = useState(false);
+  const [nameBusy, setNameBusy] = useState(false);
+  const nameDirty = (nameDraft.trim() || null) !== (profile?.name || null);
+
+  const saveName = async () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) return;
+    setNameBusy(true);
+    try {
+      await upsertProfile({ name: trimmed });
+      setNameSaved(true);
+      setTimeout(() => setNameSaved(false), 1500);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(e);
+    } finally {
+      setNameBusy(false);
+    }
+  };
 
   const myCode = profile?.invite_code || "—";
 
@@ -151,6 +174,26 @@ export default function Settings({ profile, relationships, onClose }) {
         <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888", lineHeight:1.5, margin:"8px 0 4px" }}>
           Family shares your pantry, shopping list, and meal plan — both can add or edit. Friends see only your dietary preferences.
         </p>
+
+        {/* Display name — shown to your family & friends on their screens */}
+        <SectionHeader label="YOUR NAME" />
+        <div style={{ display:"flex", gap:8 }}>
+          <input
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            placeholder="How should you appear to family?"
+            maxLength={60}
+            style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none" }}
+          />
+          <SmallButton onClick={saveName}>
+            {nameBusy ? "…" : nameSaved ? "SAVED ✓" : nameDirty ? "SAVE" : "SAVE"}
+          </SmallButton>
+        </div>
+        {!profile?.name && (
+          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#888", marginTop:6 }}>
+            Add your name so your family sees who did what.
+          </div>
+        )}
 
         {/* My invite code */}
         <SectionHeader label="MY SHARE CODE" />
