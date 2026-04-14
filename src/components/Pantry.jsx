@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo } from "react";
-import { INGREDIENTS, findIngredient, unitLabel } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, unitLabel, inferUnitsForScanned } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 
@@ -110,9 +110,14 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       // If the model matched a canonical ingredient, overlay the registry's
       // name/emoji/category so the confirm UI is consistent with the rest of
       // the app (and we know the unit is one of the valid ids).
+      //
+      // For items that DIDN'T match, the model sometimes falls back to
+      // "1 count" for things that should be weighed (cheese, deli meat, etc.).
+      // We lean on inferUnitsForScanned to pick sane units from emoji +
+      // category and replace a nonsense "count" with oz/lb/fl_oz as appropriate.
       const normalized = items.map((item, i) => {
         const canon = findIngredient(item.ingredientId);
-        return {
+        const base = {
           ...item,
           name: canon ? canon.name : item.name,
           emoji: canon ? canon.emoji : (item.emoji || "🥫"),
@@ -121,6 +126,13 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
           id: i,
           selected: true,
         };
+        if (!canon) {
+          const inferred = inferUnitsForScanned(base);
+          const validIds = inferred.units.map(u => u.id);
+          // Keep the model's unit if it's in our inferred list; otherwise use default.
+          if (!validIds.includes(base.unit)) base.unit = inferred.defaultUnit;
+        }
+        return base;
       });
       setScannedItems(normalized);
       setPhase("confirm");
@@ -234,17 +246,20 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
                     >
                       <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} autoFocus
                         style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
-                      {canon ? (
-                        <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
-                          style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}>
-                          {canon.units.map(u => (
-                            <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input value={item.unit || ""} onChange={e=>updateUnit(idx,e.target.value)} placeholder="unit"
-                          style={{ width:60, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none" }} />
-                      )}
+                      {(() => {
+                        // Canonical items use their registry units; everything
+                        // else gets category/emoji-inferred units so the user
+                        // actually has something to pick from.
+                        const units = canon ? canon.units : inferUnitsForScanned(item).units;
+                        return (
+                          <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
+                            style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}>
+                            {units.map(u => (
+                              <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                   ) : (
                     <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", flexShrink:0 }}>
@@ -820,24 +835,28 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                               onKeyDown={e => { if (e.key === "Enter") setEditingItemId(null); }}
                               style={{ width:56, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }}
                             />
-                            {canon ? (
-                              <select
-                                value={item.unit}
-                                onChange={e => updatePantryItem(item.id, { unit: e.target.value })}
-                                style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 4px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}
-                              >
-                                {canon.units.map(u => (
-                                  <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
-                                ))}
-                              </select>
-                            ) : (
-                              <input
-                                value={item.unit}
-                                onChange={e => updatePantryItem(item.id, { unit: e.target.value })}
-                                placeholder="unit"
-                                style={{ width:60, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none" }}
-                              />
-                            )}
+                            {(() => {
+                              // Free-text items lean on inferred units from
+                              // emoji + category so the user isn't stuck
+                              // typing "fl oz" by hand.
+                              const units = canon ? canon.units : inferUnitsForScanned(item).units;
+                              // Make sure the current unit is selectable — if
+                              // it isn't in our inferred list, prepend it so
+                              // the select doesn't silently swap the value.
+                              const hasCurrent = units.some(u => u.id === item.unit);
+                              const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
+                              return (
+                                <select
+                                  value={item.unit}
+                                  onChange={e => updatePantryItem(item.id, { unit: e.target.value })}
+                                  style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 4px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}
+                                >
+                                  {opts.map(u => (
+                                    <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
+                                  ))}
+                                </select>
+                              );
+                            })()}
                           </div>
                         ) : (
                           <button

@@ -77,9 +77,26 @@ below. When there's a clear match:
     bulk meat, etc.)
   - use the canonical name and its typical emoji
 
-If there's no clear canonical match (e.g. "Greek yogurt", "rice", "capers"):
+If there's no clear canonical match (e.g. "Alouette", "capers", "pickles"):
   - set ingredientId to null
   - invent a reasonable name, emoji, amount, unit, and category
+  - CHOOSE THE UNIT BASED ON WHAT THE ITEM IS, NEVER DEFAULT TO "count":
+      * Cheese (emoji 🧀, any style) → "oz" or "lb", NEVER "count"
+      * Liquid dairy / juice / milk-style drink (🥛 🧃) → "gallon", "half_gallon",
+        "quart", "pint", "fl_oz" — use the container size shown on the receipt
+      * Yogurt / sour cream / cottage cheese (🥛 tub-style) → "oz" or "tub"
+      * Meat / fish / poultry (🥩 🍗 🥓 🐟 🍤) → "lb" or "oz", NEVER "count"
+        (the one exception is if the receipt literally says "4 CT" / "2 PACK")
+      * Deli meats → "oz" or "slice"
+      * Bread / baguette / bagel (🍞 🥖 🥯) → "loaf" or "slice"
+      * Rice / grains / flour / sugar (🍚 🌾) → "lb" or "bag"
+      * Canned goods (🥫) → "can"
+      * Condiments / sauces in jars/bottles (🍶 🍯) → "jar" or "bottle"
+      * Fresh produce usually sold individually (🍎 🍌 🥑 🥒 🫑) → "count" IS fine
+      * Fresh produce sold by weight (bulk 🥔 🥕 🥦) → "lb"
+
+  "count" is a LAST RESORT for obscure items with no better fit. If you're
+  unsure about a cheese or a meat, err toward "oz".
 
 CRITICAL: the big number next to an item on a receipt is almost always the
 PRICE in USD ($6.53, $3.99, etc.), NOT the quantity. Do NOT put the price in

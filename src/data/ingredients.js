@@ -104,8 +104,137 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "oz",
   },
+  {
+    id: "cheddar", name: "Cheddar", emoji: "🧀", category: "dairy",
+    units: [
+      { id: "oz",    label: "oz",          toBase: 28.35 },
+      { id: "block", label: "blocks",      toBase: 226 },
+      { id: "cup",   label: "cups grated", toBase: 113 },
+      { id: "slice", label: "slices",      toBase: 21 },
+      { id: "lb",    label: "lb",          toBase: 453.6 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "feta", name: "Feta", emoji: "🧀", category: "dairy",
+    units: [
+      { id: "oz",    label: "oz",   toBase: 28.35 },
+      { id: "block", label: "blocks", toBase: 170 }, // 6oz tub
+      { id: "g",     label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "goat_cheese", name: "Goat Cheese", emoji: "🧀", category: "dairy",
+    units: [
+      { id: "oz",  label: "oz",  toBase: 28.35 },
+      { id: "log", label: "logs", toBase: 113 }, // 4oz log
+      { id: "g",   label: "g",   toBase: 1 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "cream_cheese", name: "Cream Cheese", emoji: "🧀", category: "dairy",
+    units: [
+      { id: "oz",    label: "oz",    toBase: 28.35 },
+      { id: "block", label: "blocks", toBase: 226 }, // 8oz brick
+      { id: "tub",   label: "tubs",  toBase: 226 },
+      { id: "tbsp",  label: "tbsp",  toBase: 14.5 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "brie", name: "Brie", emoji: "🧀", category: "dairy",
+    units: [
+      { id: "oz",    label: "oz",    toBase: 28.35 },
+      { id: "wheel", label: "wheels", toBase: 226 },
+      { id: "wedge", label: "wedges", toBase: 85 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    // Catch-all for Alouette, Boursin, Rondelé, etc. — the stuff sold in a
+    // small tub that doesn't fit the hard/semi-hard cheese buckets.
+    id: "spreadable_cheese", name: "Spreadable Cheese", emoji: "🧀", category: "dairy",
+    units: [
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "tub",  label: "tubs", toBase: 198 }, // typical 6.5oz tub
+      { id: "tbsp", label: "tbsp", toBase: 14 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "yogurt", name: "Yogurt", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "oz",    label: "oz",      toBase: 28.35 },
+      { id: "cup",   label: "cups",    toBase: 245 },
+      { id: "tub",   label: "tubs",    toBase: 907 }, // 32oz tub
+      { id: "cup_pk",label: "cups (6oz)", toBase: 170 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "greek_yogurt", name: "Greek Yogurt", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "cup",   label: "cups",   toBase: 245 },
+      { id: "tub",   label: "tubs",   toBase: 907 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "sour_cream", name: "Sour Cream", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "tub",  label: "tubs", toBase: 454 }, // 16oz tub
+      { id: "tbsp", label: "tbsp", toBase: 14.5 },
+      { id: "cup",  label: "cups", toBase: 230 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "cottage_cheese", name: "Cottage Cheese", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "oz",  label: "oz",   toBase: 28.35 },
+      { id: "tub", label: "tubs", toBase: 454 },
+      { id: "cup", label: "cups", toBase: 225 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "half_and_half", name: "Half & Half", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "quart", label: "quarts", toBase: 946 },
+      { id: "pint",  label: "pints",  toBase: 473 },
+      { id: "cup",   label: "cups",   toBase: 240 },
+      { id: "fl_oz", label: "fl oz",  toBase: 29.57 },
+      { id: "tbsp",  label: "tbsp",   toBase: 15 },
+    ],
+    defaultUnit: "quart",
+  },
+  {
+    id: "oat_milk", name: "Oat Milk", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "half_gallon", label: "half gallons", toBase: 1893 },
+      { id: "quart",       label: "quarts",       toBase: 946 },
+      { id: "carton",      label: "cartons",      toBase: 1420 }, // 48oz
+      { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+      { id: "cup",         label: "cups",         toBase: 240 },
+    ],
+    defaultUnit: "half_gallon",
+  },
+  {
+    id: "almond_milk", name: "Almond Milk", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "half_gallon", label: "half gallons", toBase: 1893 },
+      { id: "quart",       label: "quarts",       toBase: 946 },
+      { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+      { id: "cup",         label: "cups",         toBase: 240 },
+    ],
+    defaultUnit: "half_gallon",
+  },
 
-  // ── meat / pork ─────────────────────────────────────────────────────────
+  // ── meat / pork / seafood ───────────────────────────────────────────────
   {
     id: "chicken", name: "Chicken (whole)", emoji: "🍗", category: "meat",
     units: [
@@ -216,6 +345,66 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "lb",
   },
+  {
+    id: "ground_turkey", name: "Ground Turkey", emoji: "🦃", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "salmon", name: "Salmon", emoji: "🐟", category: "meat",
+    units: [
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "fillet",label: "fillets",toBase: 170 }, // 6oz fillet
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "shrimp", name: "Shrimp", emoji: "🍤", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "tuna", name: "Tuna (fresh)", emoji: "🐟", category: "meat",
+    units: [
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "steak", label: "steaks", toBase: 170 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "deli_turkey", name: "Sliced Turkey (deli)", emoji: "🦃", category: "meat",
+    units: [
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "slice", label: "slices", toBase: 14 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "salami", name: "Salami", emoji: "🥩", category: "meat",
+    units: [
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "slice", label: "slices", toBase: 7 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "prosciutto", name: "Prosciutto", emoji: "🥓", category: "meat",
+    units: [
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "slice", label: "slices", toBase: 10 },
+    ],
+    defaultUnit: "oz",
+  },
 
   // ── produce ─────────────────────────────────────────────────────────────
   {
@@ -293,6 +482,151 @@ export const INGREDIENTS = [
       { id: "cup", label: "cups", toBase: 70 },
     ],
     defaultUnit: "oz",
+  },
+  {
+    id: "bell_pepper", name: "Bell Pepper", emoji: "🫑", category: "produce",
+    units: [{ id: "count", label: "peppers", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "cucumber", name: "Cucumber", emoji: "🥒", category: "produce",
+    units: [{ id: "count", label: "cucumbers", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "avocado", name: "Avocado", emoji: "🥑", category: "produce",
+    units: [{ id: "count", label: "avocados", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "potato", name: "Potato", emoji: "🥔", category: "produce",
+    units: [
+      { id: "count", label: "potatoes", toBase: 1 },
+      { id: "lb",    label: "lb",       toBase: 3 }, // ~3 mediums per lb
+      { id: "bag",   label: "bags",     toBase: 15 }, // 5lb bag
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "sweet_potato", name: "Sweet Potato", emoji: "🍠", category: "produce",
+    units: [
+      { id: "count", label: "potatoes", toBase: 1 },
+      { id: "lb",    label: "lb",       toBase: 2.5 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "broccoli", name: "Broccoli", emoji: "🥦", category: "produce",
+    units: [
+      { id: "head", label: "heads", toBase: 450 },
+      { id: "lb",   label: "lb",    toBase: 453.6 },
+      { id: "cup",  label: "cups florets", toBase: 90 },
+    ],
+    defaultUnit: "head",
+  },
+  {
+    id: "cauliflower", name: "Cauliflower", emoji: "🥦", category: "produce",
+    units: [
+      { id: "head", label: "heads", toBase: 700 },
+      { id: "lb",   label: "lb",    toBase: 453.6 },
+    ],
+    defaultUnit: "head",
+  },
+  {
+    id: "lettuce", name: "Lettuce", emoji: "🥬", category: "produce",
+    units: [
+      { id: "head", label: "heads", toBase: 500 },
+      { id: "cup",  label: "cups",  toBase: 55 },
+    ],
+    defaultUnit: "head",
+  },
+  {
+    id: "arugula", name: "Arugula", emoji: "🥬", category: "produce",
+    units: [
+      { id: "oz",  label: "oz",   toBase: 28.35 },
+      { id: "cup", label: "cups", toBase: 20 },
+    ],
+    defaultUnit: "oz",
+  },
+  {
+    id: "kale", name: "Kale", emoji: "🥬", category: "produce",
+    units: [
+      { id: "bunch", label: "bunches", toBase: 200 },
+      { id: "oz",    label: "oz",      toBase: 28.35 },
+      { id: "cup",   label: "cups",    toBase: 67 },
+    ],
+    defaultUnit: "bunch",
+  },
+  {
+    id: "zucchini", name: "Zucchini", emoji: "🥒", category: "produce",
+    units: [{ id: "count", label: "zucchini", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "apple", name: "Apple", emoji: "🍎", category: "produce",
+    units: [
+      { id: "count", label: "apples", toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 3 },
+      { id: "bag",   label: "bags",   toBase: 9 }, // 3lb bag
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "banana", name: "Banana", emoji: "🍌", category: "produce",
+    units: [
+      { id: "count", label: "bananas", toBase: 1 },
+      { id: "bunch", label: "bunches", toBase: 5 },
+      { id: "lb",    label: "lb",      toBase: 3 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "orange", name: "Orange", emoji: "🍊", category: "produce",
+    units: [
+      { id: "count", label: "oranges", toBase: 1 },
+      { id: "lb",    label: "lb",      toBase: 3 },
+      { id: "bag",   label: "bags",    toBase: 12 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "lime", name: "Lime", emoji: "🍋", category: "produce",
+    units: [{ id: "count", label: "limes", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "strawberry", name: "Strawberries", emoji: "🍓", category: "produce",
+    units: [
+      { id: "oz",        label: "oz",        toBase: 28.35 },
+      { id: "container", label: "containers",toBase: 454 }, // 16oz clamshell
+      { id: "cup",       label: "cups",      toBase: 144 },
+    ],
+    defaultUnit: "container",
+  },
+  {
+    id: "blueberry", name: "Blueberries", emoji: "🫐", category: "produce",
+    units: [
+      { id: "oz",        label: "oz",         toBase: 28.35 },
+      { id: "container", label: "containers", toBase: 170 }, // 6oz pint
+      { id: "cup",       label: "cups",       toBase: 148 },
+    ],
+    defaultUnit: "container",
+  },
+  {
+    id: "cilantro", name: "Cilantro", emoji: "🌿", category: "produce",
+    units: [
+      { id: "bunch", label: "bunches", toBase: 30 },
+      { id: "cup",   label: "cups",    toBase: 15 },
+    ],
+    defaultUnit: "bunch",
+  },
+  {
+    id: "ginger", name: "Ginger", emoji: "🫚", category: "produce",
+    units: [
+      { id: "oz",    label: "oz",    toBase: 28.35 },
+      { id: "piece", label: "pieces", toBase: 40 },
+    ],
+    defaultUnit: "piece",
   },
 
   // ── pantry / dry goods ──────────────────────────────────────────────────
@@ -425,6 +759,163 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "cup",
   },
+  {
+    id: "rice", name: "White Rice", emoji: "🍚", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 185 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 2268 }, // 5lb bag
+      { id: "g",   label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "brown_rice", name: "Brown Rice", emoji: "🍚", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 190 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 908 }, // 2lb bag
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "quinoa", name: "Quinoa", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 170 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "g",   label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "oats", name: "Rolled Oats", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",       label: "cups",       toBase: 80 },
+      { id: "container", label: "containers", toBase: 1134 }, // 40oz canister
+      { id: "lb",        label: "lb",         toBase: 453.6 },
+    ],
+    defaultUnit: "container",
+  },
+  {
+    id: "black_beans", name: "Black Beans", emoji: "🫘", category: "pantry",
+    units: [
+      { id: "can", label: "cans", toBase: 425 }, // 15oz
+      { id: "cup", label: "cups dry", toBase: 190 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "can",
+  },
+  {
+    id: "chickpeas", name: "Chickpeas", emoji: "🫘", category: "pantry",
+    units: [
+      { id: "can", label: "cans", toBase: 425 },
+      { id: "cup", label: "cups dry", toBase: 200 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "can",
+  },
+  {
+    id: "lentils", name: "Lentils", emoji: "🫘", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 200 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 454 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "penne", name: "Penne / Rigatoni", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz", toBase: 28.35 },
+      { id: "lb",  label: "lb", toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 }, // 1lb box
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "canned_tomatoes", name: "Canned Tomatoes", emoji: "🥫", category: "pantry",
+    units: [
+      { id: "can", label: "cans", toBase: 794 }, // 28oz
+      { id: "oz",  label: "oz",   toBase: 28.35 },
+    ],
+    defaultUnit: "can",
+  },
+  {
+    id: "peanut_butter", name: "Peanut Butter", emoji: "🥜", category: "pantry",
+    units: [
+      { id: "jar",  label: "jars", toBase: 454 }, // 16oz jar
+      { id: "tbsp", label: "tbsp", toBase: 16 },
+      { id: "cup",  label: "cups", toBase: 258 },
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+    ],
+    defaultUnit: "jar",
+  },
+  {
+    id: "honey", name: "Honey", emoji: "🍯", category: "pantry",
+    units: [
+      { id: "jar",  label: "jars", toBase: 340 }, // 12oz squeeze bottle
+      { id: "tbsp", label: "tbsp", toBase: 21 },
+      { id: "cup",  label: "cups", toBase: 340 },
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+    ],
+    defaultUnit: "jar",
+  },
+  {
+    id: "maple_syrup", name: "Maple Syrup", emoji: "🍁", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 355 }, // 12oz
+      { id: "tbsp",   label: "tbsp",    toBase: 20 },
+      { id: "cup",    label: "cups",    toBase: 322 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+  },
+  {
+    id: "coffee", name: "Coffee (whole bean)", emoji: "☕", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",   toBase: 28.35 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 340 }, // 12oz bag
+    ],
+    defaultUnit: "bag",
+  },
+  {
+    id: "soy_sauce", name: "Soy Sauce", emoji: "🍶", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 296 }, // 10oz
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+  },
+  {
+    id: "vinegar", name: "Vinegar", emoji: "🍶", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 473 },
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "cup",    label: "cups",    toBase: 240 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+  },
+  {
+    id: "tortillas", name: "Tortillas", emoji: "🌮", category: "pantry",
+    units: [
+      { id: "count", label: "tortillas", toBase: 1 },
+      { id: "pack",  label: "packs",     toBase: 10 },
+    ],
+    defaultUnit: "pack",
+  },
+  {
+    id: "oj", name: "Orange Juice", emoji: "🧃", category: "dairy",
+    units: [
+      { id: "half_gallon", label: "half gallons", toBase: 1893 },
+      { id: "quart",       label: "quarts",       toBase: 946 },
+      { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+      { id: "cup",         label: "cups",         toBase: 240 },
+    ],
+    defaultUnit: "half_gallon",
+  },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -449,6 +940,114 @@ export function toBase(qty, ingredient) {
   const u = ingredient.units.find(x => x.id === qty.unit);
   if (!u) return NaN;
   return Number(qty.amount) * u.toBase;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fallback unit inference for scanned items that don't match the registry.
+//
+// The scanner sometimes returns ingredientId: null with a sensible emoji but a
+// nonsense unit like "count" (e.g. "Alouette" cheese as 1 count). We use the
+// emoji + category to pick a reasonable unit list so the user can actually
+// edit the thing with a real dropdown instead of being stuck at "1 count".
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Unit presets, so we don't repeat the same weight/volume ladders over and over.
+const UNITS_CHEESE = [
+  { id: "oz",    label: "oz",     toBase: 28.35 },
+  { id: "lb",    label: "lb",     toBase: 453.6 },
+  { id: "block", label: "blocks", toBase: 226 },
+  { id: "tub",   label: "tubs",   toBase: 198 },
+  { id: "g",     label: "g",      toBase: 1 },
+];
+const UNITS_DAIRY_LIQUID = [
+  { id: "gallon",      label: "gallons",      toBase: 3785 },
+  { id: "half_gallon", label: "half gallons", toBase: 1893 },
+  { id: "quart",       label: "quarts",       toBase: 946 },
+  { id: "pint",        label: "pints",        toBase: 473 },
+  { id: "cup",         label: "cups",         toBase: 240 },
+  { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+];
+const UNITS_MEAT = [
+  { id: "lb", label: "lb", toBase: 453.6 },
+  { id: "oz", label: "oz", toBase: 28.35 },
+  { id: "kg", label: "kg", toBase: 1000 },
+];
+const UNITS_DRY_WEIGHT = [
+  { id: "oz",  label: "oz",  toBase: 28.35 },
+  { id: "lb",  label: "lb",  toBase: 453.6 },
+  { id: "cup", label: "cups",toBase: 150 },
+  { id: "bag", label: "bags",toBase: 454 },
+  { id: "g",   label: "g",   toBase: 1 },
+];
+const UNITS_PRODUCE_COUNT = [
+  { id: "count", label: "count", toBase: 1 },
+  { id: "lb",    label: "lb",    toBase: 453.6 },
+  { id: "bunch", label: "bunches", toBase: 5 },
+];
+const UNITS_BREAD = [
+  { id: "slice", label: "slices", toBase: 1 },
+  { id: "loaf",  label: "loaves", toBase: 20 },
+  { id: "count", label: "count",  toBase: 1 },
+];
+const UNITS_GENERIC = [
+  { id: "count", label: "count", toBase: 1 },
+  { id: "oz",    label: "oz",    toBase: 28.35 },
+  { id: "lb",    label: "lb",    toBase: 453.6 },
+];
+
+// Given a scanned (non-canonical) item's emoji + category, pick a sensible
+// unit list + default unit. Used in the scanner confirm screen so the user
+// gets a real dropdown (oz, lb, fl oz) instead of being locked into "count".
+export function inferUnitsForScanned({ emoji, category, unit }) {
+  // Cheese — emoji is the strongest signal, category "dairy" often misleads.
+  if (emoji === "🧀") {
+    return { units: UNITS_CHEESE, defaultUnit: "oz" };
+  }
+  // Liquid dairy: milk glass, juice box.
+  if (emoji === "🥛" || emoji === "🧃") {
+    return { units: UNITS_DAIRY_LIQUID, defaultUnit: "half_gallon" };
+  }
+  // Egg — only case "count" is actually right.
+  if (emoji === "🥚") {
+    return {
+      units: [
+        { id: "count", label: "eggs",  toBase: 1 },
+        { id: "dozen", label: "dozen", toBase: 12 },
+      ],
+      defaultUnit: "count",
+    };
+  }
+  // Meats
+  if (emoji === "🥩" || emoji === "🍗" || emoji === "🥓" || emoji === "🦃" ||
+      emoji === "🐟" || emoji === "🍤" || category === "meat") {
+    return { units: UNITS_MEAT, defaultUnit: "lb" };
+  }
+  // Bread-ish
+  if (emoji === "🍞" || emoji === "🥖" || emoji === "🥐" || emoji === "🥯") {
+    return { units: UNITS_BREAD, defaultUnit: "loaf" };
+  }
+  // Dry/pantry grains & similar
+  if (emoji === "🍚" || emoji === "🌾" || emoji === "🥜" || category === "dry") {
+    return { units: UNITS_DRY_WEIGHT, defaultUnit: "lb" };
+  }
+  // Produce fallback — usually legitimately counted (apples, peppers).
+  if (category === "produce") {
+    return { units: UNITS_PRODUCE_COUNT, defaultUnit: "count" };
+  }
+  // Dairy fallback without a more specific emoji — probably a tub (yogurt etc.).
+  if (category === "dairy") {
+    return {
+      units: [
+        { id: "oz",  label: "oz",  toBase: 28.35 },
+        { id: "tub", label: "tubs",toBase: 454 },
+        { id: "cup", label: "cups",toBase: 240 },
+        { id: "lb",  label: "lb",  toBase: 453.6 },
+      ],
+      defaultUnit: "oz",
+    };
+  }
+  // Last ditch. Preserve whatever unit Claude guessed (might be "bottle", "jar", etc.).
+  return { units: UNITS_GENERIC, defaultUnit: unit || "count" };
 }
 
 // Compare pantry "have" vs recipe "need". Both are { amount, unit }.
