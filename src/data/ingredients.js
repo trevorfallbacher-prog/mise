@@ -38,7 +38,8 @@ export const INGREDIENTS = [
     defaultUnit: "stick",
   },
   {
-    id: "milk", name: "Milk", emoji: "🥛", category: "dairy",
+    id: "milk", name: "Whole Milk", shortName: "Whole",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "gallon",      label: "gallons",      toBase: 3785 },
       { id: "half_gallon", label: "half gallons", toBase: 1893 },
@@ -50,6 +51,40 @@ export const INGREDIENTS = [
       { id: "ml",          label: "ml",           toBase: 1 },
     ],
     defaultUnit: "gallon",
+  },
+  {
+    id: "milk_2pct", name: "2% Milk", shortName: "2%",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "gallon",      label: "gallons",      toBase: 3785 },
+      { id: "half_gallon", label: "half gallons", toBase: 1893 },
+      { id: "quart",       label: "quarts",       toBase: 946 },
+      { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+      { id: "cup",         label: "cups",         toBase: 240 },
+    ],
+    defaultUnit: "gallon",
+  },
+  {
+    id: "milk_skim", name: "Skim Milk", shortName: "Skim",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "gallon",      label: "gallons",      toBase: 3785 },
+      { id: "half_gallon", label: "half gallons", toBase: 1893 },
+      { id: "quart",       label: "quarts",       toBase: 946 },
+      { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+    ],
+    defaultUnit: "gallon",
+  },
+  {
+    id: "buttermilk", name: "Buttermilk", shortName: "Buttermilk",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
+    units: [
+      { id: "quart", label: "quarts", toBase: 946 },
+      { id: "pint",  label: "pints",  toBase: 473 },
+      { id: "cup",   label: "cups",   toBase: 240 },
+      { id: "fl_oz", label: "fl oz",  toBase: 29.57 },
+    ],
+    defaultUnit: "quart",
   },
   {
     id: "heavy_cream", name: "Heavy Cream", emoji: "🥛", category: "dairy",
@@ -174,7 +209,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "yogurt", name: "Yogurt", emoji: "🥛", category: "dairy",
+    id: "yogurt", name: "Plain Yogurt", shortName: "Plain",
+    parentId: "yogurt_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "oz",    label: "oz",      toBase: 28.35 },
       { id: "cup",   label: "cups",    toBase: 245 },
@@ -184,7 +220,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "greek_yogurt", name: "Greek Yogurt", emoji: "🥛", category: "dairy",
+    id: "greek_yogurt", name: "Greek Yogurt", shortName: "Greek",
+    parentId: "yogurt_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "cup",   label: "cups",   toBase: 245 },
@@ -212,7 +249,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "half_and_half", name: "Half & Half", emoji: "🥛", category: "dairy",
+    id: "half_and_half", name: "Half & Half", shortName: "Half & Half",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "quart", label: "quarts", toBase: 946 },
       { id: "pint",  label: "pints",  toBase: 473 },
@@ -223,7 +261,8 @@ export const INGREDIENTS = [
     defaultUnit: "quart",
   },
   {
-    id: "oat_milk", name: "Oat Milk", emoji: "🥛", category: "dairy",
+    id: "oat_milk", name: "Oat Milk", shortName: "Oat",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "half_gallon", label: "half gallons", toBase: 1893 },
       { id: "quart",       label: "quarts",       toBase: 946 },
@@ -234,7 +273,8 @@ export const INGREDIENTS = [
     defaultUnit: "half_gallon",
   },
   {
-    id: "almond_milk", name: "Almond Milk", emoji: "🥛", category: "dairy",
+    id: "almond_milk", name: "Almond Milk", shortName: "Almond",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "half_gallon", label: "half gallons", toBase: 1893 },
       { id: "quart",       label: "quarts",       toBase: 946 },
@@ -299,8 +339,79 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "count",
   },
+  // Beef ───────────────────
   {
-    id: "pork_chop", name: "Pork Chops", emoji: "🥩", category: "meat",
+    id: "steak", name: "Steak", shortName: "Steak",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb",    label: "lb",       toBase: 453.6 },
+      { id: "oz",    label: "oz",       toBase: 28.35 },
+      { id: "count", label: "steaks",   toBase: 340 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "ribeye", name: "Ribeye", shortName: "Ribeye",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "count", label: "steaks", toBase: 340 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "ny_strip", name: "NY Strip", shortName: "NY Strip",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "count", label: "steaks", toBase: 340 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "sirloin", name: "Sirloin", shortName: "Sirloin",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "brisket", name: "Brisket", shortName: "Brisket",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "kg", label: "kg", toBase: 1000 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "chuck_roast", name: "Chuck Roast", shortName: "Chuck",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "ground_beef", name: "Ground Beef", shortName: "Ground",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+
+  // Pork ───────────────────
+  {
+    id: "pork_chop", name: "Pork Chops", shortName: "Chops",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
     units: [
       { id: "count", label: "chops", toBase: 200 },
       { id: "lb",    label: "lb",    toBase: 453.6 },
@@ -309,7 +420,35 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
-    id: "sausage", name: "Sausage", emoji: "🌭", category: "meat",
+    id: "pork_loin", name: "Pork Loin", shortName: "Loin",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "pork_shoulder", name: "Pork Shoulder", shortName: "Shoulder",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "ground_pork", name: "Ground Pork", shortName: "Ground",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "sausage", name: "Sausage", shortName: "Sausage",
+    parentId: "pork_hub", emoji: "🌭", category: "meat",
     units: [
       { id: "count", label: "links", toBase: 85 },
       { id: "lb",    label: "lb",    toBase: 453.6 },
@@ -318,7 +457,8 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
-    id: "bacon", name: "Bacon / Pancetta", emoji: "🥓", category: "meat",
+    id: "bacon", name: "Bacon / Pancetta", shortName: "Bacon",
+    parentId: "pork_hub", emoji: "🥓", category: "meat",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 14 },
@@ -327,7 +467,8 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "guanciale", name: "Guanciale", emoji: "🥓", category: "meat",
+    id: "guanciale", name: "Guanciale", shortName: "Guanciale",
+    parentId: "pork_hub", emoji: "🥓", category: "meat",
     units: [
       { id: "oz", label: "oz", toBase: 28.35 },
       { id: "g",  label: "g",  toBase: 1 },
@@ -336,49 +477,39 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "ham", name: "Ham", emoji: "🥩", category: "meat",
+    id: "ham", name: "Ham", shortName: "Ham",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 15 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
     ],
     defaultUnit: "oz",
   },
   {
-    id: "steak", name: "Steak", emoji: "🥩", category: "meat",
+    id: "prosciutto", name: "Prosciutto", shortName: "Prosciutto",
+    parentId: "pork_hub", emoji: "🥓", category: "meat",
     units: [
-      { id: "lb",    label: "lb",       toBase: 453.6 },
-      { id: "oz",    label: "oz",       toBase: 28.35 },
-      { id: "count", label: "steaks",   toBase: 340 },  // ~12oz per steak
-    ],
-    defaultUnit: "lb",
-  },
-  {
-    id: "ground_beef", name: "Ground Beef", emoji: "🥩", category: "meat",
-    units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-    ],
-    defaultUnit: "lb",
-  },
-  {
-    id: "ground_turkey", name: "Ground Turkey", emoji: "🦃", category: "meat",
-    units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-    ],
-    defaultUnit: "lb",
-  },
-  {
-    id: "salmon", name: "Salmon", emoji: "🐟", category: "meat",
-    units: [
-      { id: "lb",    label: "lb",     toBase: 453.6 },
       { id: "oz",    label: "oz",     toBase: 28.35 },
-      { id: "fillet",label: "fillets",toBase: 170 }, // 6oz fillet
+      { id: "slice", label: "slices", toBase: 10 },
     ],
-    defaultUnit: "lb",
+    defaultUnit: "oz",
   },
   {
-    id: "shrimp", name: "Shrimp", emoji: "🍤", category: "meat",
+    id: "salami", name: "Salami", shortName: "Salami",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "slice", label: "slices", toBase: 7 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+    ],
+    defaultUnit: "oz",
+  },
+
+  // Turkey ───────────────────
+  {
+    id: "ground_turkey", name: "Ground Turkey", shortName: "Ground",
+    parentId: "turkey_hub", emoji: "🦃", category: "meat",
     units: [
       { id: "lb", label: "lb", toBase: 453.6 },
       { id: "oz", label: "oz", toBase: 28.35 },
@@ -386,16 +517,8 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
-    id: "tuna", name: "Tuna (fresh)", emoji: "🐟", category: "meat",
-    units: [
-      { id: "lb",    label: "lb",     toBase: 453.6 },
-      { id: "oz",    label: "oz",     toBase: 28.35 },
-      { id: "steak", label: "steaks", toBase: 170 },
-    ],
-    defaultUnit: "lb",
-  },
-  {
-    id: "deli_turkey", name: "Sliced Turkey (deli)", emoji: "🦃", category: "meat",
+    id: "deli_turkey", name: "Sliced Turkey (deli)", shortName: "Sliced (deli)",
+    parentId: "turkey_hub", emoji: "🦃", category: "meat",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "lb",    label: "lb",     toBase: 453.6 },
@@ -404,21 +527,72 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "salami", name: "Salami", emoji: "🥩", category: "meat",
+    id: "turkey_breast", name: "Turkey Breast", shortName: "Breast",
+    parentId: "turkey_hub", emoji: "🦃", category: "meat",
     units: [
-      { id: "oz",    label: "oz",     toBase: 28.35 },
-      { id: "slice", label: "slices", toBase: 7 },
-      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
     ],
-    defaultUnit: "oz",
+    defaultUnit: "lb",
+  },
+
+  // Seafood ───────────────────
+  {
+    id: "salmon", name: "Salmon", shortName: "Salmon",
+    parentId: "seafood_hub", emoji: "🐟", category: "meat",
+    units: [
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "fillet",label: "fillets",toBase: 170 },
+    ],
+    defaultUnit: "lb",
   },
   {
-    id: "prosciutto", name: "Prosciutto", emoji: "🥓", category: "meat",
+    id: "tuna", name: "Tuna (fresh)", shortName: "Tuna",
+    parentId: "seafood_hub", emoji: "🐟", category: "meat",
     units: [
+      { id: "lb",    label: "lb",     toBase: 453.6 },
       { id: "oz",    label: "oz",     toBase: 28.35 },
-      { id: "slice", label: "slices", toBase: 10 },
+      { id: "steak", label: "steaks", toBase: 170 },
     ],
-    defaultUnit: "oz",
+    defaultUnit: "lb",
+  },
+  {
+    id: "cod", name: "Cod", shortName: "Cod",
+    parentId: "seafood_hub", emoji: "🐟", category: "meat",
+    units: [
+      { id: "fillet",label: "fillets",toBase: 170 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+    ],
+    defaultUnit: "fillet",
+  },
+  {
+    id: "tilapia", name: "Tilapia", shortName: "Tilapia",
+    parentId: "seafood_hub", emoji: "🐟", category: "meat",
+    units: [
+      { id: "fillet",label: "fillets",toBase: 140 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+    ],
+    defaultUnit: "fillet",
+  },
+  {
+    id: "shrimp", name: "Shrimp", shortName: "Shrimp",
+    parentId: "seafood_hub", emoji: "🍤", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "scallops", name: "Scallops", shortName: "Scallops",
+    parentId: "seafood_hub", emoji: "🦪", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+    ],
+    defaultUnit: "lb",
   },
 
   // ── produce ─────────────────────────────────────────────────────────────
@@ -676,38 +850,125 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "tbsp",
   },
+  // Pasta ───────────────────
   {
-    id: "spaghetti", name: "Spaghetti", emoji: "🍝", category: "pantry",
+    id: "spaghetti", name: "Spaghetti", shortName: "Spaghetti",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
     units: [
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "g",  label: "g",  toBase: 1 },
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+      { id: "g",   label: "g",     toBase: 1 },
     ],
-    defaultUnit: "oz",
+    defaultUnit: "box",
   },
   {
-    id: "bread", name: "Bread (pain de mie)", emoji: "🍞", category: "pantry",
+    id: "penne", name: "Penne", shortName: "Penne",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "rigatoni", name: "Rigatoni", shortName: "Rigatoni",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "fettuccine", name: "Fettuccine", shortName: "Fettuccine",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "orzo", name: "Orzo", shortName: "Orzo",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+      { id: "cup", label: "cups",  toBase: 200 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "lasagna", name: "Lasagna Noodles", shortName: "Lasagna",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "box",   label: "boxes",   toBase: 454 },
+      { id: "oz",    label: "oz",      toBase: 28.35 },
+      { id: "lb",    label: "lb",      toBase: 453.6 },
+      { id: "sheet", label: "sheets",  toBase: 20 },
+    ],
+    defaultUnit: "box",
+  },
+
+  // Bread ───────────────────
+  {
+    id: "bread", name: "Sandwich Bread", shortName: "Sandwich",
+    parentId: "bread_hub", emoji: "🍞", category: "pantry",
     units: [
       { id: "slice", label: "slices", toBase: 1 },
       { id: "loaf",  label: "loaves", toBase: 20 },
     ],
-    defaultUnit: "slice",
+    defaultUnit: "loaf",
   },
   {
-    id: "baguette", name: "Baguette", emoji: "🥖", category: "pantry",
+    id: "sourdough", name: "Sourdough", shortName: "Sourdough",
+    parentId: "bread_hub", emoji: "🍞", category: "pantry",
     units: [
       { id: "slice", label: "slices", toBase: 1 },
+      { id: "loaf",  label: "loaves", toBase: 16 },
+    ],
+    defaultUnit: "loaf",
+  },
+  {
+    id: "baguette", name: "Baguette", shortName: "Baguette",
+    parentId: "bread_hub", emoji: "🥖", category: "pantry",
+    units: [
       { id: "count", label: "whole",  toBase: 20 },
+      { id: "slice", label: "slices", toBase: 1 },
     ],
     defaultUnit: "count",
   },
   {
-    id: "ciabatta", name: "Ciabatta / Focaccia", emoji: "🍞", category: "pantry",
+    id: "ciabatta", name: "Ciabatta / Focaccia", shortName: "Ciabatta",
+    parentId: "bread_hub", emoji: "🍞", category: "pantry",
     units: [
       { id: "count", label: "rolls",   toBase: 1 },
       { id: "loaf",  label: "loaves",  toBase: 6 },
     ],
     defaultUnit: "count",
+  },
+  {
+    id: "bagel", name: "Bagels", shortName: "Bagel",
+    parentId: "bread_hub", emoji: "🥯", category: "pantry",
+    units: [
+      { id: "count", label: "bagels", toBase: 1 },
+      { id: "pack",  label: "packs",  toBase: 6 },
+    ],
+    defaultUnit: "count",
+  },
+  {
+    id: "english_muffin", name: "English Muffins", shortName: "English Muffin",
+    parentId: "bread_hub", emoji: "🍞", category: "pantry",
+    units: [
+      { id: "count", label: "muffins", toBase: 1 },
+      { id: "pack",  label: "packs",   toBase: 6 },
+    ],
+    defaultUnit: "pack",
   },
   {
     id: "balsamic", name: "Balsamic Vinegar", emoji: "🍶", category: "pantry",
@@ -774,8 +1035,10 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "cup",
   },
+  // Rice ───────────────────
   {
-    id: "rice", name: "White Rice", emoji: "🍚", category: "pantry",
+    id: "rice", name: "White Rice", shortName: "White",
+    parentId: "rice_hub", emoji: "🍚", category: "pantry",
     units: [
       { id: "cup", label: "cups", toBase: 185 },
       { id: "lb",  label: "lb",   toBase: 453.6 },
@@ -785,13 +1048,44 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
-    id: "brown_rice", name: "Brown Rice", emoji: "🍚", category: "pantry",
+    id: "brown_rice", name: "Brown Rice", shortName: "Brown",
+    parentId: "rice_hub", emoji: "🍚", category: "pantry",
     units: [
       { id: "cup", label: "cups", toBase: 190 },
       { id: "lb",  label: "lb",   toBase: 453.6 },
       { id: "bag", label: "bags", toBase: 908 }, // 2lb bag
     ],
     defaultUnit: "lb",
+  },
+  {
+    id: "jasmine_rice", name: "Jasmine Rice", shortName: "Jasmine",
+    parentId: "rice_hub", emoji: "🍚", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 185 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 2268 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "basmati_rice", name: "Basmati Rice", shortName: "Basmati",
+    parentId: "rice_hub", emoji: "🍚", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 185 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 2268 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    id: "arborio_rice", name: "Arborio Rice", shortName: "Arborio",
+    parentId: "rice_hub", emoji: "🍚", category: "pantry",
+    units: [
+      { id: "cup", label: "cups", toBase: 200 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+      { id: "bag", label: "bags", toBase: 454 }, // 1lb bag typical
+    ],
+    defaultUnit: "bag",
   },
   {
     id: "quinoa", name: "Quinoa", emoji: "🌾", category: "pantry",
@@ -811,8 +1105,10 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "container",
   },
+  // Beans & legumes ───────────────────
   {
-    id: "black_beans", name: "Black Beans", emoji: "🫘", category: "pantry",
+    id: "black_beans", name: "Black Beans", shortName: "Black",
+    parentId: "bean_hub", emoji: "🫘", category: "pantry",
     units: [
       { id: "can", label: "cans", toBase: 425 }, // 15oz
       { id: "cup", label: "cups dry", toBase: 190 },
@@ -821,7 +1117,8 @@ export const INGREDIENTS = [
     defaultUnit: "can",
   },
   {
-    id: "chickpeas", name: "Chickpeas", emoji: "🫘", category: "pantry",
+    id: "chickpeas", name: "Chickpeas", shortName: "Chickpeas",
+    parentId: "bean_hub", emoji: "🫘", category: "pantry",
     units: [
       { id: "can", label: "cans", toBase: 425 },
       { id: "cup", label: "cups dry", toBase: 200 },
@@ -830,7 +1127,8 @@ export const INGREDIENTS = [
     defaultUnit: "can",
   },
   {
-    id: "lentils", name: "Lentils", emoji: "🫘", category: "pantry",
+    id: "lentils", name: "Lentils", shortName: "Lentils",
+    parentId: "bean_hub", emoji: "🫘", category: "pantry",
     units: [
       { id: "cup", label: "cups", toBase: 200 },
       { id: "lb",  label: "lb",   toBase: 453.6 },
@@ -839,13 +1137,34 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
-    id: "penne", name: "Penne / Rigatoni", emoji: "🍝", category: "pantry",
+    id: "kidney_beans", name: "Kidney Beans", shortName: "Kidney",
+    parentId: "bean_hub", emoji: "🫘", category: "pantry",
     units: [
-      { id: "oz",  label: "oz", toBase: 28.35 },
-      { id: "lb",  label: "lb", toBase: 453.6 },
-      { id: "box", label: "boxes", toBase: 454 }, // 1lb box
+      { id: "can", label: "cans", toBase: 425 },
+      { id: "cup", label: "cups dry", toBase: 190 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
     ],
-    defaultUnit: "box",
+    defaultUnit: "can",
+  },
+  {
+    id: "pinto_beans", name: "Pinto Beans", shortName: "Pinto",
+    parentId: "bean_hub", emoji: "🫘", category: "pantry",
+    units: [
+      { id: "can", label: "cans", toBase: 425 },
+      { id: "cup", label: "cups dry", toBase: 190 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "can",
+  },
+  {
+    id: "cannellini_beans", name: "Cannellini Beans", shortName: "Cannellini",
+    parentId: "bean_hub", emoji: "🫘", category: "pantry",
+    units: [
+      { id: "can", label: "cans", toBase: 425 },
+      { id: "cup", label: "cups dry", toBase: 190 },
+      { id: "lb",  label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "can",
   },
   {
     id: "canned_tomatoes", name: "Canned Tomatoes", emoji: "🥫", category: "pantry",
@@ -952,6 +1271,7 @@ export function findIngredient(id) {
 // (We can always convert each member to grams/ml via toBase, then back out.)
 // ─────────────────────────────────────────────────────────────────────────────
 export const HUBS = [
+  // ── meat ────────────────────────────────────────────────────────────────
   {
     id: "chicken_hub",
     name: "Chicken",
@@ -962,6 +1282,44 @@ export const HUBS = [
     aggregateBase: 453.6, // grams per aggregate unit
   },
   {
+    id: "beef_hub",
+    name: "Beef",
+    emoji: "🥩",
+    category: "meat",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
+    id: "pork_hub",
+    name: "Pork",
+    emoji: "🥓",
+    category: "meat",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
+    id: "turkey_hub",
+    name: "Turkey",
+    emoji: "🦃",
+    category: "meat",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
+    id: "seafood_hub",
+    name: "Seafood",
+    emoji: "🐟",
+    category: "meat",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+
+  // ── dairy ───────────────────────────────────────────────────────────────
+  {
     id: "cheese_hub",
     name: "Cheese",
     emoji: "🧀",
@@ -969,6 +1327,62 @@ export const HUBS = [
     aggregateUnit: "oz",
     aggregateLabel: "oz",
     aggregateBase: 28.35,
+  },
+  {
+    id: "milk_hub",
+    name: "Milk",
+    emoji: "🥛",
+    category: "dairy",
+    aggregateUnit: "gallon",
+    aggregateLabel: "gal",
+    aggregateBase: 3785,
+  },
+  {
+    id: "yogurt_hub",
+    name: "Yogurt",
+    emoji: "🥛",
+    category: "dairy",
+    aggregateUnit: "oz",
+    aggregateLabel: "oz",
+    aggregateBase: 28.35,
+  },
+
+  // ── pantry ──────────────────────────────────────────────────────────────
+  {
+    id: "bread_hub",
+    name: "Bread",
+    emoji: "🍞",
+    category: "pantry",
+    aggregateUnit: "loaf",
+    aggregateLabel: "loaves",
+    aggregateBase: 20, // slices per loaf (base unit is slices)
+  },
+  {
+    id: "pasta_hub",
+    name: "Pasta",
+    emoji: "🍝",
+    category: "pantry",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
+    id: "rice_hub",
+    name: "Rice",
+    emoji: "🍚",
+    category: "pantry",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
+    id: "bean_hub",
+    name: "Beans",
+    emoji: "🫘",
+    category: "pantry",
+    aggregateUnit: "can",
+    aggregateLabel: "cans",
+    aggregateBase: 425,
   },
 ];
 
