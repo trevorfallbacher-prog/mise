@@ -136,7 +136,7 @@ function RecipePickerModal({ onPick, onClose }) {
 // Scheduled meal detail drawer (shown when tapping an existing meal)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MealDetailDrawer({ meal, recipe, userId, nameFor, onCookNow, onClaim, onUnclaim, onDelete, onClose }) {
+function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNow, onClaim, onUnclaim, onChangeCook, onChangeServings, onDelete, onClose }) {
   const [confirming, setConfirming] = useState(false);
   if (!recipe) {
     return (
@@ -210,6 +210,77 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, onCookNow, onClaim, o
             </div>
           );
         })()}
+
+        {/* Servings stepper — only the creator can change (realtime will push to family). */}
+        {meal.user_id === userId && onChangeServings && (
+          <div style={{
+            marginTop: 10, padding: "8px 10px 8px 14px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <span style={{ fontSize: 14 }}>👥</span>
+            <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#aaa" }}>
+              Cooking for <b style={{ color: "#f0ece4" }}>{meal.servings ?? 2}</b>
+            </span>
+            <button
+              onClick={() => onChangeServings(Math.max(1, (meal.servings ?? 2) - 1))}
+              style={{ width: 28, height: 28, borderRadius: 14, background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#f5c842", cursor: "pointer" }}
+            >−</button>
+            <button
+              onClick={() => onChangeServings(Math.min(20, (meal.servings ?? 2) + 1))}
+              style={{ width: 28, height: 28, borderRadius: 14, background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#f5c842", cursor: "pointer" }}
+            >+</button>
+          </div>
+        )}
+        {meal.user_id !== userId && meal.servings != null && (
+          <div style={{
+            marginTop: 10, padding: "8px 12px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#aaa",
+          }}>
+            👥 Cooking for <b style={{ color: "#f0ece4" }}>{meal.servings}</b>
+          </div>
+        )}
+
+        {/* Reassign cook — creator can pick a different family member. */}
+        {meal.user_id === userId && onChangeCook && family.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.1em", marginBottom: 6 }}>
+              REASSIGN
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { id: "request", label: "🙋 Request", target: null },
+                { id: userId, label: "Me", target: userId },
+                ...family.filter(f => f.otherId && f.other?.name).map(f => ({
+                  id: f.otherId,
+                  label: f.other.name.trim().split(/\s+/)[0],
+                  target: f.otherId,
+                })),
+              ].map(opt => {
+                const isActive = (opt.target ?? null) === (meal.cook_id ?? null);
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => onChangeCook(opt.target)}
+                    disabled={isActive}
+                    style={{
+                      padding: "6px 12px",
+                      background: isActive ? "#1e1a0e" : "#161616",
+                      border: `1px solid ${isActive ? "#f5c842" : "#2a2a2a"}`,
+                      color: isActive ? "#f5c842" : "#888",
+                      borderRadius: 16,
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                      cursor: isActive ? "default" : "pointer",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {meal.note && (
           <div style={{
@@ -345,7 +416,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, onCookNow, onClaim, o
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, onMealChange, hasFamily }) {
+export default function Plan({ profile, userId, familyKey, nameFor, onMealChange, hasFamily, family = [] }) {
   // Show a rolling 14-day window so next week is visible without scrolling mechanics.
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
@@ -364,7 +435,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
     return d;
   }, [today]);
 
-  const { meals, loading, schedule, cancel, claim, unclaim } = useScheduledMeals(userId, {
+  const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
     fromISO: today.toISOString(),
     toISO:   windowEnd.toISOString(),
     familyKey,
@@ -395,18 +466,21 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
     setRecipeToSchedule(recipe);
   };
 
-  const onSaveSchedule = async ({ scheduledFor, notificationSettings, note }) => {
+  const onSaveSchedule = async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
     await schedule({
       recipeSlug: recipeToSchedule.slug,
       scheduledFor,
       notificationSettings,
       note,
-      isRequest: isRequesting,
+      cookId,
+      isRequest,
+      servings,
     });
     setIsRequesting(false);
   };
 
   const firstName = profile?.name?.trim().split(/\s+/)[0];
+  const userName = firstName;
 
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
@@ -512,6 +586,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
                         </div>
                         <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
                           {isRequest && "🙋 "}{cookLabel}
+                          {meal.servings != null && ` · 👥 ${meal.servings}`}
                           {recipe && ` · ${totalTimeMin(recipe)} MIN`}
                           {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
                           {meal.note && " · 📝"}
@@ -547,6 +622,10 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
         <SchedulePicker
           recipe={recipeToSchedule}
           initialDate={addingForDay}
+          userId={userId}
+          userName={userName}
+          family={family}
+          defaultRequest={hasFamily}
           onClose={() => { setRecipeToSchedule(null); setAddingForDay(null); }}
           onSave={onSaveSchedule}
         />
@@ -557,6 +636,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
           recipe={findRecipe(openMeal.recipe_slug)}
           userId={userId}
           nameFor={nameFor}
+          family={family}
           onClose={() => setOpenMeal(null)}
           onCookNow={() => {
             const r = findRecipe(openMeal.recipe_slug);
@@ -569,6 +649,14 @@ export default function Plan({ profile, userId, familyKey, nameFor, onMealChange
           }}
           onUnclaim={async () => {
             const updated = await unclaim(openMeal.id);
+            setOpenMeal(updated);
+          }}
+          onChangeCook={async (cookId) => {
+            const updated = await updateMeal(openMeal.id, { cook_id: cookId });
+            setOpenMeal(updated);
+          }}
+          onChangeServings={async (servings) => {
+            const updated = await updateMeal(openMeal.id, { servings });
             setOpenMeal(updated);
           }}
           onDelete={async (id) => {

@@ -145,19 +145,30 @@ function AuthedApp({ user, profile, upsertProfile }) {
   }, [nameFor, pushToast]);
 
   const onMealChange = useCallback((evt, row, old) => {
-    const creator = nameFor(row?.user_id || old?.user_id);
+    const creator  = nameFor(row?.user_id || old?.user_id);
+    const dish     = (row?.recipe_slug || old?.recipe_slug || "").replace(/-/g, " ");
     if (evt === "INSERT") {
-      if (row.cook_id == null) pushToast(`${creator} is asking if someone can cook ${row.recipe_slug.replace(/-/g, " ")}`, { emoji: "🙋", kind: "info", ttl: 8000 });
-      else                     pushToast(`${creator} scheduled ${row.recipe_slug.replace(/-/g, " ")}`, { emoji: "📅" });
+      if (row.cook_id == null) pushToast(`${creator} is asking if someone can cook ${dish}`, { emoji: "🙋", kind: "info", ttl: 8000 });
+      else if (row.cook_id === row.user_id) pushToast(`${creator} scheduled ${dish}`, { emoji: "📅" });
+      else pushToast(`${creator} scheduled ${dish} for ${nameFor(row.cook_id)} to cook`, { emoji: "📅" });
     } else if (evt === "UPDATE") {
-      // Detect a claim (cook_id went from null → someone) for a fun toast.
+      // Multi-field update — walk through the most meaningful transitions in
+      // priority order. First match wins so we don't spam.
       if (old && old.cook_id == null && row.cook_id) {
-        pushToast(`${nameFor(row.cook_id)} is going to cook ${row.recipe_slug.replace(/-/g, " ")} 🍳`, { emoji: "✅", kind: "success" });
+        pushToast(`${nameFor(row.cook_id)} is going to cook ${dish} 🍳`, { emoji: "✅", kind: "success" });
+      } else if (old && old.cook_id && row.cook_id == null) {
+        pushToast(`${nameFor(old.cook_id)} backed out of ${dish} — looking for a cook`, { emoji: "🙋", kind: "warn" });
+      } else if (old && old.cook_id && row.cook_id && old.cook_id !== row.cook_id) {
+        pushToast(`${nameFor(row.cook_id)} is cooking ${dish} now (was ${nameFor(old.cook_id)})`, { emoji: "🔄" });
+      } else if (old && old.servings != null && row.servings != null && old.servings !== row.servings) {
+        pushToast(`${creator} set ${dish} to ${row.servings} ${row.servings === 1 ? "person" : "people"}`, { emoji: "👥" });
+      } else if (old && old.scheduled_for !== row.scheduled_for) {
+        pushToast(`${creator} rescheduled ${dish}`, { emoji: "📅" });
       } else {
-        pushToast(`${creator} updated a planned meal`, { emoji: "📅" });
+        pushToast(`${creator} updated ${dish}`, { emoji: "📅" });
       }
     } else if (evt === "DELETE") {
-      pushToast(`${creator} removed a planned meal`, { emoji: "📅", kind: "warn" });
+      pushToast(`${creator} cancelled ${dish || "a planned meal"}`, { emoji: "🗑️", kind: "warn" });
     }
   }, [nameFor, pushToast]);
 
@@ -193,11 +204,14 @@ function AuthedApp({ user, profile, upsertProfile }) {
         {tab === "cook"     && (
           <Cook
             profile={profile}
+            userId={user.id}
             onCooked={() => setTab("cookbook")}
             pantry={pantry}
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
+            family={relationships.family}
+            hasFamily={relationships.family.length > 0}
           />
         )}
         {tab === "plan"     && (
@@ -208,6 +222,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             nameFor={nameFor}
             onMealChange={onMealChange}
             hasFamily={relationships.family.length > 0}
+            family={relationships.family}
           />
         )}
         {tab === "cookbook" && <Cookbook />}

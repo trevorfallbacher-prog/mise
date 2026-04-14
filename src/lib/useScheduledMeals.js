@@ -86,15 +86,12 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
         const cb = onRealtimeRef.current;
         if (fromOther && cb) cb(payload.eventType, row, oldRow);
       })
-      .subscribe((status) => {
-        // eslint-disable-next-line no-console
-        console.log(`[rt:scheduled_meals] ${status}`);
-      });
+      .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [userId]);
 
   const schedule = useCallback(
-    async ({ recipeSlug, scheduledFor, notificationSettings = {}, note = null, cookId, isRequest = false }) => {
+    async ({ recipeSlug, scheduledFor, notificationSettings = {}, note = null, cookId, isRequest = false, servings }) => {
       if (!userId) throw new Error("schedule called without a userId");
       // If caller didn't specify, default to self-cooking unless it's a request.
       const effectiveCookId = cookId !== undefined ? cookId : (isRequest ? null : userId);
@@ -106,6 +103,7 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
         note,
         cook_id: effectiveCookId,
         requested_by: isRequest ? userId : null,
+        ...(servings != null ? { servings } : {}),
       };
       const { data, error: e } = await supabase
         .from("scheduled_meals")

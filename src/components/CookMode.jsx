@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
 import { findIngredient, unitLabel, compareQty } from "../data/ingredients";
+import IngredientCard from "./IngredientCard";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -196,6 +197,7 @@ export default function CookMode({
   const [activeStep, setActiveStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
+  const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
 
   // Defensive: if no recipe was passed, render nothing. Parent owns selection.
   if (!recipe) return null;
@@ -334,10 +336,35 @@ export default function CookMode({
                         : status === "low"    ? { label:"LOW",       color:"#f59e0b", bg:"#1a0f00" }
                         : status === "missing"? { label:"MISSING",   color:"#ef4444", bg:"#1a0a0a" }
                         :                       null;
+            // Only rows with a canonical ingredientId are tappable — everything
+            // else ("to taste" salt, decorative herbs) just renders static.
+            const tappable = !!ing.ingredientId;
+            const Row = tappable ? "button" : "div";
             return (
-              <div key={i} style={{ padding:"12px 16px", borderBottom: i<ingredientStatus.length-1?"1px solid #222":"none" }}>
+              <Row
+                key={i}
+                onClick={tappable ? () => setCardIng({
+                  ingredientId: ing.ingredientId,
+                  fallbackName: row?.name || ing.item,
+                  fallbackEmoji: row?.emoji,
+                }) : undefined}
+                style={{
+                  display:"block", width:"100%", textAlign:"left",
+                  padding:"12px 16px",
+                  borderBottom: i<ingredientStatus.length-1?"1px solid #222":"none",
+                  background: "transparent", border: "none",
+                  borderBottomStyle: i<ingredientStatus.length-1 ? "solid" : "none",
+                  borderBottomWidth: i<ingredientStatus.length-1 ? 1 : 0,
+                  borderBottomColor: "#222",
+                  cursor: tappable ? "pointer" : "default",
+                  color:"inherit",
+                }}
+              >
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ color:"#bbb", fontSize:14 }}>{ing.item}</span>
+                  <span style={{ color:"#bbb", fontSize:14, display:"flex", alignItems:"center", gap:6 }}>
+                    {ing.item}
+                    {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
+                  </span>
                   <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
                 </div>
                 {badge && (
@@ -352,7 +379,7 @@ export default function CookMode({
                     )}
                   </div>
                 )}
-              </div>
+              </Row>
             );
           })}
         </div>
@@ -386,6 +413,16 @@ export default function CookMode({
           START COOKING →
         </button>
       </div>
+      {cardIng && (
+        <IngredientCard
+          ingredientId={cardIng.ingredientId}
+          fallbackName={cardIng.fallbackName}
+          fallbackEmoji={cardIng.fallbackEmoji}
+          pantry={pantry}
+          currentRecipeSlug={recipe.slug}
+          onClose={() => setCardIng(null)}
+        />
+      )}
     </div>
   );
 

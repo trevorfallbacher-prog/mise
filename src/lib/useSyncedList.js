@@ -98,12 +98,7 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
         const cb = onRealtimeRef.current;
         if (fromOther && cb) cb(payload.eventType, newRow, oldRow);
       })
-      .subscribe((status) => {
-        // Log so we can see in the browser console whether the channel
-        // actually made it to SUBSCRIBED (vs. CHANNEL_ERROR / TIMED_OUT).
-        // eslint-disable-next-line no-console
-        console.log(`[rt:${table}] ${status}`);
-      });
+      .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [table, userId]);
 
