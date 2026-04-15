@@ -28,6 +28,11 @@ function fromDb(row) {
     // Where this physically lives in the kitchen: fridge | pantry | freezer.
     // Older rows pre-migration come back as 'pantry' (the column default).
     location: row.location || defaultLocationForCategory(row.category),
+    // Earliest-wins expiration across whatever has been merged into this row.
+    // Nullable — rows without storage metadata (free-text, unknown ingredient)
+    // carry no date rather than a fabricated one.
+    expiresAt:   row.expires_at   ? new Date(row.expires_at)   : null,
+    purchasedAt: row.purchased_at ? new Date(row.purchased_at) : null,
     // Which user owns this row. When you share a pantry with family, their
     // rows come through via the family-select RLS policy; ownerId lets the
     // UI tag them ("+added by Alice") so it's clear who stocked what.
@@ -47,7 +52,15 @@ function toDb(item) {
     low_threshold: item.lowThreshold,
     price_cents: item.priceCents ?? null,
     location: item.location || defaultLocationForCategory(item.category),
+    expires_at:   item.expiresAt   ? toIso(item.expiresAt)   : null,
+    purchased_at: item.purchasedAt ? toIso(item.purchasedAt) : null,
   };
+}
+
+// Accept both Date objects and ISO strings — UI merges can produce either.
+function toIso(d) {
+  if (d instanceof Date) return d.toISOString();
+  return d;
 }
 
 /**

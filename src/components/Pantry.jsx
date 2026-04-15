@@ -4,7 +4,7 @@ import {
   findIngredient, findHub, hubForIngredient,
   membersOfHub, standaloneIngredients,
   unitLabel, inferUnitsForScanned, toBase,
-  estimatePriceCents, getIngredientInfo,
+  estimatePriceCents, getIngredientInfo, estimateExpirationDays,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -57,6 +57,61 @@ const pct  = item => Math.min((item.amount / item.max) * 100, 100);
 const isLow      = item => item.amount <= item.lowThreshold;
 const isCritical = item => item.amount <= item.lowThreshold * 0.5;
 const barColor   = item => isCritical(item) ? "#ef4444" : isLow(item) ? "#f59e0b" : "#4ade80";
+
+// ── Expiration meter helpers (Phase 5a) ────────────────────────────────────
+// The pantry shows a second, thinner bar underneath the amount bar — a
+// running-time meter that fills from the day of purchase down to expiration.
+// Colors are absolute by days-remaining (not percent): home cooks care about
+// "is this still good THIS WEEK", not "is this at 60% of its shelf life".
+const DAYS_MS = 1000 * 60 * 60 * 24;
+// How many days until `expiresAt`; negative if past. Null when the item
+// doesn't carry an expiration date (free-text, unknown ingredient).
+const daysUntilExpiration = item => {
+  if (!item?.expiresAt) return null;
+  const exp = item.expiresAt instanceof Date ? item.expiresAt : new Date(item.expiresAt);
+  if (Number.isNaN(exp.getTime())) return null;
+  return Math.floor((exp.getTime() - Date.now()) / DAYS_MS);
+};
+// Short countdown label: "5 days" / "1 day" / "today" / "expired" / "2d ago".
+const formatDaysUntil = days => {
+  if (days == null) return null;
+  if (days < -1)  return `expired ${-days}d ago`;
+  if (days === -1) return "expired yesterday";
+  if (days === 0) return "expires today";
+  if (days === 1) return "1 day left";
+  if (days < 14)  return `${days} days left`;
+  if (days < 60)  return `${Math.round(days / 7)} weeks left`;
+  return `${Math.round(days / 30)} months left`;
+};
+// Same palette as the amount bar, gated on days remaining:
+//   expired  → deep red      (< 0)
+//   urgent   → red           (0–2)
+//   warn     → amber         (3–7)
+//   fresh    → green         (> 7)
+const expirationColor = days => {
+  if (days == null) return "#333";
+  if (days < 0)     return "#991b1b";
+  if (days <= 2)    return "#ef4444";
+  if (days <= 7)    return "#f59e0b";
+  return "#4ade80";
+};
+// Meter fill percentage: days-remaining as fraction of total shelf life. Uses
+// purchasedAt when available; falls back to a 14-day window so the bar still
+// tells SOME story (decays visibly as the date approaches) when older rows
+// only have expires_at but no purchase date.
+const expirationPct = item => {
+  const days = daysUntilExpiration(item);
+  if (days == null) return 0;
+  if (days < 0)     return 100; // past-due bar reads full-red
+  const purchased = item.purchasedAt instanceof Date ? item.purchasedAt
+                  : item.purchasedAt ? new Date(item.purchasedAt) : null;
+  if (purchased && !Number.isNaN(purchased.getTime()) && item.expiresAt) {
+    const total = (new Date(item.expiresAt).getTime() - purchased.getTime()) / DAYS_MS;
+    if (total > 0) return Math.max(2, Math.min(100, (days / total) * 100));
+  }
+  // No purchase date to anchor against — show days remaining capped at 14.
+  return Math.max(2, Math.min(100, (days / 14) * 100));
+};
 // Render a human-friendly unit string. For canonical items (with ingredientId)
 // we map the stored unit id → label from the registry; for free-text items
 // the stored unit is already a label.
@@ -1134,9 +1189,29 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       else setSpendRefresh(k => k + 1);
     }
 
+    // Purchased-on date — receipt date when the scanner found one, else now.
+    // Used as the anchor for expiration estimation and as the row's
+    // purchasedAt (most-recent wins on merge, so the gauge always shows the
+    // freshest batch's baseline).
+    const purchasedAt = meta.date ? new Date(meta.date) : new Date();
+
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
+        // Default expiration for this scanned item = purchased_at +
+        // estimateExpirationDays(storage, location). Returns null when the
+        // ingredient has no structured storage info — in which case we leave
+        // expiresAt null rather than fabricate a number.
+        const canon = findIngredient(s.ingredientId);
+        const info  = canon ? getIngredientInfo(canon) : null;
+        const loc   = canon?.category
+          ? defaultLocationForCategory(canon.category)
+          : (s.category ? defaultLocationForCategory(s.category) : null);
+        const days  = info?.storage ? estimateExpirationDays(info.storage, loc) : null;
+        const newExpiresAt = days != null
+          ? new Date(purchasedAt.getTime() + days * 24 * 60 * 60 * 1000)
+          : null;
+
         const ex = s.ingredientId
           ? next.find(p => p.ingredientId === s.ingredientId)
           : next.find(p => p.name.toLowerCase() === s.name.toLowerCase());
@@ -1151,6 +1226,18 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           // Backfill ingredientId if the existing row was free-text.
           if (!ex.ingredientId && s.ingredientId) ex.ingredientId = s.ingredientId;
           if (s.priceCents != null) ex.priceCents = s.priceCents;
+          // Earliest-wins on expiration: the row tells the user when the
+          // OLDEST batch in the pile goes bad. Most-recent-wins on
+          // purchasedAt so the meter anchors off the freshest purchase
+          // (which also extends the max — a fresh scan widens the bar).
+          if (newExpiresAt) {
+            ex.expiresAt = ex.expiresAt
+              ? new Date(Math.min(new Date(ex.expiresAt).getTime(), newExpiresAt.getTime()))
+              : newExpiresAt;
+          }
+          ex.purchasedAt = ex.purchasedAt
+            ? new Date(Math.max(new Date(ex.purchasedAt).getTime(), purchasedAt.getTime()))
+            : purchasedAt;
         } else {
           next.push({
             id: crypto.randomUUID(),
@@ -1163,6 +1250,8 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: s.priceCents ?? null,
+            expiresAt:   newExpiresAt,
+            purchasedAt,
           });
         }
       });
@@ -1349,6 +1438,20 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                   {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
                 </span>
               )}
+              {/* Expiration countdown chip — only when we have a date. The
+                  running-time meter below tells the same story graphically;
+                  this chip gives you the "5 days" without squinting. */}
+              {(() => {
+                const days = daysUntilExpiration(item);
+                if (days == null) return null;
+                const label = formatDaysUntil(days);
+                const color = expirationColor(days);
+                return (
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color, background:`${color}22`, padding:"1px 6px", borderRadius:4 }}>
+                    ⏳ {label}
+                  </span>
+                );
+              })()}
             </div>
           </div>
           <button
@@ -1364,6 +1467,22 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
         <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
           <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
         </div>
+        {/* Running-time meter — only rendered when the row carries an
+            expiration date. Thinner than the amount bar so it reads as a
+            secondary signal; empties as time runs out (gas-gauge mental
+            model). Past-due rows lock red at full width so they can't be
+            missed. */}
+        {(() => {
+          const days = daysUntilExpiration(item);
+          if (days == null) return null;
+          const color = expirationColor(days);
+          const width = expirationPct(item);
+          return (
+            <div style={{ height:2, background:"#1e1e1e", borderRadius:2, overflow:"hidden", marginTop:4 }}>
+              <div style={{ height:"100%", borderRadius:2, width:`${width}%`, background:color, transition:"width 0.6s ease" }} />
+            </div>
+          );
+        })()}
       </div>
     );
   };
