@@ -117,14 +117,20 @@ export default function Home({
           fontFamily: "'Fraunces',serif",
           fontSize: 40, lineHeight: 1.1,
           fontWeight: 300, fontStyle: "italic",
-          color: greeting.tier === "ultra" || greeting.tier === "rare"
+          // Mythic gets the loudest treatment — bigger glow, same gold
+          // but unmistakably brighter. Ultra/rare still feel special.
+          color: greeting.tier === "mythic" || greeting.tier === "ultra" || greeting.tier === "rare"
             ? "#f5c842"
             : greeting.tier === "disney"
               ? "#e7c9b0"
               : "#f0ece4",
           letterSpacing: "-0.02em",
           margin: 0,
-          textShadow: greeting.tier === "ultra" ? "0 0 24px #f5c84244" : "none",
+          textShadow: greeting.tier === "mythic"
+            ? "0 0 40px #f5c84266"
+            : greeting.tier === "ultra"
+              ? "0 0 24px #f5c84244"
+              : "none",
         }}>
           {greeting.text}
         </h1>

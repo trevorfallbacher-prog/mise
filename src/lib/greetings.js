@@ -60,21 +60,28 @@ const LATE_NIGHT = [
   () => `Shouldn't you be doomscrolling?`,
 ];
 
-// Rare: ~1 in 100. Some carry an onShow side effect.
+// Rare: ~1 in 100.
 const RARE = [
-  {
-    // Literal Ramsay joke — name stays "Trevor" regardless of viewer.
-    // Unlocking the badge regardless of who sees the greeting means the
-    // pun lands the same for everyone.
-    text: () => `What are you, Trevor?`,
-    onShow: awardIdiotSandwich,
-  },
-  { text: () => `Free Shavacado.` },
+  () => `Free Shavacado.`,
 ];
 
 // Ultra rare: ~1 in 500.
 const ULTRA_RARE = [
   (n) => `Soak your nuts first, ${n}.`,
+];
+
+// Mythic: ~1 in 2000 per Home mount. At 3 mounts/day a daily user sees
+// one in a couple years; a casual weekend user realistically never does.
+// The point is the rumor — everyone in a family will hear that SOMEONE
+// once saw it, and the badge lives on that one wall permanently.
+const MYTHIC = [
+  {
+    // Literal Ramsay joke — name stays "Trevor" regardless of who's
+    // viewing, because the pun only lands that way. Minting the badge
+    // is the reward for actually surfacing this line.
+    text: () => `What are you, Trevor?`,
+    onShow: awardIdiotSandwich,
+  },
 ];
 
 // ── picker ──────────────────────────────────────────────────────────────────
@@ -94,28 +101,32 @@ export function pickGreeting({ name, userId, now = new Date() } = {}) {
   const n = first(name);
   const hour = now.getHours();
 
-  // Roll the tiers in descending order of specialness so an ultra-rare
-  // or rare line beats a mundane one on the same mount.
-  const ultra = Math.random();
-  if (ultra < 1 / 500) {
-    return { text: random(ULTRA_RARE)(n), tier: "ultra" };
-  }
-
-  const rareRoll = Math.random();
-  if (rareRoll < 1 / 100) {
-    const pick = random(RARE);
+  // Roll the tiers in descending order of specialness. MYTHIC first at
+  // ~1/2000 — the rarest path, where onShow side effects (Idiot
+  // Sandwich badge mint) live. Then ULTRA_RARE (~1/500) and RARE
+  // (~1/100). A mundane line is the default.
+  if (Math.random() < 1 / 2000) {
+    const pick = random(MYTHIC);
     const text = pick.text(n);
-    const tier = "rare";
     if (pick.onShow && userId) {
       const key = `${userId}:${text}`;
       if (!shownOnce.has(key)) {
         shownOnce.add(key);
-        // Fire-and-forget; the module-level once-guard keeps it idempotent
-        // per session and DB unique constraint handles cross-session.
+        // Fire-and-forget; module-level once-guard keeps it idempotent
+        // per session and the (user_id, badge_id) unique key keeps it
+        // idempotent cross-session.
         pick.onShow(userId).catch(err => console.error("[greeting.onShow]", err));
       }
     }
-    return { text, tier };
+    return { text, tier: "mythic" };
+  }
+
+  if (Math.random() < 1 / 500) {
+    return { text: random(ULTRA_RARE)(n), tier: "ultra" };
+  }
+
+  if (Math.random() < 1 / 100) {
+    return { text: random(RARE)(n), tier: "rare" };
   }
 
   // Time-of-day, roughly 40% chance in window so they don't dominate.
