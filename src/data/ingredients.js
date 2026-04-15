@@ -2316,6 +2316,158 @@ const INGREDIENT_INFO = {
     winePairings: ["Prosecco", "Franciacorta", "Lambrusco", "Chianti"],
     recipes: ["Prosciutto + melon", "Wrapped around asparagus", "On pizza after baking", "Antipasto platters"],
   },
+
+  // ── produce: alliums + herbs ──────────────────────────────────────
+  garlic: {
+    description: "Bulb of the allium family, broken into cloves. The foundational aromatic in most of the world's cuisines — on every inhabited continent, some version of garlic-in-oil starts dinner.",
+    flavorProfile: "Sharp and pungent raw; sweet, mellow, and nutty when cooked; deeply caramelized and jammy when roasted whole",
+    prepTips: "Smash cloves with the flat of a knife to loosen the papery skin. Chop just before using — pre-chopped garlic oxidizes within an hour. Never burn it; brown garlic is bitter garlic.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 90,
+      tips: "Cool, dry, airy spot — not the fridge (goes moldy). If you see a green sprout inside, it's safe but bitter; halve and remove the germ.",
+    },
+    substitutions: [
+      { id: "shallot", note: "Sweeter, subtler. 1 clove ≈ ½ small shallot, minced." },
+    ],
+    pairs: ["olive_oil", "butter", "parsley", "lemon"],
+    nutrition: { per: "100g", kcal: 149, protein_g: 6.4, fat_g: 0.5, carb_g: 33, fiber_g: 2.1, sodium_mg: 17 },
+    origin: "Central Asia — domesticated over 5,000 years ago. Fed to the pyramid builders as a stimulant and antibiotic.",
+    culturalNotes: "Every Mediterranean grandmother has an opinion about pre-peeled garlic (generally: don't). The difference between fresh and jarred is audible in a quiet kitchen.",
+    allergens: [],
+    seasonality: { peakMonths: [7, 8, 9] },
+    sourcing: "Hardneck varieties (Rocambole, Porcelain) have deeper flavor and easier-to-peel cloves. California-grown softneck is the everyday workhorse.",
+  },
+
+  yellow_onion: {
+    description: "The default onion. Thick, papery skin over a sharp, pungent flesh that mellows and sweetens when cooked. The base of roughly every soup, sauté, and stew in Western cooking.",
+    flavorProfile: "Sharp and pungent raw; sweet and savory when cooked; deeply caramelized when slow-cooked 30+ minutes in butter",
+    prepTips: "Chill 15 minutes before chopping to reduce the tear-inducing vapor. For uniform dice: halve through the root, peel, make horizontal cuts toward (not through) the root, then vertical cuts, then slice across.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 60,
+      tips: "Cool, dry, DARK spot in a mesh bag or open basket. Never next to potatoes — both emit ethylene gas that ripens the other.",
+    },
+    substitutions: [
+      { id: "shallot", note: "Subtler, sweeter. Use for finer sauces and vinaigrettes." },
+      { id: "pearl_onion", note: "Whole-form variety for braises and stews." },
+    ],
+    pairs: ["garlic", "butter", "olive_oil", "carrot"],
+    nutrition: { per: "100g", kcal: 40, protein_g: 1.1, fat_g: 0.1, carb_g: 9.3, fiber_g: 1.7, sodium_mg: 4 },
+    origin: "Central Asia, cultivated ~7,000 years ago. 'The onion is the poor man's food' — Egyptian proverb.",
+    culturalNotes: "Deeply caramelized onions (45 min+ in butter, constant stirring) are the secret foundation of French onion soup, coq au vin, and half the soups that ever tasted like 'mom made this.'",
+    allergens: [],
+    seasonality: { peakMonths: [8, 9, 10] },
+    sourcing: "Look for firm bulbs with dry, papery skin — soft spots mean rot underneath. Storage onions (yellow) are what you want; sweet onions (Vidalia, Walla Walla) are specialty.",
+  },
+
+  shallot: {
+    description: "Small, elongated allium — milder, sweeter, and more refined than an onion. The go-to for vinaigrettes, pan sauces, and anywhere you want onion character without the bite.",
+    flavorProfile: "Delicate, sweet, faintly garlicky; no bitter aftertaste raw",
+    prepTips: "Mince fine for vinaigrettes — bigger pieces stay crunchy in the mouth. For pan sauces, sweat in butter before adding wine so they surrender their sugars.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 45,
+      tips: "Same as yellow onions — cool, dark, airy. Once cut, refrigerate and use within 2 days; the delicate flavor fades fast.",
+    },
+    substitutions: [
+      { id: "yellow_onion", note: "Use half the amount; the bite is stronger and less refined." },
+      { id: "garlic", note: "Same amount for pan sauces; accepts that the result will be more assertive." },
+    ],
+    pairs: ["butter", "white_wine", "dijon", "parsley"],
+    nutrition: { per: "100g", kcal: 72, protein_g: 2.5, fat_g: 0.1, carb_g: 17, fiber_g: 3.2, sodium_mg: 12 },
+    origin: "Named for the ancient city of Ashkelon (Ascalon) in modern Israel, where crusaders first encountered them.",
+    culturalNotes: "French cooks consider shallots the 'onion for sauces' — onion is too bold, garlic too assertive; shallot is the neutral. Eschalot / échalote in French.",
+    allergens: [],
+    seasonality: { peakMonths: [7, 8, 9] },
+    sourcing: "French gray shallots (échalote grise) have deeper flavor but are hard to find. Jersey (banana) shallots are the usual supermarket option — smaller, milder, still good.",
+  },
+
+  pearl_onion: {
+    description: "Miniature onions ~½-inch across. Sold in mesh bags (fresh) or jars (pickled). The classic garnish for braises, casseroles, and a proper gin martini.",
+    flavorProfile: "Mild, sweet, delicate; less aggressive than a full onion",
+    prepTips: "To peel fresh ones: blanch 60 seconds, shock in ice water, squeeze the root end — the onion slips out of its skin. Doing 30 of them individually is the only thing worse than crying through yellow-onion dice.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 30,
+      tips: "Fresh: cool dry mesh bag, same as yellow onions. Frozen pearl onions (pre-peeled) are a legitimate shortcut for braises — nobody will taste the difference.",
+    },
+    substitutions: [
+      { id: "yellow_onion", note: "Quartered chunks work for the flavor; you lose the whole-onion visual moment." },
+    ],
+    pairs: ["bacon", "red_wine", "thyme", "mushroom"],
+    nutrition: { per: "100g", kcal: 40, protein_g: 1.1, fat_g: 0.1, carb_g: 9.3, fiber_g: 1.7, sodium_mg: 4 },
+    origin: "Bred from regular onions for size and uniformity; Dutch and French cooks made them famous as garnish onions.",
+    culturalNotes: "The bourguignon question: traditional recipe calls for ~20 pearl onions per serving, each individually peeled. Frozen pre-peeled is the modern grace.",
+    allergens: [],
+    seasonality: { peakMonths: [8, 9, 10] },
+    sourcing: "Frozen pearl onions are the move for braises — already peeled, consistent sizing, half the price of fresh. Fresh for spring peas + new pearl onions is worth the peeling penance.",
+  },
+
+  basil: {
+    description: "Sweet Italian herb with large, tender leaves. The summer-tomato herb, the pesto herb, the herb you add last so it doesn't blacken.",
+    flavorProfile: "Sweet, peppery, aniseed; clove-ish on the back end; turns soapy and thin if heated too long",
+    prepTips: "Tear, don't chop — oxidation blackens cut edges. Add at the very end or scatter raw on top. For pesto, blanch 10 seconds + ice-shock to lock the color in.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 7,
+      tips: "Never refrigerate — basil blackens in the cold. Stand stems in a glass of water on the counter like cut flowers; covers loose with a bag over the leaves.",
+    },
+    substitutions: [
+      { id: "parsley", note: "Different flavor entirely but works in a pinch as a soft green garnish." },
+      { id: "thai_basil", note: "For Asian dishes — stronger, spicier, anise-forward." },
+    ],
+    pairs: ["tomato", "mozzarella", "olive_oil", "garlic"],
+    nutrition: { per: "100g", kcal: 23, protein_g: 3.2, fat_g: 0.6, carb_g: 2.7, fiber_g: 1.6, sodium_mg: 4 },
+    origin: "India and Southeast Asia originally; the Italian Genovese cultivar is what pasta built its reputation on.",
+    culturalNotes: "Pesto alla Genovese is protected DOP — real basilico Genovese grown near the coast has smaller leaves and less mint character than what most of us grow.",
+    allergens: [],
+    seasonality: { peakMonths: [6, 7, 8, 9] },
+    sourcing: "Greenhouse basil year-round is fine; summer's farmers-market basil is incomparably better. A pot on the windowsill is almost always worth it.",
+  },
+
+  parsley: {
+    description: "Flat-leaf (Italian) parsley is the workhorse herb in Western kitchens — brighter than you remember, and not the garnish you scraped off your diner plate.",
+    flavorProfile: "Clean, grassy, peppery; refreshing bitter edge that cuts through fat",
+    prepTips: "Chop LESS than you think — over-chopped parsley is mushy and bruised. A quick mince with a sharp knife is better than a rough chop. Use stems in stocks and dressings; they're more flavorful than the leaves.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 10,
+      tips: "Wrap stems in a damp paper towel inside a zip-top bag, or stand in a glass of water with the leaves covered loosely. Refreshes wilted parsley in 30 minutes.",
+    },
+    substitutions: [
+      { id: "cilantro", note: "Different profile (citrusy, divisive) but similar green-brightener role." },
+      { id: "chervil", note: "Finer, aniseed-tinged. Use in French preparations where the parsley was already subtle." },
+    ],
+    pairs: ["garlic", "lemon", "olive_oil", "butter"],
+    nutrition: { per: "100g", kcal: 36, protein_g: 3, fat_g: 0.8, carb_g: 6.3, fiber_g: 3.3, sodium_mg: 56 },
+    origin: "Mediterranean. The ancient Greeks made parsley wreaths for athletic victors; 'requiring parsley' was a Greek euphemism for the gravely ill (parsley grew on graves).",
+    culturalNotes: "Curly-leaf parsley is what ended up on every steakhouse plate in the 1970s. Flat-leaf (Italian) is for actual cooking — stronger flavor, easier to chop.",
+    allergens: [],
+    seasonality: { peakMonths: [5, 6, 7, 8, 9] },
+    sourcing: "Flat-leaf for cooking, always. Curly is fine for decoration. Bunches should be perky, not slimy or yellowing at the base.",
+  },
+
+  cilantro: {
+    description: "Fresh coriander leaves — the herb that Mexican, Thai, Vietnamese, and North African cuisines lean on hardest. Divisive: a small fraction of people taste soap (a genetic variant of the OR6A2 olfactory receptor).",
+    flavorProfile: "Bright, citrusy, soapy-to-some, fresh; cools and lifts fatty or spicy dishes",
+    prepTips: "Chop stems and leaves — stems carry more flavor than the leaves and are common in Thai/Mexican cooking. Add at the very end; cilantro wilts to mush with any real heat.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 10,
+      tips: "Stand stems in a glass of water, loose bag over the top. Or wrap in slightly damp paper towel inside a zip-top. Slimy cilantro is a total loss — no rescue.",
+    },
+    substitutions: [
+      { id: "parsley", note: "Closest visual match; entirely different flavor. Use if cilantro allergy/aversion is in play." },
+    ],
+    pairs: ["lime", "garlic", "jalapeno", "avocado"],
+    nutrition: { per: "100g", kcal: 23, protein_g: 2.1, fat_g: 0.5, carb_g: 3.7, fiber_g: 2.8, sodium_mg: 46 },
+    origin: "Eastern Mediterranean and Central Asia. One of the oldest cultivated herbs — seeds (coriander) found in Egyptian tombs.",
+    culturalNotes: "The soap-taste haters are genuine — roughly 4–14% of people depending on heritage, due to a gene variant. Not picky eaters; literally a different sensory experience.",
+    allergens: [],
+    seasonality: { peakMonths: [5, 6, 7, 8] },
+    sourcing: "Bunches should be vibrant green with no slime at the base. 'Culantro' (recao) is a stronger, sturdier cousin used in Caribbean cooking — a legit substitute if you can find it.",
+  },
 };
 
 // Look up display info for an ingredient — ingredient-specific fields win,
