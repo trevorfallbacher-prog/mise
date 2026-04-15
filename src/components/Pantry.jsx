@@ -12,13 +12,15 @@ import { defaultLocationForCategory } from "../lib/usePantry";
 import { useToast } from "../lib/toast";
 import { FRIDGE_TILES, tileIdForItem as fridgeTileIdForItem } from "../lib/fridgeTiles";
 import { PANTRY_TILES, pantryTileIdForItem } from "../lib/pantryTiles";
+import { FREEZER_TILES, freezerTileIdForItem } from "../lib/freezerTiles";
 
-// Tab → ({ tiles, classify }) dispatch. One place to add the Freezer tile
-// set later — the render path below reads entirely off this.
+// Tab → ({ tiles, classify }) dispatch. One place to add a new tile set
+// — the render path below reads entirely off this.
 function tilesForTab(tab) {
-  if (tab === "fridge") return { tiles: FRIDGE_TILES, classify: fridgeTileIdForItem };
-  if (tab === "pantry") return { tiles: PANTRY_TILES, classify: pantryTileIdForItem };
-  return { tiles: null, classify: null }; // freezer — flat list until its own tile pass
+  if (tab === "fridge")  return { tiles: FRIDGE_TILES,  classify: fridgeTileIdForItem };
+  if (tab === "pantry")  return { tiles: PANTRY_TILES,  classify: pantryTileIdForItem };
+  if (tab === "freezer") return { tiles: FREEZER_TILES, classify: freezerTileIdForItem };
+  return { tiles: null, classify: null };
 }
 import IngredientCard from "./IngredientCard";
 import LinkIngredient from "./LinkIngredient";
