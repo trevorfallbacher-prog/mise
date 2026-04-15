@@ -156,7 +156,23 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [notifsOpen, setNotifsOpen]       = useState(false);
+  // deepLink is set when a notification tap wants to navigate. Cookbook
+  // consumes it on mount and calls setDeepLink(null) to clear.
+  // Shape: { kind: 'cook_log', id: '<uuid>' } | null
+  const [deepLink, setDeepLink]           = useState(null);
   const incomingCount = relationships.incoming.length;
+
+  // Route a notification tap. For now 'cook_log' is the only target kind
+  // (landing the user on Cookbook → that meal's detail, composer open if
+  // they were a diner). Falls through silently on unknown kinds so a
+  // future target can ship server-side without breaking old clients.
+  const openNotificationTarget = useCallback((targetKind, targetId) => {
+    if (targetKind === "cook_log" && targetId) {
+      setDeepLink({ kind: targetKind, id: targetId });
+      setTab("cookbook");
+      setNotifsOpen(false);
+    }
+  }, []);
 
   // Lazy permission request — only on explicit bell click so we don't prompt
   // on first paint.
@@ -243,6 +259,8 @@ function AuthedApp({ user, profile, upsertProfile }) {
             userId={user.id}
             familyKey={familyKey}
             nameFor={nameFor}
+            deepLink={deepLink}
+            onConsumeDeepLink={() => setDeepLink(null)}
           />
         )}
         {tab === "pantry"   && (
@@ -276,6 +294,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
           dismiss={notifications.dismiss}
           clearAll={notifications.clearAll}
           onClose={() => setNotifsOpen(false)}
+          onOpen={openNotificationTarget}
         />
       )}
 

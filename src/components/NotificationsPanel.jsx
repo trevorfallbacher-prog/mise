@@ -64,6 +64,10 @@ export default function NotificationsPanel({
   dismiss,
   clearAll,
   onClose,
+  // onOpen(targetKind, targetId) — called when the user taps a row that
+  // carries a deep-link target. App.jsx routes the tap to the right tab
+  // (currently only 'cook_log' → Cookbook). If omitted, rows are plain.
+  onOpen,
 }) {
   // Auto-mark-read on open. We deliberately fire this only on mount —
   // markAllRead's identity changes every render, but we don't want to
@@ -191,6 +195,16 @@ export default function NotificationsPanel({
             }
             const n = entry.row;
             const unread = !n.read_at;
+            // A notification becomes a link when it carries both a target
+            // kind and a target id AND the parent gave us an onOpen handler
+            // for that kind. Otherwise it's a plain info row.
+            const linkable = !!(onOpen && n.target_kind && n.target_id);
+            const openTarget = () => {
+              if (!linkable) return;
+              onOpen(n.target_kind, n.target_id);
+              // App.jsx closes the panel after routing; we don't close
+              // preemptively here so the navigation has time to happen.
+            };
             return (
               <div
                 key={n.id}
@@ -207,20 +221,60 @@ export default function NotificationsPanel({
                 <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.2 }}>
                   {n.emoji || "🔔"}
                 </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-                    color: "#f0ece4", lineHeight: 1.35,
-                  }}>
-                    {n.msg}
+                {/* Body is a button when linkable so the whole message + chevron
+                    are one target; stays a div when not linkable so there's no
+                    pointer hint where nothing happens. */}
+                {linkable ? (
+                  <button
+                    onClick={openTarget}
+                    style={{
+                      flex: 1, minWidth: 0,
+                      background: "transparent", border: "none", padding: 0,
+                      textAlign: "left", cursor: "pointer", color: "inherit",
+                      display: "flex", alignItems: "flex-start", gap: 10,
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                        color: "#f0ece4", lineHeight: 1.35,
+                      }}>
+                        {n.msg}
+                      </div>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: "#666", letterSpacing: "0.08em", marginTop: 4,
+                      }}>
+                        {timeAgo(n.created_at).toUpperCase()}
+                      </div>
+                    </div>
+                    <span
+                      aria-hidden
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 14,
+                        color: "#f5c842", letterSpacing: "0.04em",
+                        flexShrink: 0, alignSelf: "center",
+                      }}
+                    >
+                      →
+                    </span>
+                  </button>
+                ) : (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                      color: "#f0ece4", lineHeight: 1.35,
+                    }}>
+                      {n.msg}
+                    </div>
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#666", letterSpacing: "0.08em", marginTop: 4,
+                    }}>
+                      {timeAgo(n.created_at).toUpperCase()}
+                    </div>
                   </div>
-                  <div style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: "#666", letterSpacing: "0.08em", marginTop: 4,
-                  }}>
-                    {timeAgo(n.created_at).toUpperCase()}
-                  </div>
-                </div>
+                )}
                 <button
                   onClick={() => dismiss(n.id)}
                   aria-label="Dismiss"

@@ -332,7 +332,12 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, name
 }
 
 // ── Main list ────────────────────────────────────────────────────────────────
-export default function Cookbook({ userId, familyKey, nameFor }) {
+//
+// `deepLink`/`onConsumeDeepLink` — set by App.jsx when a notification tap
+// routes to a specific cook_log. Cookbook opens that log's detail (and
+// auto-switches to the right scope) the first time it sees the id, then
+// calls onConsumeDeepLink so the prop doesn't re-fire on every render.
+export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsumeDeepLink }) {
   // `scope` picks which stream drives the list. "cooked" = my own cooks,
   // "eaten" = cooks where I'm in the diners array. Default to cooked so
   // a new user's empty state matches their intuition.
@@ -343,6 +348,23 @@ export default function Cookbook({ userId, familyKey, nameFor }) {
 
   const cookedHook = useCookLog(userId, familyKey);
   const eatenHook  = useDinerLog(userId, familyKey);
+
+  // Consume an inbound deep-link. We wait until the relevant stream has
+  // loaded so the detail screen can actually resolve the row — otherwise
+  // we'd flash an empty detail. If the id genuinely isn't found (e.g. the
+  // chef deleted the log), we still consume the link so we don't get stuck
+  // retrying forever, and just fall back to the list.
+  useEffect(() => {
+    if (!deepLink || deepLink.kind !== "cook_log") return;
+    const inCooked = cookedHook.logs.some(l => l.id === deepLink.id);
+    const inEaten  = eatenHook.logs.some(l => l.id === deepLink.id);
+    const stillLoading = cookedHook.loading || eatenHook.loading;
+    if (!inCooked && !inEaten && stillLoading) return; // give the streams a beat
+    if (inCooked)       setScope("cooked");
+    else if (inEaten)   setScope("eaten");
+    setDetailId(deepLink.id);
+    onConsumeDeepLink?.();
+  }, [deepLink, cookedHook.logs, cookedHook.loading, eatenHook.logs, eatenHook.loading, onConsumeDeepLink]);
 
   const logs    = scope === "cooked" ? cookedHook.logs    : eatenHook.logs;
   const loading = scope === "cooked" ? cookedHook.loading : eatenHook.loading;
