@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 /**
  * Generic "row list synced to a Supabase table" hook.
@@ -68,8 +68,7 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
   // reconciles our own changes against what the DB ultimately stored.
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase
-      .channel(`rt:${table}:${userId}`)
+    const ch = safeChannel(`rt:${table}:${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
         const mapRow = fromDbRef.current;
         const newRow = payload.new && Object.keys(payload.new).length ? mapRow(payload.new) : null;

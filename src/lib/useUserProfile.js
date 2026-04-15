@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 // Map DB cook_log row → UI shape. Kept local so UserProfile can render
 // these directly without importing the main useCookLog normalizer (and
@@ -91,8 +91,7 @@ export function useUserProfile(targetUserId, viewerId) {
   // change the profile summary.
   useEffect(() => {
     if (!targetUserId) return;
-    const ch = supabase
-      .channel(`rt:user_profile:${targetUserId}`)
+    const ch = safeChannel(`rt:user_profile:${targetUserId}`)
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "cook_logs", filter: `user_id=eq.${targetUserId}` },
         (payload) => {

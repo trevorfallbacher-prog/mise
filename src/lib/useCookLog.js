@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 // Row shape we render in the UI. Keeps the DB column names out of components.
 //
@@ -69,8 +69,7 @@ export function useMyFavorites(userId, familyKey) {
 
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase
-      .channel(`rt:cook_log_favorites:${userId}`)
+    const ch = safeChannel(`rt:cook_log_favorites:${userId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "cook_log_favorites", filter: `user_id=eq.${userId}` },
         (payload) => {
@@ -156,8 +155,7 @@ export function useCookLog(userId, familyKey) {
   // channel could deliver family rows we don't want in this list).
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase
-      .channel(`rt:cook_logs:${userId}`)
+    const ch = safeChannel(`rt:cook_logs:${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "cook_logs" }, (payload) => {
         const rowUser = payload.new?.user_id || payload.old?.user_id;
         if (rowUser !== userId) return;
@@ -253,8 +251,7 @@ export function useDinerLog(userId, familyKey) {
 
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase
-      .channel(`rt:cook_logs_diner:${userId}`)
+    const ch = safeChannel(`rt:cook_logs_diner:${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "cook_logs" }, (payload) => {
         const row = payload.new || payload.old;
         // Only care about rows where we're a diner. Note that an UPDATE
@@ -372,8 +369,7 @@ export function useCookSavers(cookLogId, viewerId) {
   // Realtime: new ★ or un-★ on this cook from anyone in the cohort.
   useEffect(() => {
     if (!cookLogId) return;
-    const ch = supabase
-      .channel(`rt:cook_log_favorites:savers:${cookLogId}`)
+    const ch = safeChannel(`rt:cook_log_favorites:savers:${cookLogId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "cook_log_favorites", filter: `cook_log_id=eq.${cookLogId}` },
         (payload) => {
@@ -445,8 +441,7 @@ export function useCookLogReviews(cookLogId, userId) {
 
   useEffect(() => {
     if (!cookLogId) return;
-    const ch = supabase
-      .channel(`rt:cook_log_reviews:${cookLogId}`)
+    const ch = safeChannel(`rt:cook_log_reviews:${cookLogId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "cook_log_reviews", filter: `cook_log_id=eq.${cookLogId}` },
         (payload) => {
@@ -563,8 +558,7 @@ export function useCookPhotos(cookLogId, viewerId) {
 
   useEffect(() => {
     if (!cookLogId) return;
-    const ch = supabase
-      .channel(`rt:cook_log_photos:${cookLogId}`)
+    const ch = safeChannel(`rt:cook_log_photos:${cookLogId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "cook_log_photos", filter: `cook_log_id=eq.${cookLogId}` },
         (payload) => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 // Pull the last 30 days, capped at 100 rows. Older rows still exist in the DB
 // (auto-prune is a future cron); we just don't surface them in the panel.
@@ -65,8 +65,7 @@ export function useNotifications(userId, { onNew } = {}) {
   // notifications addressed to other family members on the same publication.
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase
-      .channel(`rt:notifications:${userId}`)
+    const ch = safeChannel(`rt:notifications:${userId}`)
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
         (payload) => {
