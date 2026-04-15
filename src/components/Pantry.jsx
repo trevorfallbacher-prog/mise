@@ -811,12 +811,32 @@ function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
 //      recipes can match against it.
 //   2. Custom: free-text fallback for ingredients not in the registry. These
 //      save with ingredientId: null and won't be matched by any recipe.
-function AddItemModal({ target, onClose, onAdd }) {
+function AddItemModal({ target, tileContext, onClose, onAdd }) {
   const [mode, setMode] = useState("canonical"); // "canonical" | "custom"
   const [search, setSearch] = useState("");
   // When the user taps a hub (Chicken, Cheese, …) we drill into it and show
   // just its members. `drillHub` is null on the top-level tile grid.
   const [drillHub, setDrillHub] = useState(null);
+  // When the modal was opened from a tile drill-down, the picker pre-filters
+  // to ingredients that classify into that tile. The user can override
+  // with "Show all ingredients" — useful when an ingredient is misclassified
+  // or when the user knows exactly what they want.
+  const [showAllFromTile, setShowAllFromTile] = useState(false);
+  const activeTileFilter = tileContext && !showAllFromTile ? tileContext : null;
+  // Wraps an ingredient in a fake pantry-item shape so the tile classifier
+  // (which operates on pantry rows) can route it. Only the fields the
+  // classifier actually reads are populated — ingredientId + category.
+  const fitsTile = (ing) => {
+    if (!activeTileFilter) return true;
+    const fakeItem = { ingredientId: ing.id, category: ing.category };
+    return activeTileFilter.classify(fakeItem, { findIngredient, hubForIngredient }) === activeTileFilter.tileId;
+  };
+  // A hub fits the tile if any of its members do — so the Cheese hub shows
+  // up on the Dairy tile (all cheeses fit) but not on Meat & Poultry.
+  const hubFitsTile = (hub) => {
+    if (!activeTileFilter) return true;
+    return membersOfHub(hub.id).some(fitsTile);
+  };
   const [picked, setPicked] = useState(null); // ingredient from registry
   const [unitId, setUnitId] = useState("");
   const [amount, setAmount] = useState("");
@@ -844,26 +864,36 @@ function AddItemModal({ target, onClose, onAdd }) {
   // Top-level picker view. If the user has typed a search, flatten everything
   // so "cheddar" still finds cheddar even though it's hidden under Cheese.
   // Otherwise show hub tiles + standalone ingredients as their own rows.
+  // When a tile filter is active (user came from a tile drill-down), all
+  // three branches apply it so the picker only offers ingredients that
+  // classify into the current tile.
   const pickerView = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (drillHub) {
       const members = membersOfHub(drillHub.id);
+      const matching = q ? members.filter(m => m.name.toLowerCase().includes(q)) : members;
       return {
         kind: "drill",
         hub: drillHub,
-        members: q ? members.filter(m => m.name.toLowerCase().includes(q)) : members,
+        members: matching.filter(fitsTile),
       };
     }
     if (q) {
       // Flat search across all ingredients AND hub names.
-      const matchedHubs = HUBS.filter(h => h.name.toLowerCase().includes(q));
+      const matchedHubs = HUBS.filter(h => h.name.toLowerCase().includes(q)).filter(hubFitsTile);
       const matchedIngredients = INGREDIENTS.filter(i =>
-        i.name.toLowerCase().includes(q) || (i.shortName && i.shortName.toLowerCase().includes(q))
+        (i.name.toLowerCase().includes(q) || (i.shortName && i.shortName.toLowerCase().includes(q))) &&
+        fitsTile(i)
       );
       return { kind: "search", hubs: matchedHubs, ingredients: matchedIngredients };
     }
-    return { kind: "top", hubs: HUBS, ingredients: standaloneIngredients() };
-  }, [search, drillHub]);
+    return {
+      kind: "top",
+      hubs: HUBS.filter(hubFitsTile),
+      ingredients: standaloneIngredients().filter(fitsTile),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, drillHub, activeTileFilter]);
 
   const pickIngredient = (ing) => {
     setPicked(ing);
@@ -927,11 +957,59 @@ function AddItemModal({ target, onClose, onAdd }) {
       <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 40px", maxHeight:"85vh", overflowY:"auto" }}>
         <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 20px" }} />
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6 }}>
-          {target === "shopping" ? "+ TO SHOPPING LIST" : "+ TO PANTRY"}
+          {target === "shopping"
+            ? "+ TO SHOPPING LIST"
+            : tileContext
+              ? `+ TO ${tileContext.tabId.toUpperCase()} · ${tileContext.tileLabel.toUpperCase()}`
+              : "+ TO PANTRY"}
         </div>
         <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:14 }}>
-          Add an ingredient
+          {tileContext
+            ? `Add ${/^[aeiou]/i.test(tileContext.tileLabel) ? "an" : "a"} ${tileContext.tileLabel.toLowerCase()}`
+            : "Add an ingredient"}
         </h3>
+
+        {/* Tile-filter banner — shown when we're pre-filtering to a specific
+            tile. Gives the user a way to escape the filter ("show all
+            ingredients") in case what they want is misclassified or they
+            just want the full picker. */}
+        {tileContext && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10,
+            padding: "10px 12px",
+            background: showAllFromTile ? "#0f0f0f" : "#1e1a0e",
+            border: `1px solid ${showAllFromTile ? "#2a2a2a" : "#f5c84233"}`,
+            borderRadius: 10,
+            marginBottom: 14,
+          }}>
+            <span style={{ fontSize: 18 }}>{tileContext.tileEmoji}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color: "#f0ece4" }}>
+                {showAllFromTile ? "Showing all ingredients" : `Showing ${tileContext.tileLabel.toLowerCase()}`}
+              </div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.06em", marginTop: 2 }}>
+                {showAllFromTile ? "TAP BELOW TO FILTER BACK TO TILE" : "DON'T SEE WHAT YOU WANT?"}
+              </div>
+            </div>
+            <button
+              onClick={() => { setShowAllFromTile(v => !v); setDrillHub(null); setSearch(""); }}
+              style={{
+                padding:"6px 10px",
+                background:"transparent",
+                border:`1px solid ${showAllFromTile ? "#f5c84244" : "#2a2a2a"}`,
+                borderRadius: 8,
+                fontFamily:"'DM Mono',monospace",
+                fontSize: 10,
+                color: showAllFromTile ? "#f5c842" : "#888",
+                letterSpacing:"0.06em",
+                cursor:"pointer",
+                flexShrink: 0,
+              }}
+            >
+              {showAllFromTile ? "FILTER" : "SHOW ALL"}
+            </button>
+          </div>
+        )}
 
         {/* Mode toggle */}
         <div style={{ display:"flex", gap:0, padding:3, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:16 }}>
@@ -978,7 +1056,11 @@ function AddItemModal({ target, onClose, onAdd }) {
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder={drillHub ? `Filter ${drillHub.name.toLowerCase()}…` : "Search ingredients…"}
+                  placeholder={
+                    drillHub ? `Filter ${drillHub.name.toLowerCase()}…`
+                    : activeTileFilter ? `Search ${activeTileFilter.tileLabel.toLowerCase()}…`
+                    : "Search ingredients…"
+                  }
                   autoFocus
                   style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", marginBottom:10, boxSizing:"border-box" }}
                 />
@@ -1021,6 +1103,21 @@ function AddItemModal({ target, onClose, onAdd }) {
                         </div>
                       );
                     })}
+                    {/* Filtered-to-nothing empty state — kicks in when the
+                        current tile has no canonical ingredients in the
+                        registry yet. Points the user at Custom mode or
+                        the "Show all" escape hatch in the banner above. */}
+                    {activeTileFilter && pickerView.hubs.length === 0 && pickerView.ingredients.length === 0 && (
+                      <div style={{ padding:"22px 18px", textAlign:"center", background:"#0c0c0c", border:"1px dashed #222", borderRadius:12 }}>
+                        <div style={{ fontSize: 30, marginBottom: 8, opacity: 0.7 }}>{activeTileFilter.tileEmoji}</div>
+                        <div style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize: 16, color:"#888", marginBottom: 6 }}>
+                          No {activeTileFilter.tileLabel.toLowerCase()} in the library yet
+                        </div>
+                        <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color:"#555", lineHeight: 1.5 }}>
+                          Switch to <b>Custom</b> to add your own, or tap <b>Show all</b> above to browse every ingredient.
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1245,6 +1342,11 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   const [showDeduction, setShowDeduction] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [addingTo, setAddingTo] = useState(null); // "pantry" | "shopping" | null
+  // When the add modal is opened from inside a tile drill-down, this carries
+  // the active tile so the picker can pre-filter to that category. Null
+  // for the generic top-of-tab "Add an ingredient" CTA — that opens an
+  // unfiltered picker. Cleared alongside addingTo on modal close.
+  const [addingToTile, setAddingToTile] = useState(null);
   // Inline amount+unit editor on a pantry card. Null when nothing is being
   // edited; otherwise holds the id of the row the user tapped.
   const [editingItemId, setEditingItemId] = useState(null);
@@ -2211,13 +2313,25 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                         : `Nothing in your ${storageTab} yet`}
                     </div>
                     <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color:"#555", lineHeight: 1.5, marginBottom: 14 }}>
-                      Scan a receipt or tap <em>Add an ingredient</em> above to get started.
+                      Scan a receipt or tap the button below to get started.
                     </div>
                     <button
-                      onClick={() => setAddingTo("pantry")}
+                      onClick={() => {
+                        // Pre-seed the modal with the current tile context so
+                        // the picker filters to just this category.
+                        if (currentTiles && drilledTile) {
+                          const tile = currentTiles.find(t => t.id === drilledTile);
+                          if (tile) setAddingToTile({ tabId: storageTab, tileId: tile.id, tileLabel: tile.label, tileEmoji: tile.emoji, classify: currentClassify });
+                        } else {
+                          setAddingToTile(null);
+                        }
+                        setAddingTo("pantry");
+                      }}
                       style={{ padding:"10px 18px", background:"#1a1a1a", border:"1px solid #f5c84244", borderRadius: 10, fontFamily:"'DM Mono',monospace", fontSize: 11, color:"#f5c842", letterSpacing:"0.08em", cursor:"pointer" }}
                     >
-                      + ADD AN INGREDIENT
+                      {currentTiles && drilledTile
+                        ? `+ ADD ${currentTiles.find(t => t.id === drilledTile)?.label.toUpperCase()}`
+                        : "+ ADD AN INGREDIENT"}
                     </button>
                   </div>
                 )}
@@ -2229,6 +2343,44 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 {grouped.map(g =>
                   g.type === "hub" ? renderHubCard(g) : renderItemCard(g.item)
                 )}
+                {/* Inline "+ Add X" CTA at the bottom of a populated tile
+                    drill-down. Users in the Condiments tile who want to add
+                    another condiment get a button that's exactly that — not
+                    a generic "add an ingredient" dropped at the top of the
+                    tab. Pre-filters the picker to the current tile. */}
+                {currentTiles && drilledTile && visibleItems.length > 0 && (() => {
+                  const tile = currentTiles.find(t => t.id === drilledTile);
+                  if (!tile) return null;
+                  return (
+                    <button
+                      onClick={() => {
+                        setAddingToTile({ tabId: storageTab, tileId: tile.id, tileLabel: tile.label, tileEmoji: tile.emoji, classify: currentClassify });
+                        setAddingTo("pantry");
+                      }}
+                      style={{
+                        marginTop: 6,
+                        padding: "14px 16px",
+                        background: "#0f0f0f",
+                        border: "1px dashed #2a2a2a",
+                        borderRadius: 12,
+                        fontFamily: "'DM Mono',monospace",
+                        fontSize: 11,
+                        color: "#888",
+                        letterSpacing: "0.08em",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 8,
+                      }}
+                      onMouseOver={e => { e.currentTarget.style.borderColor = "#f5c84244"; e.currentTarget.style.color = "#f5c842"; }}
+                      onMouseOut={e =>  { e.currentTarget.style.borderColor = "#2a2a2a"; e.currentTarget.style.color = "#888"; }}
+                    >
+                      <span style={{ fontSize: 14 }}>{tile.emoji}</span>
+                      + ADD {tile.label.toUpperCase()}
+                    </button>
+                  );
+                })()}
               </div>
             </>
           )}
@@ -2299,7 +2451,8 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       {addingTo && (
         <AddItemModal
           target={addingTo}
-          onClose={() => setAddingTo(null)}
+          tileContext={addingTo === "pantry" ? addingToTile : null}
+          onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
             if (addingTo === "shopping") {
               setShoppingList(prev => [...prev, { ...item, source: "manual" }]);
@@ -2308,9 +2461,13 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
               // (butter→fridge, flour→pantry), then the current tab the
               // user is viewing, then the category heuristic. Everything
               // honors an explicit location the modal may have set.
+              // When the modal was opened from a tile drill-down, the
+              // caller's tab is what we want — if they're in the Fridge
+              // tab's Condiments tile adding mustard, it goes in the
+              // fridge even though mustard's registry location is pantry.
               const canon = findIngredient(item.ingredientId);
               const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
-              const location = item.location || regLocation || storageTab;
+              const location = item.location || (addingToTile ? addingToTile.tabId : null) || regLocation || storageTab;
               setPantry(prev => [...prev, { ...item, location }]);
             }
           }}
