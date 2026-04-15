@@ -1257,6 +1257,10 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // closed; otherwise the pantry row object (we need emoji + name to show
   // in the picker header).
   const [linkingItem, setLinkingItem] = useState(null);
+  // Row currently showing the "move to other location" inline picker.
+  // Null = closed; otherwise the row's id. Only one moving picker open
+  // at a time — mirrors the edit/expiry single-editor pattern.
+  const [movingItemId, setMovingItemId] = useState(null);
   // Tapping a pantry row opens IngredientCard with rich metadata. Null when
   // the card is closed; otherwise { ingredientId, fallbackName, fallbackEmoji }.
   const [cardIng, setCardIng] = useState(null);
@@ -1780,6 +1784,19 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                   </button>
                 );
               })()}
+              {/* MOVE chip — opens the inline location picker below. We
+                  suppress this when the row is already being moved (the
+                  picker panel itself has a Cancel). */}
+              {movingItemId !== item.id && (
+                <button
+                  onClick={e => { e.stopPropagation(); setMovingItemId(item.id); }}
+                  aria-label={`Move ${item.name} to a different storage location`}
+                  title="Move this item between fridge, pantry, and freezer"
+                  style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#888", background:"transparent", border:"1px dashed #2a2a2a", padding:"0 6px", borderRadius:4, cursor:"pointer" }}
+                >
+                  ↔ MOVE
+                </button>
+              )}
             </div>
           </div>
           <button
@@ -1792,6 +1809,50 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             ✕
           </button>
         </div>
+        {/* Inline location-move picker — expands under the main row when
+            the user taps the MOVE chip. Shows the two OTHER locations
+            (never the current one) plus a cancel. Tapping a target calls
+            updatePantryItem with the new location; the row disappears
+            from the current tab and re-appears under its tile in the
+            destination tab, and we show a confirmation toast. */}
+        {movingItemId === item.id && (() => {
+          const current = effectiveLocation(item);
+          const options = [
+            { id: "fridge",  emoji: "🧊", label: "Fridge"  },
+            { id: "pantry",  emoji: "🥫", label: "Pantry"  },
+            { id: "freezer", emoji: "❄️", label: "Freezer" },
+          ].filter(o => o.id !== current);
+          return (
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap", marginBottom:10, padding:"8px 10px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10 }}
+            >
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginRight:4 }}>
+                MOVE TO
+              </span>
+              {options.map(o => (
+                <button
+                  key={o.id}
+                  onClick={() => {
+                    updatePantryItem(item.id, { location: o.id });
+                    setMovingItemId(null);
+                    pushToast(`Moved ${item.name} to ${o.label.toLowerCase()}`, { emoji: o.emoji, kind: "success", ttl: 3500 });
+                  }}
+                  style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 10px", background:"#1a1a1a", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", letterSpacing:"0.06em" }}
+                >
+                  <span style={{ fontSize:13 }}>{o.emoji}</span>
+                  → {o.label.toUpperCase()}
+                </button>
+              ))}
+              <button
+                onClick={() => setMovingItemId(null)}
+                style={{ padding:"6px 10px", background:"transparent", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", cursor:"pointer", letterSpacing:"0.06em", marginLeft:"auto" }}
+              >
+                CANCEL
+              </button>
+            </div>
+          );
+        })()}
         <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
           <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
         </div>
