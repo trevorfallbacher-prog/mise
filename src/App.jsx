@@ -184,6 +184,21 @@ function AuthedApp({ user, profile, upsertProfile }) {
     setProfileUserId(id);
   }, []);
 
+  // Same deep-link path the UserProfile's CookRow uses — lets the Home
+  // feed hand a cook_log id and land on its detail in Cookbook.
+  const openCook = useCallback((cookLogId) => {
+    if (!cookLogId) return;
+    setProfileUserId(null);
+    setDeepLink({ kind: "cook_log", id: cookLogId });
+    setTab("cookbook");
+  }, []);
+
+  // Stabilized list of family otherIds for the activity feed cohort.
+  const familyIds = useMemo(
+    () => relationships.family.map(r => r.otherId).filter(Boolean),
+    [relationships.family]
+  );
+
   // Route a notification tap. Currently supported:
   //   * 'cook_log'     — lands on Cookbook → that meal's detail,
   //                      composer open if the viewer was a diner.
@@ -257,7 +272,16 @@ function AuthedApp({ user, profile, upsertProfile }) {
       </button>
 
       <div style={{ paddingBottom:80 }}>
-        {tab === "home"     && <Home profile={profile} />}
+        {tab === "home"     && (
+          <Home
+            profile={profile}
+            userId={user.id}
+            familyIds={familyIds}
+            nameFor={nameFor}
+            openProfile={openProfile}
+            openCook={openCook}
+          />
+        )}
         {tab === "cook"     && (
           <Cook
             profile={profile}
