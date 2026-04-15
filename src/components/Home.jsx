@@ -2,15 +2,8 @@ import { useMemo } from "react";
 import { useActivityFeed } from "../lib/useActivityFeed";
 import { useBadges } from "../lib/useBadges";
 import { useCookLog } from "../lib/useCookLog";
+import { pickGreeting } from "../lib/greetings";
 import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
-
-// Time-of-day greeting. 5am-noon morning, noon-5pm afternoon, else evening.
-function greetingForHour(hour) {
-  if (hour < 5)  return "GOOD NIGHT";
-  if (hour < 12) return "GOOD MORNING";
-  if (hour < 17) return "GOOD AFTERNOON";
-  return "GOOD EVENING";
-}
 
 // Rating face lookup shared with the activity feed's cook rows.
 const RATING_EMOJI = { nailed: "🤩", good: "😊", meh: "😐", rough: "😬" };
@@ -57,9 +50,18 @@ export default function Home({
   profile, userId, familyIds = [], nameFor,
   openProfile, openCook,
 }) {
-  const firstName = profile.name?.trim().split(/\s+/)[0] || null;
-  const greeting  = greetingForHour(new Date().getHours());
   const streak    = profile.streak_count || 0;
+
+  // Greeting is picked once per mount — re-tabbing back to Home rolls
+  // again, which is the whole point (easter eggs should feel like a
+  // surprise, not a setting). useMemo with userId in the deps keeps it
+  // stable for the rest of the render pass. onShow side effects (like
+  // the Idiot Sandwich mint) fire inside pickGreeting the first time
+  // they surface for a given user, module-guarded against re-fires.
+  const greeting = useMemo(
+    () => pickGreeting({ name: profile.name, userId }),
+    [profile.name, userId]
+  );
 
   // Self stats — computed on read the same way UserProfile does it,
   // since the profiles.total_xp column isn't being maintained yet.
@@ -84,29 +86,48 @@ export default function Home({
 
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
-      {/* Header */}
-      <div style={{ padding: "24px 20px 0" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <button
-            onClick={openSelf}
-            style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}
-          >
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em" }}>
-              {greeting}{firstName ? `, ${firstName.toUpperCase()}` : ""}
-            </div>
-            <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 30, fontWeight: 300, fontStyle: "italic", color: "#f5c842", letterSpacing: "-0.02em", marginTop: 2 }}>
-              mise
-            </h1>
-          </button>
-          {streak > 0 && (
-            <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "6px 12px", display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 14 }}>🔥</span>
-              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#f5c842" }}>
-                {streak} day{streak === 1 ? "" : "s"}
-              </span>
-            </div>
-          )}
-        </div>
+      {/* Brand — tiny at the very top, sets identity without stealing
+          real estate from the hero greeting. */}
+      <div style={{ padding: "18px 20px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button
+          onClick={openSelf}
+          style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
+          title="Your profile"
+        >
+          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 18, fontStyle: "italic", fontWeight: 400, color: "#f5c842", letterSpacing: "-0.02em" }}>
+            mise
+          </span>
+        </button>
+        {streak > 0 && (
+          <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "4px 10px", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12 }}>🔥</span>
+            <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#f5c842" }}>
+              {streak} day{streak === 1 ? "" : "s"}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Hero greeting — large italic serif. Rolled per-mount from the
+          greetings module so re-tabbing to Home gives a fresh line. The
+          tier tag lets us tint the rare/ultra/disney/time-of-day ones
+          so the viewer feels the moment when something special lands. */}
+      <div style={{ padding: "22px 20px 0" }}>
+        <h1 style={{
+          fontFamily: "'Fraunces',serif",
+          fontSize: 40, lineHeight: 1.1,
+          fontWeight: 300, fontStyle: "italic",
+          color: greeting.tier === "ultra" || greeting.tier === "rare"
+            ? "#f5c842"
+            : greeting.tier === "disney"
+              ? "#e7c9b0"
+              : "#f0ece4",
+          letterSpacing: "-0.02em",
+          margin: 0,
+          textShadow: greeting.tier === "ultra" ? "0 0 24px #f5c84244" : "none",
+        }}>
+          {greeting.text}
+        </h1>
       </div>
 
       {/* Personal stats strip — 4 tiles, whole strip opens your profile */}
