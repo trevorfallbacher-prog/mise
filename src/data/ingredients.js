@@ -1865,12 +1865,90 @@ const SUBCATEGORY_INFO = {
 // Rich per-ingredient info. Anything on the ingredient overrides the
 // subcategory fallback in `getIngredientInfo` below.
 const INGREDIENT_INFO = {
+  // ── dairy staples ──────────────────────────────────────────────────
+  butter: {
+    description: "Churned cream concentrated to ~80% fat. The indispensable cooking fat — conducts heat evenly, browns beautifully, emulsifies sauces, and enriches anything it touches.",
+    flavorProfile: "Rich, creamy, faintly sweet; browns into toasted-nut territory",
+    prepTips: "For a golden sear: melt butter into hot oil so the oil's smoke point protects the milk solids from burning. For sauces: finish off-heat, whisking cold cubes in a little at a time (monter au beurre).",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 90,
+      tips: "Wrap tightly — butter absorbs fridge odors. Freezes beautifully for up to a year in its original wrap plus a zip-top bag.",
+    },
+    substitutions: [
+      { id: "olive_oil", note: "For savory sautés; loses the browning and enrichment." },
+      { id: "ghee",      note: "Pure butterfat — no milk solids. Higher smoke point, no burning." },
+    ],
+    pairs: ["garlic", "parsley", "lemon", "sage"],
+    nutrition: { per: "100g", kcal: 717, protein_g: 1, fat_g: 81, carb_g: 0, sodium_mg: 11 },
+    origin: "Europe; churned butter dates to at least 4,500 BCE in cooler dairy-herding cultures.",
+    culturalNotes: "French cuisine built its reputation on butter; Mediterranean cuisines lean on olive oil — the same dish (fish, vegetables, pasta) tells a different story depending which fat carries it.",
+    allergens: ["dairy"],
+    sourcing: "European-style (≥82% fat) makes richer sauces and flakier pastry; American-style is fine for everyday cooking and has more water for stovetop sautés.",
+  },
+
+  eggs: {
+    description: "Chicken eggs — the single most versatile ingredient in the kitchen. Emulsify sauces, leaven cakes, bind meatballs, thicken custards, or stand alone as the meal.",
+    flavorProfile: "Rich, mild, buttery yolk; clean, neutral white that picks up anything you add",
+    prepTips: "Cold eggs crack cleanly, room-temp eggs whip to more volume. For even cooking, start hard-boiled eggs in simmering water and shock in ice at 9 minutes. For silky scrambled: low heat, constant stirring, pull off just before they look done.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 35,
+      tips: "Store in the carton (not the door) — temperature's more stable on the main shelf. A fresh egg sinks; a bad one floats.",
+    },
+    substitutions: [
+      { id: "flax_egg", note: "1 tbsp ground flax + 3 tbsp water for baking. Doesn't work for scrambles or custards." },
+    ],
+    pairs: ["butter", "cream", "parmesan", "chive", "tarragon"],
+    nutrition: { per: "count", kcal: 72, protein_g: 6, fat_g: 5, carb_g: 0.4, sodium_mg: 71 },
+    origin: "Domesticated from the red junglefowl in Southeast Asia ~8,000 years ago; now the world's most-eaten animal protein.",
+    culturalNotes: "Escoffier said 'the cuisine of a nation can be judged by its egg cookery' — which is why French apprentices start with the omelette.",
+    allergens: ["egg"],
+    sourcing: "Pasture-raised yolks are deeper orange and richer in omega-3s. 'Cage-free' is a minimum bar, not a gold standard.",
+  },
+
+  milk: {
+    description: "Whole cow's milk, ~3.25% fat. The liquid foundation of custards, béchamels, soaked croutons, and a thousand breakfasts.",
+    flavorProfile: "Clean, sweet, faintly grassy; cream on top if unhomogenized",
+    prepTips: "Always scald (heat to just below simmer) before adding to eggs for custards — it shortens cook time and prevents curdling. Milk burns fast; use a heavy pot and don't walk away.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 10,
+      tips: "Coldest shelf, not the door. Ultra-pasteurized lasts much longer; traditional pasteurized tastes better but spoils sooner.",
+    },
+    substitutions: [
+      { id: "half_and_half", note: "Richer — cut 1:1 with water to mimic whole milk in recipes." },
+      { id: "oat_milk",      note: "Best non-dairy swap in savory cooking. Avoid for custards that need egg-proteins to set against milk solids." },
+    ],
+    pairs: ["butter", "vanilla", "cinnamon", "honey"],
+    nutrition: { per: "100g", kcal: 61, protein_g: 3.2, fat_g: 3.3, carb_g: 4.8, sodium_mg: 43 },
+    origin: "Cattle domesticated ~10,000 years ago in the Fertile Crescent; Northern European populations evolved lactose tolerance within the last 7,500.",
+    allergens: ["dairy"],
+    sourcing: "Grass-fed milk has higher omega-3 and conjugated linoleic acid. Small-dairy glass bottles are the pinnacle — worth it for drinking, overkill for cooking.",
+  },
+
   // ── popular cheeses ────────────────────────────────────────────────
   parmesan: {
-    description: "Italian hard cheese made from cow's milk and aged 12-36 months. Granular, crystalline texture.",
-    flavorProfile: "Nutty, savory, sharp; intense umami finish",
+    description: "Italian hard cheese made from cow's milk and aged 12-36 months. Granular, crystalline texture from tyrosine protein clusters.",
+    flavorProfile: "Nutty, savory, sharp; intense umami finish with hints of pineapple",
+    prepTips: "Grate on a microplane just before using — pre-grated dries out and loses bloom. Save rinds to simmer into stocks and bean pots (they melt into the liquid).",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 180,
+      tips: "Wrap in parchment, then loosely in foil — the cheese needs to breathe a little. A sweating wedge means you've wrapped it too tight.",
+    },
+    substitutions: [
+      { id: "pecorino",   note: "Sharper, saltier. Use slightly less." },
+      { id: "grana_padano", note: "Softer, younger cousin. Milder but interchangeable in most uses." },
+    ],
+    pairs: ["butter", "black_pepper", "garlic", "basil"],
+    nutrition: { per: "100g", kcal: 431, protein_g: 38, fat_g: 29, carb_g: 4, sodium_mg: 1529 },
     winePairings: ["Barolo", "Chianti Classico", "Sangiovese", "Aged Chardonnay"],
     recipes: ["Pasta carbonara", "Risotto alla Milanese", "Caesar salad", "Parmigiana"],
+    origin: "Emilia-Romagna, Italy — the true 'Parmigiano-Reggiano' is PDO-protected and made only in a specific zone.",
+    culturalNotes: "Italian banks have accepted Parmigiano wheels as loan collateral since the 1950s — they age for years and only appreciate in value.",
+    allergens: ["dairy"],
+    sourcing: "Look for the dot-matrix rind stamp on true Parmigiano-Reggiano. 'Parmesan' with no origin guarantee is fine for everyday grating; save the real thing for finishing.",
   },
   parmigiano: {
     description: "The original 'Parmigiano-Reggiano' — a protected Italian cheese aged 24+ months in the Parma/Reggio region.",
@@ -1879,16 +1957,47 @@ const INGREDIENT_INFO = {
     recipes: ["Finish any pasta", "Risotto", "Shaved on prosciutto", "Eaten in chunks with balsamic"],
   },
   pecorino: {
-    description: "Italian sheep's milk cheese, saltier and sharper than Parmesan. Aged firm for grating or young for eating.",
-    flavorProfile: "Sharp, salty, tangy; pronounced sheep milk character",
+    description: "Italian sheep's milk cheese, saltier and sharper than Parmesan. Aged firm for grating (Pecorino Romano) or young for eating (Pecorino Toscano).",
+    flavorProfile: "Sharp, salty, tangy; pronounced sheep-milk funk that parmesan lacks",
+    prepTips: "Grate fresh and pile loose — don't pack it. For cacio e pepe, the fineness of the grate matters more than any other ingredient; use a microplane, not a box grater.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 150,
+      tips: "Parchment + foil. Don't let it touch other cheeses in the drawer — the sheep-milk aroma bleeds.",
+    },
+    substitutions: [
+      { id: "parmesan",  note: "Milder and less salty. Cut the recipe's salt by a pinch if substituting." },
+    ],
+    pairs: ["black_pepper", "spaghetti", "honey", "fava"],
+    nutrition: { per: "100g", kcal: 419, protein_g: 28, fat_g: 33, carb_g: 2, sodium_mg: 1800 },
     winePairings: ["Chianti", "Vermentino", "Nero d'Avola", "Dry Rosé"],
     recipes: ["Cacio e pepe", "Pasta alla gricia", "Shaved on fava beans", "With honey & pears"],
+    origin: "Lazio and Sardinia, Italy — Pecorino Romano is the oldest documented Italian cheese, fed to Roman legions.",
+    culturalNotes: "'Pecorino' literally means 'from sheep' (pecora). The 'Romano' was added centuries after Roman shepherds brought the craft to Sardinia, where most of it is actually made today.",
+    allergens: ["dairy"],
+    sourcing: "Pecorino Romano DOP is the reference for cacio e pepe and pasta alla gricia. For table eating, a younger Pecorino Toscano is mellower.",
   },
   mozzarella: {
-    description: "Fresh Italian cheese, traditionally made from buffalo milk. Soft, stretchy, sold in balls packed in water.",
-    flavorProfile: "Milky, clean, lightly sweet; tender bite",
+    description: "Fresh Italian cheese, traditionally made from water buffalo milk (Mozzarella di Bufala) or cow's milk (fior di latte). Soft, stretchy, sold in balls packed in water.",
+    flavorProfile: "Milky, clean, lightly sweet; tender bite that squeaks briefly against the teeth",
+    prepTips: "Pull from the fridge 30 minutes before serving — cold mozz is rubbery and mute. Tear rather than cut for salads so the craggy edges catch oil and salt.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 7,
+      tips: "Keep it submerged in its brine. Once opened, use within 2–3 days; it sours quickly.",
+    },
+    substitutions: [
+      { id: "burrata",  note: "Richer, creamier center. Use in the same dishes for a more decadent version." },
+      { id: "ricotta",  note: "For cooked dishes (pizza, pasta bakes) when fresh mozz isn't available." },
+    ],
+    pairs: ["tomato", "basil", "olive_oil", "balsamic"],
+    nutrition: { per: "100g", kcal: 280, protein_g: 18, fat_g: 22, carb_g: 3, sodium_mg: 627 },
     winePairings: ["Prosecco", "Pinot Grigio", "Falanghina", "Rosé"],
     recipes: ["Caprese", "Pizza Margherita", "Fresh pasta", "Grilled on tomato toast"],
+    origin: "Campania, Italy — the bufala version is PDO-protected and comes from a specific zone around Naples.",
+    culturalNotes: "'Mozzarella' comes from 'mozzare' (to cut by hand) — traditional makers literally pinch off balls from a rope of stretched curd.",
+    allergens: ["dairy"],
+    sourcing: "For caprese and pizza Margherita, splurge on bufala at least once and taste the difference. For everything else, good fior di latte is excellent.",
   },
   burrata: {
     description: "A pouch of fresh mozzarella filled with stracciatella and cream. Cuts open to an oozing center.",
@@ -1909,10 +2018,26 @@ const INGREDIENT_INFO = {
     recipes: ["Cheese board with chutney", "Apple & cheddar pie", "Shaved on soups", "Paired with dark chocolate"],
   },
   gruyere: {
-    description: "Swiss Alpine cheese from the Gruyères region, pressed and aged 5-12 months. The fondue cheese.",
-    flavorProfile: "Nutty, brothy, earthy; savory long finish",
+    description: "Swiss Alpine cheese from the Gruyères region, pressed and aged 5-12 months. The quintessential melter — fondue, gratin, croque monsieur.",
+    flavorProfile: "Nutty, brothy, earthy; savory long finish with a slight sweetness from the Alpine grasses",
+    prepTips: "Shred just before cooking — pre-shredded bags are coated with anti-caking starch that muddies the melt. For fondue, toss the shreds with a spoon of cornstarch to prevent the fat from breaking.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 120,
+      tips: "Parchment + foil in the cheese drawer. A little surface mold on an aged Gruyère is normal — scrape it off, not a disaster.",
+    },
+    substitutions: [
+      { id: "comte",    note: "French cousin from the Jura. More nuanced, interchangeable in most applications." },
+      { id: "emmental", note: "Milder, holier. Melts well but lacks Gruyère's depth." },
+    ],
+    pairs: ["ham", "white_wine", "potato", "yellow_onion"],
+    nutrition: { per: "100g", kcal: 413, protein_g: 30, fat_g: 32, carb_g: 0.4, sodium_mg: 714 },
     winePairings: ["Chasselas", "Dry Riesling", "Chardonnay", "Pinot Noir"],
     recipes: ["Fondue", "French onion soup", "Croque monsieur", "Quiche Lorraine"],
+    origin: "Canton of Fribourg, Switzerland — named for the town of Gruyères, made since at least 1115 CE.",
+    culturalNotes: "Swiss soldiers in the Vatican Guard were once paid partly in Gruyère rations. The cheese travels well and doesn't spoil fast — a medieval protein bar.",
+    allergens: ["dairy"],
+    sourcing: "'Gruyère AOP' (Swiss) is the real one; 'Le Gruyère' alone can be French-style. Both are excellent — AOP is deeper.",
   },
   comte: {
     description: "French Alpine cheese from the Jura mountains, aged 6-24 months. Cousin to Gruyère with a longer finish.",
