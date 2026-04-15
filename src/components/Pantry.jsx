@@ -435,7 +435,7 @@ function Scanner({ onItemsScanned, onClose }) {
               })}
             </div>
           </div>
-          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8, minHeight:0, WebkitOverflowScrolling:"touch" }}>
+          <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:10, minHeight:0, WebkitOverflowScrolling:"touch" }}>
             {orderedItems.map(({ item, originalIdx }) => {
               const idx = originalIdx;
               const canon = findIngredient(item.ingredientId);
@@ -446,15 +446,20 @@ function Scanner({ onItemsScanned, onClose }) {
                   {/* Confidence accent stripe — reads at a glance whether to
                       trust the row, even before you read the name. */}
                   <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
-                  <div style={{ flex:1, display:"flex", alignItems:"center", gap:12, padding:"12px 14px", minWidth:0 }}>
-                  <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
-                  <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
-                  <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 14px", minWidth:0 }}>
+                  <button onClick={()=>toggleItem(idx)} style={{ width:24, height:24, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s", marginTop:2 }}>{item.selected?"✓":""}</button>
+                  <span style={{ fontSize:28, flexShrink:0, lineHeight:1 }}>{item.emoji}</span>
+                  <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:4 }}>
+                    {/* Name — wraps freely. No ellipsis truncation; the user
+                        came here to READ what the scanner saw. Giving long
+                        names space to breathe matters more than row density. */}
+                    <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:16, color:"#f0ece4", fontWeight:500, lineHeight:1.35, wordBreak:"break-word" }}>
+                      {item.name}
+                    </div>
+                    {/* Chip row — MATCHED + confidence. Wraps onto a second
+                        line when the name took up the top. */}
                     <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
-                      {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}>MATCHED</span>}
-                      {/* Confidence chip — same color as the stripe so the
-                          relationship between them is obvious. */}
+                      {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em" }}>MATCHED</span>}
                       <span
                         title={
                           item.confidence === "low"
@@ -463,19 +468,19 @@ function Scanner({ onItemsScanned, onClose }) {
                               ? "Medium confidence — verify if needed"
                               : "High confidence"
                         }
-                        style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:conf.color, background:conf.bg, border:`1px solid ${conf.border}`, borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}
+                        style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:conf.color, background:conf.bg, border:`1px solid ${conf.border}`, borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em" }}
                       >
                         {conf.label}
                       </span>
                     </div>
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", display:"flex", gap:8 }}>
-                      <span>{item.category}</span>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", display:"flex", gap:10, flexWrap:"wrap" }}>
+                      <span>{(item.category || "").toUpperCase()}</span>
                       {item.priceCents != null && <span style={{ color:"#7ec87e" }}>{formatPrice(item.priceCents)}</span>}
                     </div>
                   </div>
                   {editingIdx === idx ? (
                     <div
-                      style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}
+                      style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0, marginTop:2 }}
                       onBlur={e => {
                         // Only close when focus leaves the entire editor — otherwise
                         // tapping the unit select kills the editor before it registers.
@@ -485,7 +490,7 @@ function Scanner({ onItemsScanned, onClose }) {
                       }}
                     >
                       <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} autoFocus
-                        style={{ width:52, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, textAlign:"right", outline:"none" }} />
+                        style={{ width:58, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"6px 8px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:13, textAlign:"right", outline:"none" }} />
                       {(() => {
                         // Canonical items use their registry units; everything
                         // else gets category/emoji-inferred units so the user
@@ -493,7 +498,7 @@ function Scanner({ onItemsScanned, onClose }) {
                         const units = canon ? canon.units : inferUnitsForScanned(item).units;
                         return (
                           <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
-                            style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"4px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, outline:"none", appearance:"none", cursor:"pointer" }}>
+                            style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"6px 6px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:12, outline:"none", appearance:"none", cursor:"pointer" }}>
                             {units.map(u => (
                               <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
                             ))}
@@ -502,7 +507,7 @@ function Scanner({ onItemsScanned, onClose }) {
                       })()}
                     </div>
                   ) : (
-                    <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"4px 10px", fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", cursor:"pointer", flexShrink:0 }}>
+                    <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", cursor:"pointer", flexShrink:0, marginTop:2 }}>
                       {item.amount} {unitDisplay}
                     </button>
                   )}
