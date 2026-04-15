@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import IngredientCard from "./IngredientCard";
+import LinkIngredient from "./LinkIngredient";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -1101,6 +1102,10 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // affordances live in different spots on the row. Null = none open;
   // otherwise the id of the row whose date picker is showing.
   const [editingExpiryId, setEditingExpiryId] = useState(null);
+  // Free-text row being relinked to a canonical ingredient. Null = picker
+  // closed; otherwise the pantry row object (we need emoji + name to show
+  // in the picker header).
+  const [linkingItem, setLinkingItem] = useState(null);
   // Tapping a pantry row opens IngredientCard with rich metadata. Null when
   // the card is closed; otherwise { ingredientId, fallbackName, fallbackEmoji }.
   const [cardIng, setCardIng] = useState(null);
@@ -1434,9 +1439,14 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 </span>
               )}
               {!item.ingredientId && (
-                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", background:"#1a1a1a", padding:"1px 6px", borderRadius:4 }} title="Not linked to the canonical ingredient list — won't match recipes">
-                  FREE TEXT
-                </span>
+                <button
+                  onClick={e => { e.stopPropagation(); setLinkingItem(item); }}
+                  aria-label={`Link ${item.name} to a canonical ingredient`}
+                  title="Tap to match this with a canonical ingredient — free-text rows don't match recipes"
+                  style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#a3c9e0", background:"#0f1420", border:"1px solid #1e2a3a", padding:"1px 6px", borderRadius:4, cursor:"pointer" }}
+                >
+                  🔗 LINK
+                </button>
               )}
               {isLow(item) && (
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
@@ -1828,6 +1838,24 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           fallbackEmoji={cardIng.fallbackEmoji}
           pantry={pantry}
           onClose={() => setCardIng(null)}
+        />
+      )}
+      {linkingItem && (
+        <LinkIngredient
+          item={linkingItem}
+          onLink={canonicalId => {
+            // Link sets the ingredientId + adopts the canonical emoji so the
+            // row visibly snaps into place. Name stays the user's (don't
+            // overwrite what they typed). category too — linking is about
+            // recipe-matching, not relabeling.
+            const canon = findIngredient(canonicalId);
+            updatePantryItem(linkingItem.id, {
+              ingredientId: canonicalId,
+              emoji: canon?.emoji || linkingItem.emoji,
+            });
+            setLinkingItem(null);
+          }}
+          onClose={() => setLinkingItem(null)}
         />
       )}
     </div>

@@ -3107,6 +3107,133 @@ export function isInSeason(seasonality, hemisphere = "N", month = new Date().get
   return peak.includes(month);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Fuzzy ingredient matching.
+//
+// Use cases:
+//   1. Receipt scans where Claude returned `ingredientId: null` — client-side
+//      second-pass fallback so obvious matches don't escape as free text.
+//   2. The "Link to canonical" action on a free-text pantry row — surface
+//      likely candidates so the user picks with one tap.
+//   3. Autocomplete / "did you mean" in the manual-add flow (future).
+//
+// Algorithm: normalize both sides (lowercase, strip plurals, strip packaging
+// descriptors and sizes, strip punctuation), then score.
+//   100  → exact normalized match
+//    80  → one fully contains the other
+//   0–60 → Jaccard token overlap
+//   +20  → Levenshtein closeness bonus (short edit distance)
+//
+// Returns [{ ingredient, score }] sorted highest first, up to `limit`.
+// Callers can apply their own threshold; 30+ is a reasonable "likely match".
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Words that add no signal — sizes, descriptors, packaging. Strip these so
+// "Organic EVOO 500ml Extra Virgin" compares cleanly against "olive oil".
+const FUZZY_NOISE_WORDS = new Set([
+  "organic","grass","fed","free","range","local","fresh","raw","natural",
+  "whole","reduced","fat","lowfat","nonfat","unsalted","salted","sweet",
+  "large","medium","small","xl","xxl","jumbo","extra","virgin","premium",
+  "select","prime","pack","packed","value","family","size","pcs","piece",
+  "pieces","ea","each","ct","count","bunch","bag","jar","tin","can","tub",
+  "carton","bottle","box","pouch",
+]);
+const FUZZY_UNIT_WORDS = new Set([
+  "oz","lb","lbs","g","kg","ml","l","liter","liters","gal","gallon","gallons",
+  "qt","quart","pt","pint","cup","cups","tbsp","tsp","fl",
+]);
+
+function fuzzyNormalize(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, " ")     // strip parenthetical asides
+    .replace(/[^a-z0-9 ]+/g, " ")   // punctuation → space
+    .replace(/\b\d+(\.\d+)?\b/g, " ") // strip numbers (sizes, counts)
+    .split(/\s+/)
+    .filter(t => t && !FUZZY_NOISE_WORDS.has(t) && !FUZZY_UNIT_WORDS.has(t))
+    // Cheap pluralization strip: "eggs" → "egg", "berries" → "berrie" (good
+    // enough — fuzzy scoring tolerates the residual mismatch).
+    .map(t => t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t)
+    .join(" ")
+    .trim();
+}
+
+// Classic iterative-DP Levenshtein — small arrays, fast enough for a
+// 500-ingredient scan without memoization.
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+  return prev[b.length];
+}
+
+// Score one ingredient against a needle string. Picks the best match across
+// the ingredient's name, shortName, and id (underscores → spaces) — so
+// "parm" matches "parmesan" via shortName even if the display name is longer.
+function scoreIngredientMatch(needle, ing) {
+  const n = fuzzyNormalize(needle);
+  if (!n) return 0;
+  const candidates = [ing.name, ing.shortName, ing.id.replace(/_/g, " ")]
+    .filter(Boolean)
+    .map(fuzzyNormalize)
+    .filter(Boolean);
+  if (!candidates.length) return 0;
+
+  let best = 0;
+  for (const c of candidates) {
+    if (c === n)                           best = Math.max(best, 100);
+    else if (c.includes(n) || n.includes(c)) best = Math.max(best, 80);
+  }
+  if (best === 0) {
+    const nTokens = new Set(n.split(" "));
+    for (const c of candidates) {
+      const cTokens = new Set(c.split(" "));
+      if (!nTokens.size || !cTokens.size) continue;
+      const overlap = [...nTokens].filter(t => cTokens.has(t)).length;
+      const union   = new Set([...nTokens, ...cTokens]).size;
+      best = Math.max(best, Math.round((overlap / union) * 60));
+    }
+  }
+  // Levenshtein bonus — rewards near-misses on an already-matching candidate.
+  if (best > 0) {
+    const c = candidates[0];
+    const d = levenshtein(n, c);
+    const maxLen = Math.max(n.length, c.length);
+    if (maxLen > 0) {
+      const bonus = Math.max(0, 20 - Math.round((d / maxLen) * 20));
+      best += bonus;
+    }
+  }
+  return best;
+}
+
+// Public API: ranked matches for a free-text string. Returns at most `limit`
+// candidates with a non-zero score. Caller decides the threshold for
+// "confident enough to auto-link" (suggested: 70+).
+export function fuzzyMatchIngredient(text, limit = 5) {
+  if (!text || typeof text !== "string") return [];
+  const scored = [];
+  for (const ing of INGREDIENTS) {
+    // Skip hubs — they're UI groupings, not real pantry items.
+    if (ing.parentId === undefined && ing.id.endsWith("_hub")) continue;
+    const score = scoreIngredientMatch(text, ing);
+    if (score > 0) scored.push({ ingredient: ing, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+
 // Estimates shelf life (in days) for an ingredient stored in a given
 // location — used by receipt scans to compute a default expiration date
 // when the receipt doesn't print one. Prefers the per-location shelfLife
