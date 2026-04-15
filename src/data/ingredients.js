@@ -2760,6 +2760,171 @@ const INGREDIENT_INFO = {
     allergens: ["gluten"],  // flour tortillas; corn tortillas are gluten-free
     sourcing: "For tacos al pastor / carne asada: handmade corn tortillas from a local tortillería (or make your own from masa harina). For burritos and quesadillas: large flour. Freshness matters more than brand.",
   },
+
+  // ── pantry: oils + wines + stocks ────────────────────────────────
+  olive_oil: {
+    description: "Pressed juice of olives — extra-virgin (EVOO) is cold-pressed first-press from a single harvest, unrefined; regular 'olive oil' is refined and blended. The base of Mediterranean cooking and one of the most versatile fats in the kitchen.",
+    flavorProfile: "Grassy, peppery, fruity; a good EVOO finishes with a bitter throat-tickle that means polyphenols are present",
+    prepTips: "Two oils, two jobs: cheap blended olive oil for hot pans (sautéing, roasting); expensive EVOO for finishing (drizzling on burrata, dressing salads, dipping bread). Heating great EVOO over 350°F destroys the polyphenols you paid for.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 540,
+      tips: "Cool, dark cabinet — heat and light go after the flavor compounds. A dark glass bottle beats clear. Once opened, use within 6 months for peak flavor; rancid oil smells like crayons or putty.",
+    },
+    substitutions: [
+      { id: "butter",      note: "For finishing pasta or vegetables; richer, less herbaceous." },
+      { id: "ghee",        note: "For high-heat sautés where olive oil's smoke point is the issue." },
+    ],
+    pairs: ["garlic", "basil", "lemon", "tomato", "balsamic"],
+    nutrition: { per: "100g", kcal: 884, protein_g: 0, fat_g: 100, carb_g: 0, sodium_mg: 2 },
+    origin: "Mediterranean basin — domesticated olives date to ~6,000 BCE in the Levant. Spain, Italy, and Greece account for ~70% of global production today.",
+    culturalNotes: "The 'extra-virgin' label is widely abused. Italian-bottled doesn't mean Italian-grown — much of what's sold as Italian EVOO is blended from Spain, Greece, and Tunisia. The 2007 'extra-virgin olive oil scandal' (chronicled in Tom Mueller's 'Extra Virginity') showed most US-supermarket EVOO failed lab tests for purity.",
+    allergens: [],
+    sourcing: "Look for a harvest date on the bottle (not just 'best by') and a single country of origin. California Olive Ranch, Cobram Estate, and any oil with a recent (within 12 months) harvest date is a safer bet than the cheap big-name imports.",
+  },
+
+  balsamic: {
+    description: "Italian vinegar from Modena and Reggio Emilia, made from cooked grape must (mosto cotto), aged in a battery of progressively smaller wooden casks. True 'tradizionale' is aged 12–25+ years; commercial 'Aceto Balsamico di Modena IGP' is younger and blended with wine vinegar.",
+    flavorProfile: "Sweet-tart, syrupy, deeply fruity; aged versions taste like fig jam with bright acidity",
+    prepTips: "Cheap supermarket balsamic ($5–10): reduce in a pan with a splash of honey to fake the syrupy intensity of an aged bottle. Real tradizionale ($80+ for 100ml): never cook it. Drop it onto Parmigiano shards, vanilla ice cream, or strawberries.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 1825,
+      tips: "Tightly capped in a cool cabinet. Vinegar's acidity makes it essentially immortal — it'll outlive the bottle. No need to refrigerate.",
+    },
+    substitutions: [
+      { id: "vinegar",  note: "Plain vinegar lacks the sweetness; add a pinch of brown sugar or a drop of honey to mimic." },
+    ],
+    pairs: ["olive_oil", "tomato", "mozzarella", "basil", "parmesan"],
+    nutrition: { per: "100g", kcal: 88, protein_g: 0.5, fat_g: 0, carb_g: 17, sodium_mg: 23 },
+    origin: "Modena and Reggio Emilia, Emilia-Romagna, Italy. The tradition dates to the Middle Ages; the first written reference is from 1046, when Holy Roman Emperor Henry III was gifted a bottle.",
+    culturalNotes: "True 'Aceto Balsamico Tradizionale di Modena DOP' must be aged at least 12 years and is graded by a panel of judges who score it from 0–400 points. The bottle, the cork, and even the shape are protected by law. 99% of supermarket 'balsamic' is the IGP version — younger, blended, and a different product.",
+    allergens: [],
+    sourcing: "For everyday cooking, 'Aceto Balsamico di Modena IGP' from a brand like Giuseppe Giusti or Mussini is excellent at $15–25. For drizzling: spend $40+ on a labeled aged bottle. Avoid anything labeled just 'balsamic vinegar' with no IGP/DOP designation — usually wine vinegar with caramel coloring.",
+  },
+
+  dijon: {
+    description: "French mustard made from brown/black mustard seeds and white wine or verjuice (tart unripe-grape juice). Sharper, smoother, and more wine-forward than American yellow mustard.",
+    flavorProfile: "Sharp, tangy, sinus-tingling; creamy texture, complex finish from the wine",
+    prepTips: "Whisk a teaspoon into vinaigrettes — it's a natural emulsifier and the dressing won't separate. Stir into pan sauces off the heat (boiling kills the volatile mustard oils that make it sharp). For honey-mustard glaze: 2 parts dijon, 1 part honey, brushed on chicken or salmon.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 365,
+      tips: "Refrigerate after opening — keeps for a year, though the heat (the sinus burn) fades after 6 months. If a brown crust forms on top, scrape it off; the mustard underneath is fine.",
+    },
+    substitutions: [
+      { id: "vinegar",  note: "Loses the body and pungency. Add a pinch of mustard powder if you have it." },
+    ],
+    pairs: ["honey", "olive_oil", "balsamic", "chicken_breast"],
+    nutrition: { per: "100g", kcal: 60, protein_g: 4, fat_g: 3, carb_g: 5, fiber_g: 3, sodium_mg: 1100 },
+    origin: "Dijon, Burgundy, France. The city has been a mustard-making center since the 1300s; the formula was codified in 1856 when Jean Naigeon substituted verjuice for the vinegar in the local recipe.",
+    culturalNotes: "Despite the name, 'Dijon mustard' is not a protected designation — it can be made anywhere. Most 'Dijon' on US shelves is made in the United States or by Maille (now owned by Unilever) outside of Burgundy. The actual brown mustard seed used today is largely grown in Canada.",
+    allergens: ["mustard"],
+    sourcing: "Maille and Edmond Fallot are the standard-bearers. Fallot still stone-grinds the seeds and is the only major Dijon producer based in Burgundy. Grey Poupon (Kraft) is a fine cheap default.",
+  },
+
+  beef_stock: {
+    description: "Long-simmered broth from roasted beef bones, mirepoix (carrot/onion/celery), and aromatics. Roasting the bones first is what gives it the deep brown color and meaty depth — unroasted bones make a much paler, less intense stock.",
+    flavorProfile: "Deep, meaty, roasted; rich, gelatinous mouthfeel from the collagen",
+    prepTips: "Reduce by half before using in pan sauces — boxed stock is engineered for safety, not concentration. To deepen any boxed stock: simmer with a splash of soy sauce, a halved onion, and a bay leaf for 20 minutes before using. Bone broth (longer simmer, more collagen) is the same idea taken to its logical end.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 365,
+      tips: "Boxed/canned: pantry until opened, then 4–5 days in the fridge. Homemade: 5 days in the fridge or 6 months in the freezer (ice-cube trays for measured small portions, quart bags lying flat for braises).",
+    },
+    substitutions: [
+      { id: "chicken_stock", note: "Lighter and less beefy. Add a splash of soy sauce + tomato paste to deepen." },
+    ],
+    pairs: ["red_wine", "tomato_paste", "yellow_onion", "carrot", "garlic"],
+    nutrition: { per: "100g", kcal: 7, protein_g: 1.3, fat_g: 0.2, carb_g: 0.1, sodium_mg: 363 },
+    origin: "Stock-making is universal in cuisines that butcher whole animals. The French codified 'fond brun' (brown stock) in the 1700s; Escoffier's 'Le Guide Culinaire' (1903) made it the foundation of Western fine dining.",
+    culturalNotes: "Real homemade beef stock is rare in modern home kitchens — it takes 6–8 hours and a stockpot of bones. Boxed stock is what most weeknight cooks actually use, and it's a perfectly respectable shortcut. The 'better than bouillon' style concentrated paste is often a better deal than boxed (more depth per dollar, longer shelf life).",
+    allergens: [],
+    sourcing: "Better Than Bouillon's Roasted Beef Base is the home cook's best deal — one 8oz jar makes 9 quarts. For boxed: Kettle & Fire (more concentrated) or Swanson's organic beef stock. Avoid 'beef broth' which is weaker than stock by definition.",
+  },
+
+  chicken_stock: {
+    description: "Simmered broth from chicken bones (carcasses, backs, wings), mirepoix, and aromatics. The all-purpose cooking liquid — lighter than beef stock, more savory than vegetable, the foundation of risotto, soups, braises, and pan sauces across most cuisines.",
+    flavorProfile: "Clean, savory, gently sweet; silky mouthfeel when well-made (collagen from joints does the work)",
+    prepTips: "For risotto, warm the stock before adding to the rice — cold stock shocks the grains and slows the starch release. Save chicken carcasses in the freezer; once you have 2–3, simmer them with carrots/celery/onion/parsley stems for 4 hours to make stock that's better than anything boxed.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 365,
+      tips: "Boxed/canned: pantry until opened, then 4–5 days in the fridge. Homemade: 5 days fridge / 6 months freezer. Frozen in ice-cube trays = perfect 2-tbsp portions for finishing pan sauces.",
+    },
+    substitutions: [
+      { id: "beef_stock", note: "Heavier and more assertive. Use half + half water if you only have beef stock." },
+      { id: "white_wine", note: "For deglazing or risotto in a pinch — different flavor but works for the liquid role." },
+    ],
+    pairs: ["yellow_onion", "carrot", "garlic", "parsley", "butter"],
+    nutrition: { per: "100g", kcal: 6, protein_g: 0.9, fat_g: 0.2, carb_g: 0.5, sodium_mg: 343 },
+    origin: "Universal — every cuisine that cooks chicken makes some form of chicken stock. The French 'fond blanc' (white stock, no roasting) is the version that became the Western culinary standard.",
+    culturalNotes: "Chicken stock was the first 'restaurant' food — the word 'restaurant' originally referred to the restorative meat broths sold from 18th-century Parisian shops. The cuisine took its name from the soup, not the other way around.",
+    allergens: [],
+    sourcing: "Better Than Bouillon Roasted Chicken Base is an excellent default. For boxed: Swanson's organic, Kettle & Fire bone broth, or any brand where 'chicken' (not 'chicken broth' or 'chicken flavor') is the first ingredient. Low-sodium versions give you more control.",
+  },
+
+  red_wine: {
+    description: "Cooking red wine — use something you'd be willing to drink. Medium-bodied dry reds (Chianti, Côtes du Rhône, Cabernet, Merlot) are most versatile. Avoid 'cooking wine' from the supermarket aisle — it's loaded with salt and tastes like jet fuel.",
+    flavorProfile: "Tannic, fruity, acidic; concentrates dramatically as it reduces — what was balanced wine becomes intense fruit-and-tannin syrup",
+    prepTips: "For red wine pan sauces and braises: deglaze with the wine FIRST, then reduce by half before adding stock. Cooking the alcohol off (~5 minutes of vigorous bubbling) is what removes the harsh ethanol bite and lets the fruit flavors shine. Open a bottle for braising, drink the rest with dinner.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 730,
+      tips: "Sealed bottle: years in a cool, dark cabinet. Once opened: 3–5 days with a stopper, longer if you transfer to a smaller bottle (less air contact). For cooking specifically: opened wine is fine for braises for 2–3 weeks if refrigerated.",
+    },
+    substitutions: [
+      { id: "beef_stock",       note: "Loses the acidity and fruit. Add a splash of balsamic or red wine vinegar to compensate." },
+      { id: "white_wine",       note: "Different flavor profile but works for deglazing in a pinch — lighter, brighter result." },
+    ],
+    pairs: ["beef_stock", "tomato_paste", "yellow_onion", "garlic", "brisket"],
+    nutrition: { per: "100g", kcal: 85, protein_g: 0.1, fat_g: 0, carb_g: 2.6, sodium_mg: 4 },
+    origin: "Wine in cooking is as old as wine itself (~6,000 BCE). The French codified its role in haute cuisine — coq au vin, boeuf bourguignon, daube provençal — using local Burgundy and Rhône wines for both the dish and the table.",
+    culturalNotes: "'Cooking wine' from the supermarket aisle is salted to make it non-potable (so it can be sold in dry counties / outside of liquor licenses). Salt content is so high it'll wreck a sauce — always cook with real wine you'd drink. Two-buck Chuck (Charles Shaw) is fine for most braises.",
+    allergens: ["sulfites"],
+    sourcing: "For braising: a $10–12 Côtes du Rhône or basic Chianti is the value sweet spot. Don't waste expensive bottles on long cooks (the nuance disappears) but don't go cheaper than something you'd actually drink — the wine is the dominant flavor in red wine braises.",
+  },
+
+  white_wine: {
+    description: "Cooking white wine — dry, crisp, unoaked. Pinot Grigio, Sauvignon Blanc, Vermentino, or dry Vermouth all work. Avoid sweet wines (Moscato, Riesling) and heavily oaked Chardonnay — both turn cloying or bitter when reduced.",
+    flavorProfile: "Crisp, acidic, aromatic; brightens and lifts sauces as it reduces (where red wine deepens, white wine clarifies)",
+    prepTips: "Dry vermouth (Noilly Prat, Dolin) is the secret weapon — it keeps for months opened (it's fortified), and a bottle costs about the same as one bottle of cooking wine but lasts 10× as long. Use it 1:1 anywhere a recipe calls for white wine.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 730,
+      tips: "Sealed: years in a cool dark cabinet. Once opened: 2–3 days in the fridge with a stopper. Vermouth opened: 2–3 months refrigerated. For cooking, opened wine is usable for about a week.",
+    },
+    substitutions: [
+      { id: "chicken_stock",   note: "Loses brightness — add a splash of vinegar (white wine, champagne, or lemon juice) to compensate." },
+      { id: "vinegar",         note: "Use ¼ the amount + ¾ water; the acidity is right but no body or aromatics." },
+    ],
+    pairs: ["chicken_stock", "shallot", "butter", "lemon", "garlic"],
+    nutrition: { per: "100g", kcal: 82, protein_g: 0.1, fat_g: 0, carb_g: 2.6, sodium_mg: 5 },
+    origin: "Wine in cooking is universal in wine-producing cultures. The French use of white wine for fish and chicken sauces (beurre blanc, chicken in white wine) is the technique most Western cuisines have inherited.",
+    culturalNotes: "Risotto al vino bianco — adding white wine to risotto right after the toasting step — is non-negotiable in Italian technique. The acid balances the richness of the cheese and butter at the end; without it, the dish tastes flat.",
+    allergens: ["sulfites"],
+    sourcing: "For cooking: any dry $8–12 Pinot Grigio or Sauvignon Blanc. Better answer: keep a bottle of dry vermouth on hand. For mussels in white wine: a Muscadet from the Loire is the classic match.",
+  },
+
+  tomato_paste: {
+    description: "Concentrated tomato purée, cooked and reduced until it's a brick-red paste. Adds depth, color, and umami to anything tomato-adjacent — and to plenty of things that aren't (chili, curry, French onion soup, beef stews).",
+    flavorProfile: "Concentrated tomato umami; sweet-tart, slightly bitter; almost meaty when caramelized",
+    prepTips: "ALWAYS bloom it in hot fat for 1–2 minutes before adding liquid — the color goes from bright red to brick red, the raw acidity mellows, and the umami compounds (glutamates) get released. This single step is what separates restaurant tomato sauces from home cooking.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 730,
+      tips: "Sealed can/tube: 2 years pantry. Once opened: tubes keep 6 weeks in the fridge; opened cans should be transferred to a jar or freezer (freeze in 1-tbsp dollops on parchment, then bag — perfect portions for any recipe).",
+    },
+    substitutions: [
+      { id: "canned_tomatoes", note: "Use 3× the volume and reduce in the pan to drive off the water. Fresher flavor, less concentrated." },
+    ],
+    pairs: ["olive_oil", "garlic", "yellow_onion", "red_wine", "ground_beef"],
+    nutrition: { per: "100g", kcal: 82, protein_g: 4.3, fat_g: 0.5, carb_g: 19, fiber_g: 4.1, sodium_mg: 59 },
+    origin: "Italy and the United States — the canning of tomato concentrate scaled commercially in the late 1800s. Mutti (Parma, Italy, est. 1899) is generally considered the original modern producer.",
+    culturalNotes: "European cooks (especially Italian and French) reach for tubed tomato paste — easier portioning, no half-can waste. American cooks default to the 6oz can, then throw out 5oz unused. The tube is one of the great kitchen upgrades for $4.",
+    allergens: [],
+    sourcing: "Mutti double-concentrate (tube or can) is the gold standard — Italian-grown tomatoes, no additives, distinctly brighter flavor than American mass-market brands. Cento is a respectable American option. Avoid pastes with 'tomato puree' as the first ingredient (it's diluted) — real paste lists 'tomatoes' first.",
+  },
 };
 
 // Look up display info for an ingredient — ingredient-specific fields win,
