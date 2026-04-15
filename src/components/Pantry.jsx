@@ -9,6 +9,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
+import IngredientCard from "./IngredientCard";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -1040,6 +1041,9 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // Inline amount+unit editor on a pantry card. Null when nothing is being
   // edited; otherwise holds the id of the row the user tapped.
   const [editingItemId, setEditingItemId] = useState(null);
+  // Tapping a pantry row opens IngredientCard with rich metadata. Null when
+  // the card is closed; otherwise { ingredientId, fallbackName, fallbackEmoji }.
+  const [cardIng, setCardIng] = useState(null);
   // Bumped after each successful scan so the monthly-spend banner re-queries.
   const [spendRefresh, setSpendRefresh] = useState(0);
   const monthlySpend = useMonthlySpend(userId, spendRefresh);
@@ -1255,16 +1259,37 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     // Inside a hub we already know the "family" (🍗 Chicken), so show the
     // ingredient's short name ("Breast") instead of the full "Chicken Breast".
     const displayName = canon?.shortName && canon.parentId ? canon.shortName : item.name;
+    // Only canonical-id rows are tappable — free-text rows have no metadata
+    // to show in IngredientCard. Tapping anywhere on the row body opens the
+    // card; the inline edit/trash controls stop propagation so they still
+    // work normally.
+    const tappable = !!item.ingredientId && !isEditing;
+    const openCard = () => setCardIng({
+      ingredientId: item.ingredientId,
+      fallbackName: item.name,
+      fallbackEmoji: item.emoji,
+    });
     return (
-      <div key={item.id} style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px" }}>
+      <div
+        key={item.id}
+        onClick={tappable ? openCard : undefined}
+        role={tappable ? "button" : undefined}
+        tabIndex={tappable ? 0 : undefined}
+        onKeyDown={tappable ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openCard(); } } : undefined}
+        style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor: tappable ? "pointer" : "default" }}
+      >
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
           <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
-              <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{displayName}</span>
+              <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6 }}>
+                {displayName}
+                {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
+              </span>
               {isEditing ? (
                 <div
                   style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}
+                  onClick={e => e.stopPropagation()}
                   onBlur={e => {
                     if (!e.currentTarget.contains(e.relatedTarget)) {
                       setEditingItemId(null);
@@ -1299,7 +1324,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 </div>
               ) : (
                 <button
-                  onClick={() => setEditingItemId(item.id)}
+                  onClick={e => { e.stopPropagation(); setEditingItemId(item.id); }}
                   aria-label={`Edit amount of ${item.name}`}
                   style={{ background:"transparent", border:"1px dashed #2a2a2a", borderRadius:8, padding:"2px 8px", fontFamily:"'DM Mono',monospace", fontSize:12, color:barColor(item), cursor:"pointer", flexShrink:0 }}
                 >
@@ -1327,7 +1352,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             </div>
           </div>
           <button
-            onClick={() => removePantryItem(item.id)}
+            onClick={e => { e.stopPropagation(); removePantryItem(item.id); }}
             aria-label={`Remove ${item.name}`}
             style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
             onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
@@ -1620,6 +1645,15 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             </div>
           </div>
         </div>
+      )}
+      {cardIng && (
+        <IngredientCard
+          ingredientId={cardIng.ingredientId}
+          fallbackName={cardIng.fallbackName}
+          fallbackEmoji={cardIng.fallbackEmoji}
+          pantry={pantry}
+          onClose={() => setCardIng(null)}
+        />
       )}
     </div>
   );
