@@ -24,28 +24,22 @@ function badgeFromDb(row) {
   };
 }
 
-// One module-level fetch of the static catalog. The rows almost never
-// change at runtime (a new badge ships via migration), so we memo the
-// in-flight Promise and reuse it across every hook mount. Saves a round
-// trip when the Cookbook list, UserProfile, and a notification all
-// request the catalog in the same session.
-let catalogPromise = null;
-function loadCatalog() {
-  if (!catalogPromise) {
-    catalogPromise = supabase
-      .from("badges")
-      .select("*")
-      .order("name", { ascending: true })
-      .then(({ data, error }) => {
-        if (error) {
-          console.error("[badges] catalog load failed:", error);
-          catalogPromise = null;          // allow retry next mount
-          return [];
-        }
-        return (data || []).map(badgeFromDb);
-      });
+// Load the badges catalog. Fresh fetch per hook mount — we used to
+// memoize at module level but that cached an empty result across hot-
+// reloads when the badges table hadn't been created yet; after running
+// the migration the user still saw zero badges until a hard refresh.
+// The query is cheap enough (N=handful of rows) that paying it per
+// profile open is not a concern.
+async function loadCatalog() {
+  const { data, error } = await supabase
+    .from("badges")
+    .select("*")
+    .order("name", { ascending: true });
+  if (error) {
+    console.error("[badges] catalog load failed:", error);
+    return [];
   }
-  return catalogPromise;
+  return (data || []).map(badgeFromDb);
 }
 
 /**

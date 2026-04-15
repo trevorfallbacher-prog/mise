@@ -159,18 +159,28 @@ export default function UserProfile({
             {/* Badge wall. Earned badges render in full color (SVG from
                 public/badges/), locked badges render as dim silhouettes
                 so the user sees what's out there without spoiling the
-                exact trigger. Tap any badge to see its description and
-                earn rule. */}
-            {(badges.earnedList.length > 0 || badges.lockedList.length > 0) && (
-              <Section label={`BADGES · ${badges.earnedList.length}/${badges.earnedList.length + badges.lockedList.length}`}>
+                exact trigger. Always rendered so an empty catalog
+                surfaces a visible state rather than silently hiding
+                itself (the previous behavior made a missing migration
+                indistinguishable from "no badges yet"). */}
+            <Section label={`BADGES · ${badges.earnedList.length}/${badges.earnedList.length + badges.lockedList.length}`}>
+              {badges.loading ? (
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", fontStyle:"italic", margin:0 }}>
+                  Loading…
+                </p>
+              ) : badges.earnedList.length + badges.lockedList.length === 0 ? (
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", fontStyle:"italic", margin:0, lineHeight:1.6 }}>
+                  No badges in the catalog yet. {isSelf ? "If you expected one here, make sure the latest migrations are applied." : ""}
+                </p>
+              ) : (
                 <BadgeWall
                   earned={badges.earnedList}
                   locked={badges.lockedList}
                   isSelf={isSelf}
                   firstName={first}
                 />
-              </Section>
-            )}
+              )}
+            </Section>
 
             {/* Our history together — only when viewer ate at one+ of
                 the target's cooks. Quick recall: "we ate this together". */}
