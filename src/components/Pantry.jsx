@@ -892,7 +892,6 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
       hubs: HUBS.filter(hubFitsTile),
       ingredients: standaloneIngredients().filter(fitsTile),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, drillHub, activeTileFilter]);
 
   const pickIngredient = (ing) => {
