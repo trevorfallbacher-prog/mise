@@ -316,39 +316,60 @@ function BadgeWall({ earned, locked, isSelf, firstName }) {
   return (
     <>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
-        {all.map(b => (
-          <button
-            key={b.id}
-            onClick={() => setDetail(b)}
-            title={b.isEarned ? `${b.name} — earned` : `${b.name} — locked`}
-            style={{
-              aspectRatio: "1 / 1",
-              background: b.isEarned ? "#1a1608" : "#0f0f0f",
-              border: `1px solid ${b.isEarned ? b.color + "55" : "#1e1e1e"}`,
-              borderRadius: 12, padding: 6,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              cursor: "pointer",
-              // Lock styling: desaturate + dim so the silhouette reads
-              // "not yet" without hiding the shape of the icon.
-              filter: b.isEarned ? "none" : "grayscale(1) brightness(0.35)",
-              opacity: b.isEarned ? 1 : 0.7,
-              transition: "all 0.2s",
-            }}
-          >
-            <img
-              src={b.iconPath}
-              alt={b.name}
-              style={{ width: "80%", height: "80%", objectFit: "contain", pointerEvents: "none" }}
-              // If the SVG is missing (e.g. file not yet committed to
-              // public/badges), fall back to a stand-in glyph rather
-              // than a broken-image icon.
-              onError={(e) => {
-                e.currentTarget.outerHTML =
-                  '<div style="font-size:28px;color:' + (b.isEarned ? b.color : "#444") + '">🏅</div>';
+        {all.map(b => {
+          // Little corner marker when the earned badge is scarce. 1/1
+          // gets a filled 🥇; small-cap gets the cap number itself.
+          const rareChip = b.isEarned && typeof b.maxAwards === "number" && b.maxAwards <= 10
+            ? (b.maxAwards === 1 ? "🥇" : `1/${b.maxAwards}`)
+            : null;
+          return (
+            <button
+              key={b.id}
+              onClick={() => setDetail(b)}
+              title={b.isEarned ? `${b.name} — earned` : `${b.name} — locked`}
+              style={{
+                position: "relative",
+                aspectRatio: "1 / 1",
+                background: b.isEarned ? "#1a1608" : "#0f0f0f",
+                border: `1px solid ${b.isEarned ? b.color + "55" : "#1e1e1e"}`,
+                borderRadius: 12, padding: 6,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                cursor: "pointer",
+                // Lock styling: desaturate + dim so the silhouette reads
+                // "not yet" without hiding the shape of the icon.
+                filter: b.isEarned ? "none" : "grayscale(1) brightness(0.35)",
+                opacity: b.isEarned ? 1 : 0.7,
+                transition: "all 0.2s",
+                // Subtle pulse-glow for earned 1/1s so the wall makes
+                // them obviously special.
+                boxShadow: b.isEarned && b.maxAwards === 1
+                  ? `0 0 18px ${b.color}55`
+                  : "none",
               }}
-            />
-          </button>
-        ))}
+            >
+              <img
+                src={b.iconPath}
+                alt={b.name}
+                style={{ width: "80%", height: "80%", objectFit: "contain", pointerEvents: "none" }}
+                onError={(e) => {
+                  e.currentTarget.outerHTML =
+                    '<div style="font-size:28px;color:' + (b.isEarned ? b.color : "#444") + '">🏅</div>';
+                }}
+              />
+              {rareChip && (
+                <span style={{
+                  position: "absolute", bottom: 4, right: 4,
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#111", background: b.color,
+                  padding: "1px 5px", borderRadius: 10,
+                  fontWeight: 700, letterSpacing: "0.04em",
+                }}>
+                  {rareChip}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {!isSelf && earned.length === 0 && locked.length > 0 && (
@@ -369,8 +390,22 @@ function BadgeWall({ earned, locked, isSelf, firstName }) {
   );
 }
 
+// Render the "rarity" chip that sits above the badge name — turns
+// max_awards into language. 1/1 gets gold; small N (<=10) gets a
+// bronze/silver vibe; null = standard (no chip).
+function rarityChip(badge) {
+  if (badge.maxAwards === 1) {
+    return { label: "1 OF 1 · FOREVER", color: "#f5c842", bg: "#1a1608" };
+  }
+  if (typeof badge.maxAwards === "number" && badge.maxAwards > 1 && badge.maxAwards <= 10) {
+    return { label: `1 OF ${badge.maxAwards}`, color: "#e2c77a", bg: "#18150a" };
+  }
+  return null;
+}
+
 function BadgeDetail({ badge, onClose, isSelf }) {
   const earned = !!badge.earnedAt;
+  const rarity = rarityChip(badge);
   return (
     <div
       onClick={onClose}
@@ -387,7 +422,10 @@ function BadgeDetail({ badge, onClose, isSelf }) {
           border: `1px solid ${earned ? badge.color + "66" : "#2a2a2a"}`,
           borderRadius: 18, padding: "24px", cursor: "default",
           textAlign: "center",
-          boxShadow: earned ? `0 0 48px ${badge.color}22` : "0 12px 40px rgba(0,0,0,0.6)",
+          // Rare earned badges get a more dramatic glow; standards stay soft.
+          boxShadow: earned
+            ? (rarity ? `0 0 72px ${badge.color}55` : `0 0 48px ${badge.color}22`)
+            : "0 12px 40px rgba(0,0,0,0.6)",
         }}
       >
         <div style={{
@@ -408,6 +446,17 @@ function BadgeDetail({ badge, onClose, isSelf }) {
             }}
           />
         </div>
+
+        {/* Rarity chip — only shown when the badge is actually scarce.
+            Standard badges read cleaner without one. */}
+        {rarity && (
+          <div style={{ display:"inline-block", padding:"4px 10px", borderRadius:20, background:rarity.bg, border:`1px solid ${rarity.color}66`, marginBottom:8 }}>
+            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:rarity.color, letterSpacing:"0.14em", fontWeight:600 }}>
+              🥇 {rarity.label}
+            </span>
+          </div>
+        )}
+
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: earned ? badge.color : "#666", letterSpacing:"0.14em", marginBottom:4 }}>
           {earned ? "EARNED" : "LOCKED"}
         </div>
@@ -417,16 +466,33 @@ function BadgeDetail({ badge, onClose, isSelf }) {
         <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#aaa", lineHeight:1.6, margin:"0 0 14px" }}>
           {badge.description}
         </p>
-        {badge.earnRule && (
+
+        {/* The earn_reason — the specific "why" this earner got this
+            badge. Populated by the award trigger at INSERT time. Only
+            shows for earned badges; locked viewers see the earn_rule
+            block below instead. */}
+        {earned && badge.earnReason && (
+          <div style={{ padding:"12px 14px", background:"#1a1608", border:`1px solid ${badge.color}44`, borderRadius:10, marginBottom:12 }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:badge.color, letterSpacing:"0.12em", marginBottom:4 }}>
+              WHY {isSelf ? "YOU" : "THEY"} EARNED IT
+            </div>
+            <div style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:14, color:"#f0ece4", lineHeight:1.5 }}>
+              "{badge.earnReason}"
+            </div>
+          </div>
+        )}
+
+        {!earned && badge.earnRule && (
           <div style={{ padding:"10px 14px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10 }}>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.12em", marginBottom:4 }}>
               HOW TO EARN
             </div>
-            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color: earned ? "#888" : "#ccc", lineHeight:1.5 }}>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#ccc", lineHeight:1.5 }}>
               {badge.earnRule}
             </div>
           </div>
         )}
+
         {earned && badge.earnedAt && (
           <div style={{ marginTop:12, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.1em" }}>
             {isSelf ? "YOU EARNED IT" : "EARNED"} · {new Date(badge.earnedAt).toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" })}

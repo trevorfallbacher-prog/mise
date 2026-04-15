@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 
 // Catalog row → UI shape.
+//
+// maxAwards / isHidden / priority come from migration 0020 — we map
+// them consistently so pre-migration columns (NULL / absent) don't
+// break rendering. isHidden especially matters: locked rendering uses
+// it to decide whether to surface a silhouette on the wall at all.
 function badgeFromDb(row) {
   return {
     id:          row.id,
@@ -13,6 +18,9 @@ function badgeFromDb(row) {
     earnRule:    row.earn_rule,
     tier:        row.tier,
     color:       row.color,
+    maxAwards:   row.max_awards ?? null,
+    isHidden:    !!row.is_hidden,
+    priority:    Number(row.priority ?? 0),
   };
 }
 
@@ -80,8 +88,9 @@ export function useBadges(targetUserId) {
         const map = new Map();
         for (const row of ownedRes.data || []) {
           map.set(row.badge_id, {
-            earnedAt:  row.earned_at,
-            cookLogId: row.cook_log_id,
+            earnedAt:   row.earned_at,
+            cookLogId:  row.cook_log_id,
+            earnReason: row.earn_reason || null,
           });
         }
         setEarned(map);
@@ -105,8 +114,9 @@ export function useBadges(targetUserId) {
             const next = new Map(prev);
             if (payload.eventType === "INSERT" && payload.new) {
               next.set(payload.new.badge_id, {
-                earnedAt:  payload.new.earned_at,
-                cookLogId: payload.new.cook_log_id,
+                earnedAt:   payload.new.earned_at,
+                cookLogId:  payload.new.cook_log_id,
+                earnReason: payload.new.earn_reason || null,
               });
             } else if (payload.eventType === "DELETE" && payload.old) {
               next.delete(payload.old.badge_id);
@@ -127,8 +137,11 @@ export function useBadges(targetUserId) {
     [catalog, earned],
   );
 
+  // Hidden badges deliberately don't surface as locked silhouettes —
+  // the surprise is the reveal. Once earned they appear (the earnedList
+  // pass above already respects that).
   const lockedList = useMemo(
-    () => catalog.filter(b => !earned.has(b.id)),
+    () => catalog.filter(b => !earned.has(b.id) && !b.isHidden),
     [catalog, earned],
   );
 
