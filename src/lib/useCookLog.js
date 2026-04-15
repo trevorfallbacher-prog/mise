@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 
 // Row shape we render in the UI. Keeps the DB column names out of components.
@@ -111,4 +111,180 @@ export function useCookLog(userId, familyKey) {
   }, []);
 
   return { logs, loading, toggleFavorite, remove, refresh: load };
+}
+
+/**
+ * Loads cooks the signed-in user was a DINER on — meals they ate with
+ * someone else who cooked. Drives the "Eaten" tab of Cookbook so a diner
+ * can see every meal they attended and leave their own review.
+ *
+ * RLS on cook_logs already allows auth.uid() = ANY(diners) to SELECT, so
+ * this is just a filtered query. Realtime sub is set broad (all events on
+ * cook_logs) and we filter client-side for rows where diners contains us.
+ */
+export function useDinerLog(userId, familyKey) {
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!userId) { setLogs([]); setLoading(false); return; }
+    setLoading(true);
+    // `contains` on a uuid[] column expects an array — we want rows whose
+    // diners array contains the current user's id.
+    const { data, error } = await supabase
+      .from("cook_logs")
+      .select("*")
+      .contains("diners", [userId])
+      .order("cooked_at", { ascending: false });
+    if (error) {
+      console.error("[cook_logs:diner] load failed:", error);
+      setLogs([]);
+    } else {
+      setLogs((data || []).map(fromDb));
+    }
+    setLoading(false);
+  }, [userId]);
+
+  useEffect(() => { load(); }, [load, familyKey]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const ch = supabase
+      .channel(`rt:cook_logs_diner:${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "cook_logs" }, (payload) => {
+        const row = payload.new || payload.old;
+        // Only care about rows where we're a diner. Note that an UPDATE
+        // could add or remove us from diners — handle both edges.
+        const wasDiner = Array.isArray(payload.old?.diners) && payload.old.diners.includes(userId);
+        const isDiner  = Array.isArray(payload.new?.diners) && payload.new.diners.includes(userId);
+        if (!wasDiner && !isDiner) return;
+
+        setLogs(prev => {
+          if (payload.eventType === "INSERT" && isDiner) {
+            const mapped = fromDb(payload.new);
+            if (prev.some(l => l.id === mapped.id)) return prev;
+            return [mapped, ...prev];
+          }
+          if (payload.eventType === "UPDATE") {
+            if (!isDiner) return prev.filter(l => l.id !== row.id); // chef dropped us
+            const mapped = fromDb(payload.new);
+            if (!prev.some(l => l.id === mapped.id)) return [mapped, ...prev];
+            return prev.map(l => l.id === mapped.id ? mapped : l);
+          }
+          if (payload.eventType === "DELETE") {
+            const id = payload.old?.id;
+            return id ? prev.filter(l => l.id !== id) : prev;
+          }
+          return prev;
+        });
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [userId]);
+
+  return { logs, loading, refresh: load };
+}
+
+// Map DB review row → UI shape. Kept local so Cookbook never sees snake_case.
+function reviewFromDb(row) {
+  return {
+    id:         row.id,
+    cookLogId:  row.cook_log_id,
+    reviewerId: row.reviewer_id,
+    rating:     row.rating,
+    notes:      row.notes || "",
+    createdAt:  row.created_at,
+    updatedAt:  row.updated_at,
+  };
+}
+
+/**
+ * Loads + realtime-subs the reviews for a single cook_log.
+ *
+ * Returns:
+ *   reviews        — sorted oldest-first so the thread reads top-to-bottom
+ *   myReview       — convenience lookup: the current user's review, or null
+ *   loading
+ *   upsertMyReview — ({rating, notes}) => Promise<void>. Uses onConflict
+ *                    so editing just bumps the existing row.
+ *   deleteMyReview — () => Promise<void>
+ */
+export function useCookLogReviews(cookLogId, userId) {
+  const [reviews, setReviews] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    if (!cookLogId) { setReviews([]); setLoading(false); return; }
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("cook_log_reviews")
+        .select("*")
+        .eq("cook_log_id", cookLogId)
+        .order("created_at", { ascending: true });
+      if (!alive) return;
+      if (error) { console.error("[cook_log_reviews] load failed:", error); setReviews([]); }
+      else       { setReviews((data || []).map(reviewFromDb)); }
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [cookLogId]);
+
+  useEffect(() => {
+    if (!cookLogId) return;
+    const ch = supabase
+      .channel(`rt:cook_log_reviews:${cookLogId}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "cook_log_reviews", filter: `cook_log_id=eq.${cookLogId}` },
+        (payload) => {
+          setReviews(prev => {
+            if (payload.eventType === "INSERT") {
+              const row = reviewFromDb(payload.new);
+              if (prev.some(r => r.id === row.id)) return prev;
+              return [...prev, row];
+            }
+            if (payload.eventType === "UPDATE") {
+              const row = reviewFromDb(payload.new);
+              if (!prev.some(r => r.id === row.id)) return [...prev, row];
+              return prev.map(r => r.id === row.id ? row : r);
+            }
+            if (payload.eventType === "DELETE") {
+              const id = payload.old?.id;
+              return id ? prev.filter(r => r.id !== id) : prev;
+            }
+            return prev;
+          });
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [cookLogId]);
+
+  const myReview = useMemo(
+    () => reviews.find(r => r.reviewerId === userId) || null,
+    [reviews, userId]
+  );
+
+  const upsertMyReview = useCallback(async ({ rating, notes }) => {
+    if (!cookLogId || !userId) return;
+    const { error } = await supabase
+      .from("cook_log_reviews")
+      .upsert(
+        { cook_log_id: cookLogId, reviewer_id: userId, rating, notes: notes || null },
+        { onConflict: "cook_log_id,reviewer_id" },
+      );
+    if (error) console.error("[cook_log_reviews] upsert failed:", error);
+  }, [cookLogId, userId]);
+
+  const deleteMyReview = useCallback(async () => {
+    if (!cookLogId || !userId) return;
+    const { error } = await supabase
+      .from("cook_log_reviews")
+      .delete()
+      .eq("cook_log_id", cookLogId)
+      .eq("reviewer_id", userId);
+    if (error) console.error("[cook_log_reviews] delete failed:", error);
+  }, [cookLogId, userId]);
+
+  return { reviews, myReview, loading, upsertMyReview, deleteMyReview };
 }
