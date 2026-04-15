@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { findIngredient, getIngredientInfo, isInSeason, unitLabel } from "../data/ingredients";
-import { RECIPES } from "../data/recipes";
+import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
 import { SKILL_TREE } from "../data";
 
 // Month labels for seasonality. 1-indexed to match peakMonths convention
@@ -778,18 +778,127 @@ export default function IngredientCard({
                 </span>
               </div>
             )}
-            {info.skillDev.proFromScratch && (
+            {info.skillDev.proFromScratch && !info.skillDev.fromScratchRecipeId && (
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#d9c8a0", fontStyle: "italic", lineHeight: 1.5 }}>
                 🎓 Can be made from scratch
-                {info.skillDev.fromScratchRecipeId && (
-                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", marginLeft: 6 }}>
-                    (recipe: {info.skillDev.fromScratchRecipeId})
-                  </span>
-                )}
               </div>
             )}
           </div>
         )}
+
+        {/* ─── Compound ingredient: scratch recipe + "made from" list ───
+            When this ingredient has a working scratch recipe linked
+            (info.skillDev.fromScratchRecipeId + the recipe file exists),
+            we surface two things:
+              1. A big tappable card for the recipe itself — opens via
+                 onPickRecipe so the Cook flow picks it up naturally.
+              2. A "MADE FROM" row of ingredient chips parsed from the
+                 recipe's ingredients[]. Each chip with a known
+                 ingredientId is tappable → navigates this same card to
+                 that sub-ingredient (setViewingId). "Learn the recipe
+                 by drilling into its pieces" UX.
+            Primitive ingredients (basil, flour) never render this
+            section — only compounds you can actually build. */}
+        {(() => {
+          const scratchRecipe = info?.skillDev?.fromScratchRecipeId
+            ? findRecipe(info.skillDev.fromScratchRecipeId)
+            : null;
+          if (!scratchRecipe) return null;
+
+          // Tracked ingredients (have ingredientId) become tappable chips.
+          // Untracked ones still render as chips but grey/non-interactive
+          // — they're real ingredients (pine nuts, red pepper flakes)
+          // we just haven't added to the registry yet.
+          const recipeIngredients = (scratchRecipe.ingredients || [])
+            .filter(i => i.item && !/^(to taste|for |salt$|water$)/i.test(i.item));
+
+          const totalMin = totalTimeMin(scratchRecipe);
+          const difficulty = difficultyLabel(scratchRecipe.difficulty);
+
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
+                🔪 MAKE FROM SCRATCH
+              </div>
+              <button
+                onClick={() => onPickRecipe?.(scratchRecipe)}
+                disabled={!onPickRecipe}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", gap: 12,
+                  padding: "14px 14px",
+                  background: "linear-gradient(135deg,#1e1a0e 0%,#141008 100%)",
+                  border: "1px solid #f5c84244", borderRadius: 12,
+                  cursor: onPickRecipe ? "pointer" : "default",
+                  textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 32, flexShrink: 0 }}>{scratchRecipe.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Fraunces',serif", fontSize: 17, color: "#f0ece4", fontWeight: 400 }}>
+                    {scratchRecipe.title}
+                  </div>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", fontStyle: "italic", marginTop: 2 }}>
+                    {scratchRecipe.subtitle}
+                  </div>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#f5c842", letterSpacing: "0.08em", marginTop: 6 }}>
+                    {totalMin}m · {difficulty.toUpperCase()}
+                    {scratchRecipe.produces?.yield && (
+                      <span style={{ color: "#888", marginLeft: 8 }}>
+                        · YIELDS {scratchRecipe.produces.yield.amount} {scratchRecipe.produces.yield.unit.replace("_", " ").toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <span style={{ fontSize: 18, color: "#f5c842", flexShrink: 0 }}>→</span>
+              </button>
+
+              {recipeIngredients.length > 0 && (
+                <>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", margin: "14px 0 8px" }}>
+                    MADE FROM
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {recipeIngredients.map((ri, i) => {
+                      const subIng = ri.ingredientId ? findIngredient(ri.ingredientId) : null;
+                      const tappable = !!subIng;
+                      // Chip label: prefer the canonical short name when we
+                      // have one (fits more chips in a row), else the
+                      // recipe's "item" string trimmed to the first
+                      // comma (so "garlic, smashed" reads as "garlic").
+                      const label = subIng?.shortName || subIng?.name || ri.item.split(",")[0];
+                      const emoji = subIng?.emoji || "•";
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => tappable && setViewingId(ri.ingredientId)}
+                          disabled={!tappable}
+                          title={tappable ? `Open ${label}` : ri.item}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 6,
+                            padding: "5px 10px",
+                            background: tappable ? "#161616" : "#0d0d0d",
+                            border: `1px solid ${tappable ? "#2a2a2a" : "#1a1a1a"}`,
+                            borderRadius: 12,
+                            fontFamily: "'DM Sans',sans-serif",
+                            fontSize: 12,
+                            color: tappable ? "#f0ece4" : "#666",
+                            cursor: tappable ? "pointer" : "default",
+                          }}
+                        >
+                          <span style={{ fontSize: 14 }}>{emoji}</span>
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#444", marginTop: 8, letterSpacing: "0.06em" }}>
+                    TAP ANY INGREDIENT TO DIVE IN
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Wine pairings */}
         {info?.winePairings?.length > 0 && (

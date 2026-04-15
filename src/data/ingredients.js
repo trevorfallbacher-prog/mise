@@ -1456,6 +1456,35 @@ export const INGREDIENTS = [
     defaultUnit: "bottle",
   },
   {
+    // Compound ingredient — bottled sriracha is one product, homemade is
+    // another with the same id. Links to the "sriracha" scratch recipe
+    // via skillDev.fromScratchRecipeId (Phase 1 of the compound work).
+    id: "sriracha", name: "Sriracha", emoji: "🌶️", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 482 }, // ~17 fl oz classic Huy Fong
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "tsp",    label: "tsp",     toBase: 5 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 2.0, // ~$8–10 for the 28oz rooster bottle
+  },
+  {
+    // Compound ingredient — jarred pesto varies wildly by brand; the
+    // scratch recipe produces a ~1 cup yield. Category "pantry" for
+    // shelf placement purposes; physical location defaults to fridge
+    // after opening (or after making).
+    id: "pesto", name: "Pesto", emoji: "🌿", category: "pantry",
+    units: [
+      { id: "jar",    label: "jars",    toBase: 180 }, // ~6 oz supermarket jar
+      { id: "cup",    label: "cups",    toBase: 240 },
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "jar",
+    estCentsPerBase: 5.5, // ~$8–10 for a 6 oz jar of the decent stuff
+  },
+  {
     id: "vinegar", name: "Vinegar", emoji: "🍶", category: "pantry",
     units: [
       { id: "bottle", label: "bottles", toBase: 473 },
@@ -3832,7 +3861,7 @@ const INGREDIENT_INFO = {
       qualityMatters: true,
       qualityNote: "Homemade from saved carcasses is dramatically better — and free. For shortcuts: Better Than Bouillon concentrate > most boxed stocks. Avoid generic \"chicken broth\" which is watered-down by definition.",
     },
-    skillDev: { skills: ["sauce", "timing"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
+    skillDev: { skills: ["sauce", "timing"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: "homemade-chicken-stock" },
   },
 
   red_wine: {
@@ -3965,6 +3994,98 @@ const INGREDIENT_INFO = {
       qualityNote: "Mutti double-concentrate in a tube is transformative — brighter, cleaner, and the tube kills the half-can-waste problem. Cento is the respectable American fallback.",
     },
     skillDev: { skills: ["sauce", "heat"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
+  },
+
+  // ── compounds with working scratch recipes (Phase 1 of the compound-
+  // ingredient work). Each of these is BOTH a pantry ingredient AND a
+  // thing you can make yourself — fromScratchRecipeId points at the
+  // recipe; IngredientCard renders a "🔪 make from scratch" link.
+  sriracha: {
+    description: "Bright red, garlicky chili sauce — originally from Si Racha, Thailand, but now a global condiment. Huy Fong's rooster bottle is the iconic American version; a hundred imitators and regional takes. Heat + garlic + sugar + vinegar in one bottle.",
+    flavorProfile: "Hot, garlicky, tangy, slightly sweet; more fragrant than pure heat — capsaicin plays second fiddle to the fermented-chili-and-garlic combo",
+    prepTips: "Squirt into mayo (1:4) for the sriracha-mayo every sandwich should have. Whisk into honey for a wings glaze. Stir into soup noodles or scrambled eggs. Cook it briefly and the flavors marry; leave it raw and it punches.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 730, // unopened commercial; opened drops to ~365
+      shelfLife: { fridge: 365, freezer: null, pantry: 730 },
+      tips: "Unopened commercial: pantry for years. Once opened: most people leave it in the pantry and it's fine; fridge extends freshness but changes the texture (gets thicker). Homemade: always fridge, ~3 months.",
+      spoilageSigns: "Color shift from bright red to brown, loss of aroma, mold at the bottle neck — toss. Vinegar separation alone is fine, just shake.",
+      freezable: false,
+      freezeNotes: "No benefit — the texture breaks on thaw.",
+    },
+    substitutions: [
+      { id: "hot_sauce", tier: "direct",    note: "Any vinegar-based hot sauce works for heat, though you lose the garlic punch." },
+      { id: "gochujang", tier: "pro",       note: "Korean chili paste — thicker, fermented, less sweet. Different flavor but a pro swap in marinades." },
+    ],
+    pairs: ["mayo", "honey", "lime", "eggs", "soy_sauce"],
+    flavor: {
+      primary: ["umami", "sour", "sweet"],
+      intensity: "strong",
+      heatChange: {
+        raw: "the signature raw condiment — fragrant garlic and fermented-chili edge",
+        cooked: "simmered into a sauce it mellows and the garlic rounds out; great glaze base",
+        charred: "direct flame scorches the sugars and goes bitter — brush on at the end, not the start",
+      },
+    },
+    nutrition: { per: "1 tsp", kcal: 5, protein_g: 0.1, fat_g: 0, carb_g: 1, sodium_mg: 90 },
+    origin: "Si Racha, Thailand, where coastal cooks made versions for a local seafood restaurant from the 1930s onward. Huy Fong Foods (founded by David Tran, a Vietnamese refugee) launched the rooster bottle in the US in 1980 — American sriracha diverged from Thai sriracha immediately.",
+    culturalNotes: "The Huy Fong rooster bottle is NOT what most Thai people think of as sriracha — their local sauces (like Sriraja Panich) are sweeter, thinner, and less garlicky. American sriracha is its own genre at this point.",
+    allergens: [],
+    diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "high", nightshade: true, allium: true },
+    seasonality: { yearRound: true, preservedAvailable: true },
+    sourcing: "Huy Fong is the default and has improved again since their 2022 supply shortage. Lee Kum Kee and Shark brand are decent alternatives. Homemade is transformative if you can get fresh red Fresno chilies.",
+    market: {
+      priceTier: "budget",
+      availability: "supermarket",
+      organicCommon: false,
+      qualityMatters: true,
+      qualityNote: "Homemade sriracha from fresh Fresnos is a different food than the bottle — brighter, more garlic, less cloying. If you cook enough to justify the 30-min batch, do it.",
+    },
+    skillDev: { skills: ["sauce", "seasoning"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: "sriracha" },
+  },
+
+  pesto: {
+    description: "Ligurian uncooked sauce — basil, pine nuts, Parmigiano, Pecorino, garlic, olive oil, salt. The scratch version in the fridge is a different food than the shelf-stable jar; both have their place.",
+    flavorProfile: "Bright, herbaceous, nutty, salty; high-quality pesto has a grassy pepperiness from good EVOO and a buttery richness from pine nuts",
+    prepTips: "Toss with hot pasta OFF the heat (direct contact with a boiling pot breaks the sauce). Loosen with pasta water, never more oil. On toast under eggs. On caprese. On roast chicken. On pizza after it's out of the oven.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 7, // homemade; shelf-stable jar is pantry for months
+      shelfLife: { fridge: 7, freezer: 90, pantry: 180 },
+      tips: "Homemade: fridge 1 week under a film of olive oil (the film blocks oxygen, keeps the surface green). Shelf-stable jar: pantry until opened, then 2–3 weeks fridge. Freezes beautifully in ice-cube trays.",
+      spoilageSigns: "Dark olive-drab or brown color instead of bright green = oxidized (still edible but sad). White fuzzy mold on the surface = toss.",
+      freezable: true,
+      freezeNotes: "The save-my-basil-glut move. Freeze in ice-cube trays, transfer cubes to a bag. 2 cubes = enough for a pasta portion. Thaws in 30 seconds tossed into hot pasta.",
+      prepYield: "One batch of the scratch recipe yields ~1 cup (240g) — enough to sauce pasta for 4 generously.",
+    },
+    substitutions: [
+      { id: "basil",       tier: "emergency", note: "Raw basil + good olive oil + cheese is a minute-to-make rough approximation when you're out of pesto." },
+    ],
+    pairs: ["spaghetti", "mozzarella", "tomato", "chicken_breast", "bread"],
+    flavor: {
+      primary: ["umami", "bitter", "sweet"],
+      intensity: "medium",
+      heatChange: {
+        raw: "the point of pesto — bright, herbaceous, never cooked",
+        cooked: "direct heat dulls the basil instantly; toss with hot pasta OFF the heat",
+        charred: "don't. Past 150°F the sauce breaks and goes bitter; brushed on pizza post-bake is the limit.",
+      },
+    },
+    nutrition: { per: "2 tbsp", kcal: 180, protein_g: 3, fat_g: 18, carb_g: 2, sodium_mg: 210 },
+    origin: "Genoa, Liguria, Italy. The tradition is mortar-and-pestle (hence the name 'pestare' = to pound) using the small-leaf Genovese basil variety. 'Pesto alla Genovese' is a DOP designation with specific requirements.",
+    culturalNotes: "Real Genovese pesto is made with a marble mortar and wooden pestle at a specific rotation speed — bruising not grinding. Food processor pesto is faster but a different texture. Both are defensible; pretend otherwise at your peril.",
+    allergens: ["tree_nuts", "dairy"],
+    diet: { vegan: false, vegetarian: true, keto: true, halal: true, kosher: "dairy", fodmap: "moderate", nightshade: false, allium: true },
+    seasonality: { yearRound: true, preservedAvailable: true },
+    sourcing: "For jarred: Barilla is fine, Rana is better, anything labeled 'Genovese DOP' is the real thing (at a real price). Homemade with good basil and real Parmigiano-Reggiano beats any jar.",
+    market: {
+      priceTier: "mid",
+      availability: "supermarket",
+      organicCommon: true,
+      qualityMatters: true,
+      qualityNote: "Supermarket pesto is almost always stabilized with other oils and less cheese than the name implies. A scratch batch from one $3 bunch of basil is both cheaper and better.",
+    },
+    skillDev: { skills: ["sauce", "seasoning", "knife"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: "pesto" },
   },
 };
 
@@ -4258,4 +4379,31 @@ export function compareQty({ have, need, lowThreshold, ingredient }) {
     : 0;
   if (haveBase - needBase <= thresholdBase) return "low";
   return "ok";
+}
+
+// ─── compound vs. primitive kind ───────────────────────────────────────
+//
+// Primitive ingredients are terminal — basil is basil, you don't build it
+// from simpler things. Compound ingredients (sriracha, pesto, stocks,
+// mustards) can be purchased OR produced by a scratch recipe. The same
+// id covers both cases — a bottle of Huy Fong sriracha and a jar of
+// homemade sriracha both live as ingredientId === "sriracha" in the
+// pantry, merge by id, match the same recipes.
+//
+// Source of truth is skillDev.fromScratchRecipeId — if a scratch recipe
+// is linked, the ingredient is a compound. This set is a sugar helper
+// for UI code that wants the primitive/compound split without reaching
+// into skillDev.
+
+export const COMPOUND_INGREDIENT_IDS = new Set([
+  "sriracha",
+  "pesto",
+  "chicken_stock",
+  // future: beef_stock, mayo, ketchup, dijon, tomato_paste, ricotta,
+  // hot_sauce, peanut_butter, compound butter, vanilla extract, …
+  // Each gets added here when its scratch recipe ships.
+]);
+
+export function ingredientKind(id) {
+  return COMPOUND_INGREDIENT_IDS.has(id) ? "compound" : "primitive";
 }

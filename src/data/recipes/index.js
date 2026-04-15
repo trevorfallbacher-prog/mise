@@ -18,6 +18,9 @@ import soupeALoignon       from "./soupe-a-loignon";
 import coqAuVin            from "./coq-au-vin";
 import chickenFajitas      from "./chicken-fajitas";
 import steakTacos          from "./steak-tacos";
+import sriracha            from "./sriracha";
+import pesto               from "./pesto";
+import homemadeChickenStock from "./homemade-chicken-stock";
 
 export const RECIPES = [
   aglioEOlio,
@@ -31,6 +34,11 @@ export const RECIPES = [
   coqAuVin,
   chickenFajitas,
   steakTacos,
+  // Compound-ingredient scratch recipes — produce a pantry ingredient
+  // rather than a plated meal. See schema.js `produces` docs.
+  sriracha,
+  pesto,
+  homemadeChickenStock,
 ];
 
 export const findRecipe = (slug) => RECIPES.find(r => r.slug === slug) || null;
