@@ -1502,6 +1502,51 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "pack",
   },
+  // ── condiments batch 1: American staples ────────────────────────────
+  {
+    id: "mayo", name: "Mayonnaise", emoji: "🥚", category: "pantry",
+    units: [
+      { id: "jar",    label: "jars",    toBase: 887 }, // 30oz standard Hellmann's
+      { id: "cup",    label: "cups",    toBase: 220 },
+      { id: "tbsp",   label: "tbsp",    toBase: 14 },
+      { id: "tsp",    label: "tsp",     toBase: 4.7 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "jar",
+    estCentsPerBase: 0.8, // ~$6–8 for a 30oz jar
+  },
+  {
+    id: "ketchup", name: "Ketchup", emoji: "🥫", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 567 }, // 20oz squeeze bottle
+      { id: "tbsp",   label: "tbsp",    toBase: 17 },
+      { id: "tsp",    label: "tsp",     toBase: 5.7 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 0.6, // ~$3–4 for a 20oz Heinz
+  },
+  {
+    id: "mustard", name: "Yellow Mustard", emoji: "🟡", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 397 }, // 14oz squeeze
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "tsp",    label: "tsp",     toBase: 5 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 0.5, // ~$2–3 for a standard yellow mustard
+  },
+  {
+    id: "hot_sauce", name: "Hot Sauce", emoji: "🌶️", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 148 }, // ~5oz Tabasco-size bottle
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "tsp",    label: "tsp",     toBase: 5 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 2.5, // ~$4–5 for a 5oz bottle; varies wildly by brand
+  },
   {
     id: "oj", name: "Orange Juice", emoji: "🧃", category: "dairy",
     units: [
@@ -4086,6 +4131,181 @@ const INGREDIENT_INFO = {
       qualityNote: "Supermarket pesto is almost always stabilized with other oils and less cheese than the name implies. A scratch batch from one $3 bunch of basil is both cheaper and better.",
     },
     skillDev: { skills: ["sauce", "seasoning", "knife"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: "pesto" },
+  },
+
+  // ── condiments: American staples (batch 1) ─────────────────────────
+  mayo: {
+    description: "Egg-yolk emulsion of oil, acid (lemon or vinegar), mustard, salt. Hellmann's (east of the Rockies) and Best Foods (same jar, west of the Rockies) are the American benchmark. Kewpie (Japan) is eggier and sweeter. Duke's (the South) uses more yolk and no sugar. Homemade is a 90-second job with a stick blender.",
+    flavorProfile: "Creamy, tangy, faintly sweet; a good mayo tastes of egg and oil first, acid second. Bad mayo tastes of plastic and sugar.",
+    prepTips: "Whisk with lemon juice + pepper + a dab of dijon for the best sandwich spread there is. Mix 3:1 with sriracha for spicy mayo (every Japanese-steakhouse trick). Fold into canned tuna or chicken with mustard + relish — a salad in 2 minutes.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 90, // opened; sealed commercial keeps 3–4 months pantry and then fridge after opening
+      shelfLife: { fridge: 90, freezer: null, pantry: 180 },
+      tips: "Commercial mayo is shelf-stable sealed; refrigerate after opening. Homemade is ALWAYS fridge-only, 5–7 days tops. The jar lid and the tool you scoop with are the infection vectors — clean spoon, always.",
+      spoilageSigns: "Separation that doesn't stir back in, sour/off smell, yellowing at the top surface, any pink or black spots. Opened jar past 2–3 months in the fridge is a coin flip; sniff before using.",
+      freezable: false,
+      freezeNotes: "Don't. Mayo freezes but the emulsion breaks irrevocably on thaw — you'll get oil-slicked water and sad egg solids.",
+    },
+    substitutions: [
+      { id: "sour_cream", tier: "direct",    note: "For dips and dressings; tangier, less fat. 1:1 swap." },
+      { id: "avocado",    tier: "dietary",   note: "Mashed avocado + lemon is a vegan sandwich spread that plays a similar role." },
+    ],
+    pairs: ["dijon", "sriracha", "lemon", "tuna", "bread"],
+    flavor: {
+      primary: ["umami", "sour"],
+      intensity: "medium",
+      heatChange: {
+        raw: "the condiment itself — creamy, tangy, binding",
+        cooked: "stirred into pan sauces off-heat it smooths; direct heat breaks the emulsion — mayo-roasted potatoes use the film as an oil carrier, not a sauce",
+        charred: "brushed on grilled sandwiches (Duke's melt, Cuban press) it crisps the bread beautifully — the mayo is the frying fat",
+      },
+    },
+    nutrition: { per: "1 tbsp", kcal: 94, protein_g: 0.1, fat_g: 10, carb_g: 0.4, sodium_mg: 88 },
+    origin: "Generally credited to 18th-century French cooks; the name may come from Mahón, Menorca (1756 French siege) where chef to the Duc de Richelieu supposedly improvised an egg-oil sauce. Modern jarred mayo is a 20th-century American invention — Hellmann's launched in 1905 from a NYC deli.",
+    culturalNotes: "Mayo is one of the most regionally-loved condiments on earth — Japan's Kewpie (MSG + rice vinegar + yolks-only) inspires cult devotion, Belgium puts mayo on frites as the default (ketchup is for tourists), and the US South guards Duke's like a state secret. Kraft-brand Miracle Whip is NOT mayo — it's a \"dressing\" with sugar and spices. Don't confuse.",
+    allergens: ["egg"],
+    diet: { vegan: false, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: false, allium: false },
+    seasonality: { yearRound: true },
+    sourcing: "Hellmann's/Best Foods for the default American. Duke's for the sweet-free South style. Kewpie for the eggy/umami Japanese style — worth owning alongside regular. Avoid anything calling itself \"salad dressing\" on the label.",
+    market: {
+      priceTier: "budget",
+      availability: "supermarket",
+      organicCommon: true,
+      qualityMatters: true,
+      qualityNote: "Kewpie vs. Hellmann's vs. Duke's is a real flavor-difference question, not a snobbery one. Pick the one that matches what you're making — Kewpie for sushi-adjacent, Duke's for pimento cheese, Hellmann's for everything else.",
+    },
+    skillDev: { skills: ["sauce", "seasoning"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
+  },
+
+  ketchup: {
+    description: "Tomato-vinegar-sugar-spice paste, a 400-year journey from a fermented fish sauce in SE Asia (kê-tsiap) through English walnut-and-mushroom versions to Heinz's 1876 bottled tomato version — the one that every American now means. Heinz's 57 is sweet-tart-salty-umami balance that other brands chase.",
+    flavorProfile: "Sweet, tart, salty, faintly spiced (clove, allspice); tomato umami undergirds everything. A great ketchup is balanced; a bad one is cloying.",
+    prepTips: "Whisk with soy sauce + garlic + a splash of vinegar for a 90-second BBQ-sauce base. Fold into ground beef for meatloaf binding (1 tbsp/lb). Drizzle + sriracha for spicy ketchup. Dip. Fry. Burger. Hash browns.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 180, // opened fridge; sealed keeps years pantry
+      shelfLife: { fridge: 180, freezer: null, pantry: 365 },
+      tips: "Shelf-stable sealed for a year or more. After opening: most people shelf it at room temp and it's fine for 4–6 weeks, but fridge extends to 6 months without flavor loss. Glass bottle + dark cabinet > plastic squeeze.",
+      spoilageSigns: "Brown/maroon darkening (oxidation — still safe but flavor dulls), mold around the cap threads, any fizz or gas when opened. Crystallized sugar at the neck is normal and fine.",
+      freezable: false,
+      freezeNotes: "No benefit — the water separates and the texture goes grainy on thaw.",
+    },
+    substitutions: [
+      { id: "tomato_paste", tier: "emergency", note: "Tomato paste + vinegar + sugar + salt in a pinch. Closer to homemade ketchup than you'd think." },
+    ],
+    pairs: ["mustard", "mayo", "hot_sauce", "worcestershire", "ground_beef"],
+    flavor: {
+      primary: ["sweet", "umami", "sour"],
+      intensity: "medium",
+      heatChange: {
+        raw: "the condiment — cold, sharp, tangy-sweet",
+        cooked: "reduces into a sticky glaze on burgers and wings; caramelizes on meatloaf tops",
+        charred: "brushed on ribs and smoked over wood it lacquers; past deep mahogany the sugars scorch bitter",
+      },
+    },
+    nutrition: { per: "1 tbsp", kcal: 17, protein_g: 0.2, fat_g: 0, carb_g: 4.5, sodium_mg: 154 },
+    origin: "Kê-tsiap — 17th-century Fujianese fermented fish sauce — traveled on merchant ships to SE Asia and England. English cooks tried walnut and mushroom versions for 150 years before tomato became the default in 1812 (James Mease, Philadelphia). Heinz bottled it in 1876; added cider vinegar to replace coal-tar preservative in 1906 — the current formula.",
+    culturalNotes: "Americans put ketchup on everything (eggs, hot dogs, hash browns); much of the rest of the world finds this alarming. The Filipino banana ketchup (sweeter, brighter, WWII improvisation) is a separate, delicious thing worth knowing. \"Catsup\" is the same product with a dying spelling.",
+    allergens: [],
+    diet: { vegan: true, vegetarian: true, keto: false, halal: true, kosher: "pareve", fodmap: "moderate", nightshade: true, allium: false },
+    seasonality: { yearRound: true },
+    sourcing: "Heinz is the benchmark — their 57 blend is genuinely hard to beat. Sir Kensington's (organic, less sweet) is the upmarket alternative. Primal Kitchen does a sugar-free version for keto. Banana ketchup from the Philippines (Jufran, UFC) for tropical heat.",
+    market: {
+      priceTier: "budget",
+      availability: "supermarket",
+      organicCommon: true,
+      qualityMatters: false,
+      qualityNote: "Heinz is the gold standard and a nostalgia artifact — trying to \"upgrade\" ketchup often just makes it worse. Save fancy spending for mustard.",
+    },
+    skillDev: { skills: ["sauce"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
+  },
+
+  mustard: {
+    description: "Yellow mustard — ground mustard seed + turmeric (the yellow) + vinegar + salt. French's is the American default and a 1904 St. Louis World's Fair debut. Sharper than Dijon but a one-note punch compared to the wine-forward complexity of the French version.",
+    flavorProfile: "Bright yellow, sharp, vinegar-forward, mildly pungent; the sinus-tingle is milder than Dijon's because ground yellow mustard seed has less allyl isothiocyanate than brown.",
+    prepTips: "The right mustard on a hot dog and the wrong one on a ham sandwich — yellow for ballpark food, Dijon for vinaigrettes and pan sauces, whole grain for pretzels and charcuterie. Mix 1:1 with mayo for a sandwich spread. Blend into deviled eggs.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 365,
+      shelfLife: { fridge: 365, freezer: null, pantry: 60 },
+      tips: "Refrigerate after opening. Keeps nearly a year in the fridge; flavor dulls after 6 months but still safe. Pantry storage is fine for a couple months unopened, but opened-at-room-temp drops to 4–6 weeks before the heat fades noticeably.",
+      spoilageSigns: "Dark crust on top (scrape and use), actual mold, separation that doesn't stir, sour smell beyond mustard's normal sharpness. Darkening alone is not spoilage.",
+      freezable: false,
+      freezeNotes: "Freezing breaks the emulsion and the heat dulls further. Fridge only.",
+    },
+    substitutions: [
+      { id: "dijon",   tier: "pro",       note: "Upgrade pick — wine-based, smoother, more complex. Better in vinaigrettes and sauces." },
+    ],
+    pairs: ["ketchup", "mayo", "honey", "sausage", "bread"],
+    flavor: {
+      primary: ["sour", "bitter"],
+      intensity: "medium",
+      heatChange: {
+        raw: "sharp, vinegar-forward, mild sinus tingle",
+        cooked: "heat dulls the pungency fast — add late to pan sauces, never at the start",
+        charred: "mustard past a hard boil goes flat and slightly bitter; glazes on ham bake well because of the sugar, not the mustard",
+      },
+    },
+    nutrition: { per: "1 tsp", kcal: 3, protein_g: 0.2, fat_g: 0.2, carb_g: 0.3, sodium_mg: 57 },
+    origin: "St. Louis, 1904 — French's debuted at the World's Fair as \"cream salad mustard\" and rode the hot-dog boom. Turmeric was the coloring because ground yellow mustard seed alone is beige. The name \"French's\" has nothing to do with France; it's the founding family's name.",
+    culturalNotes: "Yellow mustard on ballpark hot dogs is an American identity artifact. Most of Europe thinks it's too mild; Eastern Europe prefers brown Düsseldorf-style; Japan's karashi is a horseradish-fueled different thing. English mustard (Colman's) is the nuclear version.",
+    allergens: ["mustard"],
+    diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: false, allium: false },
+    seasonality: { yearRound: true },
+    sourcing: "French's is the benchmark. Gulden's is a slightly spicier Brooklyn version. Plochman's (Midwest) is the underdog pick. Colman's English mustard (yellow, loose-powder) for serious heat.",
+    market: {
+      priceTier: "budget",
+      availability: "supermarket",
+      organicCommon: false,
+      qualityMatters: false,
+      qualityNote: "Yellow mustard is commodity. If you're cooking where mustard matters, reach for Dijon or whole-grain — those brand differences are real.",
+    },
+    skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
+  },
+
+  hot_sauce: {
+    description: "Vinegar-forward cayenne-pepper sauce — the Tabasco family (fermented Louisiana), the Frank's family (Buffalo wing origin), the Crystal/Louisiana family (thin, sharp, not sweet). Distinct from sriracha (thick, garlicky, sweet) and chili oil (oil-based). Every major style has a role.",
+    flavorProfile: "Sharp vinegar, cayenne heat, salt; Louisiana-style leans thin and pure, Frank's adds garlic, Tabasco adds a light wood-barrel ferment funk.",
+    prepTips: "Shake into eggs, soups, beans, chili, anything braised. Mix 1:1 with melted butter for Buffalo sauce (this is literally the recipe). A dash into mayo or aioli instantly lifts a sandwich. Don't boil — the volatile heat compounds flash off at high heat.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 730,
+      shelfLife: { fridge: 1095, freezer: null, pantry: 730 },
+      tips: "Vinegar + salt + ferment = effectively immortal. Pantry unopened indefinitely; opened works fine pantry for 1–2 years (you'll use it well before it matters). Fridge extends color and heat for 3+ years but most people don't bother.",
+      spoilageSigns: "Color shift from bright red to brown (oxidation, still safe), loss of kick, separation that doesn't shake back. Actual spoilage (mold, fizz) is essentially never — the vinegar and salt are intense preservatives.",
+      freezable: false,
+      freezeNotes: "Pointless — it's already more shelf-stable than your freezer.",
+    },
+    substitutions: [
+      { id: "sriracha",  tier: "direct",    note: "Thicker, garlicky, sweeter; works for most applications but changes the profile meaningfully." },
+      { id: "gochujang", tier: "pro",       note: "Korean fermented chili paste — thicker, umami-forward, less vinegar. Different idiom, excellent pick in marinades and stews." },
+    ],
+    pairs: ["butter", "eggs", "mayo", "ketchup", "chicken_wing"],
+    flavor: {
+      primary: ["sour", "bitter"],
+      intensity: "strong",
+      heatChange: {
+        raw: "the point — raw vinegar heat, immediate capsaicin kick",
+        cooked: "reduces into glazes and braises nicely; half the heat carries through, the other half flashes off",
+        charred: "brushed on meat over direct flame and the vinegar scorches fast — brush in the last 2 minutes, not at the start",
+      },
+    },
+    nutrition: { per: "1 tsp", kcal: 1, protein_g: 0.1, fat_g: 0, carb_g: 0.2, sodium_mg: 130 },
+    origin: "Louisiana, 1860s–1870s — Tabasco (Edmund McIlhenny, Avery Island, 1868) is the oldest commercial American. Frank's RedHot (Cincinnati, 1920) invented Buffalo wings via Anchor Bar NY in 1964. Crystal (New Orleans, 1923) is the thin working-class benchmark most Southerners prefer for gumbo and eggs.",
+    culturalNotes: "The \"hot sauce\" aisle has exploded from 3 bottles in 1990 to hundreds today — a lot of them are marketing, not better sauce. The Louisiana trinity (Tabasco/Frank's/Crystal) plus a good habanero bottle covers 90% of cooking. Everything else is novelty until you find one you actually love.",
+    allergens: [],
+    diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "moderate", nightshade: true, allium: false },
+    seasonality: { yearRound: true, preservedAvailable: true },
+    sourcing: "Tabasco for classic fermented vinegar-forward. Frank's for Buffalo wings (it's literally the original recipe). Crystal for Louisiana cooking. Yucateco (green habanero, yellow habanero) for heat with actual flavor. Cholula if you want a medium everyday bottle.",
+    market: {
+      priceTier: "budget",
+      availability: "supermarket",
+      organicCommon: false,
+      qualityMatters: true,
+      qualityNote: "Different sauces have different jobs — Tabasco is not a Buffalo sauce, Frank's is not Louisiana gumbo hot sauce. Own 2–3 styles; skip the boutique $15 bottles with death-metal labels.",
+    },
+    skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
   },
 };
 
