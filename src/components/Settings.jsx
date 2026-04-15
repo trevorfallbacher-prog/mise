@@ -30,28 +30,43 @@ function DietaryChip({ profile }) {
   return <Chip>{label}</Chip>;
 }
 
-// A single relationship row (family, friend, or pending).
-function ConnectionRow({ row, actions }) {
+// A single relationship row (family, friend, or pending). Tapping the
+// avatar + name opens the target's profile overlay when that connection
+// is accepted. Pending rows stay inert — there's nothing useful to show
+// until the other side accepts.
+function ConnectionRow({ row, actions, onOpenProfile }) {
   const name = row.other?.name || "Unknown";
   const initial = name[0]?.toUpperCase() || "?";
+  const canOpen = !!(onOpenProfile && row.status === "accepted" && row.otherId);
 
   return (
     <div style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:"#141414", border:"1px solid #1e1e1e", borderRadius:12, marginBottom:8 }}>
-      <div style={{ width:40, height:40, borderRadius:20, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500, flexShrink:0 }}>
-        {initial}
-      </div>
-      <div style={{ flex:1, minWidth:0 }}>
-        <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
-          {name}
+      <button
+        onClick={canOpen ? () => onOpenProfile(row.otherId) : undefined}
+        disabled={!canOpen}
+        style={{
+          display:"flex", alignItems:"center", gap:12, flex:1, minWidth:0,
+          background:"transparent", border:"none", padding:0,
+          textAlign:"left", color:"inherit",
+          cursor: canOpen ? "pointer" : "default",
+        }}
+      >
+        <div style={{ width:40, height:40, borderRadius:20, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500, flexShrink:0 }}>
+          {initial}
         </div>
-        <div style={{ display:"flex", gap:5, marginTop:4, flexWrap:"wrap" }}>
-          {row.kind === "family" && <Chip bg="#1a2015" color="#2a3a1e" text="#a3d977">FAMILY</Chip>}
-          {row.kind === "friend" && <Chip bg="#15182a" color="#1e2a3a" text="#77a3d9">FRIEND</Chip>}
-          {row.status === "pending" && row.direction === "outgoing" && <Chip>SENT</Chip>}
-          {row.status === "pending" && row.direction === "incoming" && <Chip bg="#2a1e15" color="#3a2a1e" text="#d9a377">INCOMING</Chip>}
-          {row.status === "accepted" && <DietaryChip profile={row.other} />}
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+            {name}
+          </div>
+          <div style={{ display:"flex", gap:5, marginTop:4, flexWrap:"wrap" }}>
+            {row.kind === "family" && <Chip bg="#1a2015" color="#2a3a1e" text="#a3d977">FAMILY</Chip>}
+            {row.kind === "friend" && <Chip bg="#15182a" color="#1e2a3a" text="#77a3d9">FRIEND</Chip>}
+            {row.status === "pending" && row.direction === "outgoing" && <Chip>SENT</Chip>}
+            {row.status === "pending" && row.direction === "incoming" && <Chip bg="#2a1e15" color="#3a2a1e" text="#d9a377">INCOMING</Chip>}
+            {row.status === "accepted" && <DietaryChip profile={row.other} />}
+          </div>
         </div>
-      </div>
+      </button>
       <div style={{ display:"flex", gap:6, flexShrink:0 }}>
         {actions}
       </div>
@@ -90,7 +105,7 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ profile, relationships, upsertProfile, onClose }) {
+export default function Settings({ profile, relationships, upsertProfile, onClose, onOpenProfile }) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
@@ -252,7 +267,7 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
           <>
             <SectionHeader label={`INCOMING (${incoming.length})`} />
             {incoming.map(row => (
-              <ConnectionRow
+              <ConnectionRow onOpenProfile={onOpenProfile}
                 key={row.id}
                 row={row}
                 actions={
@@ -274,7 +289,7 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
           </p>
         ) : (
           family.map(row => (
-            <ConnectionRow
+            <ConnectionRow onOpenProfile={onOpenProfile}
               key={row.id}
               row={row}
               actions={
@@ -295,7 +310,7 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
           </p>
         ) : (
           friends.map(row => (
-            <ConnectionRow
+            <ConnectionRow onOpenProfile={onOpenProfile}
               key={row.id}
               row={row}
               actions={
@@ -313,7 +328,7 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
           <>
             <SectionHeader label={`AWAITING REPLY (${outgoing.length})`} />
             {outgoing.map(row => (
-              <ConnectionRow
+              <ConnectionRow onOpenProfile={onOpenProfile}
                 key={row.id}
                 row={row}
                 actions={

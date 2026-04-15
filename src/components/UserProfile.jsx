@@ -1,0 +1,308 @@
+import { useMemo } from "react";
+import { useUserProfile } from "../lib/useUserProfile";
+import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
+
+// Rating meta — kept in sync with Cookbook's table so the recent-cooks
+// strip renders with the same face language as the cookbook itself.
+const RATING_META = {
+  nailed: { emoji: "🤩", color: "#f5c842" },
+  good:   { emoji: "😊", color: "#4ade80" },
+  meh:    { emoji: "😐", color: "#888"    },
+  rough:  { emoji: "😬", color: "#ef4444" },
+};
+
+function relativeDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diff = (now - d) / 1000;
+  if (diff < 60)    return "just now";
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+  const opts = d.getFullYear() === now.getFullYear()
+    ? { month: "short", day: "numeric" }
+    : { month: "short", day: "numeric", year: "numeric" };
+  return d.toLocaleDateString(undefined, opts);
+}
+
+// First-letter avatar in the mise palette. Deterministic per name so a
+// family member's initial stays the same color every time you see it.
+function avatarColor(name) {
+  if (!name) return "#2a2015";
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) | 0;
+  const palette = ["#2a2015", "#15201a", "#1a1228", "#2a1a15", "#15182a", "#2a1e28"];
+  return palette[Math.abs(hash) % palette.length];
+}
+
+/**
+ * Full-screen overlay showing another user's cooking profile. Shown the
+ * same way Settings is — fixed 480px shell, × to close.
+ *
+ * Props:
+ *   targetUserId   — whose profile to show
+ *   viewerId       — the signed-in user's id (for "our history together"
+ *                    + to detect self-view which grays the relationship
+ *                    chip)
+ *   relationship   — "family" | "friend" | "self" | "stranger". Drives
+ *                    the banner chip and what the empty states say. The
+ *                    caller already knows this from useRelationships, so
+ *                    passing it in saves a query here.
+ *   nameFor        — id → string, used for diner attributions on the
+ *                    shared-cooks strip
+ *   onOpenCook     — (cookLogId) => void — tap a cook card to open it in
+ *                    Cookbook (deep-link through the existing pipeline)
+ *   onClose
+ */
+export default function UserProfile({
+  targetUserId, viewerId, relationship = "stranger",
+  nameFor, onOpenCook, onClose,
+}) {
+  const { profile, cooks, stats, sharedCooks, loading, error } =
+    useUserProfile(targetUserId, viewerId);
+
+  const isSelf = relationship === "self" || (viewerId && viewerId === targetUserId);
+  const name   = profile?.name || (isSelf ? "You" : "Someone");
+  const first  = name.split(/\s+/)[0];
+  const initial = name[0]?.toUpperCase() || "?";
+
+  const skills = useMemo(() => {
+    const lvls = profile?.skill_levels || {};
+    return SKILL_TREE.map(s => ({ ...s, level: lvls[s.id] ?? 0 }));
+  }, [profile]);
+  const hasAnySkill = skills.some(s => s.level > 0);
+
+  const diet = DIETARY_OPTIONS.find(d => d.id === profile?.dietary);
+  const level = LEVEL_OPTIONS.find(l => l.id === profile?.level);
+  const goal  = GOAL_OPTIONS.find(g => g.id === profile?.goal);
+
+  // When the viewer is a FRIEND (not family), RLS returns the profile row
+  // but cook_logs is empty — that's by design (friends share prefs only).
+  // We surface a soft note rather than leave an awkward empty stats block.
+  const friendsLimited = relationship === "friend" && !isSelf;
+
+  // Hidden = we got nothing back. Either stranger access or a deleted
+  // account. Show a graceful empty panel with close.
+  const hidden = !loading && !profile && !isSelf;
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"#111", zIndex:200, maxWidth:480, margin:"0 auto", overflowY:"auto" }}>
+      <div style={{ padding:"20px 20px 80px" }}>
+        {/* Header — back × top-right like Settings */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em" }}>
+            {isSelf ? "YOUR PROFILE" : "CHEF PROFILE"}
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#888", fontSize:20, cursor:"pointer", lineHeight:1 }}
+          >
+            ×
+          </button>
+        </div>
+
+        {hidden ? (
+          <div style={{ marginTop:60, textAlign:"center", padding:"40px 20px", background:"#0f0f0f", border:"1px dashed #222", borderRadius:18 }}>
+            <div style={{ fontSize:48, marginBottom:12, opacity:0.5 }}>🫥</div>
+            <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#888", marginBottom:6 }}>
+              Profile unavailable
+            </div>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666" }}>
+              Either this person hasn't accepted a connection with you yet, or the account has been removed.
+            </div>
+          </div>
+        ) : loading && !profile ? (
+          <div style={{ marginTop:60, textAlign:"center", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13 }}>
+            Loading…
+          </div>
+        ) : (
+          <>
+            {/* Identity block — avatar, name, relationship */}
+            <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20 }}>
+              <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
+                {initial}
+              </div>
+              <div style={{ flex:1, minWidth:0 }}>
+                <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", margin:0, letterSpacing:"-0.02em" }}>
+                  {name}
+                </h1>
+                <div style={{ display:"flex", gap:6, marginTop:6, flexWrap:"wrap" }}>
+                  {isSelf && <Chip bg="#2a2015" color="#3a2f10" text="#f5c842">YOU</Chip>}
+                  {!isSelf && relationship === "family" && <Chip bg="#1a2015" color="#2a3a1e" text="#a3d977">FAMILY</Chip>}
+                  {!isSelf && relationship === "friend" && <Chip bg="#15182a" color="#1e2a3a" text="#77a3d9">FRIEND</Chip>}
+                  {diet && <Chip>{diet.label.toUpperCase()}</Chip>}
+                </div>
+                {(level || goal) && (
+                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", marginTop:6 }}>
+                    {[level?.label, goal?.label].filter(Boolean).join(" · ")}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Quick stats band — XP / cooks / nailed / streak */}
+            <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8, marginBottom:20 }}>
+              <Stat value={stats.xp} label="XP" color="#f5c842" />
+              <Stat value={stats.cookCount} label="COOKS" />
+              <Stat value={stats.nailedCount} label="🤩" color="#f5c842" />
+              <Stat value={profile?.streak_count ?? 0} label="🔥" color="#e07a3a" />
+            </div>
+
+            {/* Our history together — only when viewer ate at one+ of
+                the target's cooks. Quick recall: "we ate this together". */}
+            {!isSelf && sharedCooks.length > 0 && (
+              <Section label={`YOU'VE EATEN ${sharedCooks.length} OF THEIR MEALS`}>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {sharedCooks.slice(0, 4).map(c => (
+                    <CookRow key={c.id} cook={c} onOpen={onOpenCook} />
+                  ))}
+                </div>
+              </Section>
+            )}
+
+            {/* Recent cooks — limited for friends by RLS, so we show a
+                gentle note instead of pretending they've never cooked. */}
+            {friendsLimited ? (
+              <Section label="RECENT COOKS">
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", fontStyle:"italic", margin:0, lineHeight:1.6 }}>
+                  Friends only share dietary preferences. Upgrade to family in Settings to see each other's cookbooks and meal plans.
+                </p>
+              </Section>
+            ) : cooks.length > 0 ? (
+              <Section label={isSelf ? "YOUR RECENT COOKS" : "RECENT COOKS"}>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {cooks.slice(0, 8).map(c => (
+                    <CookRow key={c.id} cook={c} onOpen={onOpenCook} />
+                  ))}
+                </div>
+              </Section>
+            ) : (
+              <Section label={isSelf ? "YOUR RECENT COOKS" : "RECENT COOKS"}>
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#555", fontStyle:"italic", margin:0 }}>
+                  {isSelf
+                    ? "Finish a meal in Cook Mode to start your cookbook."
+                    : "Nothing cooked yet."}
+                </p>
+              </Section>
+            )}
+
+            {/* Skill tree. Shown whenever there are any skill rows,
+                even if all are level 0 for the target — the visual
+                still reads "here's where they could grow". For friends
+                the profile row is visible (RLS) but skill_levels stays
+                empty unless the target has filled it in themselves. */}
+            <Section label={isSelf ? "YOUR SKILL TREE" : "SKILLS"}>
+              {hasAnySkill || isSelf ? (
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {skills.map(s => (
+                    <div key={s.id} style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"10px 14px", display:"flex", alignItems:"center", gap:12 }}>
+                      <div style={{ fontSize:22, flexShrink:0 }}>{s.emoji}</div>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>{s.name}</div>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: s.level > 0 ? s.color : "#555" }}>
+                            LVL {s.level}/{s.maxLevel}
+                          </div>
+                        </div>
+                        <div style={{ height:3, background:"#222", borderRadius:2, overflow:"hidden" }}>
+                          <div style={{ height:"100%", borderRadius:2, background: s.color, width:`${(s.level/s.maxLevel)*100}%`, boxShadow: s.level > 0 ? `0 0 6px ${s.color}88` : "none", transition:"width 0.3s" }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#555", fontStyle:"italic", margin:0 }}>
+                  No skills leveled up yet.
+                </p>
+              )}
+            </Section>
+
+            {/* Favorite cuisine readout — cheap signal but it's the sort of
+                line that reads like "they'd love my ramen pop-up". */}
+            {stats.favCuisine && (
+              <Section label="FAVORITE CUISINE">
+                <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:12 }}>
+                  <div style={{ fontSize:24 }}>🌍</div>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", textTransform:"capitalize" }}>
+                    {stats.favCuisine}
+                  </div>
+                  {stats.firstCookedAt && (
+                    <div style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.08em" }}>
+                      SINCE {relativeDate(stats.firstCookedAt).toUpperCase()}
+                    </div>
+                  )}
+                </div>
+              </Section>
+            )}
+
+            {error && (
+              <div style={{ marginTop:24, padding:"10px 12px", background:"#2a1515", border:"1px solid #3a1e1e", color:"#d77777", borderRadius:8, fontFamily:"'DM Sans',sans-serif", fontSize:12 }}>
+                Couldn't fully load {first}'s profile.
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Tiny shared UI bits ──────────────────────────────────────────────────────
+
+function Section({ label, children }) {
+  return (
+    <div style={{ marginTop:18 }}>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:10 }}>
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Chip({ color = "#2a2a2a", bg = "#1a1a1a", text = "#bbb", children }) {
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", background: bg, border:`1px solid ${color}`, color: text, borderRadius:20, padding:"3px 9px", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:"0.08em" }}>
+      {children}
+    </span>
+  );
+}
+
+function Stat({ value, label, color = "#f0ece4" }) {
+  return (
+    <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"12px 4px", textAlign:"center" }}>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color, fontWeight:500 }}>{value}</div>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>{label}</div>
+    </div>
+  );
+}
+
+// Compact one-line recipe row. Tapping routes back into the Cookbook
+// detail via the existing deep-link pipeline, so reviews/photos/etc
+// all come for free.
+function CookRow({ cook, onOpen }) {
+  const m = RATING_META[cook.rating] || RATING_META.meh;
+  return (
+    <button
+      onClick={() => onOpen?.(cook.id)}
+      style={{ display:"flex", alignItems:"center", gap:12, background:"#141414", border:"1px solid #222", borderRadius:12, padding:"10px 14px", cursor:"pointer", textAlign:"left", width:"100%" }}
+    >
+      <div style={{ fontSize:24, flexShrink:0 }}>{cook.recipeEmoji}</div>
+      <div style={{ flex:1, minWidth:0 }}>
+        <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+          {cook.recipeTitle}
+        </div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, display:"flex", gap:6, alignItems:"center" }}>
+          <span>{m.emoji}</span>
+          <span>{relativeDate(cook.cookedAt)}</span>
+          <span style={{ color:"#444" }}>·</span>
+          <span>+{cook.xpEarned} XP</span>
+        </div>
+      </div>
+      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f5c842" }}>→</span>
+    </button>
+  );
+}

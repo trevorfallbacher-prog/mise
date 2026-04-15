@@ -158,7 +158,7 @@ function ReviewComposer({ myReview, upsertMyReview, deleteMyReview }) {
 // — the face + rating label is the whole point. Without this, a thumbs-
 // only review looks like nothing happened, which was the bug where "the
 // chef can't read the review or rating".
-function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
+function ReviewList({ reviews, excludeReviewerId, nameFor, title, onOpenProfile }) {
   const shown = reviews.filter(r => r.reviewerId !== excludeReviewerId);
   if (shown.length === 0) return null;
   return (
@@ -175,7 +175,7 @@ function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
                 <span style={{ fontSize:30, flexShrink:0 }}>{m.emoji}</span>
                 <div style={{ flex:1, minWidth:0 }}>
                   <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", fontWeight:500 }}>
-                    {nameFor ? nameFor(r.reviewerId) : "Someone"}
+                    <NameLink id={r.reviewerId} nameFor={nameFor} onOpen={onOpenProfile} bold />
                   </div>
                   <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
                     <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:m.color, letterSpacing:"0.1em", background:m.bg, border:`1px solid ${m.border}`, padding:"1px 8px", borderRadius:4 }}>
@@ -202,6 +202,32 @@ function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
   );
 }
 
+// Tiny inline name that routes to a profile when a handler is available.
+// Used in every place a user shows up in the cookbook: chef attribution,
+// saved-by strip, diners list, review authors. Falls back to a plain span
+// when onOpen isn't wired so the caller doesn't have to branch.
+function NameLink({ id, onOpen, nameFor, bold = false, style }) {
+  const text = nameFor ? nameFor(id) : "Someone";
+  if (!onOpen || !id) {
+    return <span style={style}>{text}</span>;
+  }
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onOpen(id); }}
+      style={{
+        background:"transparent", border:"none", padding:0,
+        color:"inherit", cursor:"pointer",
+        fontFamily:"inherit", fontSize:"inherit", fontWeight: bold ? 500 : "inherit",
+        letterSpacing:"inherit", textDecoration:"underline dotted",
+        textUnderlineOffset:"2px", textDecorationColor:"#f5c84266",
+        ...(style || {}),
+      }}
+    >
+      {text}
+    </button>
+  );
+}
+
 // ── Photo gallery ────────────────────────────────────────────────────────────
 // Thumbs in a 3-up grid + a final "+" tile that opens the file picker.
 // Tap a thumb to zoom. On mobile the input's `capture="environment"`
@@ -209,7 +235,7 @@ function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
 // picker. We don't force-compress client-side — Supabase storage is
 // cheap and the quality loss would be noticeable on shots the user
 // actually wants to keep.
-function PhotoGallery({ cookLogId, viewerId, nameFor }) {
+function PhotoGallery({ cookLogId, viewerId, nameFor, onOpenProfile }) {
   const { photos, loading, upload, remove } = useCookPhotos(cookLogId, viewerId);
   const [lightbox, setLightbox] = useState(null); // the photo being zoomed
   const [busy, setBusy] = useState(false);
@@ -330,7 +356,14 @@ function PhotoGallery({ cookLogId, viewerId, nameFor }) {
             style={{ maxWidth:"100%", maxHeight:"80vh", borderRadius:10, boxShadow:"0 8px 32px rgba(0,0,0,0.6)" }}
           />
           <div style={{ marginTop:14, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.12em" }}>
-            BY {(nameFor ? nameFor(lightbox.uploaderId) : "SOMEONE").toUpperCase()} · {relativeDate(lightbox.createdAt).toUpperCase()}
+            BY{" "}
+            <NameLink
+              id={lightbox.uploaderId}
+              nameFor={nameFor}
+              onOpen={onOpenProfile ? (id) => { setLightbox(null); onOpenProfile(id); } : undefined}
+              style={{ color:"#f5c842", textTransform:"uppercase" }}
+            />
+            {" "}· {relativeDate(lightbox.createdAt).toUpperCase()}
           </div>
         </div>
       )}
@@ -348,7 +381,7 @@ function PhotoGallery({ cookLogId, viewerId, nameFor }) {
 //     diner reviews. No composer (they already own the "rating" on the log).
 //   * Diner (viewer is in log.diners): sees a composer to add/edit their
 //     own review + everyone else's reviews.
-function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLeave, nameFor }) {
+function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLeave, nameFor, onOpenProfile }) {
   const meta = ratingMeta(log.rating);
   const recipe = findRecipe(log.recipeSlug);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -386,7 +419,8 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
         </div>
         {!isChef && (
           <div style={{ marginTop:8, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888" }}>
-            Cooked by <span style={{ color:"#f0ece4" }}>{nameFor ? nameFor(log.userId) : "a friend"}</span>
+            Cooked by{" "}
+            <NameLink id={log.userId} nameFor={nameFor} onOpen={onOpenProfile} style={{ color:"#f0ece4" }} />
           </div>
         )}
       </div>
@@ -414,8 +448,8 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
           <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f5c842" }}>
             Saved by{" "}
             {saverIds.slice(0, 3).map((id, i) => (
-              <span key={id} style={{ fontWeight:500 }}>
-                {nameFor ? nameFor(id) : "Someone"}
+              <span key={id}>
+                <NameLink id={id} nameFor={nameFor} onOpen={onOpenProfile} bold style={{ color:"#f5c842" }} />
                 {i < Math.min(saverIds.length, 3) - 1 ? ", " : ""}
               </span>
             ))}
@@ -432,7 +466,7 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
           above even diner-attributed reviews so it reads shared rather
           than review-adjacent. */}
       <div style={{ margin:"12px 20px 0" }}>
-        <PhotoGallery cookLogId={log.id} viewerId={viewerId} nameFor={nameFor} />
+        <PhotoGallery cookLogId={log.id} viewerId={viewerId} nameFor={nameFor} onOpenProfile={onOpenProfile} />
       </div>
 
       {/* Chef view: the diners' reviews are the whole reason for opening
@@ -443,7 +477,7 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
       {isChef && (
         <div style={{ margin:"12px 20px 0" }}>
           {reviews.length > 0 ? (
-            <ReviewList reviews={reviews} excludeReviewerId={null} nameFor={nameFor} title="WHAT YOUR DINERS THOUGHT" />
+            <ReviewList reviews={reviews} excludeReviewerId={null} nameFor={nameFor} title="WHAT YOUR DINERS THOUGHT" onOpenProfile={onOpenProfile} />
           ) : log.diners.length > 0 ? (
             <div style={{ padding:"16px", background:"#161616", border:"1px dashed #2a2a2a", borderRadius:14 }}>
               <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>WHAT YOUR DINERS THOUGHT</div>
@@ -470,11 +504,24 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
             {isChef ? "ATE WITH YOU" : "ALSO AT THE TABLE"}
           </div>
           <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-            {log.diners.map(id => (
-              <span key={id} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:20, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#ccc" }}>
-                👥 {nameFor ? nameFor(id) : "Someone"}
-              </span>
-            ))}
+            {log.diners.map(id => {
+              const clickable = !!onOpenProfile && id !== viewerId;
+              return (
+                <button
+                  key={id}
+                  onClick={clickable ? () => onOpenProfile(id) : undefined}
+                  disabled={!clickable}
+                  style={{
+                    display:"inline-flex", alignItems:"center", gap:6, padding:"6px 12px",
+                    background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:20,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#ccc",
+                    cursor: clickable ? "pointer" : "default",
+                  }}
+                >
+                  👥 {id === viewerId ? "You" : (nameFor ? nameFor(id) : "Someone")}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -502,6 +549,7 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
             excludeReviewerId={viewerId}
             nameFor={nameFor}
             title="ALSO AT THE TABLE"
+            onOpenProfile={onOpenProfile}
           />
         </div>
       )}
@@ -558,7 +606,7 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
 // routes to a specific cook_log. Cookbook opens that log's detail (and
 // auto-switches to the right scope) the first time it sees the id, then
 // calls onConsumeDeepLink so the prop doesn't re-fire on every render.
-export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsumeDeepLink }) {
+export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsumeDeepLink, onOpenProfile }) {
   // `scope` picks which stream drives the list. "cooked" = my own cooks,
   // "eaten" = cooks where I'm in the diners array. Default to cooked so
   // a new user's empty state matches their intuition.
@@ -682,6 +730,7 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
         onDelete={remove}
         onLeave={leaveCookLog}
         nameFor={nameFor}
+        onOpenProfile={onOpenProfile}
       />
     );
   }
@@ -896,7 +945,19 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
                           <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.08em" }}>★ FAVORITE</span>
                         )}
                         {!isCooked && (
-                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#888", letterSpacing:"0.08em" }}>
+                          <span
+                            role={onOpenProfile ? "button" : undefined}
+                            onClick={onOpenProfile
+                              ? (e) => { e.stopPropagation(); onOpenProfile(log.userId); }
+                              : undefined}
+                            style={{
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              color: onOpenProfile ? "#f5c842" : "#888",
+                              letterSpacing:"0.08em",
+                              cursor: onOpenProfile ? "pointer" : "default",
+                              textDecoration: onOpenProfile ? "underline dotted" : "none",
+                            }}
+                          >
                             BY {(nameFor ? nameFor(log.userId) : "SOMEONE").toUpperCase()}
                           </span>
                         )}

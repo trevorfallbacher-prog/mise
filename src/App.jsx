@@ -8,6 +8,7 @@ import Pantry from "./components/Pantry";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
 import NotificationsPanel from "./components/NotificationsPanel";
+import UserProfile from "./components/UserProfile";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
 import { usePantry } from "./lib/usePantry";
@@ -160,7 +161,28 @@ function AuthedApp({ user, profile, upsertProfile }) {
   // consumes it on mount and calls setDeepLink(null) to clear.
   // Shape: { kind: 'cook_log', id: '<uuid>' } | null
   const [deepLink, setDeepLink]           = useState(null);
+  // Whose profile is open, if any. A string user id; null = closed.
+  // Lives at App level so every surface (Settings, Cookbook, etc) can
+  // route into the same overlay.
+  const [profileUserId, setProfileUserId] = useState(null);
   const incomingCount = relationships.incoming.length;
+
+  // Classify a user id relative to the viewer so the UserProfile overlay
+  // shows the right chip and doesn't tease cook history it won't have.
+  const relationshipFor = useCallback((id) => {
+    if (!id || id === user.id) return "self";
+    if (relationships.family.some(r => r.otherId === id))  return "family";
+    if (relationships.friends.some(r => r.otherId === id)) return "friend";
+    return "stranger";
+  }, [user.id, relationships.family, relationships.friends]);
+
+  const openProfile = useCallback((id) => {
+    if (!id) return;
+    // Close other overlays so the user doesn't stack screens.
+    setSettingsOpen(false);
+    setNotifsOpen(false);
+    setProfileUserId(id);
+  }, []);
 
   // Route a notification tap. For now 'cook_log' is the only target kind
   // (landing the user on Cookbook → that meal's detail, composer open if
@@ -261,6 +283,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             nameFor={nameFor}
             deepLink={deepLink}
             onConsumeDeepLink={() => setDeepLink(null)}
+            onOpenProfile={openProfile}
           />
         )}
         {tab === "pantry"   && (
@@ -282,6 +305,25 @@ function AuthedApp({ user, profile, upsertProfile }) {
           relationships={relationships}
           upsertProfile={upsertProfile}
           onClose={() => setSettingsOpen(false)}
+          onOpenProfile={openProfile}
+        />
+      )}
+
+      {profileUserId && (
+        <UserProfile
+          targetUserId={profileUserId}
+          viewerId={user.id}
+          relationship={relationshipFor(profileUserId)}
+          nameFor={nameFor}
+          onOpenCook={(cookId) => {
+            // Route through the existing cook_log deep-link: close
+            // the profile, switch to the Cookbook tab, and let it open
+            // the detail once it finds the row in either scope.
+            setProfileUserId(null);
+            setDeepLink({ kind: "cook_log", id: cookId });
+            setTab("cookbook");
+          }}
+          onClose={() => setProfileUserId(null)}
         />
       )}
 
