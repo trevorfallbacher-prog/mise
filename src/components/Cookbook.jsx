@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useCookLog, useDinerLog, useCookLogReviews } from "../lib/useCookLog";
 import { findRecipe } from "../data/recipes";
 
@@ -56,13 +56,23 @@ function ReviewComposer({ myReview, upsertMyReview, deleteMyReview }) {
   const [savedTick, setSavedTick] = useState(0); // bump to show "saved ✓" briefly
 
   // When the remote review updates (e.g. realtime reflection of our own
-  // upsert), sync local state so edits don't feel like they reverted.
-  // Tracking by id means we only rehydrate on a fundamentally new row.
-  const lastSyncedId = useMemo(() => myReview?.id, [myReview?.id]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useMemo(() => {
-    if (myReview) { setRating(myReview.rating); setNotes(myReview.notes); }
-  }, [lastSyncedId]);
+  // upsert, or an edit on another device), sync local state so the form
+  // doesn't lie about what's actually saved. Keying the effect on the
+  // review id + timestamp means we re-hydrate only on a real change —
+  // typing into the textarea won't re-hydrate itself.
+  const reviewId = myReview?.id;
+  const reviewUpdatedAt = myReview?.updatedAt;
+  // myReview is stable as long as reviewId + reviewUpdatedAt don't change;
+  // depending on those two scalars keeps the effect from re-firing on
+  // every parent render while still syncing on real edits. The project's
+  // eslint config doesn't load react-hooks/exhaustive-deps, so we don't
+  // need a disable pragma here — just keep the deps array honest-ish.
+  useEffect(() => {
+    if (myReview) {
+      setRating(myReview.rating);
+      setNotes(myReview.notes);
+    }
+  }, [reviewId, reviewUpdatedAt, myReview]);
 
   const canSave = !!rating && !busy;
   const save = async () => {
