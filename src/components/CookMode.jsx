@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
 import { findIngredient, unitLabel, compareQty } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
+import CookComplete from "./CookComplete";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -192,12 +193,16 @@ function statusFor(ing, pantry) {
 export default function CookMode({
   recipe, onDone, onExit, onSchedule,
   pantry = [], setShoppingList, onGoToShopping,
+  userId, family = [], friends = [],
 }) {
   const [view, setView] = useState("overview");
   const [activeStep, setActiveStep] = useState(0);
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
   const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
+  // Non-null while the 4-phase celebration/rating/notes flow is on screen.
+  // Mounts CookComplete; on finish we hand off to parent's onDone.
+  const [completing, setCompleting] = useState(false);
 
   // Defensive: if no recipe was passed, render nothing. Parent owns selection.
   if (!recipe) return null;
@@ -462,11 +467,24 @@ export default function CookMode({
             {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
           </button>
         ) : (
-          <button onClick={onDone} style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", boxShadow:"0 0 30px #22c55e44" }}>
+          <button onClick={() => setCompleting(true)} style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", boxShadow:"0 0 30px #22c55e44" }}>
             🍝 DONE! LOG IT →
           </button>
         )}
       </div>
+
+      {completing && (
+        <CookComplete
+          recipe={recipe}
+          userId={userId}
+          family={family}
+          friends={friends}
+          onFinish={() => {
+            setCompleting(false);
+            onDone?.();
+          }}
+        />
+      )}
     </div>
   );
 }

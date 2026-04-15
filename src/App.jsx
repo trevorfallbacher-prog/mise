@@ -219,6 +219,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
             family={relationships.family}
+            friends={relationships.friends}
             hasFamily={relationships.family.length > 0}
           />
         )}
@@ -230,6 +231,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             nameFor={nameFor}
             hasFamily={relationships.family.length > 0}
             family={relationships.family}
+            friends={relationships.friends}
             pantry={pantry}
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}

@@ -86,7 +86,7 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
   );
 }
 
-export default function Cook({ profile, userId, onCooked, pantry, shoppingList, setShoppingList, onGoToShopping, family = [], hasFamily = false }) {
+export default function Cook({ profile, userId, onCooked, pantry, shoppingList, setShoppingList, onGoToShopping, family = [], friends = [], hasFamily = false }) {
   const [route, setRoute]     = useState("plan");   // "plan" | "learn"
   const [cuisine, setCuisine] = useState("all");    // "all" | "italian" | "french" | ...
   const [openRecipe, setOpenRecipe] = useState(null);
@@ -134,6 +134,9 @@ export default function Cook({ profile, userId, onCooked, pantry, shoppingList, 
           shoppingList={shoppingList}
           setShoppingList={setShoppingList}
           onGoToShopping={onGoToShopping}
+          userId={userId}
+          family={family}
+          friends={friends}
         />
         {schedulingRecipe && (
           <SchedulePicker
