@@ -500,3 +500,143 @@ export function useCookLogReviews(cookLogId, userId) {
 
   return { reviews, myReview, loading, upsertMyReview, deleteMyReview };
 }
+
+// Map a DB photo row → UI shape, materializing the public URL so consumers
+// can drop it straight into an <img src>.
+function photoFromDb(row, publicUrlFor) {
+  return {
+    id:          row.id,
+    cookLogId:   row.cook_log_id,
+    uploaderId:  row.uploader_id,
+    storagePath: row.storage_path,
+    createdAt:   row.created_at,
+    url:         publicUrlFor(row.storage_path),
+  };
+}
+
+/**
+ * Photos attached to a single cook_log. Anyone in the cohort (chef, any
+ * diner, family-of-chef) can upload. Only the uploader can delete their
+ * own photos. Realtime sub keeps all open detail screens in sync so a
+ * diner's pic shows up on the chef's side the moment it lands.
+ *
+ * Exposes:
+ *   photos         — oldest-first array (first-uploaded becomes cover)
+ *   loading        — initial fetch flag
+ *   upload(file)   — blob/File → storage + DB insert (Promise<void>)
+ *   remove(id)     — delete the DB row and the underlying storage object
+ *                    (only the uploader can run this)
+ */
+export function useCookPhotos(cookLogId, viewerId) {
+  const [photos, setPhotos] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  // publicUrl is stable per path; memoize the bucket handle so the
+  // photoFromDb helper doesn't allocate a new one per call.
+  const bucket = useMemo(() => supabase.storage.from("meal-photos"), []);
+  const publicUrlFor = useCallback(
+    (path) => bucket.getPublicUrl(path).data.publicUrl,
+    [bucket]
+  );
+
+  useEffect(() => {
+    let alive = true;
+    if (!cookLogId) { setPhotos([]); setLoading(false); return; }
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("cook_log_photos")
+        .select("*")
+        .eq("cook_log_id", cookLogId)
+        .order("created_at", { ascending: true });
+      if (!alive) return;
+      if (error) {
+        console.error("[cook_log_photos] load failed:", error);
+        setPhotos([]);
+      } else {
+        setPhotos((data || []).map(r => photoFromDb(r, publicUrlFor)));
+      }
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [cookLogId, publicUrlFor]);
+
+  useEffect(() => {
+    if (!cookLogId) return;
+    const ch = supabase
+      .channel(`rt:cook_log_photos:${cookLogId}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "cook_log_photos", filter: `cook_log_id=eq.${cookLogId}` },
+        (payload) => {
+          setPhotos(prev => {
+            if (payload.eventType === "INSERT") {
+              const row = photoFromDb(payload.new, publicUrlFor);
+              if (prev.some(p => p.id === row.id)) return prev;
+              return [...prev, row];
+            }
+            if (payload.eventType === "DELETE") {
+              const id = payload.old?.id;
+              return id ? prev.filter(p => p.id !== id) : prev;
+            }
+            return prev;
+          });
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [cookLogId, publicUrlFor]);
+
+  const upload = useCallback(async (file) => {
+    if (!cookLogId || !viewerId || !file) return;
+    // Opaque, unguessable path under a cook_log_id folder so the bucket
+    // can't be enumerated. Extension is a best-effort sniff from the
+    // MIME type — good enough for browsers serving the file back.
+    const ext = (file.type && file.type.split("/")[1]) || "jpg";
+    const storagePath = `${cookLogId}/${crypto.randomUUID()}.${ext}`;
+
+    const { error: upErr } = await bucket.upload(storagePath, file, {
+      cacheControl: "3600",
+      upsert: false,
+      contentType: file.type || undefined,
+    });
+    if (upErr) {
+      console.error("[cook_log_photos] storage upload failed:", upErr);
+      return;
+    }
+
+    const { error: insErr } = await supabase.from("cook_log_photos").insert({
+      cook_log_id: cookLogId,
+      uploader_id: viewerId,
+      storage_path: storagePath,
+    });
+    if (insErr) {
+      console.error("[cook_log_photos] row insert failed:", insErr);
+      // Best-effort rollback — if the DB insert fails we shouldn't leave
+      // a dangling object in storage that nobody can discover.
+      bucket.remove([storagePath]).catch(() => { /* swallow */ });
+    }
+    // Realtime handles the list update.
+  }, [cookLogId, viewerId, bucket]);
+
+  const remove = useCallback(async (photoId) => {
+    const target = photos.find(p => p.id === photoId);
+    if (!target) return;
+    // Optimistic — realtime DELETE will also fire, but removing locally
+    // now keeps the UI snappy even on flaky connections.
+    setPhotos(prev => prev.filter(p => p.id !== photoId));
+    const { error: delErr } = await supabase
+      .from("cook_log_photos")
+      .delete()
+      .eq("id", photoId);
+    if (delErr) {
+      console.error("[cook_log_photos] db delete failed:", delErr);
+      return;
+    }
+    // Storage cleanup is gated by the bucket RLS "owner delete" policy —
+    // if the viewer isn't the uploader this no-ops, which is exactly what
+    // we want (the DB delete above would have been blocked too).
+    const { error: rmErr } = await bucket.remove([target.storagePath]);
+    if (rmErr) console.error("[cook_log_photos] storage remove failed:", rmErr);
+  }, [photos, bucket]);
+
+  return { photos, loading, upload, remove };
+}

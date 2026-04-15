@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { useCookLog, useDinerLog, useCookLogReviews, useMyFavorites, useCookSavers } from "../lib/useCookLog";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useCookLog, useDinerLog, useCookLogReviews, useMyFavorites, useCookSavers, useCookPhotos } from "../lib/useCookLog";
 import { findRecipe } from "../data/recipes";
 
 // Mapping the DB's rating column onto the visual language used throughout
@@ -202,6 +202,142 @@ function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
   );
 }
 
+// ── Photo gallery ────────────────────────────────────────────────────────────
+// Thumbs in a 3-up grid + a final "+" tile that opens the file picker.
+// Tap a thumb to zoom. On mobile the input's `capture="environment"`
+// hint surfaces the camera directly; on desktop it's a plain file
+// picker. We don't force-compress client-side — Supabase storage is
+// cheap and the quality loss would be noticeable on shots the user
+// actually wants to keep.
+function PhotoGallery({ cookLogId, viewerId, nameFor }) {
+  const { photos, loading, upload, remove } = useCookPhotos(cookLogId, viewerId);
+  const [lightbox, setLightbox] = useState(null); // the photo being zoomed
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef(null);
+
+  const onPick = async (e) => {
+    const file = e.target.files?.[0];
+    // Always clear the input value so the same file can be picked twice
+    // in a row (e.g. after a failed upload).
+    e.target.value = "";
+    if (!file) return;
+    setBusy(true);
+    await upload(file);
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.12em" }}>
+          PHOTOS{photos.length > 0 ? ` · ${photos.length}` : ""}
+        </div>
+        {busy && (
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#888", letterSpacing:"0.08em" }}>
+            UPLOADING…
+          </div>
+        )}
+      </div>
+
+      {/* The hidden file input. `accept` limits to images; `capture` asks
+          mobile for the rear camera when available but falls back to
+          the file picker on desktop. */}
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={onPick}
+        style={{ display:"none" }}
+      />
+
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:8 }}>
+        {photos.map(p => {
+          const isMine = p.uploaderId === viewerId;
+          return (
+            <div
+              key={p.id}
+              style={{ position:"relative", aspectRatio:"1 / 1", borderRadius:10, overflow:"hidden", background:"#0f0f0f", border:"1px solid #222" }}
+            >
+              <img
+                src={p.url}
+                alt="meal"
+                onClick={() => setLightbox(p)}
+                style={{ width:"100%", height:"100%", objectFit:"cover", cursor:"zoom-in" }}
+              />
+              {/* Only the uploader sees the × — RLS would block the
+                  delete anyway, but surfacing it prevents a confused
+                  tap that looks like it did nothing. */}
+              {isMine && (
+                <button
+                  onClick={() => remove(p.id)}
+                  aria-label="Remove photo"
+                  style={{
+                    position:"absolute", top:4, right:4,
+                    width:22, height:22, borderRadius:11,
+                    background:"rgba(0,0,0,0.65)", border:"1px solid rgba(255,255,255,0.15)",
+                    color:"#fff", fontFamily:"'DM Mono',monospace", fontSize:13,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    cursor:"pointer", padding:0,
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          );
+        })}
+
+        {/* + tile — always present, lets any cohort member add a photo. */}
+        <button
+          onClick={() => fileRef.current?.click()}
+          disabled={busy}
+          style={{
+            aspectRatio:"1 / 1", borderRadius:10,
+            background:"#0f0f0f", border:"1px dashed #3a2f10",
+            color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11,
+            letterSpacing:"0.08em", cursor: busy ? "progress" : "pointer",
+            display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:4,
+          }}
+        >
+          <span style={{ fontSize:22, lineHeight:1 }}>＋</span>
+          <span>ADD</span>
+        </button>
+      </div>
+
+      {!loading && photos.length === 0 && (
+        <p style={{ marginTop:10, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", fontStyle:"italic", margin:"10px 0 0" }}>
+          No photos yet — tap + to add one.
+        </p>
+      )}
+
+      {/* Lightbox — simple fullscreen overlay. Tap anywhere to close.
+          Shows uploader attribution so you remember whose shot you're
+          looking at (useful when a few people photographed the same
+          meal from different angles). */}
+      {lightbox && (
+        <div
+          onClick={() => setLightbox(null)}
+          style={{
+            position:"fixed", inset:0, background:"rgba(0,0,0,0.92)",
+            zIndex:200, display:"flex", flexDirection:"column",
+            alignItems:"center", justifyContent:"center", padding:20, cursor:"zoom-out",
+          }}
+        >
+          <img
+            src={lightbox.url}
+            alt="meal"
+            style={{ maxWidth:"100%", maxHeight:"80vh", borderRadius:10, boxShadow:"0 8px 32px rgba(0,0,0,0.6)" }}
+          />
+          <div style={{ marginTop:14, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.12em" }}>
+            BY {(nameFor ? nameFor(lightbox.uploaderId) : "SOMEONE").toUpperCase()} · {relativeDate(lightbox.createdAt).toUpperCase()}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Detail screen ────────────────────────────────────────────────────────────
 // Tapping a cookbook card pushes here. Shows the full memory of the cook —
 // rating, notes, diners, XP — plus a "Cook it again" CTA that eventually
@@ -289,6 +425,15 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLe
           </span>
         </div>
       )}
+
+      {/* Photos — anyone in the cohort can upload, everyone sees the
+          whole gallery. Landed above the review thread because a
+          picture is the fastest way to re-enter the memory, and sits
+          above even diner-attributed reviews so it reads shared rather
+          than review-adjacent. */}
+      <div style={{ margin:"12px 20px 0" }}>
+        <PhotoGallery cookLogId={log.id} viewerId={viewerId} nameFor={nameFor} />
+      </div>
 
       {/* Chef view: the diners' reviews are the whole reason for opening
           this screen — surface them HIGH so a tap from a notification
