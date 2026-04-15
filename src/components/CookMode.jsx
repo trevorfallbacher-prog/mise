@@ -192,7 +192,7 @@ function statusFor(ing, pantry) {
 
 export default function CookMode({
   recipe, onDone, onExit, onSchedule,
-  pantry = [], setShoppingList, onGoToShopping,
+  pantry = [], setPantry, setShoppingList, onGoToShopping,
   userId, family = [], friends = [],
 }) {
   const [view, setView] = useState("overview");
@@ -479,6 +479,8 @@ export default function CookMode({
           userId={userId}
           family={family}
           friends={friends}
+          pantry={pantry}
+          setPantry={setPantry}
           onFinish={() => {
             setCompleting(false);
             onDone?.();

@@ -33,6 +33,14 @@ function fromDb(row) {
     // carry no date rather than a fabricated one.
     expiresAt:   row.expires_at   ? new Date(row.expires_at)   : null,
     purchasedAt: row.purchased_at ? new Date(row.purchased_at) : null,
+    // Phase-2 compound-ingredient / leftovers support (migration 0026).
+    // 'ingredient' rows track amount+unit as always; 'meal' rows track
+    // servings_remaining instead. source_* columns link a row back to
+    // the cook that produced it so the UI can show provenance.
+    kind:              row.kind || "ingredient",
+    servingsRemaining: row.servings_remaining != null ? Number(row.servings_remaining) : null,
+    sourceRecipeSlug:  row.source_recipe_slug || null,
+    sourceCookLogId:   row.source_cook_log_id || null,
     // Which user owns this row. When you share a pantry with family, their
     // rows come through via the family-select RLS policy; ownerId lets the
     // UI tag them ("+added by Alice") so it's clear who stocked what.
@@ -54,6 +62,12 @@ function toDb(item) {
     location: item.location || defaultLocationForCategory(item.category),
     expires_at:   item.expiresAt   ? toIso(item.expiresAt)   : null,
     purchased_at: item.purchasedAt ? toIso(item.purchasedAt) : null,
+    // Phase-2 columns — only serialized when present so untouched old
+    // callers keep writing exactly the payload they always did.
+    ...(item.kind              !== undefined ? { kind: item.kind || "ingredient" } : {}),
+    ...(item.servingsRemaining !== undefined ? { servings_remaining: item.servingsRemaining } : {}),
+    ...(item.sourceRecipeSlug  !== undefined ? { source_recipe_slug: item.sourceRecipeSlug } : {}),
+    ...(item.sourceCookLogId   !== undefined ? { source_cook_log_id: item.sourceCookLogId } : {}),
   };
 }
 
