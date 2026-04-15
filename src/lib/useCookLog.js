@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 
 // Row shape we render in the UI. Keeps the DB column names out of components.
+//
+// `isFavorite` is intentionally NOT mapped from cook_logs.is_favorite here
+// — that column is a legacy boolean from when only the chef could star
+// their own log. Per-viewer favorites moved to the cook_log_favorites
+// join (see migration 0016), and consumers enrich each log with an
+// `isFavorite` via useMyFavorites() → set-membership check.
 function fromDb(row) {
   return {
     id:            row.id,
@@ -15,10 +21,96 @@ function fromDb(row) {
     notes:         row.notes || "",
     xpEarned:      Number(row.xp_earned || 0),
     diners:        Array.isArray(row.diners) ? row.diners : [],
-    isFavorite:    !!row.is_favorite,
     cookedAt:      row.cooked_at,
     createdAt:     row.created_at,
   };
+}
+
+/**
+ * Viewer-scoped favorites. Each row in cook_log_favorites is a (user,
+ * cook_log) bookmark — the chef can star their own cooks, and a diner
+ * can star someone else's cook without touching the host's row.
+ *
+ * Exposes:
+ *   favoriteIds   — Set<cookLogId> for O(1) enrichment
+ *   toggle(id)    — optimistic flip; writes (or deletes) in the DB and
+ *                   lets realtime reconcile on success
+ *   loading       — true until first fetch resolves
+ *
+ * Realtime sub is scoped to user_id=me so we don't pay for family
+ * members' star flips.
+ */
+export function useMyFavorites(userId, familyKey) {
+  const [favoriteIds, setFavoriteIds] = useState(() => new Set());
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    if (!userId) { setFavoriteIds(new Set()); setLoading(false); return; }
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("cook_log_favorites")
+        .select("cook_log_id")
+        .eq("user_id", userId);
+      if (!alive) return;
+      if (error) {
+        console.error("[cook_log_favorites] load failed:", error);
+        setFavoriteIds(new Set());
+      } else {
+        setFavoriteIds(new Set((data || []).map(r => r.cook_log_id)));
+      }
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+    // familyKey triggers a re-fetch when connections change — same
+    // refresh pattern as usePantry.
+  }, [userId, familyKey]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const ch = supabase
+      .channel(`rt:cook_log_favorites:${userId}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "cook_log_favorites", filter: `user_id=eq.${userId}` },
+        (payload) => {
+          setFavoriteIds(prev => {
+            const next = new Set(prev);
+            if (payload.eventType === "INSERT" && payload.new?.cook_log_id) {
+              next.add(payload.new.cook_log_id);
+            } else if (payload.eventType === "DELETE" && payload.old?.cook_log_id) {
+              next.delete(payload.old.cook_log_id);
+            }
+            return next;
+          });
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [userId]);
+
+  const toggle = useCallback((cookLogId) => {
+    if (!userId || !cookLogId) return;
+    setFavoriteIds(prev => {
+      const isFav = prev.has(cookLogId);
+      const next = new Set(prev);
+      if (isFav) {
+        next.delete(cookLogId);
+        supabase.from("cook_log_favorites")
+          .delete()
+          .eq("user_id", userId)
+          .eq("cook_log_id", cookLogId)
+          .then(({ error }) => { if (error) console.error("[cook_log_favorites] unfav failed:", error); });
+      } else {
+        next.add(cookLogId);
+        supabase.from("cook_log_favorites")
+          .insert({ user_id: userId, cook_log_id: cookLogId })
+          .then(({ error }) => { if (error) console.error("[cook_log_favorites] fav failed:", error); });
+      }
+      return next;
+    });
+  }, [userId]);
+
+  return { favoriteIds, toggle, loading };
 }
 
 /**
@@ -90,19 +182,9 @@ export function useCookLog(userId, familyKey) {
     return () => { supabase.removeChannel(ch); };
   }, [userId]);
 
-  const toggleFavorite = useCallback((id) => {
-    setLogs(prev => {
-      const target = prev.find(l => l.id === id);
-      if (!target) return prev;
-      const next = !target.isFavorite;
-      // Fire-and-forget; realtime UPDATE will reconcile on success.
-      supabase.from("cook_logs").update({ is_favorite: next }).eq("id", id).then(({ error }) => {
-        if (error) console.error("[cook_logs] toggleFavorite failed:", error);
-      });
-      return prev.map(l => l.id === id ? { ...l, isFavorite: next } : l);
-    });
-  }, []);
-
+  // Favorites moved out to useMyFavorites (viewer-scoped, see migration
+  // 0016) — useCookLog no longer owns toggleFavorite. remove stays here
+  // because only the chef can delete their own log.
   const remove = useCallback((id) => {
     setLogs(prev => prev.filter(l => l.id !== id));
     supabase.from("cook_logs").delete().eq("id", id).then(({ error }) => {
@@ -110,7 +192,7 @@ export function useCookLog(userId, familyKey) {
     });
   }, []);
 
-  return { logs, loading, toggleFavorite, remove, refresh: load };
+  return { logs, loading, remove, refresh: load };
 }
 
 /**

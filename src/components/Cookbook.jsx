@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useCookLog, useDinerLog, useCookLogReviews } from "../lib/useCookLog";
+import { useCookLog, useDinerLog, useCookLogReviews, useMyFavorites } from "../lib/useCookLog";
 import { findRecipe } from "../data/recipes";
 
 // Mapping the DB's rating column onto the visual language used throughout
@@ -225,18 +225,16 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, name
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em", flex:1 }}>
           {isChef ? "YOUR COOKBOOK" : "MEALS YOU ATE"}
         </div>
-        {/* Favorite only makes sense on rows you own — your own
-            cookbook is the one you curate. Diners can still "save a
-            recipe" into their own cookbook later (chunk 4). */}
-        {isChef && (
-          <button
-            onClick={() => onToggleFavorite(log.id)}
-            title={log.isFavorite ? "Unfavorite" : "Favorite"}
-            style={{ background:"none", border:"none", color: log.isFavorite ? "#f5c842" : "#444", fontSize:20, cursor:"pointer" }}
-          >
-            {log.isFavorite ? "★" : "☆"}
-          </button>
-        )}
+        {/* Viewer-scoped favorites (migration 0016) — the star is a
+            personal bookmark that works on any cook the viewer can see,
+            including meals cooked by a family member. */}
+        <button
+          onClick={() => onToggleFavorite(log.id)}
+          title={log.isFavorite ? "Remove from favorites" : "Save to favorites"}
+          style={{ background:"none", border:"none", color: log.isFavorite ? "#f5c842" : "#444", fontSize:20, cursor:"pointer" }}
+        >
+          {log.isFavorite ? "★" : "☆"}
+        </button>
       </div>
 
       <div style={{ padding:"24px 20px 0", textAlign:"center" }}>
@@ -384,6 +382,22 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
 
   const cookedHook = useCookLog(userId, familyKey);
   const eatenHook  = useDinerLog(userId, familyKey);
+  // Viewer-scoped favorites (migration 0016). The star is now a personal
+  // bookmark that works on any cook the viewer can see — their own OR
+  // someone else's — so both scopes treat it identically.
+  const favorites  = useMyFavorites(userId, familyKey);
+  const toggleFavorite = favorites.toggle;
+
+  // Enrich each log with an isFavorite flag derived from the viewer's
+  // own favorites set. Done via memo so list re-renders are stable.
+  const cookedLogs = useMemo(
+    () => cookedHook.logs.map(l => ({ ...l, isFavorite: favorites.favoriteIds.has(l.id) })),
+    [cookedHook.logs, favorites.favoriteIds],
+  );
+  const eatenLogs = useMemo(
+    () => eatenHook.logs.map(l => ({ ...l, isFavorite: favorites.favoriteIds.has(l.id) })),
+    [eatenHook.logs, favorites.favoriteIds],
+  );
 
   // Consume an inbound deep-link. We wait until the relevant stream has
   // loaded so the detail screen can actually resolve the row — otherwise
@@ -392,19 +406,20 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
   // retrying forever, and just fall back to the list.
   useEffect(() => {
     if (!deepLink || deepLink.kind !== "cook_log") return;
-    const inCooked = cookedHook.logs.some(l => l.id === deepLink.id);
-    const inEaten  = eatenHook.logs.some(l => l.id === deepLink.id);
+    const inCooked = cookedLogs.some(l => l.id === deepLink.id);
+    const inEaten  = eatenLogs.some(l => l.id === deepLink.id);
     const stillLoading = cookedHook.loading || eatenHook.loading;
     if (!inCooked && !inEaten && stillLoading) return; // give the streams a beat
     if (inCooked)       setScope("cooked");
     else if (inEaten)   setScope("eaten");
     setDetailId(deepLink.id);
     onConsumeDeepLink?.();
-  }, [deepLink, cookedHook.logs, cookedHook.loading, eatenHook.logs, eatenHook.loading, onConsumeDeepLink]);
+  }, [deepLink, cookedLogs, eatenLogs, cookedHook.loading, eatenHook.loading, onConsumeDeepLink]);
 
-  const logs    = scope === "cooked" ? cookedHook.logs    : eatenHook.logs;
+  const logs    = scope === "cooked" ? cookedLogs    : eatenLogs;
   const loading = scope === "cooked" ? cookedHook.loading : eatenHook.loading;
-  const { toggleFavorite, remove } = cookedHook; // only used on chef-owned rows
+  // Chef-owned delete still lives on the cooked hook.
+  const { remove } = cookedHook;
 
   // On the COOKED scope, a log's rating IS the chef's own rating — that's
   // what the chef sees and filters by. On the EATEN scope the relevant
@@ -427,19 +442,20 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
     return c;
   }, [logs, scope]);
 
-  // On the "eaten" scope, favorites doesn't belong to the viewer — hide
-  // that filter and replace with a "Pending" bucket for cooks the diner
-  // hasn't reviewed yet. On "cooked" scope, Pending would always be zero
-  // (the chef auto-rates on save), so we hide it there.
+  // Favorites are viewer-scoped now, so ★ works on both scopes. EATEN
+  // picks up a "To review" bucket for unreviewed diner cooks — the
+  // chef auto-rates on save, so Pending would always be zero on COOKED
+  // and we hide it there.
   const visibleFilters = useMemo(() => {
     if (scope === "eaten") {
       return [
-        { id: "all",     label: "All"           },
-        { id: "pending", label: "🕒 To review"  },
-        { id: "nailed",  label: "🤩 Nailed"     },
-        { id: "good",    label: "😊 Good"       },
-        { id: "meh",     label: "😐 Meh"        },
-        { id: "rough",   label: "😬 Rough"      },
+        { id: "all",       label: "All"           },
+        { id: "favorites", label: "★ Favorites"   },
+        { id: "pending",   label: "🕒 To review"  },
+        { id: "nailed",    label: "🤩 Nailed"     },
+        { id: "good",      label: "😊 Good"       },
+        { id: "meh",       label: "😐 Meh"        },
+        { id: "rough",     label: "😬 Rough"      },
       ];
     }
     return FILTERS;
@@ -456,10 +472,11 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
   }, [logs, filter, search, scope]);
 
   // Detail mode — find the log across both streams so "back" works
-  // seamlessly if the scope changes while the detail is open.
+  // seamlessly if the scope changes while the detail is open. Uses the
+  // enriched versions so isFavorite reflects the viewer's own bookmark.
   const detailLog = useMemo(
-    () => cookedHook.logs.concat(eatenHook.logs).find(l => l.id === detailId) || null,
-    [cookedHook.logs, eatenHook.logs, detailId],
+    () => cookedLogs.concat(eatenLogs).find(l => l.id === detailId) || null,
+    [cookedLogs, eatenLogs, detailId],
   );
   if (detailLog) {
     return (
@@ -608,7 +625,7 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
                 <button
                   key={log.id}
                   onClick={() => setDetailId(log.id)}
-                  style={{ width:"100%", textAlign:"left", background:"#141414", border:`1px solid ${isCooked && log.isFavorite ? "#f5c84244" : !isCooked && !isReviewed ? "#f5c84233" : "#222"}`, borderRadius:16, padding:"16px", cursor:"pointer", position:"relative" }}
+                  style={{ width:"100%", textAlign:"left", background:"#141414", border:`1px solid ${log.isFavorite ? "#f5c84244" : !isCooked && !isReviewed ? "#f5c84233" : "#222"}`, borderRadius:16, padding:"16px", cursor:"pointer", position:"relative" }}
                 >
                   <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
                     <div style={{ fontSize:36, flexShrink:0 }}>{log.recipeEmoji}</div>
@@ -616,7 +633,7 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
                         <span style={{ fontFamily:"'Fraunces',serif", fontSize:17, color:"#f0ece4", fontWeight:400 }}>{log.recipeTitle}</span>
                         {faceMeta && <span style={{ fontSize:16 }} title={faceMeta.label}>{faceMeta.emoji}</span>}
-                        {isCooked && log.isFavorite && (
+                        {log.isFavorite && (
                           <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.08em" }}>★ FAVORITE</span>
                         )}
                         {!isCooked && (
