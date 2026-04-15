@@ -1096,6 +1096,11 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // Inline amount+unit editor on a pantry card. Null when nothing is being
   // edited; otherwise holds the id of the row the user tapped.
   const [editingItemId, setEditingItemId] = useState(null);
+  // Inline expiration-date editor. Separate from editingItemId because the
+  // two editors can be open on different rows, and the chip/amount
+  // affordances live in different spots on the row. Null = none open;
+  // otherwise the id of the row whose date picker is showing.
+  const [editingExpiryId, setEditingExpiryId] = useState(null);
   // Tapping a pantry row opens IngredientCard with rich metadata. Null when
   // the card is closed; otherwise { ingredientId, fallbackName, fallbackEmoji }.
   const [cardIng, setCardIng] = useState(null);
@@ -1438,18 +1443,69 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                   {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
                 </span>
               )}
-              {/* Expiration countdown chip — only when we have a date. The
-                  running-time meter below tells the same story graphically;
-                  this chip gives you the "5 days" without squinting. */}
-              {(() => {
+              {/* Expiration countdown chip — the running-time meter below
+                  tells the same story graphically; this chip gives you the
+                  "5 days" without squinting AND is the handle for editing.
+                  Tap it to open a date picker (always overrideable; never
+                  fabricated for rows that don't have one). When the row
+                  has no date, we show a small "+ set expires" affordance
+                  instead so manual entry is a first-class option — not
+                  an override. */}
+              {editingExpiryId === item.id ? (
+                <span
+                  style={{ display:"inline-flex", alignItems:"center", gap:4 }}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <input
+                    type="date"
+                    autoFocus
+                    defaultValue={item.expiresAt
+                      ? new Date(item.expiresAt).toISOString().slice(0, 10)
+                      : ""}
+                    onChange={e => {
+                      const v = e.target.value;
+                      if (!v) return;
+                      // Pin to noon UTC to dodge DST edge-cases that would
+                      // nudge "Apr 22" to "Apr 21 23:00" in some zones.
+                      updatePantryItem(item.id, { expiresAt: new Date(`${v}T12:00:00Z`) });
+                    }}
+                    onBlur={() => setEditingExpiryId(null)}
+                    onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingExpiryId(null); }}
+                    style={{ background:"#222", border:"1px solid #f5c842", borderRadius:4, padding:"1px 4px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:10, outline:"none" }}
+                  />
+                  {item.expiresAt && (
+                    <button
+                      onClick={e => { e.stopPropagation(); updatePantryItem(item.id, { expiresAt: null, purchasedAt: null }); setEditingExpiryId(null); }}
+                      aria-label="Clear expiration date"
+                      style={{ background:"transparent", border:"none", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:9, cursor:"pointer", padding:"0 2px" }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </span>
+              ) : (() => {
                 const days = daysUntilExpiration(item);
-                if (days == null) return null;
-                const label = formatDaysUntil(days);
-                const color = expirationColor(days);
+                if (days != null) {
+                  const label = formatDaysUntil(days);
+                  const color = expirationColor(days);
+                  return (
+                    <button
+                      onClick={e => { e.stopPropagation(); setEditingExpiryId(item.id); }}
+                      aria-label={`Edit expiration date for ${item.name}`}
+                      style={{ background:`${color}22`, border:"none", color, fontFamily:"'DM Mono',monospace", fontSize:9, padding:"1px 6px", borderRadius:4, cursor:"pointer" }}
+                    >
+                      ⏳ {label}
+                    </button>
+                  );
+                }
                 return (
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color, background:`${color}22`, padding:"1px 6px", borderRadius:4 }}>
-                    ⏳ {label}
-                  </span>
+                  <button
+                    onClick={e => { e.stopPropagation(); setEditingExpiryId(item.id); }}
+                    aria-label={`Set expiration date for ${item.name}`}
+                    style={{ background:"transparent", border:"1px dashed #2a2a2a", color:"#555", fontFamily:"'DM Mono',monospace", fontSize:9, padding:"0 6px", borderRadius:4, cursor:"pointer" }}
+                  >
+                    + set expires
+                  </button>
                 );
               })()}
             </div>
