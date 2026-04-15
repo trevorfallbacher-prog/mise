@@ -1,10 +1,84 @@
 import { useEffect, useMemo, useState } from "react";
-import { findIngredient, getIngredientInfo, unitLabel } from "../data/ingredients";
+import { findIngredient, getIngredientInfo, isInSeason, unitLabel } from "../data/ingredients";
 import { RECIPES } from "../data/recipes";
+import { SKILL_TREE } from "../data";
 
 // Month labels for seasonality. 1-indexed to match peakMonths convention
 // in the ingredient schema.
 const MONTHS = ["", "Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// v2 schema display helpers.
+// Dietary chip rendering — label, short pos/neg symbol, + color. Only
+// rendered when the ingredient's diet object carries the field.
+const DIET_CHIP_META = {
+  vegan:      { label: "Vegan",        color: "#a3d977", icon: "🌱" },
+  vegetarian: { label: "Vegetarian",   color: "#a3d977", icon: "🥗" },
+  keto:       { label: "Keto-friendly", color: "#d9b877", icon: "🥓" },
+  halal:      { label: "Halal",        color: "#a3c9d9", icon: "☪" },
+  nightshade: { label: "Nightshade",   color: "#d98a8a", icon: "🍆" },
+  allium:     { label: "Allium",       color: "#d9a877", icon: "🧄" },
+};
+const KOSHER_META = {
+  meat:      { label: "Kosher (meat)",   color: "#d9a877" },
+  dairy:     { label: "Kosher (dairy)",  color: "#a3c9d9" },
+  pareve:    { label: "Kosher (pareve)", color: "#d9c8a0" },
+  nonkosher: { label: "Not kosher",      color: "#d98a8a" },
+};
+const FODMAP_META = {
+  low:      { label: "Low FODMAP",      color: "#a3d977" },
+  moderate: { label: "Moderate FODMAP", color: "#d9c877" },
+  high:     { label: "High FODMAP",     color: "#d98a8a" },
+};
+
+// Market chip rendering — price tier gets a $/$$/$$$/$$$$ glyph, availability
+// gets a short label.
+const PRICE_TIER = {
+  budget:   { glyph: "$",     label: "Budget"   },
+  moderate: { glyph: "$$",    label: "Moderate" },
+  premium:  { glyph: "$$$",   label: "Premium"  },
+  luxury:   { glyph: "$$$$",  label: "Luxury"   },
+};
+const AVAILABILITY_LABEL = {
+  supermarket: "Supermarket",
+  specialty:   "Specialty store",
+  online:      "Online",
+  seasonal:    "Seasonal market",
+};
+
+// Skill difficulty tone.
+const DIFFICULTY_META = {
+  easy:      { label: "Easy",      color: "#a3d977" },
+  moderate:  { label: "Moderate",  color: "#d9c877" },
+  technical: { label: "Technical", color: "#e07a3a" },
+  expert:    { label: "Expert",    color: "#d98a8a" },
+};
+
+// Flavor-tag palette — keeps the chip row readable at a glance.
+const FLAVOR_TAG_META = {
+  sweet:  { label: "Sweet",  color: "#d9a8c7" },
+  sour:   { label: "Sour",   color: "#d9c877" },
+  salt:   { label: "Salt",   color: "#c8d9e0" },
+  bitter: { label: "Bitter", color: "#a88a6b" },
+  umami:  { label: "Umami",  color: "#d9a877" },
+  fat:    { label: "Fat",    color: "#e8d4a0" },
+  heat:   { label: "Heat",   color: "#e07a3a" },
+};
+
+// Intensity → filled-dots visualization (0..3).
+const INTENSITY_DOTS = {
+  mild:       1,
+  moderate:   2,
+  strong:     3,
+  aggressive: 4,
+};
+
+// Substitution tier display order + tone. `direct` first, `pro` last.
+const SUB_TIERS = [
+  { id: "direct",    label: "DIRECT SUBS",       color: "#a3d977" },
+  { id: "emergency", label: "EMERGENCY SUBS",    color: "#d9c877" },
+  { id: "dietary",   label: "DIETARY ALTS",      color: "#a3c9d9" },
+  { id: "pro",       label: "PRO UPGRADE",       color: "#f5c842" },
+];
 
 // Turn [5,6,7,8] into "May – Aug". Handles year-wrap (e.g. [11,12,1,2]
 // → "Nov – Feb") for winter produce. Falls back to a comma list when
@@ -135,8 +209,56 @@ export default function IngredientCard({
   }, [info]);
 
   const shelfLife = info?.storage?.shelfLifeDays ? formatShelfLife(info.storage.shelfLifeDays) : null;
-  const peakLabel = info?.seasonality?.peakMonths ? formatPeakMonths(info.seasonality.peakMonths) : "";
-  const locMeta   = info?.storage?.location ? LOCATION_META[info.storage.location] : null;
+  // Prefer v2 hemisphere-aware peakMonthsN, fall back to legacy peakMonths.
+  // Southern hemisphere is handled by isInSeason; the chip label stays
+  // "Peak <months>" either way (labeling both hemispheres inline gets noisy
+  // for the 98% of users in the northern hemisphere — we'll treat S as a
+  // user preference later).
+  const peakMonths = info?.seasonality?.peakMonthsN || info?.seasonality?.peakMonths;
+  const peakLabel  = peakMonths ? formatPeakMonths(peakMonths) : "";
+  const locMeta    = info?.storage?.location ? LOCATION_META[info.storage.location] : null;
+
+  // v2: in-season banner. Only shown when we have seasonality data AND the
+  // ingredient isn't year-round (no point saying "in season" for garlic).
+  const inSeasonNow = useMemo(() => {
+    if (!info?.seasonality) return false;
+    if (info.seasonality.yearRound) return false;
+    if (!peakMonths || !peakMonths.length) return false;
+    return isInSeason(info.seasonality, "N");
+  }, [info, peakMonths]);
+
+  // v2: group substitutions by tier. Untiered entries default to "direct".
+  const subsByTier = useMemo(() => {
+    const groups = { direct: [], emergency: [], dietary: [], pro: [] };
+    for (const s of substitutions) {
+      const raw = (info?.substitutions || []).find(x => x.id === s.id);
+      const tier = raw?.tier && groups[raw.tier] ? raw.tier : "direct";
+      groups[tier].push(s);
+    }
+    return groups;
+  }, [substitutions, info]);
+
+  // v2: resolve skillDev.skills (["knife","heat"]) to full SKILL_TREE
+  // entries for colored badge rendering. Unknown ids pass through with a
+  // generic look.
+  const skills = useMemo(() => {
+    if (!info?.skillDev?.skills?.length) return [];
+    return info.skillDev.skills.map(id => {
+      const s = SKILL_TREE.find(x => x.id === id);
+      return s || { id, name: id, emoji: "🏅", color: "#888" };
+    });
+  }, [info]);
+
+  // v2: allergen display — prefer specific names ("almonds") when
+  // allergenDetail has them, otherwise the generic category ("treenut").
+  const allergensDisplay = useMemo(() => {
+    if (!info?.allergens?.length) return [];
+    return info.allergens.map(flag => {
+      const specific = info.allergenDetail?.[flag];
+      if (Array.isArray(specific) && specific.length) return specific.join(", ");
+      return flag;
+    });
+  }, [info]);
 
   return (
     <div style={{
@@ -202,7 +324,7 @@ export default function IngredientCard({
           </p>
         )}
 
-        {/* Flavor profile */}
+        {/* Flavor profile (prose) */}
         {info?.flavorProfile && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>
@@ -213,6 +335,96 @@ export default function IngredientCard({
             </div>
           </div>
         )}
+
+        {/* v2: structured flavor — primary tags, intensity dots, heat-change */}
+        {info?.flavor && (info.flavor.primary?.length || info.flavor.intensity || info.flavor.heatChange) && (
+          <div style={{ marginBottom: 14, padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
+              FLAVOR WHEEL
+            </div>
+            {info.flavor.primary?.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: info.flavor.intensity || info.flavor.heatChange ? 8 : 0 }}>
+                {info.flavor.primary.map(tag => {
+                  const m = FLAVOR_TAG_META[tag] || { label: tag, color: "#bbb" };
+                  return (
+                    <span key={tag} style={{ padding: "3px 9px", background: `${m.color}18`, border: `1px solid ${m.color}44`, borderRadius: 12, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: m.color }}>
+                      {m.label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+            {info.flavor.intensity && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: info.flavor.heatChange ? 8 : 0 }}>
+                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em" }}>INTENSITY</span>
+                <div style={{ display: "flex", gap: 3 }}>
+                  {[1,2,3,4].map(i => (
+                    <span key={i} style={{
+                      width: 8, height: 8, borderRadius: "50%",
+                      background: i <= (INTENSITY_DOTS[info.flavor.intensity] || 0) ? "#f5c842" : "#2a2a2a",
+                    }} />
+                  ))}
+                </div>
+                <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#999", fontStyle: "italic" }}>
+                  {info.flavor.intensity}
+                </span>
+              </div>
+            )}
+            {info.flavor.heatChange && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
+                {["raw","cooked","charred"].map(k => info.flavor.heatChange[k] ? (
+                  <div key={k} style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#999", lineHeight: 1.4 }}>
+                    <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", marginRight: 6 }}>{k.toUpperCase()}</span>
+                    {info.flavor.heatChange[k]}
+                  </div>
+                ) : null)}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* v2: dietary / lifestyle flags — compact chip row. Only populated
+            fields render; sparse ingredients skip the whole section. */}
+        {info?.diet && (() => {
+          const chips = [];
+          const d = info.diet;
+          for (const key of ["vegan","vegetarian","keto","halal","nightshade","allium"]) {
+            if (d[key] === true) {
+              const m = DIET_CHIP_META[key];
+              chips.push({ key, label: m.label, color: m.color, icon: m.icon });
+            }
+          }
+          if (d.kosher) {
+            const m = KOSHER_META[d.kosher];
+            if (m) chips.push({ key: "kosher", label: m.label, color: m.color, icon: "✡" });
+          }
+          if (d.fodmap) {
+            const m = FODMAP_META[d.fodmap];
+            if (m) chips.push({ key: "fodmap", label: m.label, color: m.color, icon: "🧬" });
+          }
+          if (!chips.length) return null;
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
+                DIETARY
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {chips.map(c => (
+                  <span key={c.key} style={{
+                    padding: "3px 9px",
+                    background: `${c.color}18`,
+                    border: `1px solid ${c.color}44`,
+                    borderRadius: 12,
+                    fontFamily: "'DM Sans',sans-serif",
+                    fontSize: 11, color: c.color,
+                  }}>
+                    {c.icon} {c.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Cultural notes — separate section so the origin chip up top
             stays compact and we can let the story breathe. */}
@@ -227,7 +439,9 @@ export default function IngredientCard({
           </div>
         )}
 
-        {/* Storage — one compact row: location chip + shelf life + tips */}
+        {/* Storage — location chip + shelf-life (per-location when v2 map
+            present) + tips. v2 also adds spoilage signs, freezability, and
+            a prep-yield line if the entry carries them. */}
         {info?.storage && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
@@ -239,15 +453,62 @@ export default function IngredientCard({
                   {locMeta.emoji} {locMeta.label}
                 </span>
               )}
-              {shelfLife && (
-                <span style={{ padding: "4px 10px", background: "#0f0f0f", border: "1px solid #2a2a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb" }}>
-                  Keeps ~{shelfLife}
+              {/* v2: per-location shelf life map takes precedence; fall back
+                  to the legacy single shelfLifeDays chip when absent. */}
+              {info.storage.shelfLife
+                ? ["fridge","freezer","pantry"].map(loc => {
+                    const days = info.storage.shelfLife[loc];
+                    const human = formatShelfLife(days);
+                    if (!human) return null;
+                    const m = LOCATION_META[loc];
+                    return (
+                      <span key={loc} style={{ padding: "4px 10px", background: "#0f0f0f", border: "1px solid #2a2a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb" }}>
+                        {m?.emoji} {human}
+                      </span>
+                    );
+                  })
+                : shelfLife && (
+                    <span style={{ padding: "4px 10px", background: "#0f0f0f", border: "1px solid #2a2a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb" }}>
+                      Keeps ~{shelfLife}
+                    </span>
+                  )}
+              {info.storage.freezable === true && !info.storage.shelfLife?.freezer && (
+                <span style={{ padding: "4px 10px", background: "#0f1420", border: "1px solid #1e2a3a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#a3c9e0" }}>
+                  ❄️ Freezes well
                 </span>
               )}
             </div>
             {info.storage.tips && (
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", fontStyle: "italic", lineHeight: 1.5 }}>
                 {info.storage.tips}
+              </div>
+            )}
+            {/* v2: how to tell if it's bad — the actionable spoilage line. */}
+            {info.storage.spoilageSigns && (
+              <div style={{ marginTop: 8, padding: "8px 10px", background: "#1a0f0f", border: "1px solid #2a1515", borderRadius: 8, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 14, lineHeight: 1.2 }}>🚫</span>
+                <div>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#d98a8a", letterSpacing: "0.1em", marginBottom: 2 }}>
+                    IF IT'S BAD
+                  </div>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#ccc", lineHeight: 1.5 }}>
+                    {info.storage.spoilageSigns}
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* v2: freeze notes (only if the user has something more useful
+                than just "yes freezable" — procedure matters). */}
+            {info.storage.freezeNotes && (
+              <div style={{ marginTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#7a9dc0", lineHeight: 1.5 }}>
+                ❄️ {info.storage.freezeNotes}
+              </div>
+            )}
+            {/* v2: prep yield (whole vs. prepped — answers "how many onions
+                is a cup of chopped onions?"). */}
+            {info.storage.prepYield?.whole && info.storage.prepYield?.yields && (
+              <div style={{ marginTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", lineHeight: 1.5 }}>
+                ⚖ {info.storage.prepYield.whole} → {info.storage.prepYield.yields}
               </div>
             )}
           </div>
@@ -303,40 +564,78 @@ export default function IngredientCard({
           </div>
         )}
 
-        {/* Substitutions — tappable pills swap the displayed ingredient. */}
+        {/* v2: irreplaceable callout — rendered instead of (or above) the
+            substitutions list when the ingredient has no real sub. */}
+        {info?.irreplaceable && (
+          <div style={{ marginBottom: 14, padding: "10px 12px", background: "#1a1408", border: "1px solid #3a2a15", borderRadius: 10, display: "flex", gap: 10, alignItems: "flex-start" }}>
+            <span style={{ fontSize: 18, lineHeight: 1.2 }}>🚫</span>
+            <div>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em", marginBottom: 4 }}>
+                IRREPLACEABLE
+              </div>
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#d9c8a0", lineHeight: 1.5, fontStyle: "italic" }}>
+                {info.irreplaceableNote || "No real substitute. Nothing else behaves the same way."}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Substitutions — grouped by tier (v2). Untiered entries land in
+            the "direct" group so older data still renders cleanly. Taps
+            swap the displayed ingredient. */}
         {substitutions.length > 0 && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               SUBSTITUTIONS
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {substitutions.map(s => (
-                <button
-                  key={s.id}
-                  onClick={s.resolved ? () => setViewingId(s.id) : undefined}
-                  disabled={!s.resolved}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    padding: "9px 12px", background: "#161616",
-                    border: "1px solid #2a2a2a", borderRadius: 10,
-                    cursor: s.resolved ? "pointer" : "default",
-                    textAlign: "left", width: "100%",
-                  }}
-                >
-                  <span style={{ fontSize: 20 }}>{s.emoji}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                      {s.name}
-                    </div>
-                    {s.note && (
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", marginTop: 1, fontStyle: "italic" }}>
-                        {s.note}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {SUB_TIERS.map(tier => {
+                const items = subsByTier[tier.id];
+                if (!items || !items.length) return null;
+                // Only show the tier header label when we have >1 tier
+                // populated; single-tier entries (old-schema ingredients) get
+                // a clean plain list without noise.
+                const populatedTiers = SUB_TIERS.filter(t => subsByTier[t.id]?.length).length;
+                return (
+                  <div key={tier.id}>
+                    {populatedTiers > 1 && (
+                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: tier.color, letterSpacing: "0.1em", marginBottom: 4 }}>
+                        {tier.label}
                       </div>
                     )}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {items.map(s => (
+                        <button
+                          key={s.id}
+                          onClick={s.resolved ? () => setViewingId(s.id) : undefined}
+                          disabled={!s.resolved}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "9px 12px", background: "#161616",
+                            border: `1px solid ${populatedTiers > 1 ? tier.color + "44" : "#2a2a2a"}`,
+                            borderRadius: 10,
+                            cursor: s.resolved ? "pointer" : "default",
+                            textAlign: "left", width: "100%",
+                          }}
+                        >
+                          <span style={{ fontSize: 20 }}>{s.emoji}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                              {s.name}
+                            </div>
+                            {s.note && (
+                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", marginTop: 1, fontStyle: "italic" }}>
+                                {s.note}
+                              </div>
+                            )}
+                          </div>
+                          {s.resolved && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#f5c842" }}>→</span>}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  {s.resolved && <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#f5c842" }}>→</span>}
-                </button>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -367,18 +666,25 @@ export default function IngredientCard({
           </div>
         )}
 
-        {/* Allergens + seasonality + sourcing — grouped as a single info
-            strip at the bottom of the meta section. Each chip rendered
-            only when its field is populated. */}
-        {(info?.allergens?.length > 0 || peakLabel || info?.sourcing) && (
+        {/* Allergens + seasonality + sourcing — grouped info strip. Each
+            chip rendered only when its field is populated. v2: allergens
+            use allergenDetail for specificity ("almonds" vs. generic
+            "treenut") when available, and we add an "IN SEASON NOW"
+            badge when the current month hits peakMonthsN. */}
+        {(allergensDisplay.length > 0 || peakLabel || inSeasonNow || info?.sourcing) && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               GOOD TO KNOW
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: info.sourcing ? 6 : 0 }}>
-              {info.allergens?.length > 0 && (
+              {allergensDisplay.length > 0 && (
                 <span style={{ padding: "4px 10px", background: "#1a0f0f", border: "1px solid #3a1a1a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#d98a8a" }}>
-                  ⚠ Contains {info.allergens.join(", ")}
+                  ⚠ Contains {allergensDisplay.join(", ")}
+                </span>
+              )}
+              {inSeasonNow && (
+                <span style={{ padding: "4px 10px", background: "#0a1a0a", border: "1px solid #2a5a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#7edd7e", fontWeight: 600 }}>
+                  🌱 In season now
                 </span>
               )}
               {peakLabel && (
@@ -386,10 +692,100 @@ export default function IngredientCard({
                   🗓 Peak {peakLabel}
                 </span>
               )}
+              {info.seasonality?.yearRound && (
+                <span style={{ padding: "4px 10px", background: "#0f1a14", border: "1px solid #1e3a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#a3d9b4" }}>
+                  🗓 Year-round
+                </span>
+              )}
             </div>
             {info.sourcing && (
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", fontStyle: "italic", lineHeight: 1.5 }}>
                 💡 {info.sourcing}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* v2: market — price tier + availability chips + "worth buying nice"
+            callout when qualityMatters. Keeps the long-form sourcing prose
+            above for detail; these chips are scannable. */}
+        {info?.market && (info.market.priceTier || info.market.availability || info.market.qualityMatters || info.market.organicCommon) && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
+              MARKET
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: info.market.qualityMatters && info.market.qualityNote ? 8 : 0 }}>
+              {info.market.priceTier && PRICE_TIER[info.market.priceTier] && (
+                <span style={{ padding: "4px 10px", background: "#0f0f0f", border: "1px solid #2a2a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#d9c877" }}>
+                  {PRICE_TIER[info.market.priceTier].glyph} {PRICE_TIER[info.market.priceTier].label}
+                </span>
+              )}
+              {info.market.availability && AVAILABILITY_LABEL[info.market.availability] && (
+                <span style={{ padding: "4px 10px", background: "#0f0f0f", border: "1px solid #2a2a2a", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb" }}>
+                  🛒 {AVAILABILITY_LABEL[info.market.availability]}
+                </span>
+              )}
+              {info.market.organicCommon === true && (
+                <span style={{ padding: "4px 10px", background: "#0f1a0f", border: "1px solid #1e3a1e", borderRadius: 14, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#a3d977" }}>
+                  🌿 Organic common
+                </span>
+              )}
+            </div>
+            {info.market.qualityMatters && (
+              <div style={{ padding: "8px 10px", background: "#161208", border: "1px solid #2a2015", borderRadius: 8, display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <span style={{ fontSize: 14, lineHeight: 1.2 }}>✨</span>
+                <div>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#f5c842", letterSpacing: "0.1em", marginBottom: 2 }}>
+                    WORTH BUYING NICE
+                  </div>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#d9c8a0", lineHeight: 1.5 }}>
+                    {info.market.qualityNote || "Cheap versions really don't cut it here."}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* v2: skill development — badges for skills this ingredient exercises,
+            difficulty tone, and a "make from scratch" link when proFromScratch. */}
+        {info?.skillDev && (skills.length > 0 || info.skillDev.difficulty || info.skillDev.proFromScratch) && (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
+              BUILDS SKILLS
+            </div>
+            {skills.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                {skills.map(s => (
+                  <span key={s.id} style={{
+                    padding: "3px 9px",
+                    background: `${s.color}18`,
+                    border: `1px solid ${s.color}44`,
+                    borderRadius: 12,
+                    fontFamily: "'DM Sans',sans-serif",
+                    fontSize: 11, color: s.color,
+                  }}>
+                    {s.emoji} {s.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            {info.skillDev.difficulty && DIFFICULTY_META[info.skillDev.difficulty] && (
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", marginBottom: 4 }}>
+                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", marginRight: 6 }}>DIFFICULTY</span>
+                <span style={{ color: DIFFICULTY_META[info.skillDev.difficulty].color }}>
+                  {DIFFICULTY_META[info.skillDev.difficulty].label}
+                </span>
+              </div>
+            )}
+            {info.skillDev.proFromScratch && (
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#d9c8a0", fontStyle: "italic", lineHeight: 1.5 }}>
+                🎓 Can be made from scratch
+                {info.skillDev.fromScratchRecipeId && (
+                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", marginLeft: 6 }}>
+                    (recipe: {info.skillDev.fromScratchRecipeId})
+                  </span>
+                )}
               </div>
             )}
           </div>
