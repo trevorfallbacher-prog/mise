@@ -25,13 +25,43 @@
 //   flavorProfile: compact taste descriptor ("Nutty, savory, umami…")
 //   prepTips:      one-line kitchen advice ("Grate just before use")
 //   storage: {
-//     location:     "fridge" | "pantry" | "freezer"
+//     location:     "fridge" | "pantry" | "freezer"      (primary / default)
 //     shelfLifeDays:number (approximate; use the loosely-safe number)
+//     shelfLife: {                                        (v2 — optional)
+//       fridge:  number | null,
+//       freezer: number | null,
+//       pantry:  number | null,
+//     }
 //     tips:         "…"    (optional, e.g. "Wrap in parchment, not plastic")
+//     spoilageSigns:"Slimy, sour smell, mold on top — toss." (v2, optional)
+//     freezable:    boolean                                (v2, optional)
+//     freezeNotes:  "In portioned zip-top bags, 6 months." (v2, optional)
+//     prepYield: {                                         (v2, optional)
+//       whole:  "1 medium onion",
+//       yields: "~1 cup diced",
+//     }
 //   }
-//   substitutions: [{ id: "pecorino", note: "Sharper, 1:1" }, …]
+//   substitutions: [
+//     // tier is optional; defaults to "direct" when omitted. (v2)
+//     { id: "pecorino", tier: "direct"|"emergency"|"dietary"|"pro", note: "…" }, …
+//   ]
+//   irreplaceable:     boolean    (v2 — true when no real sub exists)
+//   irreplaceableNote: "Saffron is saffron. No sub works."   (v2, optional)
 //   pairs:         [otherIngredientId, …]  — classic complements
 //   clashes:       [otherIngredientId, …]  — classic conflicts (rare)
+//
+//   ── Flavor (structured, v2) ─────────────────────────────────────────
+//   // flavorProfile (the one-line string) stays as-is. This object is for
+//   // filtering, pairing suggestions, and "how it tastes when cooked".
+//   flavor: {
+//     primary:   [ "sweet" | "sour" | "salt" | "bitter" | "umami" | "fat" | "heat", … ]
+//     intensity: "mild" | "moderate" | "strong" | "aggressive"
+//     heatChange: {
+//       raw:     "grassy, sharp",
+//       cooked:  "nutty, caramelized",
+//       charred: "bitter with smoky depth",
+//     }
+//   }
 //
 //   ── Nutrition (approximate, per reference serving) ───────────────────
 //   nutrition: {
@@ -47,9 +77,47 @@
 //   recipes:       ["Cacio e Pepe", …]  — classic preparations
 //
 //   ── Sourcing / allergens / seasonality ───────────────────────────────
-//   allergens:     ["dairy","gluten","nut","egg","shellfish","soy","sesame"]
-//   seasonality:   { peakMonths: [5,6,7,8] }  — 1..12
+//   allergens:     ["dairy","gluten","treenut","peanut","egg","shellfish",
+//                   "soy","sesame","sulfites","mustard","fish"]
+//   // v2: optional specificity — which tree nuts, which shellfish, etc.
+//   allergenDetail:{ treenut: ["almond","hazelnut"], shellfish: ["shrimp"] }
+//   seasonality: {
+//     peakMonthsN:        [5,6,7,8]    — northern-hemisphere peak (1..12)
+//     peakMonthsS:        [11,12,1,2]  — southern-hemisphere peak  (v2)
+//     yearRound:          boolean       (v2)
+//     preservedAvailable: boolean       (v2 — canned/frozen works year-round)
+//   }
 //   sourcing:      "Look for grass-fed / wild-caught / …"
+//
+//   ── Dietary / lifestyle flags (v2) ───────────────────────────────────
+//   diet: {
+//     vegan:      boolean,
+//     vegetarian: boolean,     (vegan implies vegetarian)
+//     keto:       boolean,     (<5g net carbs per reference serving)
+//     halal:      boolean,     (default true; false for pork/alcohol/…)
+//     kosher:     "meat" | "dairy" | "pareve" | "nonkosher",
+//     fodmap:     "low" | "moderate" | "high",
+//     nightshade: boolean,     (tomato, pepper, eggplant, potato)
+//     allium:     boolean,     (onion/garlic family)
+//   }
+//
+//   ── Market intelligence (structured, v2) ─────────────────────────────
+//   // sourcing (prose) stays as-is. `market` is for filters and chips.
+//   market: {
+//     priceTier:     "budget" | "moderate" | "premium" | "luxury",
+//     availability:  "supermarket" | "specialty" | "online" | "seasonal",
+//     organicCommon: boolean,
+//     qualityMatters:boolean,   (cheap version ruins the dish)
+//     qualityNote:   "Generic parmesan doesn't behave like Parmigiano.",
+//   }
+//
+//   ── Skill + course links (v2) ────────────────────────────────────────
+//   skillDev: {
+//     skills:              [skillId, …]   — references src/data/index.js skills
+//     difficulty:          "easy" | "moderate" | "technical" | "expert",
+//     proFromScratch:      boolean,       — can be made at home by a pro
+//     fromScratchRecipeId: "homemade_stock" | null,
+//   }
 //
 // Every field is optional — populated fields render their own section on
 // the IngredientCard; empty fields fall back to SUBCATEGORY_INFO defaults
@@ -2947,8 +3015,12 @@ export function getIngredientInfo(ingredient) {
     prepTips:       ing?.prepTips       || sub?.prepTips       || null,
     storage:        ing?.storage        || sub?.storage        || null,
     substitutions:  ing?.substitutions  || sub?.substitutions  || [],
+    irreplaceable:       ing?.irreplaceable ?? sub?.irreplaceable ?? false,
+    irreplaceableNote:   ing?.irreplaceableNote || sub?.irreplaceableNote || null,
     pairs:          ing?.pairs          || sub?.pairs          || [],
     clashes:        ing?.clashes        || sub?.clashes        || [],
+    // ── flavor (structured v2; freeform flavorProfile above) ───────────
+    flavor:         ing?.flavor         || sub?.flavor         || null,
     // ── nutrition ──────────────────────────────────────────────────────
     nutrition:      ing?.nutrition      || sub?.nutrition      || null,
     // ── social / cultural ──────────────────────────────────────────────
@@ -2958,9 +3030,100 @@ export function getIngredientInfo(ingredient) {
     recipes:        ing?.recipes        || sub?.recipes        || [],
     // ── sourcing / allergens / seasonality ─────────────────────────────
     allergens:      ing?.allergens      || sub?.allergens      || [],
+    allergenDetail: ing?.allergenDetail || sub?.allergenDetail || null,
     seasonality:    ing?.seasonality    || sub?.seasonality    || null,
     sourcing:       ing?.sourcing       || sub?.sourcing       || null,
+    // ── dietary / lifestyle flags (v2) ─────────────────────────────────
+    diet:           ing?.diet           || sub?.diet           || null,
+    // ── market intelligence (structured v2) ────────────────────────────
+    market:         ing?.market         || sub?.market         || null,
+    // ── skill + course links (v2) ──────────────────────────────────────
+    skillDev:       ing?.skillDev       || sub?.skillDev       || null,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v2 metadata helpers. These operate on the shape getIngredientInfo returns,
+// so callers can pass the result straight in — no re-lookup required.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Returns true if the ingredient is compatible with a user's active dietary
+// preferences. `userDiet` is a partial shape mirroring INGREDIENT_INFO's
+// `diet` object — only the flags the user cares about need to be set.
+//
+// Example:
+//   isCompatibleWithDiet(getIngredientInfo(canon), { vegan: true })
+//   → false for parmesan, true for olive oil
+//
+// Rules:
+//   - vegan/vegetarian/keto/halal/nightshade/allium: user's truthy flag
+//     requires ingredient's matching flag to be truthy (or falsey-absent
+//     for the inverse, e.g. user says "no nightshades" ⇒ ingredient must
+//     not be flagged nightshade).
+//   - kosher: user passes "meat" | "dairy" | "pareve" — ingredient must
+//     not be "nonkosher"; pareve is compatible with anything.
+//   - fodmap: user passes "low" or "moderate" — ingredient's fodmap level
+//     must be at or below the user's threshold.
+//
+// Missing info defaults to "compatible" (don't hide ingredients just
+// because we haven't backfilled their flags yet).
+export function isCompatibleWithDiet(info, userDiet) {
+  if (!userDiet || !info) return true;
+  const diet = info.diet;
+  if (!diet) return true;
+
+  if (userDiet.vegan      && !diet.vegan)      return false;
+  if (userDiet.vegetarian && !diet.vegetarian) return false;
+  if (userDiet.keto       && !diet.keto)       return false;
+  if (userDiet.halal      && diet.halal === false) return false;
+  if (userDiet.kosher && userDiet.kosher !== "nonkosher") {
+    if (diet.kosher === "nonkosher") return false;
+  }
+  if (userDiet.noNightshade && diet.nightshade) return false;
+  if (userDiet.noAllium     && diet.allium)     return false;
+
+  if (userDiet.fodmap) {
+    const order = { low: 0, moderate: 1, high: 2 };
+    const cap = order[userDiet.fodmap] ?? 2;
+    const got = order[diet.fodmap] ?? 0;
+    if (got > cap) return false;
+  }
+  return true;
+}
+
+// Returns true if the ingredient is in season right now for the given
+// hemisphere. `month` is 1..12; defaults to current month.
+//
+// yearRound overrides — always in season.
+// No peakMonths for the hemisphere → defaults to true (don't hide produce
+// we haven't tagged).
+export function isInSeason(seasonality, hemisphere = "N", month = new Date().getMonth() + 1) {
+  if (!seasonality) return true;
+  if (seasonality.yearRound) return true;
+  const peak = hemisphere === "S"
+    ? (seasonality.peakMonthsS || seasonality.peakMonths)
+    : (seasonality.peakMonthsN || seasonality.peakMonths);
+  if (!peak || !peak.length) return true;
+  return peak.includes(month);
+}
+
+// Estimates shelf life (in days) for an ingredient stored in a given
+// location — used by receipt scans to compute a default expiration date
+// when the receipt doesn't print one. Prefers the per-location shelfLife
+// map when present; falls back to the flat shelfLifeDays if the requested
+// location matches storage.location; returns null if no estimate is
+// available (caller should leave expiration blank rather than guess).
+export function estimateExpirationDays(storage, location) {
+  if (!storage) return null;
+  const loc = location || storage.location;
+  if (!loc) return null;
+  if (storage.shelfLife && storage.shelfLife[loc] != null) {
+    return storage.shelfLife[loc];
+  }
+  if (storage.location === loc && storage.shelfLifeDays != null) {
+    return storage.shelfLifeDays;
+  }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
