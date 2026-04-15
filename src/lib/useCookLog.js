@@ -312,7 +312,89 @@ export function useDinerLog(userId, familyKey) {
     [logs, reviewsByLog]
   );
 
-  return { logs: enriched, loading, refresh: load };
+  // Diner-side "delete this from my list" — calls the SECURITY DEFINER
+  // RPC that removes the caller from the chef's diners[] and cleans up
+  // their review + favorite on that cook. Optimistically drops the row
+  // from the local state so the UI feels instant; realtime reconcile
+  // will confirm or put it back if the RPC failed.
+  const leaveCookLog = useCallback(async (cookLogId) => {
+    if (!userId || !cookLogId) return;
+    setLogs(prev => prev.filter(l => l.id !== cookLogId));
+    setReviewsByLog(prev => {
+      if (!(cookLogId in prev)) return prev;
+      const next = { ...prev };
+      delete next[cookLogId];
+      return next;
+    });
+    const { error } = await supabase.rpc("leave_cook_log", { cook_log_id: cookLogId });
+    if (error) console.error("[leave_cook_log] failed:", error);
+  }, [userId]);
+
+  return { logs: enriched, loading, leaveCookLog, refresh: load };
+}
+
+/**
+ * Loads everyone who has ★-saved a given cook_log (by cook_log_favorites
+ * membership), minus the viewer themselves — so the chef can see social
+ * proof without their own star inflating the count ("3 people saved
+ * this" is truthier than "4" when one of them is the chef).
+ *
+ * Intentionally a thin, detail-screen-scoped hook rather than a bulk
+ * fetch across every log: the list cards don't need this data, and
+ * fanning it in would make the initial cookbook paint slower for the
+ * one-in-ten moment a chef taps into a cook.
+ */
+export function useCookSavers(cookLogId, viewerId) {
+  const [saverIds, setSaverIds] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    if (!cookLogId) { setSaverIds([]); setLoading(false); return; }
+    setLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("cook_log_favorites")
+        .select("user_id")
+        .eq("cook_log_id", cookLogId);
+      if (!alive) return;
+      if (error) {
+        console.error("[cook_log_favorites:savers] load failed:", error);
+        setSaverIds([]);
+      } else {
+        setSaverIds((data || []).map(r => r.user_id).filter(id => id !== viewerId));
+      }
+      setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, [cookLogId, viewerId]);
+
+  // Realtime: new ★ or un-★ on this cook from anyone in the cohort.
+  useEffect(() => {
+    if (!cookLogId) return;
+    const ch = supabase
+      .channel(`rt:cook_log_favorites:savers:${cookLogId}`)
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "cook_log_favorites", filter: `cook_log_id=eq.${cookLogId}` },
+        (payload) => {
+          setSaverIds(prev => {
+            if (payload.eventType === "INSERT") {
+              const id = payload.new?.user_id;
+              if (!id || id === viewerId || prev.includes(id)) return prev;
+              return [...prev, id];
+            }
+            if (payload.eventType === "DELETE") {
+              const id = payload.old?.user_id;
+              return id ? prev.filter(x => x !== id) : prev;
+            }
+            return prev;
+          });
+        })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [cookLogId, viewerId]);
+
+  return { saverIds, loading };
 }
 
 // Map DB review row → UI shape. Kept local so Cookbook never sees snake_case.

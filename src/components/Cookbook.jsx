@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useCookLog, useDinerLog, useCookLogReviews, useMyFavorites } from "../lib/useCookLog";
+import { useCookLog, useDinerLog, useCookLogReviews, useMyFavorites, useCookSavers } from "../lib/useCookLog";
 import { findRecipe } from "../data/recipes";
 
 // Mapping the DB's rating column onto the visual language used throughout
@@ -212,12 +212,15 @@ function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
 //     diner reviews. No composer (they already own the "rating" on the log).
 //   * Diner (viewer is in log.diners): sees a composer to add/edit their
 //     own review + everyone else's reviews.
-function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, nameFor }) {
+function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLeave, nameFor }) {
   const meta = ratingMeta(log.rating);
   const recipe = findRecipe(log.recipeSlug);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const isChef = viewerId === log.userId;
   const { reviews, myReview, upsertMyReview, deleteMyReview } = useCookLogReviews(log.id, viewerId);
+  // "Who else has saved this?" — chef-side social proof. Excludes the
+  // viewer so the chef doesn't see their own star padding the count.
+  const { saverIds } = useCookSavers(log.id, viewerId);
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
       <div style={{ padding:"20px 20px 0", display:"flex", alignItems:"center", gap:12 }}>
@@ -264,6 +267,28 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, name
           </div>
         </div>
       </div>
+
+      {/* Social proof — chef sees who from the cohort has ★-saved this
+          cook. Surfaced as a small pill strip right under the headline
+          so it reads as ambient "your family liked this" without hogging
+          vertical space. Hidden when it's just the chef's own star. */}
+      {isChef && saverIds.length > 0 && (
+        <div style={{ margin:"12px 20px 0", padding:"10px 14px", background:"#161208", border:"1px solid #3a2f10", borderRadius:12, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+          <span style={{ fontSize:14 }}>⭐</span>
+          <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f5c842" }}>
+            Saved by{" "}
+            {saverIds.slice(0, 3).map((id, i) => (
+              <span key={id} style={{ fontWeight:500 }}>
+                {nameFor ? nameFor(id) : "Someone"}
+                {i < Math.min(saverIds.length, 3) - 1 ? ", " : ""}
+              </span>
+            ))}
+            {saverIds.length > 3 && (
+              <span>{" "}+ {saverIds.length - 3} more</span>
+            )}
+          </span>
+        </div>
+      )}
 
       {/* Chef view: the diners' reviews are the whole reason for opening
           this screen — surface them HIGH so a tap from a notification
@@ -343,21 +368,38 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, name
             {isChef ? "COOK IT AGAIN →" : "OPEN RECIPE →"}
           </button>
         )}
-        {/* Only the chef can delete their own log. Diners removing their
-            review is handled inside the composer. */}
-        {isChef && !confirmDelete && (
+        {/* Both chef and diner can clear a meal from their cookbook.
+            Chef deletes the underlying row (vaporizing everyone's
+            references); diner just removes themselves from diners[]
+            via leave_cook_log RPC — the cook stays on the chef's
+            cookbook and other diners' as normal.*/}
+        {!confirmDelete && (
           <button onClick={() => setConfirmDelete(true)} style={{ width:"100%", padding:"12px", background:"transparent", color:"#555", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em" }}>
-            REMOVE FROM COOKBOOK
+            {isChef ? "REMOVE FROM COOKBOOK" : "REMOVE FROM MY LIST"}
           </button>
         )}
-        {isChef && confirmDelete && (
-          <div style={{ display:"flex", gap:8 }}>
-            <button onClick={() => setConfirmDelete(false)} style={{ flex:1, padding:"12px", background:"#1a1a1a", color:"#888", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em" }}>
-              CANCEL
-            </button>
-            <button onClick={() => { onDelete(log.id); onBack(); }} style={{ flex:2, padding:"12px", background:"#ef4444", color:"#fff", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em", fontWeight:600 }}>
-              DELETE PERMANENTLY
-            </button>
+        {confirmDelete && (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#bbb", textAlign:"center", padding:"4px 8px", lineHeight:1.5 }}>
+              {isChef
+                ? "Delete this meal permanently? Your diners' reviews on it will go with it."
+                : "Remove yourself from this meal? Your review and favorite on it will be cleared — the chef's cookbook is unaffected."}
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              <button onClick={() => setConfirmDelete(false)} style={{ flex:1, padding:"12px", background:"#1a1a1a", color:"#888", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em" }}>
+                CANCEL
+              </button>
+              <button
+                onClick={() => {
+                  if (isChef) onDelete(log.id);
+                  else onLeave?.(log.id);
+                  onBack();
+                }}
+                style={{ flex:2, padding:"12px", background:"#ef4444", color:"#fff", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em", fontWeight:600 }}
+              >
+                {isChef ? "DELETE PERMANENTLY" : "YES, REMOVE"}
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -418,8 +460,15 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
 
   const logs    = scope === "cooked" ? cookedLogs    : eatenLogs;
   const loading = scope === "cooked" ? cookedHook.loading : eatenHook.loading;
-  // Chef-owned delete still lives on the cooked hook.
+  // Chef-owned delete still lives on the cooked hook; diner-side "leave
+  // this meal" lives on the diner hook and talks to the RPC.
   const { remove } = cookedHook;
+  const { leaveCookLog } = eatenHook;
+
+  // Which card (if any) is in its inline confirm state. null = none.
+  // Kept as an id rather than a boolean so only one card at a time can
+  // show the confirm strip.
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
 
   // On the COOKED scope, a log's rating IS the chef's own rating — that's
   // what the chef sees and filters by. On the EATEN scope the relevant
@@ -486,6 +535,7 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
         onBack={() => setDetailId(null)}
         onToggleFavorite={toggleFavorite}
         onDelete={remove}
+        onLeave={leaveCookLog}
         nameFor={nameFor}
       />
     );
@@ -621,13 +671,77 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
               const cardNotes = isCooked
                 ? log.notes
                 : (isReviewed ? log.myReview.notes : "");
+              const isConfirming = pendingDeleteId === log.id;
+              // Inline confirm strip — card morphs in place when the user
+              // taps the ×. Chef deletes the underlying row; diner
+              // leaves via RPC. The wording is scope-aware so nobody
+              // accidentally blows up the chef's cookbook.
+              if (isConfirming) {
+                return (
+                  <div
+                    key={log.id}
+                    style={{ width:"100%", background:"#1a0f0f", border:"1px solid #3a1a1a", borderRadius:16, padding:"16px" }}
+                  >
+                    <div style={{ display:"flex", alignItems:"flex-start", gap:12, marginBottom:12 }}>
+                      <span style={{ fontSize:24, flexShrink:0 }}>{log.recipeEmoji}</span>
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f0ece4", marginBottom:4 }}>
+                          {isCooked ? "Delete this meal?" : "Remove from your list?"}
+                        </div>
+                        <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", lineHeight:1.5 }}>
+                          {isCooked
+                            ? `${log.recipeTitle} — deletes permanently, including every diner's review on it.`
+                            : `${log.recipeTitle} — clears your review and favorite for this meal. The chef's cookbook isn't affected.`}
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", gap:8 }}>
+                      <button
+                        onClick={() => setPendingDeleteId(null)}
+                        style={{ flex:1, padding:"10px", background:"#1a1a1a", color:"#888", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em" }}
+                      >
+                        CANCEL
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (isCooked) remove(log.id);
+                          else          leaveCookLog?.(log.id);
+                          setPendingDeleteId(null);
+                        }}
+                        style={{ flex:1, padding:"10px", background:"#ef4444", color:"#fff", border:"none", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em", fontWeight:600 }}
+                      >
+                        {isCooked ? "DELETE" : "REMOVE"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <button
                   key={log.id}
                   onClick={() => setDetailId(log.id)}
                   style={{ width:"100%", textAlign:"left", background:"#141414", border:`1px solid ${log.isFavorite ? "#f5c84244" : !isCooked && !isReviewed ? "#f5c84233" : "#222"}`, borderRadius:16, padding:"16px", cursor:"pointer", position:"relative" }}
                 >
-                  <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
+                  {/* Inline × — tap to morph the card into the confirm
+                      strip above. stopPropagation so we don't also open
+                      the detail screen under the prompt. */}
+                  <span
+                    role="button"
+                    aria-label="Remove this meal"
+                    onClick={(e) => { e.stopPropagation(); setPendingDeleteId(log.id); }}
+                    style={{
+                      position:"absolute", top:10, right:12,
+                      width:24, height:24,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontFamily:"'DM Mono',monospace", fontSize:16, color:"#444",
+                      cursor:"pointer", borderRadius:6,
+                    }}
+                    onMouseOver={(e) => { e.currentTarget.style.color = "#ef4444"; e.currentTarget.style.background = "#1a0a0a"; }}
+                    onMouseOut={(e) => { e.currentTarget.style.color = "#444"; e.currentTarget.style.background = "transparent"; }}
+                  >
+                    ×
+                  </span>
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:14, paddingRight:20 }}>
                     <div style={{ fontSize:36, flexShrink:0 }}>{log.recipeEmoji}</div>
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
