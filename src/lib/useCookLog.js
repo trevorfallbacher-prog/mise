@@ -118,16 +118,23 @@ export function useCookLog(userId, familyKey) {
  * someone else who cooked. Drives the "Eaten" tab of Cookbook so a diner
  * can see every meal they attended and leave their own review.
  *
- * RLS on cook_logs already allows auth.uid() = ANY(diners) to SELECT, so
- * this is just a filtered query. Realtime sub is set broad (all events on
- * cook_logs) and we filter client-side for rows where diners contains us.
+ * Each log comes back enriched with `myReview` (the current user's own
+ * review of this cook, null if they haven't posted one yet). The cookbook
+ * UI uses that — not the chef's self-rating — to color eaten cards and
+ * power the filter chips, because the DINER's opinion is what a diner
+ * cares about on their own cookbook.
+ *
+ * Subscribes to realtime on both cook_logs AND cook_log_reviews (scoped
+ * to the current user as reviewer) so a review the diner posts anywhere
+ * reflects back on their cookbook cards without a manual refresh.
  */
 export function useDinerLog(userId, familyKey) {
   const [logs, setLogs] = useState([]);
+  const [reviewsByLog, setReviewsByLog] = useState({}); // cookLogId → reviewRow
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
-    if (!userId) { setLogs([]); setLoading(false); return; }
+    if (!userId) { setLogs([]); setReviewsByLog({}); setLoading(false); return; }
     setLoading(true);
     // `contains` on a uuid[] column expects an array — we want rows whose
     // diners array contains the current user's id.
@@ -141,6 +148,21 @@ export function useDinerLog(userId, familyKey) {
       setLogs([]);
     } else {
       setLogs((data || []).map(fromDb));
+    }
+
+    // My reviews across all eaten logs — cheap single query, keyed by
+    // reviewer so RLS only returns mine.
+    const { data: revData, error: revErr } = await supabase
+      .from("cook_log_reviews")
+      .select("*")
+      .eq("reviewer_id", userId);
+    if (revErr) {
+      console.error("[cook_log_reviews:mine] load failed:", revErr);
+      setReviewsByLog({});
+    } else {
+      const map = {};
+      for (const r of revData || []) map[r.cook_log_id] = reviewFromDb(r);
+      setReviewsByLog(map);
     }
     setLoading(false);
   }, [userId]);
@@ -178,11 +200,37 @@ export function useDinerLog(userId, familyKey) {
           return prev;
         });
       })
+      // Keep the diner's own review-per-log map up to date. Scoped to this
+      // user's reviews only via the reviewer_id filter so we don't react to
+      // every family member's edits.
+      .on("postgres_changes",
+        { event: "*", schema: "public", table: "cook_log_reviews", filter: `reviewer_id=eq.${userId}` },
+        (payload) => {
+          setReviewsByLog(prev => {
+            if (payload.eventType === "DELETE") {
+              const cookLogId = payload.old?.cook_log_id;
+              if (!cookLogId) return prev;
+              const next = { ...prev };
+              delete next[cookLogId];
+              return next;
+            }
+            const row = payload.new;
+            if (!row?.cook_log_id) return prev;
+            return { ...prev, [row.cook_log_id]: reviewFromDb(row) };
+          });
+        })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [userId]);
 
-  return { logs, loading, refresh: load };
+  // Merge myReview onto each log so consumers don't have to juggle two
+  // collections. Pure derivation; realtime drives the underlying state.
+  const enriched = useMemo(
+    () => logs.map(l => ({ ...l, myReview: reviewsByLog[l.id] || null })),
+    [logs, reviewsByLog]
+  );
+
+  return { logs: enriched, loading, refresh: load };
 }
 
 // Map DB review row → UI shape. Kept local so Cookbook never sees snake_case.

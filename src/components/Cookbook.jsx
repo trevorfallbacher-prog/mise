@@ -153,33 +153,45 @@ function ReviewComposer({ myReview, upsertMyReview, deleteMyReview }) {
 // Shown to the chef (all diner reviews) and to other diners (everyone
 // else's reviews). The current viewer's own review is suppressed here
 // because the composer above already represents it.
-function ReviewList({ reviews, excludeReviewerId, nameFor }) {
+//
+// Even when a reviewer left the notes field blank we still render the row
+// — the face + rating label is the whole point. Without this, a thumbs-
+// only review looks like nothing happened, which was the bug where "the
+// chef can't read the review or rating".
+function ReviewList({ reviews, excludeReviewerId, nameFor, title }) {
   const shown = reviews.filter(r => r.reviewerId !== excludeReviewerId);
   if (shown.length === 0) return null;
   return (
     <div style={{ padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
-      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em", marginBottom:12 }}>
-        {shown.length === 1 ? "1 REVIEW" : `${shown.length} REVIEWS`}
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.12em", marginBottom:12 }}>
+        {title || (shown.length === 1 ? "1 REVIEW" : `${shown.length} REVIEWS`)}
       </div>
       <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
         {shown.map(r => {
           const m = ratingMeta(r.rating);
           return (
-            <div key={r.id} style={{ padding:"12px", background:"#0f0f0f", border:`1px solid ${m.border}`, borderRadius:12 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom: r.notes ? 8 : 0 }}>
-                <span style={{ fontSize:24, flexShrink:0 }}>{m.emoji}</span>
+            <div key={r.id} style={{ padding:"12px 14px", background:"#0f0f0f", border:`1px solid ${m.border}`, borderRadius:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom: 8 }}>
+                <span style={{ fontSize:30, flexShrink:0 }}>{m.emoji}</span>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4" }}>
+                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", fontWeight:500 }}>
                     {nameFor ? nameFor(r.reviewerId) : "Someone"}
                   </div>
-                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:m.color, letterSpacing:"0.1em" }}>
-                    {m.label.toUpperCase()} · {relativeDate(r.createdAt)}
+                  <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
+                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:m.color, letterSpacing:"0.1em", background:m.bg, border:`1px solid ${m.border}`, padding:"1px 8px", borderRadius:4 }}>
+                      {m.label.toUpperCase()}
+                    </span>
+                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{relativeDate(r.createdAt)}</span>
                   </div>
                 </div>
               </div>
-              {r.notes && (
-                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#bbb", lineHeight:1.6, margin:0, whiteSpace:"pre-wrap" }}>
+              {r.notes ? (
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#ccc", lineHeight:1.65, margin:0, whiteSpace:"pre-wrap" }}>
                   "{r.notes}"
+                </p>
+              ) : (
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555", fontStyle:"italic", margin:0 }}>
+                  — no written notes —
                 </p>
               )}
             </div>
@@ -242,14 +254,38 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, name
         )}
       </div>
 
-      {/* Rating headline card */}
+      {/* Rating headline card — whose rating this is depends on whether
+          the viewer is the chef (they see their OWN self-rating) or a
+          diner (they see the chef's self-rating, labeled as such). */}
       <div style={{ margin:"22px 20px 0", padding:"18px 20px", background:meta.bg, border:`1px solid ${meta.border}`, borderRadius:16, display:"flex", alignItems:"center", gap:14 }}>
         <span style={{ fontSize:40 }}>{meta.emoji}</span>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:meta.color, fontStyle:"italic" }}>{meta.label}</div>
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.1em" }}>+{log.xpEarned} XP · {log.diners.length > 0 ? `${log.diners.length} ${log.diners.length === 1 ? "DINER" : "DINERS"}` : "SOLO"}</div>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.1em" }}>
+            {isChef ? "YOUR RATING" : `CHEF'S OWN RATING`} · +{log.xpEarned} XP · {log.diners.length > 0 ? `${log.diners.length} ${log.diners.length === 1 ? "DINER" : "DINERS"}` : "SOLO"}
+          </div>
         </div>
       </div>
+
+      {/* Chef view: the diners' reviews are the whole reason for opening
+          this screen — surface them HIGH so a tap from a notification
+          lands right on the review thread. Empty state is explicit so
+          the chef knows the diners haven't weighed in yet rather than
+          wondering if the UI broke. */}
+      {isChef && (
+        <div style={{ margin:"12px 20px 0" }}>
+          {reviews.length > 0 ? (
+            <ReviewList reviews={reviews} excludeReviewerId={null} nameFor={nameFor} title="WHAT YOUR DINERS THOUGHT" />
+          ) : log.diners.length > 0 ? (
+            <div style={{ padding:"16px", background:"#161616", border:"1px dashed #2a2a2a", borderRadius:14 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>WHAT YOUR DINERS THOUGHT</div>
+              <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888", margin:0, lineHeight:1.6 }}>
+                No reviews yet — they just got a notification with a tappable link.
+              </p>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Notes */}
       <div style={{ margin:"12px 20px 0", padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
@@ -288,16 +324,16 @@ function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, name
         </div>
       )}
 
-      {/* Review list — chef sees all diner reviews; diners see the
-          others'. ReviewList hides the viewer's own review when
-          excludeReviewerId matches (otherwise it'd duplicate the
-          composer above). */}
-      {reviews.length > (isChef ? 0 : 1) && (
+      {/* Diner view: show OTHER diners' reviews below the composer, so
+          the current reviewer can see what the rest of the table thought
+          without their own review duplicating (that's in the composer). */}
+      {!isChef && reviews.length > 1 && (
         <div style={{ margin:"12px 20px 0" }}>
           <ReviewList
             reviews={reviews}
-            excludeReviewerId={isChef ? null : viewerId}
+            excludeReviewerId={viewerId}
             nameFor={nameFor}
+            title="ALSO AT THE TABLE"
           />
         </div>
       )}
@@ -370,24 +406,44 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
   const loading = scope === "cooked" ? cookedHook.loading : eatenHook.loading;
   const { toggleFavorite, remove } = cookedHook; // only used on chef-owned rows
 
+  // On the COOKED scope, a log's rating IS the chef's own rating — that's
+  // what the chef sees and filters by. On the EATEN scope the relevant
+  // rating is the DINER's (the viewer's) own review of that meal; if they
+  // haven't reviewed yet, we bucket it as "pending". Shared helper so
+  // cards, filter chips, and counts all agree on the same signal.
+  const effectiveRating = (l) =>
+    scope === "cooked"
+      ? l.rating
+      : (l.myReview?.rating || "pending");
+
   // Precompute counts per filter for the active scope.
   const counts = useMemo(() => {
-    const c = { all: logs.length, favorites: 0, nailed: 0, good: 0, meh: 0, rough: 0 };
+    const c = { all: logs.length, favorites: 0, pending: 0, nailed: 0, good: 0, meh: 0, rough: 0 };
     for (const l of logs) {
       if (l.isFavorite) c.favorites++;
-      c[l.rating] = (c[l.rating] || 0) + 1;
+      const r = effectiveRating(l);
+      c[r] = (c[r] || 0) + 1;
     }
     return c;
-  }, [logs]);
+  }, [logs, scope]);
 
   // On the "eaten" scope, favorites doesn't belong to the viewer — hide
-  // that filter chip to avoid confusion. The chef owns the ★ on their
-  // own row. (Chunk 4 will add a separate "save to my cookbook" concept
-  // for diners.)
-  const visibleFilters = useMemo(
-    () => scope === "eaten" ? FILTERS.filter(f => f.id !== "favorites") : FILTERS,
-    [scope],
-  );
+  // that filter and replace with a "Pending" bucket for cooks the diner
+  // hasn't reviewed yet. On "cooked" scope, Pending would always be zero
+  // (the chef auto-rates on save), so we hide it there.
+  const visibleFilters = useMemo(() => {
+    if (scope === "eaten") {
+      return [
+        { id: "all",     label: "All"           },
+        { id: "pending", label: "🕒 To review"  },
+        { id: "nailed",  label: "🤩 Nailed"     },
+        { id: "good",    label: "😊 Good"       },
+        { id: "meh",     label: "😐 Meh"        },
+        { id: "rough",   label: "😬 Rough"      },
+      ];
+    }
+    return FILTERS;
+  }, [scope]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -395,9 +451,9 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
       if (q && !l.recipeTitle.toLowerCase().includes(q) && !(l.notes || "").toLowerCase().includes(q)) return false;
       if (filter === "all")       return true;
       if (filter === "favorites") return l.isFavorite;
-      return l.rating === filter;
+      return effectiveRating(l) === filter;
     });
-  }, [logs, filter, search]);
+  }, [logs, filter, search, scope]);
 
   // Detail mode — find the log across both streams so "back" works
   // seamlessly if the scope changes while the detail is open.
@@ -530,32 +586,58 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
               </div>
             )}
             {filtered.map(log => {
-              const meta = ratingMeta(log.rating);
+              // On EATEN scope the viewer cares about THEIR OWN review
+              // rating, not the chef's self-rating. When they haven't
+              // reviewed yet we show a neutral "pending" pill and no
+              // face so the card looks unmistakably unrated.
+              const isCooked = scope === "cooked";
+              const isReviewed = !!log.myReview;
+              const faceRating = isCooked
+                ? log.rating
+                : (isReviewed ? log.myReview.rating : null);
+              const faceMeta = faceRating ? ratingMeta(faceRating) : null;
+              // Notes shown on the card follow the same "whose view is
+              // this?" logic — chef's notes on COOKED, diner's own notes
+              // on EATEN. Chef's notes on someone else's cook aren't
+              // ours to expose on a list card (that lives in the detail
+              // review list).
+              const cardNotes = isCooked
+                ? log.notes
+                : (isReviewed ? log.myReview.notes : "");
               return (
                 <button
                   key={log.id}
                   onClick={() => setDetailId(log.id)}
-                  style={{ width:"100%", textAlign:"left", background:"#141414", border:`1px solid ${log.isFavorite ? "#f5c84244" : "#222"}`, borderRadius:16, padding:"16px", cursor:"pointer", position:"relative" }}
+                  style={{ width:"100%", textAlign:"left", background:"#141414", border:`1px solid ${isCooked && log.isFavorite ? "#f5c84244" : !isCooked && !isReviewed ? "#f5c84233" : "#222"}`, borderRadius:16, padding:"16px", cursor:"pointer", position:"relative" }}
                 >
                   <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
                     <div style={{ fontSize:36, flexShrink:0 }}>{log.recipeEmoji}</div>
                     <div style={{ flex:1, minWidth:0 }}>
                       <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
                         <span style={{ fontFamily:"'Fraunces',serif", fontSize:17, color:"#f0ece4", fontWeight:400 }}>{log.recipeTitle}</span>
-                        <span style={{ fontSize:16 }} title={meta.label}>{meta.emoji}</span>
-                        {scope === "cooked" && log.isFavorite && (
+                        {faceMeta && <span style={{ fontSize:16 }} title={faceMeta.label}>{faceMeta.emoji}</span>}
+                        {isCooked && log.isFavorite && (
                           <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.08em" }}>★ FAVORITE</span>
                         )}
-                        {scope === "eaten" && (
+                        {!isCooked && (
                           <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#888", letterSpacing:"0.08em" }}>
                             BY {(nameFor ? nameFor(log.userId) : "SOMEONE").toUpperCase()}
+                          </span>
+                        )}
+                        {!isCooked && !isReviewed && (
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", background:"#1a1608", border:"1px solid #3a2f10", borderRadius:4, padding:"1px 6px", letterSpacing:"0.08em" }}>
+                            🕒 TAP TO REVIEW
                           </span>
                         )}
                       </div>
                       <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>{relativeDate(log.cookedAt)}</span>
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>+{log.xpEarned} XP</span>
+                        {isCooked && (
+                          <>
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>+{log.xpEarned} XP</span>
+                          </>
+                        )}
                         {log.diners.length > 0 && (
                           <>
                             <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
@@ -564,10 +646,18 @@ export default function Cookbook({ userId, familyKey, nameFor, deepLink, onConsu
                             </span>
                           </>
                         )}
+                        {!isCooked && isReviewed && faceMeta && (
+                          <>
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:faceMeta.color, letterSpacing:"0.1em" }}>
+                              YOU · {faceMeta.label.toUpperCase()}
+                            </span>
+                          </>
+                        )}
                       </div>
-                      {log.notes && (
+                      {cardNotes && (
                         <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", fontStyle:"italic", lineHeight:1.5, marginTop:8, marginBottom:0, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" }}>
-                          "{log.notes}"
+                          "{cardNotes}"
                         </p>
                       )}
                     </div>
