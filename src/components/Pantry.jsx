@@ -9,6 +9,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
+import { useToast } from "../lib/toast";
 import IngredientCard from "./IngredientCard";
 import LinkIngredient from "./LinkIngredient";
 
@@ -1248,6 +1249,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // Bumped after each successful scan so the monthly-spend banner re-queries.
   const [spendRefresh, setSpendRefresh] = useState(0);
   const monthlySpend = useMonthlySpend(userId, spendRefresh);
+  const { push: pushToast } = useToast();
 
   const lowItems = pantry.filter(isLow);
 
@@ -1341,6 +1343,14 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     // freshest batch's baseline).
     const purchasedAt = meta.date ? new Date(meta.date) : new Date();
 
+    // Summary counters for the single post-batch toast. Per-item toasts
+    // don't scale for a 15-line receipt; one "added X new · merged Y"
+    // message is more useful than 15 separate animations.
+    let addedCount = 0;
+    let mergedCount = 0;
+    let unitMismatchCount = 0;
+    const mergedNames = [];  // for a second toast when short
+
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
@@ -1364,24 +1374,55 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
               ? new Date(purchasedAt.getTime() + days * 24 * 60 * 60 * 1000)
               : null);
 
+        // Price fallback: if the scanner didn't capture a receipt price but
+        // the ingredient has a registry estimate (estCentsPerBase), compute
+        // one so monthly-spend totals stay accurate and rows don't go
+        // permanently price-less. Real scan prices always win.
+        const scanPriceCents = s.priceCents != null
+          ? s.priceCents
+          : (canon ? estimatePriceCents({ amount: s.amount, unit: s.unit, ingredient: canon }) : null);
+
         const ex = s.ingredientId
           ? next.find(p => p.ingredientId === s.ingredientId)
           : next.find(p => p.name.toLowerCase() === s.name.toLowerCase());
         if (ex) {
+          mergedCount++;
+          if (mergedNames.length < 3) mergedNames.push(s.name);
+
+          // Unit merge: if units already match, direct sum. If they don't
+          // but both convert via toBase (canonical ingredient + known
+          // units), sum in base units and express the result back in the
+          // existing row's unit — "2 sticks + 4 tbsp" → "2.33 sticks" rather
+          // than silently dropping the tbsp addition.
+          const exCanon = findIngredient(ex.ingredientId) || canon;
           if (ex.unit === s.unit) {
             ex.amount = ex.amount + s.amount;
-            ex.max = Math.max(ex.max, ex.amount);
+          } else if (exCanon) {
+            const haveBase = toBase({ amount: ex.amount, unit: ex.unit }, exCanon);
+            const addBase  = toBase({ amount: s.amount,  unit: s.unit },  exCanon);
+            const exUnitFactor = exCanon.units.find(u => u.id === ex.unit)?.toBase;
+            if (Number.isFinite(haveBase) && Number.isFinite(addBase) && exUnitFactor) {
+              ex.amount = (haveBase + addBase) / exUnitFactor;
+            } else {
+              // Fallback — one side doesn't convert. Prefer the larger
+              // number and flag it so we can warn the user.
+              unitMismatchCount++;
+              ex.amount = Math.max(ex.amount, s.amount);
+            }
           } else {
-            // Unit mismatch — keep the receipt's fresher amount if larger.
+            // Free-text row on both sides, no registry to convert through.
+            unitMismatchCount++;
             ex.amount = Math.max(ex.amount, s.amount);
           }
-          // Backfill ingredientId if the existing row was free-text.
+          ex.max = Math.max(ex.max, ex.amount);
+
+          // Backfill ingredientId if the existing row was free-text — lets a
+          // fresh scan "upgrade" an older untagged row to canonical.
           if (!ex.ingredientId && s.ingredientId) ex.ingredientId = s.ingredientId;
-          if (s.priceCents != null) ex.priceCents = s.priceCents;
+          if (scanPriceCents != null) ex.priceCents = scanPriceCents;
           // Earliest-wins on expiration: the row tells the user when the
           // OLDEST batch in the pile goes bad. Most-recent-wins on
-          // purchasedAt so the meter anchors off the freshest purchase
-          // (which also extends the max — a fresh scan widens the bar).
+          // purchasedAt so the meter anchors off the freshest purchase.
           if (newExpiresAt) {
             ex.expiresAt = ex.expiresAt
               ? new Date(Math.min(new Date(ex.expiresAt).getTime(), newExpiresAt.getTime()))
@@ -1391,6 +1432,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             ? new Date(Math.max(new Date(ex.purchasedAt).getTime(), purchasedAt.getTime()))
             : purchasedAt;
         } else {
+          addedCount++;
           next.push({
             id: crypto.randomUUID(),
             ingredientId: s.ingredientId || null,
@@ -1401,7 +1443,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             max: Math.max(s.amount * 2, 1),
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
-            priceCents: s.priceCents ?? null,
+            priceCents: scanPriceCents,
             expiresAt:   newExpiresAt,
             purchasedAt,
           });
@@ -1409,6 +1451,23 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       });
       return next;
     });
+
+    // Summary toast — sits above the bottom nav for 4.5s. Keep it short:
+    // small receipts (1–3 items) get the name roll-call; big receipts
+    // collapse to counts so the UI doesn't scream at the user.
+    if (items.length <= 3) {
+      items.forEach(s => {
+        pushToast(`Added ${s.amount} ${s.unit} of ${s.name}`, { emoji: s.emoji || "🛒", kind: "success", ttl: 3500 });
+      });
+    } else {
+      const parts = [];
+      if (addedCount)  parts.push(`${addedCount} new`);
+      if (mergedCount) parts.push(`${mergedCount} merged`);
+      pushToast(`Stocked ${items.length} items · ${parts.join(" · ")}`, { emoji: "🛒", kind: "success" });
+    }
+    if (unitMismatchCount > 0) {
+      pushToast(`${unitMismatchCount} item${unitMismatchCount === 1 ? "" : "s"} had a unit mismatch — check the pantry`, { emoji: "⚠️", kind: "warn" });
+    }
 
     setScanning(false);
   };
