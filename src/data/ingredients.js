@@ -15,6 +15,46 @@
 //
 // Add a new ingredient here and it's automatically available in the AddItem
 // modal and can be referenced from any recipe.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// Rich display metadata lives in INGREDIENT_INFO (further down in the
+// file). Each ingredient can optionally carry:
+//
+//   ── Cooking-centric ──────────────────────────────────────────────────
+//   description:   short prose ("Italian hard cheese aged 12–36 months…")
+//   flavorProfile: compact taste descriptor ("Nutty, savory, umami…")
+//   prepTips:      one-line kitchen advice ("Grate just before use")
+//   storage: {
+//     location:     "fridge" | "pantry" | "freezer"
+//     shelfLifeDays:number (approximate; use the loosely-safe number)
+//     tips:         "…"    (optional, e.g. "Wrap in parchment, not plastic")
+//   }
+//   substitutions: [{ id: "pecorino", note: "Sharper, 1:1" }, …]
+//   pairs:         [otherIngredientId, …]  — classic complements
+//   clashes:       [otherIngredientId, …]  — classic conflicts (rare)
+//
+//   ── Nutrition (approximate, per reference serving) ───────────────────
+//   nutrition: {
+//     per:       "100g" | "serving" | "count"
+//     kcal, protein_g, fat_g, carb_g
+//     fiber_g, sodium_mg  (both optional)
+//   }
+//
+//   ── Social / cultural ────────────────────────────────────────────────
+//   origin:        "Lazio, Italy"
+//   culturalNotes: "…"          — the story, history, tradition
+//   winePairings:  ["Chardonnay", …]
+//   recipes:       ["Cacio e Pepe", …]  — classic preparations
+//
+//   ── Sourcing / allergens / seasonality ───────────────────────────────
+//   allergens:     ["dairy","gluten","nut","egg","shellfish","soy","sesame"]
+//   seasonality:   { peakMonths: [5,6,7,8] }  — 1..12
+//   sourcing:      "Look for grass-fed / wild-caught / …"
+//
+// Every field is optional — populated fields render their own section on
+// the IngredientCard; empty fields fall back to SUBCATEGORY_INFO defaults
+// (cheese subcategories especially), then to nothing.
+// ─────────────────────────────────────────────────────────────────────────
 
 // Shared unit ladder for the long tail of cheese varieties. Specialty
 // cheeses we track individually (parmesan wedges, mozz balls, feta blocks,
@@ -2047,16 +2087,38 @@ const INGREDIENT_INFO = {
 };
 
 // Look up display info for an ingredient — ingredient-specific fields win,
-// subcategory fallback fills the gaps. Returns null-safe defaults.
+// subcategory fallback fills the gaps. Returns null-safe defaults for
+// every schema field so the UI can safely read `info.storage?.location`
+// without per-key existence checks.
+//
+// When adding a new metadata field: add it to INGREDIENT_INFO entries,
+// extend this merge, and add a render branch in IngredientCard. The
+// empty-return shape below documents every surface-level key the UI can
+// rely on.
 export function getIngredientInfo(ingredient) {
   if (!ingredient) return null;
   const sub = ingredient.subcategory ? SUBCATEGORY_INFO[ingredient.subcategory] : null;
   const ing = INGREDIENT_INFO[ingredient.id] || null;
   return {
+    // ── cooking-centric ────────────────────────────────────────────────
     description:    ing?.description    || sub?.description    || null,
     flavorProfile:  ing?.flavorProfile  || sub?.flavorProfile  || null,
+    prepTips:       ing?.prepTips       || sub?.prepTips       || null,
+    storage:        ing?.storage        || sub?.storage        || null,
+    substitutions:  ing?.substitutions  || sub?.substitutions  || [],
+    pairs:          ing?.pairs          || sub?.pairs          || [],
+    clashes:        ing?.clashes        || sub?.clashes        || [],
+    // ── nutrition ──────────────────────────────────────────────────────
+    nutrition:      ing?.nutrition      || sub?.nutrition      || null,
+    // ── social / cultural ──────────────────────────────────────────────
+    origin:         ing?.origin         || sub?.origin         || null,
+    culturalNotes:  ing?.culturalNotes  || sub?.culturalNotes  || null,
     winePairings:   ing?.winePairings   || sub?.winePairings   || [],
     recipes:        ing?.recipes        || sub?.recipes        || [],
+    // ── sourcing / allergens / seasonality ─────────────────────────────
+    allergens:      ing?.allergens      || sub?.allergens      || [],
+    seasonality:    ing?.seasonality    || sub?.seasonality    || null,
+    sourcing:       ing?.sourcing       || sub?.sourcing       || null,
   };
 }
 
