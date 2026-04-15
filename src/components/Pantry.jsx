@@ -192,9 +192,22 @@ function Scanner({ onItemsScanned, onClose }) {
   const [scannedItems, setScannedItems] = useState([]);
   const [receiptMeta, setReceiptMeta] = useState({ store: null, date: null, totalCents: null });
   const [editingIdx, setEditingIdx] = useState(null);
+  // Per-row editors for the confirm phase — each targets a single scan-item
+  // index, null when closed. Name, expiration, and canonical-link pickers
+  // don't stack (only one editor open at a time) but they're independent of
+  // editingIdx (amount editor) so users can rapid-fire corrections.
+  const [editingNameIdx, setEditingNameIdx] = useState(null);
+  const [editingExpiryScanIdx, setEditingExpiryScanIdx] = useState(null);
+  const [linkingScanIdx, setLinkingScanIdx] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef();
   const activeMode = SCAN_MODES.find(m => m.id === mode) || SCAN_MODES[2];
+
+  // One-shot patch helper for scan items. Same semantics as updatePantryItem
+  // in the main component — shallow merge by index.
+  const updateScanItem = (idx, patch) => setScannedItems(prev =>
+    prev.map((item, i) => i === idx ? { ...item, ...patch } : item)
+  );
 
   const handleFile = file => {
     if (!file) return;
@@ -449,17 +462,53 @@ function Scanner({ onItemsScanned, onClose }) {
                   <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 14px", minWidth:0 }}>
                   <button onClick={()=>toggleItem(idx)} style={{ width:24, height:24, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s", marginTop:2 }}>{item.selected?"✓":""}</button>
                   <span style={{ fontSize:28, flexShrink:0, lineHeight:1 }}>{item.emoji}</span>
-                  <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:4 }}>
-                    {/* Name — wraps freely. No ellipsis truncation; the user
-                        came here to READ what the scanner saw. Giving long
-                        names space to breathe matters more than row density. */}
-                    <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:16, color:"#f0ece4", fontWeight:500, lineHeight:1.35, wordBreak:"break-word" }}>
-                      {item.name}
-                    </div>
-                    {/* Chip row — MATCHED + confidence. Wraps onto a second
-                        line when the name took up the top. */}
+                  <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:6 }}>
+                    {/* Name — tap to rename. When editing, becomes a full-
+                        width text input so you can retype the receipt's
+                        garbled "ZITS CRACKERS" → "Ritz Crackers" or match
+                        the canonical. Wraps when read-only. */}
+                    {editingNameIdx === idx ? (
+                      <input
+                        type="text"
+                        value={item.name}
+                        autoFocus
+                        onChange={e => updateScanItem(idx, { name: e.target.value })}
+                        onBlur={() => setEditingNameIdx(null)}
+                        onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingNameIdx(null); }}
+                        style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"6px 10px", color:"#f5c842", fontFamily:"'DM Sans',sans-serif", fontSize:16, outline:"none", width:"100%", boxSizing:"border-box" }}
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setEditingNameIdx(idx)}
+                        aria-label={`Rename ${item.name}`}
+                        style={{ background:"transparent", border:"none", padding:0, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:16, color:"#f0ece4", fontWeight:500, lineHeight:1.35, wordBreak:"break-word", cursor:"text" }}
+                      >
+                        {item.name}
+                      </button>
+                    )}
+
+                    {/* Chip row — status + tappable corrections. LINK/RELINK
+                        opens the fuzzy-match picker so misidentified rows
+                        get fixed BEFORE landing in the pantry. Expiration
+                        chip lets you type the date off the carton inline. */}
                     <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                      {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em" }}>MATCHED</span>}
+                      {canon ? (
+                        <button
+                          onClick={() => setLinkingScanIdx(idx)}
+                          title="Tap to change which canonical ingredient this links to"
+                          style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em", cursor:"pointer" }}
+                        >
+                          ✓ {canon.name.toUpperCase()}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => setLinkingScanIdx(idx)}
+                          title="Tap to match this with a canonical ingredient"
+                          style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#a3c9e0", background:"#0f1420", border:"1px solid #1e2a3a", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em", cursor:"pointer" }}
+                        >
+                          🔗 LINK
+                        </button>
+                      )}
                       <span
                         title={
                           item.confidence === "low"
@@ -472,7 +521,68 @@ function Scanner({ onItemsScanned, onClose }) {
                       >
                         {conf.label}
                       </span>
+
+                      {/* Expiration — inline date picker when open, tappable
+                          chip / "+ set expires" button otherwise. Saving
+                          here persists through addScannedItems' merge — the
+                          user-set date wins over the auto-estimate. */}
+                      {editingExpiryScanIdx === idx ? (
+                        <span
+                          style={{ display:"inline-flex", alignItems:"center", gap:4 }}
+                          onClick={e => e.stopPropagation()}
+                        >
+                          <input
+                            type="date"
+                            autoFocus
+                            defaultValue={item.expiresAt
+                              ? new Date(item.expiresAt).toISOString().slice(0, 10)
+                              : ""}
+                            onChange={e => {
+                              const v = e.target.value;
+                              if (!v) return;
+                              updateScanItem(idx, { expiresAt: new Date(`${v}T12:00:00Z`) });
+                            }}
+                            onBlur={() => setEditingExpiryScanIdx(null)}
+                            onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingExpiryScanIdx(null); }}
+                            style={{ background:"#222", border:"1px solid #f5c842", borderRadius:4, padding:"1px 4px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:10, outline:"none" }}
+                          />
+                          {item.expiresAt && (
+                            <button
+                              onClick={() => { updateScanItem(idx, { expiresAt: null }); setEditingExpiryScanIdx(null); }}
+                              aria-label="Clear expiration date"
+                              style={{ background:"transparent", border:"none", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:9, cursor:"pointer", padding:"0 2px" }}
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </span>
+                      ) : (() => {
+                        const days = daysUntilExpiration(item);
+                        if (days != null) {
+                          const label = formatDaysUntil(days);
+                          const color = expirationColor(days);
+                          return (
+                            <button
+                              onClick={() => setEditingExpiryScanIdx(idx)}
+                              aria-label={`Edit expiration date for ${item.name}`}
+                              style={{ background:`${color}22`, border:"none", color, fontFamily:"'DM Mono',monospace", fontSize:9, padding:"2px 6px", borderRadius:4, cursor:"pointer", letterSpacing:"0.08em" }}
+                            >
+                              ⏳ {label}
+                            </button>
+                          );
+                        }
+                        return (
+                          <button
+                            onClick={() => setEditingExpiryScanIdx(idx)}
+                            aria-label={`Set expiration date for ${item.name}`}
+                            style={{ background:"transparent", border:"1px dashed #2a2a2a", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:9, padding:"1px 6px", borderRadius:4, cursor:"pointer", letterSpacing:"0.08em" }}
+                          >
+                            + set expires
+                          </button>
+                        );
+                      })()}
                     </div>
+
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", display:"flex", gap:10, flexWrap:"wrap" }}>
                       <span>{(item.category || "").toUpperCase()}</span>
                       {item.priceCents != null && <span style={{ color:"#7ec87e" }}>{formatPrice(item.priceCents)}</span>}
@@ -537,6 +647,27 @@ function Scanner({ onItemsScanned, onClose }) {
           <button onClick={onClose} style={{ width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, cursor:"pointer" }}>SEE MY PANTRY →</button>
           <style>{`@keyframes pop{0%{transform:scale(0.5);opacity:0}70%{transform:scale(1.15)}100%{transform:scale(1);opacity:1}}`}</style>
         </div>
+      )}
+
+      {/* Link-to-canonical picker for a scanned item. Same modal used in
+          the pantry row, just sourced from the scan-item state instead of
+          a persisted row. Linking here: sets ingredientId, adopts the
+          canonical emoji + category so the row immediately reflects the
+          correction. Name stays the user's typed text. */}
+      {linkingScanIdx != null && scannedItems[linkingScanIdx] && (
+        <LinkIngredient
+          item={scannedItems[linkingScanIdx]}
+          onLink={canonicalId => {
+            const canon = findIngredient(canonicalId);
+            updateScanItem(linkingScanIdx, {
+              ingredientId: canonicalId,
+              emoji:    canon?.emoji    || scannedItems[linkingScanIdx].emoji,
+              category: canon?.category || scannedItems[linkingScanIdx].category,
+            });
+            setLinkingScanIdx(null);
+          }}
+          onClose={() => setLinkingScanIdx(null)}
+        />
       )}
     </div>
   );
@@ -1223,9 +1354,15 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           ? defaultLocationForCategory(canon.category)
           : (s.category ? defaultLocationForCategory(s.category) : null);
         const days  = info?.storage ? estimateExpirationDays(info.storage, loc) : null;
-        const newExpiresAt = days != null
-          ? new Date(purchasedAt.getTime() + days * 24 * 60 * 60 * 1000)
-          : null;
+        // User-set expiration (typed off the carton in the confirm UI) wins
+        // over the auto-estimate. If they didn't set one, fall back to
+        // purchasedAt + shelfLife days; if no shelf-life data either, leave
+        // null rather than fabricate.
+        const newExpiresAt = s.expiresAt
+          ? (s.expiresAt instanceof Date ? s.expiresAt : new Date(s.expiresAt))
+          : (days != null
+              ? new Date(purchasedAt.getTime() + days * 24 * 60 * 60 * 1000)
+              : null);
 
         const ex = s.ingredientId
           ? next.find(p => p.ingredientId === s.ingredientId)
