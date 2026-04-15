@@ -10,7 +10,16 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { useToast } from "../lib/toast";
-import { FRIDGE_TILES, tileIdForItem } from "../lib/fridgeTiles";
+import { FRIDGE_TILES, tileIdForItem as fridgeTileIdForItem } from "../lib/fridgeTiles";
+import { PANTRY_TILES, pantryTileIdForItem } from "../lib/pantryTiles";
+
+// Tab → ({ tiles, classify }) dispatch. One place to add the Freezer tile
+// set later — the render path below reads entirely off this.
+function tilesForTab(tab) {
+  if (tab === "fridge") return { tiles: FRIDGE_TILES, classify: fridgeTileIdForItem };
+  if (tab === "pantry") return { tiles: PANTRY_TILES, classify: pantryTileIdForItem };
+  return { tiles: null, classify: null }; // freezer — flat list until its own tile pass
+}
 import IngredientCard from "./IngredientCard";
 import LinkIngredient from "./LinkIngredient";
 
@@ -1274,27 +1283,33 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
 
   const lowItems = pantry.filter(isLow);
 
-  // Count items per fridge tile (regardless of drill state) — powers the
-  // tile grid's badge numbers and the "empty tile" greyed-out treatment.
-  const fridgeTileCounts = useMemo(() => {
+  // Current tab's tile set + classifier. Null when the tab has no tiles
+  // wired yet (freezer) — the render path falls back to a flat list.
+  const { tiles: currentTiles, classify: currentClassify } = tilesForTab(storageTab);
+
+  // Count items per tile (regardless of drill state) for the active tab
+  // — powers the grid's badge numbers and the "empty tile" greyed-out
+  // treatment. Returns {} when the tab has no tile set.
+  const tileCounts = useMemo(() => {
+    if (!currentTiles || !currentClassify) return {};
     const counts = {};
     for (const p of pantry) {
-      if (effectiveLocation(p) !== "fridge") continue;
-      const tid = tileIdForItem(p, { findIngredient, hubForIngredient });
+      if (effectiveLocation(p) !== storageTab) continue;
+      const tid = currentClassify(p, { findIngredient, hubForIngredient });
       counts[tid] = (counts[tid] || 0) + 1;
     }
     return counts;
-  }, [pantry]);
+  }, [pantry, storageTab, currentTiles, currentClassify]);
 
   // Items visible in the current tab/drill context. The grouped list below
   // renders from this subset instead of the whole pantry.
   const visibleItems = useMemo(() => {
     let v = pantry.filter(p => effectiveLocation(p) === storageTab);
-    if (storageTab === "fridge" && drilledTile) {
-      v = v.filter(p => tileIdForItem(p, { findIngredient, hubForIngredient }) === drilledTile);
+    if (currentClassify && drilledTile) {
+      v = v.filter(p => currentClassify(p, { findIngredient, hubForIngredient }) === drilledTile);
     }
     return v;
-  }, [pantry, storageTab, drilledTile]);
+  }, [pantry, storageTab, drilledTile, currentClassify]);
 
   // Group visible items under their ingredient hub (Chicken, Cheese, …) when
   // they have one — otherwise they render as standalone rows. `search` filters
@@ -1993,15 +2008,16 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             </div>
           </div>
 
-          {/* Tile grid (fridge only, no drill-down active). Tapping a tile
-              enters a drill-down view of items in that tile. Empty tiles
-              render greyed-out but remain tappable — the drill-down's
-              empty state surfaces an "Add your first" affordance. */}
-          {storageTab === "fridge" && drilledTile === null && (
+          {/* Tile grid — any tab that has a tile set (fridge, pantry), no
+              drill-down active. Tapping a tile enters a drill-down view
+              of items in that tile. Empty tiles render greyed-out but
+              remain tappable — the drill-down's empty state surfaces
+              an "Add your first" affordance. */}
+          {currentTiles && drilledTile === null && (
             <div style={{ padding:"14px 20px 0" }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
-                {FRIDGE_TILES.map(tile => {
-                  const count = fridgeTileCounts[tile.id] || 0;
+                {currentTiles.map(tile => {
+                  const count = tileCounts[tile.id] || 0;
                   const empty = count === 0;
                   return (
                     <button
@@ -2064,15 +2080,16 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           )}
 
           {/* Drill-down header — shown when the user has tapped into a
-              specific fridge tile. Back arrow returns to the tile grid. */}
-          {storageTab === "fridge" && drilledTile !== null && (() => {
-            const tile = FRIDGE_TILES.find(t => t.id === drilledTile);
+              specific tile (fridge or pantry). Back arrow returns to the
+              tile grid. */}
+          {currentTiles && drilledTile !== null && (() => {
+            const tile = currentTiles.find(t => t.id === drilledTile);
             if (!tile) return null;
             return (
               <div style={{ padding:"18px 20px 0", display:"flex", alignItems:"center", gap:12 }}>
                 <button
                   onClick={() => setDrilledTile(null)}
-                  aria-label="Back to fridge overview"
+                  aria-label={`Back to ${storageTab} overview`}
                   style={{
                     width: 36, height: 36, borderRadius: 10,
                     background:"#141414", border:"1px solid #222",
@@ -2096,12 +2113,10 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             );
           })()}
 
-          {/* Search + items list. Hidden on the fridge tile grid (drilledTile
-              === null) because the grid is the index; search + list appear
-              once the user has drilled into a tile, AND for the pantry and
-              freezer tabs (which are still flat lists pending their own
-              tile pass). */}
-          {!(storageTab === "fridge" && drilledTile === null) && (
+          {/* Search + items list. Hidden on the tile-grid view (drilledTile
+              === null and the tab has tiles); shown once the user drills
+              into a tile, and on tabs without a tile set (freezer). */}
+          {!(currentTiles && drilledTile === null) && (
             <>
               {/* Search — matches item names, category, and hub names,
                   scoped to the current tab/tile. */}
@@ -2110,8 +2125,8 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder={
-                    storageTab === "fridge" && drilledTile
-                      ? `Search ${FRIDGE_TILES.find(t => t.id === drilledTile)?.label.toLowerCase() || "this section"}…`
+                    currentTiles && drilledTile
+                      ? `Search ${currentTiles.find(t => t.id === drilledTile)?.label.toLowerCase() || "this section"}…`
                       : `Search your ${storageTab}…`
                   }
                   style={{ width:"100%", padding:"11px 14px", background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
@@ -2123,13 +2138,13 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 {grouped.length === 0 && visibleItems.length === 0 && (
                   <div style={{ padding:"28px 18px", textAlign:"center", background:"#0c0c0c", border:"1px dashed #222", borderRadius:14 }}>
                     <div style={{ fontSize: 36, marginBottom: 10, opacity: 0.7 }}>
-                      {storageTab === "fridge" && drilledTile
-                        ? FRIDGE_TILES.find(t => t.id === drilledTile)?.emoji
-                        : storageTab === "pantry" ? "🥫" : "❄️"}
+                      {currentTiles && drilledTile
+                        ? currentTiles.find(t => t.id === drilledTile)?.emoji
+                        : storageTab === "pantry" ? "🥫" : storageTab === "freezer" ? "❄️" : "🧊"}
                     </div>
                     <div style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize: 18, color:"#888", marginBottom: 6 }}>
-                      {storageTab === "fridge" && drilledTile
-                        ? `No ${FRIDGE_TILES.find(t => t.id === drilledTile)?.label.toLowerCase()} yet`
+                      {currentTiles && drilledTile
+                        ? `No ${currentTiles.find(t => t.id === drilledTile)?.label.toLowerCase()} yet`
                         : `Nothing in your ${storageTab} yet`}
                     </div>
                     <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color:"#555", lineHeight: 1.5, marginBottom: 14 }}>
