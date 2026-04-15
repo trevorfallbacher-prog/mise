@@ -2448,6 +2448,155 @@ const INGREDIENT_INFO = {
     sourcing: "Flat-leaf for cooking, always. Curly is fine for decoration. Bunches should be perky, not slimy or yellowing at the base.",
   },
 
+  // ── produce: fruits + vegetables ──────────────────────────────────
+  tomato: {
+    description: "Fresh tomato — the one ingredient that deserves actual seasonal respect. August's vine-ripened tomato and January's grocery-store tomato are barely the same food.",
+    flavorProfile: "Sweet, acidic, umami-rich; depth of flavor tracks directly with ripeness",
+    prepTips: "Never refrigerate a ripe tomato — cold destroys the aromatic compounds and mealies the texture. Salt tomatoes 15 minutes before serving raw; it draws out juice and concentrates flavor.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 7,
+      tips: "Counter, stem-end DOWN, out of direct sun. If overripe and you can't eat them in time: quarter and freeze for future sauce.",
+    },
+    substitutions: [
+      { id: "tomato_paste", note: "For cooked dishes; concentrated flavor but no water." },
+      { id: "sundried_tomato", note: "For flavor, not for volume. A tablespoon adds what a cup of fresh would." },
+    ],
+    pairs: ["basil", "mozzarella", "olive_oil", "balsamic"],
+    nutrition: { per: "100g", kcal: 18, protein_g: 0.9, fat_g: 0.2, carb_g: 3.9, fiber_g: 1.2, sodium_mg: 5 },
+    origin: "Western South America (Andes) — domesticated in Mexico by the Aztecs. Brought to Europe in the 1500s; long thought poisonous because the leaves and stems are.",
+    culturalNotes: "Tomatoes in Italian cooking only date to the 1800s. Caprese, marinara, pasta al pomodoro — all 'traditional' dishes younger than the USA.",
+    allergens: [],
+    seasonality: { peakMonths: [7, 8, 9] },
+    sourcing: "Heirloom varieties (Brandywine, Cherokee Purple, Green Zebra) taste like tomato; uniform red supermarket tomatoes are bred for shipping, not flavor. Even in winter, canned San Marzanos beat fresh supermarket tomatoes for cooking.",
+  },
+
+  bell_pepper: {
+    description: "Sweet, crunchy, hollow-fleshed peppers. Red, yellow, and orange are ripe; green is an unripe red. Raw or cooked, they're mild and family-friendly.",
+    flavorProfile: "Sweet, grassy raw (green more so); smoky and deep when charred",
+    prepTips: "Char directly over a gas flame or under a broiler until black, then steam in a bowl covered with plastic wrap for 10 minutes — skin slips off by hand. Cut lengthwise for fajitas, rings for sandwiches.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 14,
+      tips: "Crisper drawer, unwashed. Once cut, wrap tightly — exposed flesh dries fast. Freezes well for cooking: dice, freeze on a sheet tray, transfer to a bag.",
+    },
+    substitutions: [
+      { id: "poblano", note: "For when you want a little heat; mild pepper with more character." },
+      { id: "pimento", note: "Sweeter, smaller, usually jarred. Substitute in sauces and dressings." },
+    ],
+    pairs: ["yellow_onion", "olive_oil", "garlic", "chicken_breast"],
+    nutrition: { per: "100g", kcal: 31, protein_g: 1, fat_g: 0.3, carb_g: 6, fiber_g: 2.1, sodium_mg: 4 },
+    origin: "Central and South America — domesticated over 9,000 years ago. The 'bell' shape was developed in the 1920s in Hungary from sweeter paprika peppers.",
+    culturalNotes: "Red, yellow, and orange peppers are 2–3× the price of green because they're on the vine longer. Green ones are picked early and sold to keep the crop profitable while the rest ripen.",
+    allergens: [],
+    seasonality: { peakMonths: [7, 8, 9, 10] },
+    sourcing: "Heavy for their size = more flesh. Wrinkled or soft spots = past prime. For fajitas, mix colors for visual interest; flavor differences are subtle.",
+  },
+
+  carrot: {
+    description: "Root vegetable — sweet, crunchy raw, transformed to deep caramelized sweetness when roasted or braised. A mirepoix staple along with onion and celery.",
+    flavorProfile: "Sweet, earthy; intensifies when cooked. Raw carrots are crisp and grassy; roasted carrots are candy.",
+    prepTips: "Peel only if the skin's tough or dirty — young carrots don't need it. For stocks and braises, leave chunky; for raw salads, match the cut (ribbons, julienne, grated) to the dressing.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 30,
+      tips: "Remove any leafy tops — they pull moisture from the root. Store in a zip-top bag in the crisper; they keep for weeks. Limp carrots can be revived 30 min in ice water.",
+    },
+    substitutions: [
+      { id: "parsnip", note: "Similar cooking behavior; sweeter and more aromatic when roasted." },
+    ],
+    pairs: ["yellow_onion", "butter", "thyme", "honey"],
+    nutrition: { per: "100g", kcal: 41, protein_g: 0.9, fat_g: 0.2, carb_g: 10, fiber_g: 2.8, sodium_mg: 69 },
+    origin: "Central Asia (Afghanistan) — originally purple. The orange variety was developed in 17th-century Netherlands, possibly as a tribute to William of Orange.",
+    culturalNotes: "Rainbow / heirloom carrots (purple, yellow, white, red) are closer to the original species than the uniform orange we grew up with. Purple ones stain everything they touch bright pink.",
+    allergens: [],
+    seasonality: { peakMonths: [9, 10, 11] },
+    sourcing: "Loose carrots with greens attached are fresher than bagged. 'Baby' carrots are usually whittled-down large carrots; real baby carrots from a farmer's market are another category.",
+  },
+
+  mushroom: {
+    description: "The catch-all category — button, cremini, portobello, shiitake, oyster, chanterelle, morel. Meaty, umami-rich, the vegetarian kitchen's secret weapon.",
+    flavorProfile: "Earthy, savory, umami; dried mushrooms concentrate all three to a different dimension",
+    prepTips: "Don't wash — wipe with a damp paper towel. Mushrooms absorb water and steam instead of browning. For crispy sear, crowd-free hot pan, dry mushrooms, high heat, salt AFTER they've browned.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 7,
+      tips: "In their original packaging or a paper bag (not plastic — traps moisture, speeds rot). Wrinkled caps mean they're past prime but still fine for soups and stocks.",
+    },
+    substitutions: [
+      { id: "dried_porcini", note: "Rehydrate in warm water; the soaking liquid becomes an umami bomb for sauces and risottos." },
+    ],
+    pairs: ["butter", "garlic", "thyme", "red_wine"],
+    nutrition: { per: "100g", kcal: 22, protein_g: 3.1, fat_g: 0.3, carb_g: 3.3, fiber_g: 1, sodium_mg: 5 },
+    origin: "Mushroom cultivation dates to Imperial China ~1,500 years ago. Agaricus bisporus (white button, cremini, portobello — all same species, different maturities) was first cultivated in 17th-century France.",
+    culturalNotes: "Cremini and portobello are just older button mushrooms. Same species, picked at different ages. The 'portobello' name was invented in the 1980s to sell what producers had been throwing away.",
+    allergens: [],
+    seasonality: { peakMonths: [9, 10, 11] },
+    sourcing: "Button and cremini year-round; specialty (shiitake, oyster, trumpet) at better groceries; wild (morel, chanterelle) at farmer's markets in season. Dried porcini is worth keeping in the pantry permanently.",
+  },
+
+  spinach: {
+    description: "Soft-leaved dark green — wilts in seconds, filling when raw, vanishes into a cup of cooked volume. The kitchen's most reliable green.",
+    flavorProfile: "Mild, slightly mineral, faintly sweet; tangy edge with long cooking from oxalic acid",
+    prepTips: "Buy in bulk; cooks down to ~10% of raw volume. Wash even 'pre-washed' bags — spinach holds grit. Sauté in olive oil with garlic and a pinch of salt for 90 seconds, pull when just wilted — longer goes slimy.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 7,
+      tips: "Crisper drawer in its original bag or a zip-top with a paper towel to absorb moisture. Wilted spinach can be cooked — slimy spinach cannot.",
+    },
+    substitutions: [
+      { id: "kale", note: "Hardier; needs longer cooking or a massage with oil + salt to soften raw." },
+      { id: "swiss_chard", note: "Bigger leaves, earthier flavor. Stems cook separately — dice and sauté with aromatics first." },
+    ],
+    pairs: ["garlic", "olive_oil", "lemon", "parmesan"],
+    nutrition: { per: "100g", kcal: 23, protein_g: 2.9, fat_g: 0.4, carb_g: 3.6, fiber_g: 2.2, sodium_mg: 79 },
+    origin: "Persia (modern Iran) — came to Europe via Moorish Spain in the 11th century. 'Spanish vegetable' in many European languages for centuries.",
+    culturalNotes: "Popeye's strength came from spinach's iron content, which turns out to be overstated — an early 1870s study mis-placed a decimal point by 10×, and the error wasn't caught until the 1930s.",
+    allergens: [],
+    seasonality: { peakMonths: [3, 4, 5, 10, 11] },
+    sourcing: "Baby spinach for salads, mature (bunched) spinach for cooking. Bunched is cheaper and more flavorful but needs washing. Frozen spinach is legitimate for soups and fillings — squeeze out the water.",
+  },
+
+  avocado: {
+    description: "Buttery, green-fleshed fruit of the Persea americana tree. Eaten raw — guacamole, smashed on toast, diced in salads, sliced in tacos.",
+    flavorProfile: "Rich, buttery, mildly grassy; creamy texture from ~15% fat content (mostly monounsaturated)",
+    prepTips: "Ripe when it yields to gentle squeeze (not thumb-piercing pressure). Rock-hard? Bag with an apple or banana for 24 hours — ethylene accelerates ripening. Halve around the pit, twist, pop the pit with a knife tap.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 5,
+      tips: "Unripe on the counter. Ripe ones move to the fridge (slows further ripening by ~2–3 days). Cut avocado: cling wrap against the flesh + squeeze of lemon juice keeps it green overnight.",
+    },
+    substitutions: [],
+    pairs: ["lime", "cilantro", "tortillas", "tomato"],
+    nutrition: { per: "count", kcal: 322, protein_g: 4, fat_g: 29, carb_g: 17, fiber_g: 14, sodium_mg: 14 },
+    origin: "Mexico and Central America — cultivated by the Mesoamerican civilizations for 10,000+ years. The Aztec word 'ahuacatl' (from which 'avocado' derives) also meant 'testicle.'",
+    culturalNotes: "~90% of the Hass avocados sold in the US come from a single tree bred by Rudolph Hass in 1935. Every store-bought Hass is a clone of that tree.",
+    allergens: [],
+    seasonality: { peakMonths: [5, 6, 7, 8, 9] },
+    sourcing: "Hass (knobby, darkens when ripe) is the default; Fuerte is a smoother, greener variety. Buy unripe, ripen on the counter — it gives you control.",
+  },
+
+  lime: {
+    description: "Small, green citrus. Sharper and more aromatic than lemon; the citrus of choice for Mexican, Thai, and Caribbean cooking.",
+    flavorProfile: "Sharp, floral, tart; slightly bitter in the pith and zest",
+    prepTips: "Roll on the counter pressing firmly before juicing — breaks the internal membranes, doubles the juice yield. Microwaving 10 seconds also works. Zest before juicing; it's impossible the other way around.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 21,
+      tips: "Crisper drawer, not the door. On the counter they'll last a week; in the fridge up to 3. Juice freezes well in ice-cube trays for later use.",
+    },
+    substitutions: [
+      { id: "lemon", note: "Similar brightness, different profile. Lemon is more floral-sweet; lime is sharper and more tropical." },
+    ],
+    pairs: ["cilantro", "avocado", "chicken_breast", "tortillas"],
+    nutrition: { per: "count", kcal: 20, protein_g: 0.5, fat_g: 0.1, carb_g: 7, fiber_g: 1.9, sodium_mg: 1 },
+    origin: "Southeast Asia — spread through Persian and Arab trade routes. Key limes (the small, aromatic originals) come from the Florida Keys and are used for the namesake pie.",
+    culturalNotes: "18th-century British sailors were issued lime juice to prevent scurvy — hence 'limey.' Ironically, Key limes worked far better than the Persian limes the navy eventually substituted.",
+    allergens: [],
+    seasonality: { peakMonths: [5, 6, 7, 8, 9] },
+    sourcing: "Persian limes (the usual supermarket kind) are larger and juicier. Key limes are tiny, intensely aromatic, usually only available bagged. Bottled 'lime juice' is an insult — always fresh.",
+  },
+
   cilantro: {
     description: "Fresh coriander leaves — the herb that Mexican, Thai, Vietnamese, and North African cuisines lean on hardest. Divisive: a small fraction of people taste soap (a genetic variant of the OR6A2 olfactory receptor).",
     flavorProfile: "Bright, citrusy, soapy-to-some, fresh; cools and lifts fatty or spicy dishes",
