@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { useToast } from "../lib/toast";
+import { FRIDGE_TILES, tileIdForItem } from "../lib/fridgeTiles";
 import IngredientCard from "./IngredientCard";
 import LinkIngredient from "./LinkIngredient";
 
@@ -271,9 +272,11 @@ function Scanner({ onItemsScanned, onClose }) {
         const canon = findIngredient(item.ingredientId);
         const cat = canon ? canon.category : (item.category || "pantry");
         // Fridge/pantry scans force every item to that physical location.
-        // Receipt scans don't know — fall back to a category default
-        // (dairy/produce/meat → fridge, frozen → freezer, else pantry).
-        const location = activeMode.location || defaultLocationForCategory(cat);
+        // Receipt scans don't know — prefer the ingredient registry's
+        // storage.location when we have a canonical match (butter→fridge,
+        // flour→pantry), then fall back to a category default.
+        const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
+        const location = activeMode.location || regLocation || defaultLocationForCategory(cat);
         // Confidence comes off the wire for scan-shelf; receipts don't carry
         // it (OCR is deterministic enough), so we treat them as "high" so the
         // confirm UI doesn't ask the user to second-guess every receipt row.
@@ -1251,12 +1254,53 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   const monthlySpend = useMonthlySpend(userId, spendRefresh);
   const { push: pushToast } = useToast();
 
+  // Fridge / Pantry / Freezer tab. Default to fridge — the tab users hit
+  // most often. `drilledTile` holds the fridge-tile id the user has tapped
+  // into (null = tile grid view; string = tile detail view). Switching
+  // tabs always resets the drill-down.
+  const [storageTab, setStorageTabRaw] = useState("fridge");
+  const [drilledTile, setDrilledTile] = useState(null);
+  const setStorageTab = (next) => {
+    setStorageTabRaw(next);
+    setDrilledTile(null);
+  };
+
+  // Effective location for an item — respects the stored value, falls back
+  // to the category heuristic. Older rows without a location end up where
+  // they logically belong (dairy/produce/meat → fridge, frozen → freezer,
+  // else pantry). Keeps all tab filtering honest.
+  const effectiveLocation = (item) =>
+    item.location || defaultLocationForCategory(item.category);
+
   const lowItems = pantry.filter(isLow);
 
-  // Group pantry items under their ingredient hub (Chicken, Cheese, …) when
+  // Count items per fridge tile (regardless of drill state) — powers the
+  // tile grid's badge numbers and the "empty tile" greyed-out treatment.
+  const fridgeTileCounts = useMemo(() => {
+    const counts = {};
+    for (const p of pantry) {
+      if (effectiveLocation(p) !== "fridge") continue;
+      const tid = tileIdForItem(p, { findIngredient, hubForIngredient });
+      counts[tid] = (counts[tid] || 0) + 1;
+    }
+    return counts;
+  }, [pantry]);
+
+  // Items visible in the current tab/drill context. The grouped list below
+  // renders from this subset instead of the whole pantry.
+  const visibleItems = useMemo(() => {
+    let v = pantry.filter(p => effectiveLocation(p) === storageTab);
+    if (storageTab === "fridge" && drilledTile) {
+      v = v.filter(p => tileIdForItem(p, { findIngredient, hubForIngredient }) === drilledTile);
+    }
+    return v;
+  }, [pantry, storageTab, drilledTile]);
+
+  // Group visible items under their ingredient hub (Chicken, Cheese, …) when
   // they have one — otherwise they render as standalone rows. `search` filters
   // both the hub name and each item's name. A hub shows if its name matches OR
-  // any of its items match.
+  // any of its items match. Driven off `visibleItems` so the grouping respects
+  // the current Fridge/Pantry/Freezer tab and any fridge-tile drill-down.
   const grouped = useMemo(() => {
     const q = search.trim().toLowerCase();
     // Null-safe: legacy rows may have null category/name fields.
@@ -1265,7 +1309,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     const groups = new Map(); // hubId → { hub, items }
     const loose = [];
 
-    for (const item of pantry) {
+    for (const item of visibleItems) {
       const ing = findIngredient(item.ingredientId);
       const hub = hubForIngredient(ing);
       if (hub) {
@@ -1312,7 +1356,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       }
     }
     return out;
-  }, [pantry, search]);
+  }, [visibleItems, search]);
 
   // Merge scanned items into the pantry. When the scanner matched a canonical
   // ingredient we merge by ingredientId (so "2 sticks butter" stacks with an
@@ -1909,28 +1953,207 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>TRY IT →</div>
           </div>
 
-          {/* Search — replaces the old category filter pills. Matches item
-              names, category, and hub names, so "cheese" finds every cheese. */}
+          {/* Fridge / Pantry / Freezer tab strip. Default is Fridge — the
+              tab most users open by reflex. Selecting a tab resets any
+              active tile drill-down (handled in setStorageTab). */}
           <div style={{ padding:"18px 20px 0" }}>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search your pantry…"
-              style={{ width:"100%", padding:"11px 14px", background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
-            />
+            <div style={{ display:"flex", gap:6, background:"#0b0b0b", border:"1px solid #1e1e1e", borderRadius:12, padding:4 }}>
+              {[
+                { id: "fridge",  label: "Fridge",  emoji: "🧊" },
+                { id: "pantry",  label: "Pantry",  emoji: "🥫" },
+                { id: "freezer", label: "Freezer", emoji: "❄️" },
+              ].map(t => {
+                const active = storageTab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => setStorageTab(t.id)}
+                    style={{
+                      flex: 1,
+                      padding: "10px 8px",
+                      background: active ? "#1a1a1a" : "transparent",
+                      border: active ? "1px solid #f5c84244" : "1px solid transparent",
+                      borderRadius: 9,
+                      fontFamily: "'DM Mono',monospace",
+                      fontSize: 11,
+                      letterSpacing: "0.08em",
+                      color: active ? "#f5c842" : "#888",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{t.emoji}</span>
+                    {t.label.toUpperCase()}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Items — grouped under hubs where applicable */}
-          <div style={{ padding:"14px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
-            {grouped.length === 0 && pantry.length > 0 && (
-              <div style={{ padding:"18px", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
-                Nothing matches "{search}".
+          {/* Tile grid (fridge only, no drill-down active). Tapping a tile
+              enters a drill-down view of items in that tile. Empty tiles
+              render greyed-out but remain tappable — the drill-down's
+              empty state surfaces an "Add your first" affordance. */}
+          {storageTab === "fridge" && drilledTile === null && (
+            <div style={{ padding:"14px 20px 0" }}>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                {FRIDGE_TILES.map(tile => {
+                  const count = fridgeTileCounts[tile.id] || 0;
+                  const empty = count === 0;
+                  return (
+                    <button
+                      key={tile.id}
+                      onClick={() => setDrilledTile(tile.id)}
+                      style={{
+                        textAlign: "left",
+                        padding: "16px 14px",
+                        background: empty ? "#0c0c0c" : "#141414",
+                        border: `1px solid ${empty ? "#1a1a1a" : "#242424"}`,
+                        borderRadius: 14,
+                        cursor: "pointer",
+                        opacity: empty ? 0.45 : 1,
+                        filter: empty ? "grayscale(0.85)" : "none",
+                        transition: "transform 0.12s, border-color 0.12s",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 6,
+                        minHeight: 110,
+                      }}
+                      onMouseOver={e => { e.currentTarget.style.borderColor = empty ? "#222" : "#f5c84244"; }}
+                      onMouseOut={e =>  { e.currentTarget.style.borderColor = empty ? "#1a1a1a" : "#242424"; }}
+                    >
+                      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                        <span style={{ fontSize: 30 }}>{tile.emoji}</span>
+                        <span style={{
+                          fontFamily:"'DM Mono',monospace",
+                          fontSize: 10,
+                          letterSpacing:"0.08em",
+                          color: empty ? "#444" : "#f5c842",
+                          background: empty ? "transparent" : "#1a1a1a",
+                          padding: empty ? 0 : "2px 8px",
+                          borderRadius: 10,
+                        }}>
+                          {empty ? "EMPTY" : `${count} ITEM${count === 1 ? "" : "S"}`}
+                        </span>
+                      </div>
+                      <div style={{
+                        fontFamily:"'Fraunces',serif",
+                        fontSize: 16,
+                        color:"#f0ece4",
+                        fontWeight: 400,
+                        marginTop: 4,
+                      }}>
+                        {tile.label}
+                      </div>
+                      <div style={{
+                        fontFamily:"'DM Sans',sans-serif",
+                        fontSize: 11,
+                        color:"#666",
+                        lineHeight: 1.35,
+                      }}>
+                        {tile.blurb}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
-            )}
-            {grouped.map(g =>
-              g.type === "hub" ? renderHubCard(g) : renderItemCard(g.item)
-            )}
-          </div>
+            </div>
+          )}
+
+          {/* Drill-down header — shown when the user has tapped into a
+              specific fridge tile. Back arrow returns to the tile grid. */}
+          {storageTab === "fridge" && drilledTile !== null && (() => {
+            const tile = FRIDGE_TILES.find(t => t.id === drilledTile);
+            if (!tile) return null;
+            return (
+              <div style={{ padding:"18px 20px 0", display:"flex", alignItems:"center", gap:12 }}>
+                <button
+                  onClick={() => setDrilledTile(null)}
+                  aria-label="Back to fridge overview"
+                  style={{
+                    width: 36, height: 36, borderRadius: 10,
+                    background:"#141414", border:"1px solid #222",
+                    color:"#f0ece4", fontSize: 18, cursor:"pointer",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    flexShrink: 0,
+                  }}
+                >←</button>
+                <div style={{ flex:1, minWidth: 0 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                    <span style={{ fontSize: 22 }}>{tile.emoji}</span>
+                    <div style={{ fontFamily:"'Fraunces',serif", fontSize: 20, color:"#f0ece4", fontWeight: 400 }}>
+                      {tile.label}
+                    </div>
+                  </div>
+                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 11, color:"#666", marginTop: 2 }}>
+                    {tile.blurb}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Search + items list. Hidden on the fridge tile grid (drilledTile
+              === null) because the grid is the index; search + list appear
+              once the user has drilled into a tile, AND for the pantry and
+              freezer tabs (which are still flat lists pending their own
+              tile pass). */}
+          {!(storageTab === "fridge" && drilledTile === null) && (
+            <>
+              {/* Search — matches item names, category, and hub names,
+                  scoped to the current tab/tile. */}
+              <div style={{ padding:"14px 20px 0" }}>
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder={
+                    storageTab === "fridge" && drilledTile
+                      ? `Search ${FRIDGE_TILES.find(t => t.id === drilledTile)?.label.toLowerCase() || "this section"}…`
+                      : `Search your ${storageTab}…`
+                  }
+                  style={{ width:"100%", padding:"11px 14px", background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+                />
+              </div>
+
+              {/* Items — grouped under hubs where applicable */}
+              <div style={{ padding:"14px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
+                {grouped.length === 0 && visibleItems.length === 0 && (
+                  <div style={{ padding:"28px 18px", textAlign:"center", background:"#0c0c0c", border:"1px dashed #222", borderRadius:14 }}>
+                    <div style={{ fontSize: 36, marginBottom: 10, opacity: 0.7 }}>
+                      {storageTab === "fridge" && drilledTile
+                        ? FRIDGE_TILES.find(t => t.id === drilledTile)?.emoji
+                        : storageTab === "pantry" ? "🥫" : "❄️"}
+                    </div>
+                    <div style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize: 18, color:"#888", marginBottom: 6 }}>
+                      {storageTab === "fridge" && drilledTile
+                        ? `No ${FRIDGE_TILES.find(t => t.id === drilledTile)?.label.toLowerCase()} yet`
+                        : `Nothing in your ${storageTab} yet`}
+                    </div>
+                    <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color:"#555", lineHeight: 1.5, marginBottom: 14 }}>
+                      Scan a receipt or tap <em>Add an ingredient</em> above to get started.
+                    </div>
+                    <button
+                      onClick={() => setAddingTo("pantry")}
+                      style={{ padding:"10px 18px", background:"#1a1a1a", border:"1px solid #f5c84244", borderRadius: 10, fontFamily:"'DM Mono',monospace", fontSize: 11, color:"#f5c842", letterSpacing:"0.08em", cursor:"pointer" }}
+                    >
+                      + ADD AN INGREDIENT
+                    </button>
+                  </div>
+                )}
+                {grouped.length === 0 && visibleItems.length > 0 && (
+                  <div style={{ padding:"18px", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
+                    Nothing matches "{search}".
+                  </div>
+                )}
+                {grouped.map(g =>
+                  g.type === "hub" ? renderHubCard(g) : renderItemCard(g.item)
+                )}
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -2003,7 +2226,14 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             if (addingTo === "shopping") {
               setShoppingList(prev => [...prev, { ...item, source: "manual" }]);
             } else {
-              setPantry(prev => [...prev, item]);
+              // Suggest a location: registry's storage.location wins
+              // (butter→fridge, flour→pantry), then the current tab the
+              // user is viewing, then the category heuristic. Everything
+              // honors an explicit location the modal may have set.
+              const canon = findIngredient(item.ingredientId);
+              const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
+              const location = item.location || regLocation || storageTab;
+              setPantry(prev => [...prev, { ...item, location }]);
             }
           }}
         />
