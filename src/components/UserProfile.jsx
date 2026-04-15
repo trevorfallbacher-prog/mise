@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useUserProfile } from "../lib/useUserProfile";
+import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
 
 // Rating meta — kept in sync with Cookbook's table so the recent-cooks
@@ -78,6 +79,11 @@ export default function UserProfile({
   const level = LEVEL_OPTIONS.find(l => l.id === profile?.level);
   const goal  = GOAL_OPTIONS.find(g => g.id === profile?.goal);
 
+  // Badges — earned (colored) vs catalog-leftover (silhouette) so the
+  // empty slots double as "here's what's out there to unlock" without
+  // spoiling anything.
+  const badges = useBadges(targetUserId);
+
   // When the viewer is a FRIEND (not family), RLS returns the profile row
   // but cook_logs is empty — that's by design (friends share prefs only).
   // We surface a soft note rather than leave an awkward empty stats block.
@@ -149,6 +155,22 @@ export default function UserProfile({
               <Stat value={stats.nailedCount} label="🤩" color="#f5c842" />
               <Stat value={profile?.streak_count ?? 0} label="🔥" color="#e07a3a" />
             </div>
+
+            {/* Badge wall. Earned badges render in full color (SVG from
+                public/badges/), locked badges render as dim silhouettes
+                so the user sees what's out there without spoiling the
+                exact trigger. Tap any badge to see its description and
+                earn rule. */}
+            {(badges.earnedList.length > 0 || badges.lockedList.length > 0) && (
+              <Section label={`BADGES · ${badges.earnedList.length}/${badges.earnedList.length + badges.lockedList.length}`}>
+                <BadgeWall
+                  earned={badges.earnedList}
+                  locked={badges.lockedList}
+                  isSelf={isSelf}
+                  firstName={first}
+                />
+              </Section>
+            )}
 
             {/* Our history together — only when viewer ate at one+ of
                 the target's cooks. Quick recall: "we ate this together". */}
@@ -276,6 +298,153 @@ function Stat({ value, label, color = "#f0ece4" }) {
     <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"12px 4px", textAlign:"center" }}>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color, fontWeight:500 }}>{value}</div>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>{label}</div>
+    </div>
+  );
+}
+
+// Badge wall — 4-up grid mixing earned (full color) and locked
+// (silhouetted) tiles. Tapping any tile opens a small detail card with
+// the description + earn rule so the user knows what to do next. Locked
+// badges still show the silhouette so the collection feels discoverable
+// rather than empty.
+function BadgeWall({ earned, locked, isSelf, firstName }) {
+  const [detail, setDetail] = useState(null);
+  const all = [
+    ...earned.map(b => ({ ...b, isEarned: true })),
+    ...locked.map(b => ({ ...b, isEarned: false })),
+  ];
+  return (
+    <>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
+        {all.map(b => (
+          <button
+            key={b.id}
+            onClick={() => setDetail(b)}
+            title={b.isEarned ? `${b.name} — earned` : `${b.name} — locked`}
+            style={{
+              aspectRatio: "1 / 1",
+              background: b.isEarned ? "#1a1608" : "#0f0f0f",
+              border: `1px solid ${b.isEarned ? b.color + "55" : "#1e1e1e"}`,
+              borderRadius: 12, padding: 6,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer",
+              // Lock styling: desaturate + dim so the silhouette reads
+              // "not yet" without hiding the shape of the icon.
+              filter: b.isEarned ? "none" : "grayscale(1) brightness(0.35)",
+              opacity: b.isEarned ? 1 : 0.7,
+              transition: "all 0.2s",
+            }}
+          >
+            <img
+              src={b.iconPath}
+              alt={b.name}
+              style={{ width: "80%", height: "80%", objectFit: "contain", pointerEvents: "none" }}
+              // If the SVG is missing (e.g. file not yet committed to
+              // public/badges), fall back to a stand-in glyph rather
+              // than a broken-image icon.
+              onError={(e) => {
+                e.currentTarget.outerHTML =
+                  '<div style="font-size:28px;color:' + (b.isEarned ? b.color : "#444") + '">🏅</div>';
+              }}
+            />
+          </button>
+        ))}
+      </div>
+
+      {!isSelf && earned.length === 0 && locked.length > 0 && (
+        <p style={{ marginTop:10, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", fontStyle:"italic", margin:"10px 0 0" }}>
+          {firstName} hasn't earned any badges yet.
+        </p>
+      )}
+      {isSelf && earned.length === 0 && locked.length > 0 && (
+        <p style={{ marginTop:10, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", fontStyle:"italic", margin:"10px 0 0" }}>
+          Cook a badge-eligible recipe and rate it good or nailed to unlock your first one.
+        </p>
+      )}
+
+      {detail && (
+        <BadgeDetail badge={detail} onClose={() => setDetail(null)} isSelf={isSelf} />
+      )}
+    </>
+  );
+}
+
+function BadgeDetail({ badge, onClose, isSelf }) {
+  const earned = !!badge.earnedAt;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)",
+        zIndex: 220, display: "flex", alignItems: "center", justifyContent: "center",
+        padding: 20, cursor: "zoom-out",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%", maxWidth: 360, background: "#141414",
+          border: `1px solid ${earned ? badge.color + "66" : "#2a2a2a"}`,
+          borderRadius: 18, padding: "24px", cursor: "default",
+          textAlign: "center",
+          boxShadow: earned ? `0 0 48px ${badge.color}22` : "0 12px 40px rgba(0,0,0,0.6)",
+        }}
+      >
+        <div style={{
+          width: 128, height: 128, margin: "0 auto 16px",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: earned ? "#1a1608" : "#0f0f0f",
+          border: `1px solid ${earned ? badge.color + "66" : "#2a2a2a"}`,
+          borderRadius: 20,
+          filter: earned ? "none" : "grayscale(1) brightness(0.4)",
+        }}>
+          <img
+            src={badge.iconPath}
+            alt={badge.name}
+            style={{ width: "80%", height: "80%", objectFit: "contain" }}
+            onError={(e) => {
+              e.currentTarget.outerHTML =
+                '<div style="font-size:64px;color:' + (earned ? badge.color : "#444") + '">🏅</div>';
+            }}
+          />
+        </div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: earned ? badge.color : "#666", letterSpacing:"0.14em", marginBottom:4 }}>
+          {earned ? "EARNED" : "LOCKED"}
+        </div>
+        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:22, fontStyle:"italic", color:"#f0ece4", fontWeight:300, margin:"0 0 6px" }}>
+          {badge.name}
+        </h3>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#aaa", lineHeight:1.6, margin:"0 0 14px" }}>
+          {badge.description}
+        </p>
+        {badge.earnRule && (
+          <div style={{ padding:"10px 14px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10 }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.12em", marginBottom:4 }}>
+              HOW TO EARN
+            </div>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color: earned ? "#888" : "#ccc", lineHeight:1.5 }}>
+              {badge.earnRule}
+            </div>
+          </div>
+        )}
+        {earned && badge.earnedAt && (
+          <div style={{ marginTop:12, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.1em" }}>
+            {isSelf ? "YOU EARNED IT" : "EARNED"} · {new Date(badge.earnedAt).toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" })}
+          </div>
+        )}
+        <button
+          onClick={onClose}
+          style={{
+            marginTop:18, width:"100%", padding:"12px",
+            background:"#1a1a1a", color:"#888",
+            border:"1px solid #2a2a2a", borderRadius:10,
+            fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:"0.08em",
+            cursor:"pointer",
+          }}
+        >
+          CLOSE
+        </button>
+      </div>
     </div>
   );
 }

@@ -184,15 +184,26 @@ function AuthedApp({ user, profile, upsertProfile }) {
     setProfileUserId(id);
   }, []);
 
-  // Route a notification tap. For now 'cook_log' is the only target kind
-  // (landing the user on Cookbook → that meal's detail, composer open if
-  // they were a diner). Falls through silently on unknown kinds so a
-  // future target can ship server-side without breaking old clients.
+  // Route a notification tap. Currently supported:
+  //   * 'cook_log'     — lands on Cookbook → that meal's detail,
+  //                      composer open if the viewer was a diner.
+  //   * 'user_profile' — opens the target user's profile overlay (used
+  //                      by badge earn/fan-out notifications so a tap
+  //                      lands on the badge wall).
+  // Unknown kinds fall through silently so future server-side targets
+  // ship without breaking old clients.
   const openNotificationTarget = useCallback((targetKind, targetId) => {
-    if (targetKind === "cook_log" && targetId) {
+    if (!targetId) return;
+    if (targetKind === "cook_log") {
       setDeepLink({ kind: targetKind, id: targetId });
       setTab("cookbook");
       setNotifsOpen(false);
+      return;
+    }
+    if (targetKind === "user_profile") {
+      setNotifsOpen(false);
+      setProfileUserId(targetId);
+      return;
     }
   }, []);
 
