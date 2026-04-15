@@ -2617,6 +2617,149 @@ const INGREDIENT_INFO = {
     seasonality: { peakMonths: [5, 6, 7, 8] },
     sourcing: "Bunches should be vibrant green with no slime at the base. 'Culantro' (recao) is a stronger, sturdier cousin used in Caribbean cooking — a legit substitute if you can find it.",
   },
+
+  // ── pantry: grains + flours ──────────────────────────────────────
+  spaghetti: {
+    description: "Long, thin dried wheat pasta. The default noodle of the American Italian kitchen — the shape for carbonara, aglio e olio, meatballs, and a thousand weeknight dinners.",
+    flavorProfile: "Clean, wheaty, faintly nutty; takes on whatever sauce it meets",
+    prepTips: "Salt the water like the sea (1 tbsp per quart). Cook 1 minute less than the box for al dente, then finish in the pan with the sauce — the last minute of starch-release is what makes sauce cling. Save a cup of pasta water before draining.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 730,
+      tips: "Sealed in a dry cabinet. Dried pasta is basically immortal — 'best by' dates are conservative. An opened box keeps 1–2 years.",
+    },
+    substitutions: [
+      { id: "linguine", note: "Flatter, similar thickness. Works in most spaghetti recipes." },
+      { id: "bucatini", note: "Hollow core; heartier. Classic for amatriciana." },
+    ],
+    pairs: ["pecorino", "guanciale", "black_pepper", "garlic"],
+    nutrition: { per: "100g", kcal: 371, protein_g: 13, fat_g: 1.5, carb_g: 75, fiber_g: 3.2, sodium_mg: 6 },
+    origin: "Wheat pasta dates to ancient Persia/China; Italian tradition codified around Naples and Genoa in the 1200s. The American diet's obsession with spaghetti specifically came post-WWII.",
+    culturalNotes: "'Al dente' literally means 'to the tooth' — the pasta should have a tiny chalky core visible when you bite one in half. Mushy pasta is an American invention.",
+    allergens: ["gluten"],
+    sourcing: "Bronze-die (trafilato al bronzo) pasta has a rougher surface that holds sauce better. Italian imports (De Cecco, Rustichella, Setaro) are worth the markup over American mass-market brands.",
+  },
+
+  bread: {
+    description: "Generic loaf — the thing you actually have in the kitchen when a recipe says 'a slice of bread.' Sandwich loaves, sourdough boules, multigrain, whatever the house keeps.",
+    flavorProfile: "Wheaty, mildly sweet; sourdough adds tang, rye adds earth, whole wheat adds grass",
+    prepTips: "Stale bread > fresh bread for nearly every cooking application: breadcrumbs, strata, panzanella, French toast. Fresh bread is for eating, not cooking.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 5,
+      tips: "Paper bag (breathable) keeps the crust crisp. Plastic bags keep the crumb soft but soften the crust. Freeze halved loaves if you're not eating them fast — toasts from frozen perfectly.",
+    },
+    substitutions: [
+      { id: "baguette",  note: "Same family; crustier." },
+      { id: "ciabatta",  note: "Holier crumb, better for sandwiches." },
+    ],
+    pairs: ["butter", "olive_oil", "cheese", "tomato"],
+    nutrition: { per: "100g", kcal: 265, protein_g: 9, fat_g: 3.2, carb_g: 49, fiber_g: 2.7, sodium_mg: 491 },
+    origin: "Leavened bread dates to at least ancient Egypt (4,000+ years ago). Almost every agricultural civilization developed some form independently.",
+    allergens: ["gluten"],
+    sourcing: "A real bakery loaf tastes like a different food than sliced supermarket bread. If you have one nearby, worth the 10-minute detour. Frozen half-loaves from a good bakery outperform fresh from a mediocre one.",
+  },
+
+  baguette: {
+    description: "The long, slender French loaf. Crackling golden crust, airy interior, ready for butter, cheese, or the classic ham-and-butter sandwich (jambon-beurre).",
+    flavorProfile: "Wheaty, faintly sour, clean; crust carries caramelized notes from the high-heat bake",
+    prepTips: "Best within 4–6 hours of baking. Day-old baguette: refresh with a 30-second splash under running water, then 5 minutes in a 350°F oven — returns the crust to shatter-crisp.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 2,
+      tips: "Stand it upright in a paper bag; this slows the crust-softening. Freeze the second half the day you buy it.",
+    },
+    substitutions: [
+      { id: "ciabatta", note: "Italian cousin; holier crumb, wider shape. Similar crust play." },
+      { id: "bread",    note: "Emergency fallback — results noticeably different." },
+    ],
+    pairs: ["butter", "ham", "brie", "olive_oil"],
+    nutrition: { per: "100g", kcal: 274, protein_g: 9.8, fat_g: 2.6, carb_g: 52, fiber_g: 2.5, sodium_mg: 570 },
+    origin: "Paris, early 20th century — invented as a quick-to-bake loaf after labor laws banned early-morning baker shifts. The thin shape cooks in 20 minutes instead of an hour.",
+    culturalNotes: "UNESCO recognized French baguette craftsmanship as an 'intangible cultural heritage' in 2022. By law, a real Parisian baguette tradition contains only flour, water, salt, and yeast — no additives.",
+    allergens: ["gluten"],
+    sourcing: "A real bakery baguette at ~$3 is one of the best deals in food. Supermarket baguettes are an entirely different product — same shape, different soul.",
+  },
+
+  ciabatta: {
+    description: "Italian rustic bread — holey, airy crumb; floury, crackling crust; wide flat loaf shape. The sandwich bread for when you want structure and chew.",
+    flavorProfile: "Mild, yeasty, faintly sour; open crumb soaks up oil and vinegar beautifully",
+    prepTips: "For panini and grilled sandwiches, ciabatta is unbeatable — the holes trap fillings, the crust crisps gorgeously under the press. For bruschetta, toast cut slices in a hot dry pan.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 3,
+      tips: "Paper bag or bread box. Reheats beautifully: 5 min in a 350°F oven wakes the crust back up. Freezes well in halves.",
+    },
+    substitutions: [
+      { id: "baguette",  note: "Finer crumb; different sandwich style (tartine vs panino)." },
+      { id: "focaccia",  note: "Same region, richer with olive oil. Also excellent for sandwiches." },
+    ],
+    pairs: ["tomato", "mozzarella", "prosciutto", "olive_oil"],
+    nutrition: { per: "100g", kcal: 271, protein_g: 9, fat_g: 3, carb_g: 52, fiber_g: 2.5, sodium_mg: 540 },
+    origin: "Invented in 1982 in Veneto, Italy. Actually recent — an Italian baker (Arnaldo Cavallari) developed it as a response to the French baguette's popularity in sandwiches.",
+    culturalNotes: "The name means 'slipper' in Italian — the wide, flat loaf shape. For all its rustic appearance, ciabatta is essentially a modern invention younger than the microwave.",
+    allergens: ["gluten"],
+    sourcing: "A bakery ciabatta is meaningfully better than supermarket. The hydration (water in the dough) is very high — commercial bakers often cheat with less, and you can taste it.",
+  },
+
+  flour: {
+    description: "All-purpose wheat flour — the default. A ~10–12% protein content splits the difference between soft cake flour and high-gluten bread flour. Works for most baking and all thickening.",
+    flavorProfile: "Clean, faintly sweet; takes on whatever flavors surround it",
+    prepTips: "Weigh, don't scoop — a packed cup can vary by 40g. For gravies and roux: whisk 1 tbsp flour + 1 tbsp fat for 1 minute (blonde) or 3 minutes (caramel) to cook out the raw-flour taste before adding liquid.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 240,
+      tips: "Cool, dry cabinet in an airtight container — the original paper bag invites weevils. Whole-wheat flour goes rancid faster (oils in the germ); store in the fridge if you keep any.",
+    },
+    substitutions: [
+      { id: "bread_flour",   note: "Higher protein (~13%). For yeasted breads and pizza dough." },
+      { id: "cake_flour",    note: "Lower protein (~8%). For tender cakes and biscuits." },
+    ],
+    pairs: ["butter", "sugar", "eggs", "salt"],
+    nutrition: { per: "100g", kcal: 364, protein_g: 10, fat_g: 1, carb_g: 76, fiber_g: 2.7, sodium_mg: 2 },
+    origin: "Milled wheat dates to the dawn of agriculture (~10,000 years). Modern roller-milled white flour is a 19th-century invention; before that, all flour was stoneground and coarser.",
+    allergens: ["gluten"],
+    sourcing: "King Arthur's AP flour has a consistent 11.7% protein content — the most reliable American AP flour. European '00' flour is finer and softer, great for pasta and pizza but not interchangeable for most baking.",
+  },
+
+  sugar: {
+    description: "White granulated sugar — refined sucrose. The universal sweetener in Western baking, key to Maillard browning, structure in meringues, balance in savory sauces.",
+    flavorProfile: "Clean, sweet; no flavor beyond sweetness",
+    prepTips: "For caramel: dry method (sugar alone in a pan) is faster but risks burning — stay vigilant. Wet method (sugar + water) is forgiving but slower. Don't stir once it starts to color; swirl the pan.",
+    storage: {
+      location: "pantry",
+      shelfLifeDays: 1825,
+      tips: "Airtight container. White sugar is functionally immortal — it doesn't spoil; just hardens if exposed to humidity. A slice of bread in the container softens hardened sugar overnight.",
+    },
+    substitutions: [
+      { id: "brown_sugar", note: "Molasses content adds warmth and moisture. Packed cup for cup in most recipes." },
+      { id: "honey",       note: "Sweeter, more moisture. Reduce other liquid by 25%, reduce oven temp by 25°F." },
+    ],
+    pairs: ["butter", "cinnamon", "vanilla", "flour"],
+    nutrition: { per: "100g", kcal: 387, protein_g: 0, fat_g: 0, carb_g: 100, sodium_mg: 1 },
+    origin: "Sugarcane originated in New Guinea ~10,000 years ago; sugar refining came via India to the Arab world, to Europe, and eventually to the colonial Americas — with all the dark history that implies.",
+    culturalNotes: "Pre-industrial, sugar was a luxury spice stored in locked boxes. Average per-capita consumption has increased roughly 30× since 1800 — industrial processing made it the cheap default it is today.",
+    allergens: [],
+    sourcing: "For baking, white granulated is the standard. Specialty sugars (muscovado, demerara, turbinado) have moisture and molasses notes that change the behavior — not 1:1 swaps.",
+  },
+
+  tortillas: {
+    description: "Flatbreads from Mexican cuisine — corn (yellow or white masa) or flour (wheat), varying diameters. Tortillas are the plate, the spoon, and the context in countless dishes.",
+    flavorProfile: "Corn: earthy, slightly sweet, toasty when warm. Flour: mild, wheaty, tender.",
+    prepTips: "ALWAYS warm before serving — cold tortillas crack. Gas flame: 10 seconds per side directly on the burner (tongs required). No gas? Dry pan over medium-high, 20 seconds per side. Stack wrapped in foil to keep warm.",
+    storage: {
+      location: "fridge",
+      shelfLifeDays: 14,
+      tips: "In their original bag in the fridge. Freeze in flat packs for longer storage. Room temp: 2–3 days max; they dry out fast.",
+    },
+    substitutions: [],
+    pairs: ["lime", "cilantro", "avocado", "chicken_breast"],
+    nutrition: { per: "count", kcal: 96, protein_g: 2.6, fat_g: 2.3, carb_g: 16, fiber_g: 1.1, sodium_mg: 204 },
+    origin: "Mesoamerica — domesticated from teosinte corn ~9,000 years ago. Corn tortillas are the older tradition; wheat tortillas came with the Spanish in the 1500s and settled in Northern Mexico.",
+    culturalNotes: "Real Mexican tortillerías use nixtamalized masa (corn cooked in alkaline water) — the process releases nutrients and creates the distinctive aroma. Supermarket corn tortillas skip this step, which is why they taste different.",
+    allergens: ["gluten"],  // flour tortillas; corn tortillas are gluten-free
+    sourcing: "For tacos al pastor / carne asada: handmade corn tortillas from a local tortillería (or make your own from masa harina). For burritos and quesadillas: large flour. Freshness matters more than brand.",
+  },
 };
 
 // Look up display info for an ingredient — ingredient-specific fields win,
