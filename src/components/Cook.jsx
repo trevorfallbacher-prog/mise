@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import CookMode from "./CookMode";
 import SchedulePicker from "./SchedulePicker";
+import SuggestMeal from "./SuggestMeal";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import {
   RECIPES,
@@ -85,14 +86,16 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
   );
 }
 
-export default function Cook({ profile, onCooked, pantry, shoppingList, setShoppingList, onGoToShopping }) {
+export default function Cook({ profile, userId, onCooked, pantry, shoppingList, setShoppingList, onGoToShopping, family = [], friends = [], hasFamily = false }) {
   const [route, setRoute]     = useState("plan");   // "plan" | "learn"
   const [cuisine, setCuisine] = useState("all");    // "all" | "italian" | "french" | ...
   const [openRecipe, setOpenRecipe] = useState(null);
   const [schedulingRecipe, setSchedulingRecipe] = useState(null);
+  const [suggesting, setSuggesting] = useState(false);
 
   const skillLevels = profile?.skill_levels || {};
-  const { schedule } = useScheduledMeals(profile?.id);
+  const { schedule } = useScheduledMeals(userId);
+  const userName = profile?.name?.trim().split(/\s+/)[0];
 
   const list = useMemo(() => {
     const filtered = RECIPES.filter(r =>
@@ -131,17 +134,27 @@ export default function Cook({ profile, onCooked, pantry, shoppingList, setShopp
           shoppingList={shoppingList}
           setShoppingList={setShoppingList}
           onGoToShopping={onGoToShopping}
+          userId={userId}
+          family={family}
+          friends={friends}
         />
         {schedulingRecipe && (
           <SchedulePicker
             recipe={schedulingRecipe}
+            userId={userId}
+            userName={userName}
+            family={family}
+            defaultRequest={hasFamily}
             onClose={() => setSchedulingRecipe(null)}
-            onSave={async ({ scheduledFor, notificationSettings, note }) => {
+            onSave={async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
               await schedule({
                 recipeSlug: schedulingRecipe.slug,
                 scheduledFor,
                 notificationSettings,
                 note,
+                cookId,
+                isRequest,
+                servings,
               });
             }}
           />
@@ -185,6 +198,33 @@ export default function Cook({ profile, onCooked, pantry, shoppingList, setShopp
           ? "Cook whatever you want. Schedule it, prep it, eat it."
           : "Skill-tree progression. Harder dishes unlock as your skills level up."}
       </div>
+
+      {/* Suggest-a-meal — prominent when pantry has anything in it */}
+      {pantry && pantry.length > 0 && (
+        <div style={{ padding: "16px 20px 0" }}>
+          <button
+            onClick={() => setSuggesting(true)}
+            style={{
+              width: "100%", padding: "14px 16px",
+              background: "linear-gradient(135deg, #1e1a0e 0%, #141414 100%)",
+              border: "1px solid #f5c84244", borderRadius: 14,
+              display: "flex", alignItems: "center", gap: 12,
+              cursor: "pointer", textAlign: "left",
+            }}
+          >
+            <div style={{ fontSize: 24 }}>✨</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
+                SUGGEST A MEAL
+              </div>
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb", marginTop: 2 }}>
+                See what you could make with what you have
+              </div>
+            </div>
+            <span style={{ color: "#f5c842", fontSize: 18 }}>→</span>
+          </button>
+        </div>
+      )}
 
       {/* Cuisine chips */}
       <div style={{ display: "flex", gap: 8, padding: "16px 20px 0", overflowX: "auto", scrollbarWidth: "none" }}>
@@ -242,6 +282,14 @@ export default function Cook({ profile, onCooked, pantry, shoppingList, setShopp
           </div>
         )}
       </div>
+
+      {suggesting && (
+        <SuggestMeal
+          pantry={pantry}
+          onPick={(r) => { setSuggesting(false); setOpenRecipe(r); }}
+          onClose={() => setSuggesting(false)}
+        />
+      )}
     </div>
   );
 }

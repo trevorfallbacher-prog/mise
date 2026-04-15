@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "./supabase";
 
 /**
@@ -14,20 +14,20 @@ import { supabase } from "./supabase";
  *   - `id` — client-generated uuid (use `crypto.randomUUID()` on new items)
  *
  * Params:
- *   table      — Supabase table name
- *   userId     — the owning user (used to tag new inserts; reads rely on RLS)
- *   toDb       — (item) => row, for camelCase → snake_case conversion
- *   fromDb     — (row)  => item, the inverse
- *   refreshKey — optional value; changing it triggers a reload (used to pick
- *                up newly-shared family rows after a connection is accepted)
- *   selfOnly   — when true, filter loads to the current user's rows only.
- *                Use for lists that shouldn't be shared even though RLS may
- *                allow broader access elsewhere (defaults to false — let RLS
- *                decide, so family members' rows come through).
+ *   table       — Supabase table name
+ *   userId      — the owning user (used to tag new inserts; reads rely on RLS)
+ *   toDb        — (item) => row, for camelCase → snake_case conversion
+ *   fromDb      — (row)  => item, the inverse
+ *   refreshKey  — optional value; changing it triggers a reload (used to pick
+ *                 up newly-shared family rows after a connection is accepted)
+ *   selfOnly    — when true, filter loads to the current user's rows only.
+ *   onRealtime  — optional callback fired for each realtime event from *other*
+ *                 users. Shape: (eventType, row, oldRow) — row is already
+ *                 mapped through fromDb. Use this to raise toasts.
  *
  * Returns [items, setItems, loading]
  */
-export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnly = false }) {
+export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnly = false, onRealtime }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -55,6 +55,52 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
     })();
     return () => { alive = false; };
   }, [table, userId, fromDb, refreshKey, selfOnly]);
+
+  // Keep the latest onRealtime / fromDb in refs so we don't tear down the
+  // subscription on every render. (onRealtime typically closes over
+  // relationships.family which gets a new array reference on reload.)
+  const onRealtimeRef = useRef(onRealtime);
+  const fromDbRef = useRef(fromDb);
+  useEffect(() => { onRealtimeRef.current = onRealtime; }, [onRealtime]);
+  useEffect(() => { fromDbRef.current = fromDb; }, [fromDb]);
+
+  // Realtime subscription — merges in changes from other users, and
+  // reconciles our own changes against what the DB ultimately stored.
+  useEffect(() => {
+    if (!userId) return;
+    const ch = supabase
+      .channel(`rt:${table}:${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
+        const mapRow = fromDbRef.current;
+        const newRow = payload.new && Object.keys(payload.new).length ? mapRow(payload.new) : null;
+        const oldRow = payload.old && Object.keys(payload.old).length ? payload.old : null;
+        const fromOther =
+          (payload.new && payload.new.user_id && payload.new.user_id !== userId) ||
+          (payload.old && payload.old.user_id && payload.old.user_id !== userId);
+
+        setItems(prev => {
+          if (payload.eventType === "INSERT") {
+            if (prev.some(i => i.id === newRow.id)) return prev;
+            return [...prev, newRow];
+          }
+          if (payload.eventType === "UPDATE") {
+            if (!prev.some(i => i.id === newRow.id)) return [...prev, newRow];
+            return prev.map(i => (i.id === newRow.id ? newRow : i));
+          }
+          if (payload.eventType === "DELETE") {
+            const id = oldRow?.id;
+            if (!id) return prev;
+            return prev.filter(i => i.id !== id);
+          }
+          return prev;
+        });
+
+        const cb = onRealtimeRef.current;
+        if (fromOther && cb) cb(payload.eventType, newRow, oldRow);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [table, userId]);
 
   // Diff-based setter. Accepts a value or functional updater, just like useState.
   const setList = useCallback(

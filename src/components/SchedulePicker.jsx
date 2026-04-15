@@ -29,12 +29,19 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  * SchedulePicker modal.
  *
  * Props:
- *   recipe       — the recipe to schedule
- *   initialDate  — optional Date the picker should default to
- *   onClose()    — user dismissed
- *   onSave({ scheduledFor, notificationSettings, note })
+ *   recipe         — the recipe to schedule
+ *   initialDate    — optional Date the picker should default to
+ *   userId         — current user id (for self-cook option)
+ *   userName       — current user's first name (for "Me (Alex)" label)
+ *   family         — [{ otherId, other: { name } }] from useRelationships
+ *   defaultRequest — if true, the "Who's cooking?" picker defaults to REQUEST
+ *   onClose()      — user dismissed
+ *   onSave({ scheduledFor, notificationSettings, note, cookId, isRequest, servings })
  */
-export default function SchedulePicker({ recipe, initialDate, onClose, onSave }) {
+export default function SchedulePicker({
+  recipe, initialDate, userId, userName, family = [], defaultRequest = false,
+  onClose, onSave,
+}) {
   const today = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -56,6 +63,13 @@ export default function SchedulePicker({ recipe, initialDate, onClose, onSave })
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Cook picker. "request" = nobody assigned yet, userId = self, other uuid = family
+  // member. Default to request per user spec ("start as request until changed").
+  const [cookChoice, setCookChoice] = useState(defaultRequest ? "request" : (userId || "request"));
+
+  // Servings stepper. Seed from the recipe's default.
+  const [servings, setServings] = useState(recipe.serves || 2);
+
   // Per-notification opt-in state, keyed by notification.id.
   const [notifOpts, setNotifOpts] = useState(() => {
     const map = {};
@@ -68,6 +82,23 @@ export default function SchedulePicker({ recipe, initialDate, onClose, onSave })
   const toggleNotif = (id) =>
     setNotifOpts(prev => ({ ...prev, [id]: !prev[id] }));
 
+  // Cook options: [ {id: "request", label: "Request — ask family"} , {id: userId, label: "Me (…)"}, ...family ]
+  const cookOptions = useMemo(() => {
+    const options = [
+      { id: "request", label: "🙋 Request", hint: "Ask family to volunteer" },
+    ];
+    if (userId) {
+      options.push({ id: userId, label: userName ? `${userName} (me)` : "Me", hint: "I'll cook it" });
+    }
+    for (const f of family) {
+      if (f.otherId && f.other?.name) {
+        const first = f.other.name.trim().split(/\s+/)[0];
+        options.push({ id: f.otherId, label: first, hint: "Assign to them" });
+      }
+    }
+    return options;
+  }, [userId, userName, family]);
+
   const handleSave = async () => {
     setSaving(true);
     setError("");
@@ -75,10 +106,14 @@ export default function SchedulePicker({ recipe, initialDate, onClose, onSave })
       const { hours, minutes } = parseHHMM(timeStr);
       const dt = new Date(selectedDay);
       dt.setHours(hours, minutes, 0, 0);
+      const isRequest = cookChoice === "request";
       await onSave({
         scheduledFor: dt.toISOString(),
         notificationSettings: notifOpts,
         note: note.trim() || null,
+        cookId: isRequest ? null : cookChoice,
+        isRequest,
+        servings,
       });
       onClose();
     } catch (e) {
@@ -161,6 +196,85 @@ export default function SchedulePicker({ recipe, initialDate, onClose, onSave })
               }}
             />
           </div>
+        </div>
+
+        {/* Who's cooking? */}
+        <div style={{ marginTop: 22 }}>
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 10 }}>
+            WHO'S COOKING?
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {cookOptions.map(opt => {
+              const selected = cookChoice === opt.id;
+              const isReq = opt.id === "request";
+              return (
+                <button
+                  key={opt.id}
+                  onClick={() => setCookChoice(opt.id)}
+                  style={{
+                    padding: "10px 14px",
+                    background: selected ? (isReq ? "#1e1408" : "#1e1a0e") : "#161616",
+                    border: `1px solid ${selected ? (isReq ? "#f5c842" : "#a3d977") : "#2a2a2a"}`,
+                    color: selected ? (isReq ? "#f5c842" : "#a3d977") : "#888",
+                    borderRadius: 20,
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                    cursor: "pointer", transition: "all 0.15s",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ marginTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#555", lineHeight: 1.4 }}>
+            {cookChoice === "request"
+              ? "Family will see this as a request. Anyone can tap \"I'll cook this\" to claim it."
+              : cookChoice === userId
+              ? "You'll get the prep reminders."
+              : "They'll be tagged as the cook."}
+          </div>
+        </div>
+
+        {/* Servings stepper */}
+        <div style={{ marginTop: 22 }}>
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 10 }}>
+            HOW MANY PEOPLE EATING?
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 12, padding: "10px 14px" }}>
+            <button
+              onClick={() => setServings(s => Math.max(1, s - 1))}
+              disabled={servings <= 1}
+              style={{
+                width: 36, height: 36, borderRadius: 18,
+                background: "#0f0f0f", border: "1px solid #2a2a2a",
+                color: servings <= 1 ? "#333" : "#f5c842", fontSize: 18,
+                cursor: servings <= 1 ? "not-allowed" : "pointer",
+              }}
+            >−</button>
+            <div style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontFamily: "'Fraunces',serif", fontSize: 28, color: "#f0ece4", fontWeight: 400 }}>
+                {servings}
+              </div>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.08em" }}>
+                {servings === 1 ? "PERSON" : "PEOPLE"}
+              </div>
+            </div>
+            <button
+              onClick={() => setServings(s => Math.min(20, s + 1))}
+              disabled={servings >= 20}
+              style={{
+                width: 36, height: 36, borderRadius: 18,
+                background: "#0f0f0f", border: "1px solid #2a2a2a",
+                color: servings >= 20 ? "#333" : "#f5c842", fontSize: 18,
+                cursor: servings >= 20 ? "not-allowed" : "pointer",
+              }}
+            >+</button>
+          </div>
+          {recipe.serves && servings !== recipe.serves && (
+            <div style={{ marginTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#555", fontStyle: "italic" }}>
+              Recipe is written for {recipe.serves}. You'll want to scale ingredients accordingly.
+            </div>
+          )}
         </div>
 
         {/* Prep notifications */}

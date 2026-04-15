@@ -136,7 +136,7 @@ function RecipePickerModal({ onPick, onClose }) {
 // Scheduled meal detail drawer (shown when tapping an existing meal)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
+function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNow, onClaim, onUnclaim, onChangeCook, onChangeServings, onDelete, onClose }) {
   const [confirming, setConfirming] = useState(false);
   if (!recipe) {
     return (
@@ -187,9 +187,104 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
           </div>
         </div>
 
+        {/* Attribution: who scheduled it and who's cooking / requesting. */}
+        {(() => {
+          const creatorName = nameFor ? nameFor(meal.user_id) : null;
+          const isRequest   = meal.cook_id == null;
+          const cookName    = !isRequest && nameFor ? nameFor(meal.cook_id) : null;
+          return (
+            <div style={{
+              marginTop: 14, padding: "10px 12px",
+              background: isRequest ? "#1e1408" : "#0f0f0f",
+              border: `1px solid ${isRequest ? "#3a2a15" : "#1e1e1e"}`,
+              borderRadius: 10, display: "flex", alignItems: "center", gap: 8,
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb",
+            }}>
+              <span style={{ fontSize: 16 }}>{isRequest ? "🙋" : "🧑‍🍳"}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                {isRequest
+                  ? <><b style={{ color:"#d9b877" }}>{creatorName}</b> is hoping someone will cook this</>
+                  : <>Scheduled by <b style={{ color:"#eee" }}>{creatorName}</b>{cookName && cookName !== creatorName ? <> · Cooking: <b style={{ color:"#a3d977" }}>{cookName}</b></> : null}</>
+                }
+              </span>
+            </div>
+          );
+        })()}
+
+        {/* Servings stepper — only the creator can change (realtime will push to family). */}
+        {meal.user_id === userId && onChangeServings && (
+          <div style={{
+            marginTop: 10, padding: "8px 10px 8px 14px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+          }}>
+            <span style={{ fontSize: 14 }}>👥</span>
+            <span style={{ flex: 1, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#aaa" }}>
+              Cooking for <b style={{ color: "#f0ece4" }}>{meal.servings ?? 2}</b>
+            </span>
+            <button
+              onClick={() => onChangeServings(Math.max(1, (meal.servings ?? 2) - 1))}
+              style={{ width: 28, height: 28, borderRadius: 14, background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#f5c842", cursor: "pointer" }}
+            >−</button>
+            <button
+              onClick={() => onChangeServings(Math.min(20, (meal.servings ?? 2) + 1))}
+              style={{ width: 28, height: 28, borderRadius: 14, background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#f5c842", cursor: "pointer" }}
+            >+</button>
+          </div>
+        )}
+        {meal.user_id !== userId && meal.servings != null && (
+          <div style={{
+            marginTop: 10, padding: "8px 12px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#aaa",
+          }}>
+            👥 Cooking for <b style={{ color: "#f0ece4" }}>{meal.servings}</b>
+          </div>
+        )}
+
+        {/* Reassign cook — creator can pick a different family member. */}
+        {meal.user_id === userId && onChangeCook && family.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.1em", marginBottom: 6 }}>
+              REASSIGN
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { id: "request", label: "🙋 Request", target: null },
+                { id: userId, label: "Me", target: userId },
+                ...family.filter(f => f.otherId && f.other?.name).map(f => ({
+                  id: f.otherId,
+                  label: f.other.name.trim().split(/\s+/)[0],
+                  target: f.otherId,
+                })),
+              ].map(opt => {
+                const isActive = (opt.target ?? null) === (meal.cook_id ?? null);
+                return (
+                  <button
+                    key={opt.id}
+                    onClick={() => onChangeCook(opt.target)}
+                    disabled={isActive}
+                    style={{
+                      padding: "6px 12px",
+                      background: isActive ? "#1e1a0e" : "#161616",
+                      border: `1px solid ${isActive ? "#f5c842" : "#2a2a2a"}`,
+                      color: isActive ? "#f5c842" : "#888",
+                      borderRadius: 16,
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                      cursor: isActive ? "default" : "pointer",
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {meal.note && (
           <div style={{
-            marginTop: 14, padding: "10px 12px",
+            marginTop: 10, padding: "10px 12px",
             background: "#161616", border: "1px solid #2a2a2a",
             borderRadius: 10, fontFamily: "'DM Sans',sans-serif",
             fontSize: 13, color: "#ccc", fontStyle: "italic",
@@ -211,7 +306,40 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+        {/* Cook/request action — only when not in "confirming delete" mode. */}
+        {!confirming && (meal.cook_id == null || meal.cook_id === userId) && (
+          <div style={{ marginTop: 14 }}>
+            {meal.cook_id == null ? (
+              <button
+                onClick={onClaim}
+                style={{
+                  width: "100%", padding: "12px",
+                  background: "#1a2015", border: "1px solid #2a3a1e",
+                  color: "#a3d977", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                🙋 I'LL COOK THIS
+              </button>
+            ) : (
+              <button
+                onClick={onUnclaim}
+                style={{
+                  width: "100%", padding: "12px",
+                  background: "#1a1a1a", border: "1px solid #2a2a2a",
+                  color: "#d9b877", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                ↩ ASK FAMILY INSTEAD
+              </button>
+            )}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           {confirming ? (
             <>
               <button
@@ -288,7 +416,7 @@ function MealDetailDrawer({ meal, recipe, onCookNow, onDelete, onClose }) {
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey }) {
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], shoppingList = [], setShoppingList, onGoToShopping }) {
   // Show a rolling 14-day window so next week is visible without scrolling mechanics.
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
@@ -307,7 +435,11 @@ export default function Plan({ profile, userId, familyKey }) {
     return d;
   }, [today]);
 
-  const { meals, loading, schedule, cancel } = useScheduledMeals(userId, {
+  // No onRealtime here — toast/inbox notifications are produced by a DB
+  // trigger (see migration 0010) and surfaced via App-level useNotifications,
+  // so they fire from any tab. Plan's subscription just keeps its local
+  // state in sync.
+  const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
     fromISO: today.toISOString(),
     toISO:   windowEnd.toISOString(),
     familyKey,
@@ -316,16 +448,26 @@ export default function Plan({ profile, userId, familyKey }) {
   // UI state
   const [addingForDay, setAddingForDay] = useState(null);       // Date picked via "+"
   const [recipeToSchedule, setRecipeToSchedule] = useState(null); // Recipe picked from modal
+  const [isRequesting, setIsRequesting] = useState(false);       // "Request" mode vs. "I'll cook"
   const [openMeal, setOpenMeal] = useState(null);                // Meal tapped to view
   const [cookingRecipe, setCookingRecipe] = useState(null);      // Recipe now in CookMode
 
   // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
+  // Pantry + shoppingList wiring is identical to the Cook tab's path so
+  // "ADD MISSING TO SHOPPING LIST" works regardless of where you started.
   if (cookingRecipe) {
     return (
       <CookMode
         recipe={cookingRecipe}
         onExit={() => setCookingRecipe(null)}
         onDone={() => setCookingRecipe(null)}
+        pantry={pantry}
+        shoppingList={shoppingList}
+        setShoppingList={setShoppingList}
+        onGoToShopping={onGoToShopping}
+        userId={userId}
+        family={family}
+        friends={friends}
       />
     );
   }
@@ -336,16 +478,21 @@ export default function Plan({ profile, userId, familyKey }) {
     setRecipeToSchedule(recipe);
   };
 
-  const onSaveSchedule = async ({ scheduledFor, notificationSettings, note }) => {
+  const onSaveSchedule = async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
     await schedule({
       recipeSlug: recipeToSchedule.slug,
       scheduledFor,
       notificationSettings,
       note,
+      cookId,
+      isRequest,
+      servings,
     });
+    setIsRequesting(false);
   };
 
   const firstName = profile?.name?.trim().split(/\s+/)[0];
+  const userName = firstName;
 
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
@@ -383,17 +530,33 @@ export default function Plan({ profile, userId, familyKey }) {
                     {dateLabel}
                   </div>
                 </div>
-                <button
-                  onClick={() => setAddingForDay(d)}
-                  style={{
-                    background: "#1a1a1a", border: "1px solid #2a2a2a",
-                    borderRadius: 20, padding: "4px 12px",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: "#888", letterSpacing: "0.08em", cursor: "pointer",
-                  }}
-                >
-                  + ADD
-                </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {hasFamily && (
+                    <button
+                      onClick={() => { setIsRequesting(true); setAddingForDay(d); }}
+                      title="Ask family to cook something"
+                      style={{
+                        background: "#1a1a1a", border: "1px solid #2a2a2a",
+                        borderRadius: 20, padding: "4px 10px",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#d9b877", letterSpacing: "0.08em", cursor: "pointer",
+                      }}
+                    >
+                      🙋 REQUEST
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setIsRequesting(false); setAddingForDay(d); }}
+                    style={{
+                      background: "#1a1a1a", border: "1px solid #2a2a2a",
+                      borderRadius: 20, padding: "4px 12px",
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#888", letterSpacing: "0.08em", cursor: "pointer",
+                    }}
+                  >
+                    + ADD
+                  </button>
+                </div>
               </div>
 
               {dayMeals.length === 0 && !isToday && (
@@ -406,14 +569,20 @@ export default function Plan({ profile, userId, familyKey }) {
                 {dayMeals.map(meal => {
                   const recipe = findRecipe(meal.recipe_slug);
                   const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
+                  const isRequest = meal.cook_id == null;
+                  const cookLabel = isRequest
+                    ? `Requested by ${nameFor ? nameFor(meal.user_id) : "someone"}`
+                    : `Cooking: ${nameFor ? nameFor(meal.cook_id) : ""}`;
                   return (
                     <button
                       key={meal.id}
                       onClick={() => setOpenMeal(meal)}
                       style={{
                         display: "flex", alignItems: "center", gap: 12,
-                        padding: "12px 14px", background: "#0f0f0f",
-                        border: "1px solid #1e1e1e", borderRadius: 12,
+                        padding: "12px 14px",
+                        background: isRequest ? "#1e1408" : "#0f0f0f",
+                        border: `1px solid ${isRequest ? "#3a2a15" : "#1e1e1e"}`,
+                        borderRadius: 12,
                         cursor: "pointer", textAlign: "left",
                       }}
                     >
@@ -427,8 +596,10 @@ export default function Plan({ profile, userId, familyKey }) {
                             {fmtTime(meal.scheduled_for)}
                           </span>
                         </div>
-                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.05em", marginTop: 3 }}>
-                          {recipe && `${totalTimeMin(recipe)} MIN`}
+                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
+                          {isRequest && "🙋 "}{cookLabel}
+                          {meal.servings != null && ` · 👥 ${meal.servings}`}
+                          {recipe && ` · ${totalTimeMin(recipe)} MIN`}
                           {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
                           {meal.note && " · 📝"}
                         </div>
@@ -463,6 +634,10 @@ export default function Plan({ profile, userId, familyKey }) {
         <SchedulePicker
           recipe={recipeToSchedule}
           initialDate={addingForDay}
+          userId={userId}
+          userName={userName}
+          family={family}
+          defaultRequest={hasFamily}
           onClose={() => { setRecipeToSchedule(null); setAddingForDay(null); }}
           onSave={onSaveSchedule}
         />
@@ -471,11 +646,30 @@ export default function Plan({ profile, userId, familyKey }) {
         <MealDetailDrawer
           meal={openMeal}
           recipe={findRecipe(openMeal.recipe_slug)}
+          userId={userId}
+          nameFor={nameFor}
+          family={family}
           onClose={() => setOpenMeal(null)}
           onCookNow={() => {
             const r = findRecipe(openMeal.recipe_slug);
             setOpenMeal(null);
             if (r) setCookingRecipe(r);
+          }}
+          onClaim={async () => {
+            const updated = await claim(openMeal.id);
+            setOpenMeal(updated);
+          }}
+          onUnclaim={async () => {
+            const updated = await unclaim(openMeal.id);
+            setOpenMeal(updated);
+          }}
+          onChangeCook={async (cookId) => {
+            const updated = await updateMeal(openMeal.id, { cook_id: cookId });
+            setOpenMeal(updated);
+          }}
+          onChangeServings={async (servings) => {
+            const updated = await updateMeal(openMeal.id, { servings });
+            setOpenMeal(updated);
           }}
           onDelete={async (id) => {
             await cancel(id);

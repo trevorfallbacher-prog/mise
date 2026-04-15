@@ -34,9 +34,9 @@ function toDb(item) {
  * Returns [shoppingList, setShoppingList, loading]. Persists to Supabase
  * transparently; components write to it with the usual useState setter API.
  *
- * Pass `familyKey` (from useRelationships) so new family members' shopping
- * items appear without a page reload.
+ * `familyKey` triggers re-queries when a family connection is added/removed.
+ * `onRealtime(evt, row, old)` fires for every change from another user.
  */
-export function useShoppingList(userId, familyKey) {
-  return useSyncedList({ table: "shopping_list_items", userId, toDb, fromDb, refreshKey: familyKey });
+export function useShoppingList(userId, familyKey, onRealtime) {
+  return useSyncedList({ table: "shopping_list_items", userId, toDb, fromDb, refreshKey: familyKey, onRealtime });
 }

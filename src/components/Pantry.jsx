@@ -8,6 +8,7 @@ import {
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
+import { defaultLocationForCategory } from "../lib/usePantry";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -73,8 +74,61 @@ const formatPrice = cents =>
     ? `$${(cents / 100).toFixed(2)}`
     : "";
 
-// ── Receipt Scanner ───────────────────────────────────────────────────────────
-function ReceiptScanner({ onItemsScanned, onClose }) {
+// Color + label + ordering for the confidence tag a scanned item carries.
+// Receipts get treated as "high" by default — OCR is deterministic enough
+// that we don't want every receipt row screaming for review. Shelf scans
+// (scan-shelf) supply their own tag per item, since opaque containers and
+// frosted-over labels are exactly the kinds of things the user needs to
+// double-check.
+const CONFIDENCE_STYLES = {
+  high:   { label: "HIGH",  color: "#4ade80", bg: "#0f1a0f", border: "#1e3a1e", order: 2 },
+  medium: { label: "MED",   color: "#f5c842", bg: "#1a1608", border: "#3a2f10", order: 1 },
+  low:    { label: "LOW",   color: "#f59e0b", bg: "#1a0f00", border: "#3a2810", order: 0 },
+};
+const confidenceStyle = c => CONFIDENCE_STYLES[c] || CONFIDENCE_STYLES.medium;
+
+// One scanner, three contexts. The user picks an icon at the top — that
+// determines (a) the label/copy shown throughout the flow, (b) the location
+// new items will land in (fridge / pantry / freezer), and (c) which edge
+// function we'll eventually invoke. For this chunk every mode still routes
+// to scan-receipt; the dedicated scan-shelf function lands in a follow-up.
+const SCAN_MODES = [
+  {
+    id: "fridge",
+    icon: "🥬",
+    label: "Fridge",
+    location: "fridge",
+    title: "What's in the fridge?",
+    blurb: "Snap a shot of the open fridge — we'll catalog what we see.",
+    cta: "SCAN FRIDGE →",
+    badge: "FRIDGE SCAN",
+  },
+  {
+    id: "pantry",
+    icon: "🥫",
+    label: "Pantry",
+    location: "pantry",
+    title: "What's on the shelf?",
+    blurb: "Photo of a pantry shelf or open cabinet — we'll count what's there.",
+    cta: "SCAN SHELF →",
+    badge: "PANTRY SCAN",
+  },
+  {
+    id: "receipt",
+    icon: "🧾",
+    label: "Receipt",
+    // null → fall back to category-based default per item.
+    location: null,
+    title: "Got groceries?",
+    blurb: "Photo your receipt and we'll stock your pantry automatically.",
+    cta: "SCAN RECEIPT →",
+    badge: "RECEIPT SCAN",
+  },
+];
+
+// ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
+function Scanner({ onItemsScanned, onClose }) {
+  const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
   const [imageData, setImageData] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -83,6 +137,7 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
   const [editingIdx, setEditingIdx] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef();
+  const activeMode = SCAN_MODES.find(m => m.id === mode) || SCAN_MODES[2];
 
   const handleFile = file => {
     if (!file) return;
@@ -95,23 +150,37 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  const scanReceipt = async () => {
+  const runScan = async () => {
     setPhase("scanning"); setError(null);
     try {
       // Server-side call: Supabase forwards the caller's JWT, and the Edge
       // Function holds ANTHROPIC_API_KEY so it never ships to the browser.
-      const { data, error: fnError } = await supabase.functions.invoke("scan-receipt", {
+      // Receipts go to scan-receipt (OCR + price extraction); fridge / pantry
+      // photos go to scan-shelf (vision-based inventory + confidence tags).
+      const fnName = activeMode.id === "receipt" ? "scan-receipt" : "scan-shelf";
+      const { data, error: fnError } = await supabase.functions.invoke(fnName, {
         body: {
           image: imageData.base64,
           mediaType: imageData.mediaType,
           ingredients: INGREDIENTS_FOR_SCAN,
+          // scan-shelf branches its system prompt on this; scan-receipt
+          // ignores it but accepts it silently.
+          location: activeMode.location,
         },
       });
       if (fnError) throw fnError;
       if (data?.error) throw new Error(data.error);
 
       const items = Array.isArray(data?.items) ? data.items : [];
-      if (!items.length) { setError("No grocery items found. Try a clearer photo."); setPhase("ready"); return; }
+      if (!items.length) {
+        setError(
+          activeMode.id === "receipt"
+            ? "No grocery items found. Try a clearer photo."
+            : `Couldn't make out anything in the ${activeMode.label.toLowerCase()}. Try a brighter photo.`
+        );
+        setPhase("ready");
+        return;
+      }
 
       setReceiptMeta({
         store: data?.store ?? null,
@@ -129,11 +198,26 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       // category and replace a nonsense "count" with oz/lb/fl_oz as appropriate.
       const normalized = items.map((item, i) => {
         const canon = findIngredient(item.ingredientId);
+        const cat = canon ? canon.category : (item.category || "pantry");
+        // Fridge/pantry scans force every item to that physical location.
+        // Receipt scans don't know — fall back to a category default
+        // (dairy/produce/meat → fridge, frozen → freezer, else pantry).
+        const location = activeMode.location || defaultLocationForCategory(cat);
+        // Confidence comes off the wire for scan-shelf; receipts don't carry
+        // it (OCR is deterministic enough), so we treat them as "high" so the
+        // confirm UI doesn't ask the user to second-guess every receipt row.
+        const rawConf = item.confidence;
+        const confidence =
+          rawConf === "high" || rawConf === "medium" || rawConf === "low"
+            ? rawConf
+            : (activeMode.id === "receipt" ? "high" : "medium");
         const base = {
           ...item,
           name: canon ? canon.name : item.name,
           emoji: canon ? canon.emoji : (item.emoji || "🥫"),
-          category: canon ? canon.category : (item.category || "pantry"),
+          category: cat,
+          location,
+          confidence,
           priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
           id: i,
           selected: true,
@@ -165,15 +249,46 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
       </div>
       <div style={{ padding:"20px 20px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <button onClick={onClose} style={{ background:"none", border:"none", color:"#555", fontSize:20, cursor:"pointer" }}>←</button>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em" }}>SCAN RECEIPT</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em" }}>{activeMode.badge}</div>
         <div style={{ width:28 }} />
       </div>
 
       {(phase === "upload" || phase === "ready") && (
         <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"24px 20px 40px" }}>
+          {/* Mode picker — picking an icon determines what we're scanning,
+              where the items will land, and (eventually) which prompt the
+              edge function uses. Disabled while a photo is queued so the
+              user can't accidentally re-bucket what they already lined up. */}
+          <div style={{ display:"flex", gap:10, marginBottom:22 }}>
+            {SCAN_MODES.map(m => {
+              const active = m.id === mode;
+              return (
+                <button
+                  key={m.id}
+                  onClick={() => setMode(m.id)}
+                  disabled={!!imagePreview}
+                  style={{
+                    flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:6,
+                    padding:"14px 6px",
+                    background: active ? "#1e1a0e" : "#0f0f0f",
+                    border: `1px solid ${active ? "#f5c842" : "#1e1e1e"}`,
+                    borderRadius:14,
+                    cursor: imagePreview ? "not-allowed" : "pointer",
+                    opacity: imagePreview && !active ? 0.4 : 1,
+                    transition:"all 0.2s",
+                  }}
+                >
+                  <span style={{ fontSize:26 }}>{m.icon}</span>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.08em", color: active ? "#f5c842" : "#666" }}>
+                    {m.label.toUpperCase()}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
           <div style={{ marginBottom:28 }}>
-            <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:32, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>Got groceries?</h2>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666" }}>Photo your receipt and we'll stock your pantry automatically.</p>
+            <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:32, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>{activeMode.title}</h2>
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666" }}>{activeMode.blurb}</p>
           </div>
           <div onClick={() => fileRef.current?.click()} style={{ flex:1, border:`2px dashed ${imagePreview?"#f5c84255":"#2a2a2a"}`, borderRadius:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background: imagePreview?"#0f0d08":"#0f0f0f", overflow:"hidden", position:"relative", minHeight:280, transition:"all 0.3s" }}>
             {imagePreview ? (
@@ -183,16 +298,18 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
               </>
             ) : (
               <>
-                <div style={{ fontSize:48, marginBottom:16 }}>🧾</div>
-                <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>Tap to upload receipt</div>
+                <div style={{ fontSize:48, marginBottom:16 }}>{activeMode.icon}</div>
+                <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>
+                  Tap to upload {activeMode.id === "receipt" ? "receipt" : "photo"}
+                </div>
                 <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>Photo or screenshot works</div>
               </>
             )}
           </div>
           <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e=>handleFile(e.target.files[0])} />
           {error && <div style={{ marginTop:12, padding:"12px 14px", background:"#1a0f0f", border:"1px solid #3a1a1a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f87171" }}>{error}</div>}
-          <button onClick={imagePreview ? scanReceipt : ()=>fileRef.current?.click()} style={{ marginTop:20, width:"100%", padding:"16px", background: imagePreview?"#f5c842":"#1a1a1a", color: imagePreview?"#111":"#444", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", transition:"all 0.3s", boxShadow: imagePreview?"0 0 30px #f5c84233":"none" }}>
-            {imagePreview ? "SCAN WITH AI →" : "CHOOSE PHOTO"}
+          <button onClick={imagePreview ? runScan : ()=>fileRef.current?.click()} style={{ marginTop:20, width:"100%", padding:"16px", background: imagePreview?"#f5c842":"#1a1a1a", color: imagePreview?"#111":"#444", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", transition:"all 0.3s", boxShadow: imagePreview?"0 0 30px #f5c84233":"none" }}>
+            {imagePreview ? activeMode.cta : "CHOOSE PHOTO"}
           </button>
         </div>
       )}
@@ -201,24 +318,43 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
         <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40, textAlign:"center" }}>
           {imagePreview && (
             <div style={{ width:120, height:160, borderRadius:12, overflow:"hidden", marginBottom:28, position:"relative", border:"1px solid #2a2a2a" }}>
-              <img src={imagePreview} alt="Receipt" style={{ width:"100%", height:"100%", objectFit:"cover", filter:"brightness(0.4)" }} />
+              <img src={imagePreview} alt="Scan" style={{ width:"100%", height:"100%", objectFit:"cover", filter:"brightness(0.4)" }} />
               <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
                 <div style={{ width:40, height:40, borderRadius:"50%", border:"3px solid #f5c842", borderTopColor:"transparent", animation:"spin 0.8s linear infinite" }} />
               </div>
             </div>
           )}
-          <div style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontStyle:"italic", marginBottom:8 }}>Reading your receipt...</div>
-          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#555" }}>Claude is scanning every item</div>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontStyle:"italic", marginBottom:8 }}>
+            {activeMode.id === "receipt" ? "Reading your receipt..." : `Reading your ${activeMode.label.toLowerCase()}...`}
+          </div>
+          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#555" }}>
+            {activeMode.id === "receipt" ? "Claude is scanning every item" : "Claude is cataloging what's in the photo"}
+          </div>
           <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         </div>
       )}
 
-      {phase === "confirm" && (
+      {phase === "confirm" && (() => {
+        // Sort: low confidence first → medium → high. The user lands on the
+        // rows that most need their attention without scrolling. Stable
+        // within a confidence bucket so the receipt's natural order survives.
+        const orderedItems = scannedItems
+          .map((item, originalIdx) => ({ item, originalIdx }))
+          .sort((a, b) => confidenceStyle(a.item.confidence).order - confidenceStyle(b.item.confidence).order);
+        const lowCount = scannedItems.filter(i => i.confidence === "low").length;
+        const medCount = scannedItems.filter(i => i.confidence === "medium").length;
+        return (
         <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"20px 20px 40px", minHeight:0 }}>
           <div style={{ marginBottom:20, flexShrink:0 }}>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#4ade80", letterSpacing:"0.15em", marginBottom:6 }}>✓ FOUND {scannedItems.length} ITEMS</div>
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300, fontStyle:"italic", color:"#f0ece4" }}>Look right?</h2>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>Deselect anything wrong. Tap amounts to edit.</p>
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginTop:4 }}>
+              {lowCount > 0
+                ? `${lowCount} item${lowCount === 1 ? "" : "s"} need a closer look — start at the top.`
+                : medCount > 0
+                  ? "Yellow rows are best-guesses — tap to fix amount or unit."
+                  : "Deselect anything wrong. Tap amounts to edit."}
+            </p>
             {(receiptMeta.store || receiptMeta.date || receiptMeta.totalCents != null) && (
               <div style={{ marginTop:10, padding:"8px 12px", background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:8, display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                 {receiptMeta.store && <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{receiptMeta.store}</span>}
@@ -226,19 +362,54 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
                 {receiptMeta.totalCents != null && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", marginLeft:"auto" }}>{formatPrice(receiptMeta.totalCents)}</span>}
               </div>
             )}
+            {/* Inline legend so users learn what the colors mean without us
+                having to spell it out in copy on every row. */}
+            <div style={{ marginTop:10, display:"flex", gap:8, flexWrap:"wrap" }}>
+              {(["high","medium","low"]).map(level => {
+                const s = confidenceStyle(level);
+                const count = scannedItems.filter(i => (i.confidence || "medium") === level).length;
+                if (count === 0) return null;
+                return (
+                  <span key={level} style={{ display:"inline-flex", alignItems:"center", gap:5, padding:"3px 8px", background:s.bg, border:`1px solid ${s.border}`, borderRadius:20, fontFamily:"'DM Mono',monospace", fontSize:9, color:s.color, letterSpacing:"0.08em" }}>
+                    <span style={{ width:6, height:6, borderRadius:"50%", background:s.color, display:"inline-block" }} />
+                    {count} {s.label}
+                  </span>
+                );
+              })}
+            </div>
           </div>
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:8, minHeight:0, WebkitOverflowScrolling:"touch" }}>
-            {scannedItems.map((item, idx) => {
+            {orderedItems.map(({ item, originalIdx }) => {
+              const idx = originalIdx;
               const canon = findIngredient(item.ingredientId);
               const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
+              const conf = confidenceStyle(item.confidence);
               return (
-                <div key={idx} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected?"#2a2a2a":"#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s" }}>
+                <div key={idx} style={{ display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden" }}>
+                  {/* Confidence accent stripe — reads at a glance whether to
+                      trust the row, even before you read the name. */}
+                  <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
+                  <div style={{ flex:1, display:"flex", alignItems:"center", gap:12, padding:"12px 14px", minWidth:0 }}>
                   <button onClick={()=>toggleItem(idx)} style={{ width:22, height:22, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s" }}>{item.selected?"✓":""}</button>
                   <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji}</span>
                   <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                       <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{item.name}</span>
                       {canon && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}>MATCHED</span>}
+                      {/* Confidence chip — same color as the stripe so the
+                          relationship between them is obvious. */}
+                      <span
+                        title={
+                          item.confidence === "low"
+                            ? "Low confidence — please double-check"
+                            : item.confidence === "medium"
+                              ? "Medium confidence — verify if needed"
+                              : "High confidence"
+                        }
+                        style={{ fontFamily:"'DM Mono',monospace", fontSize:8, color:conf.color, background:conf.bg, border:`1px solid ${conf.border}`, borderRadius:4, padding:"1px 5px", letterSpacing:"0.08em", flexShrink:0 }}
+                      >
+                        {conf.label}
+                      </span>
                     </div>
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", display:"flex", gap:8 }}>
                       <span>{item.category}</span>
@@ -278,6 +449,7 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
                       {item.amount} {unitDisplay}
                     </button>
                   )}
+                  </div>
                 </div>
               );
             })}
@@ -291,7 +463,8 @@ function ReceiptScanner({ onItemsScanned, onClose }) {
             STOCK MY PANTRY →
           </button>
         </div>
-      )}
+        );
+      })()}
 
       {phase === "done" && (
         <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:40, textAlign:"center" }}>
@@ -453,9 +626,10 @@ function AddItemModal({ target, onClose, onAdd }) {
   // in the sheet is what actually promotes it to `picked`.
   const [detailIngredient, setDetailIngredient] = useState(null);
 
-  // Custom-mode fields (only used when mode === "custom")
+  // Custom-mode fields (only used when mode === "custom"). Custom items
+  // always get the generic 🥫 emoji — the on-screen emoji input was a bad
+  // affordance on mobile keyboards and rarely produced anything sensible.
   const [customName, setCustomName] = useState("");
-  const [customEmoji, setCustomEmoji] = useState("🥫");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
 
@@ -526,7 +700,7 @@ function AddItemModal({ target, onClose, onAdd }) {
           id: crypto.randomUUID(),
           ingredientId: null,
           name: customName.trim(),
-          emoji: customEmoji.trim() || "🥫",
+          emoji: "🥫",
           amount: amt,
           unit: customUnit.trim(),
           max: Math.max(amt * 2, 1),
@@ -774,20 +948,15 @@ function AddItemModal({ target, onClose, onAdd }) {
           </>
         ) : (
           <>
-            {/* Custom mode */}
-            <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-              <input
-                value={customEmoji}
-                onChange={e => setCustomEmoji(e.target.value)}
-                maxLength={4}
-                placeholder="🥫"
-                style={{ width:56, textAlign:"center", padding:"12px 0", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontSize:22, color:"#f0ece4", outline:"none" }}
-              />
+            {/* Custom mode — emoji is auto-assigned (🥫) since the picker
+                rarely worked on iOS keyboards anyway. Users can change the
+                name freely; the emoji stays consistent for custom items. */}
+            <div style={{ marginBottom:12 }}>
               <input
                 value={customName}
                 onChange={e => setCustomName(e.target.value)}
                 placeholder="Name (e.g. Capers)"
-                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none" }}
+                style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
               />
             </div>
 
@@ -944,7 +1113,23 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // they match — otherwise we just bump to the larger amount and let the user
   // sort it out in the UI. Last-paid priceCents is always overwritten with
   // the freshest receipt price.
-  const addScannedItems = (items, meta = {}) => {
+  const addScannedItems = async (items, meta = {}) => {
+    // Persist the receipt FIRST (and await it) so the DB-side suppression
+    // window in notify_family_pantry() is open before the per-item pantry
+    // inserts land. Otherwise a 12-item receipt would fan out 12 individual
+    // "Trevor added X" notifications on top of the receipt summary one.
+    if (userId) {
+      const { error } = await supabase.from("receipts").insert({
+        user_id: userId,
+        store_name: meta.store || null,
+        receipt_date: meta.date || null,
+        total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
+        item_count: items.length,
+      });
+      if (error) console.warn("[receipts] insert failed:", error.message);
+      else setSpendRefresh(k => k + 1);
+    }
+
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       items.forEach(s => {
@@ -979,21 +1164,6 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       });
       return next;
     });
-
-    // Persist the receipt as its own record. Fire-and-forget — if it fails
-    // we swallow it (the pantry update is the important part).
-    if (userId) {
-      supabase.from("receipts").insert({
-        user_id: userId,
-        store_name: meta.store || null,
-        receipt_date: meta.date || null,
-        total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
-        item_count: items.length,
-      }).then(({ error }) => {
-        if (error) console.warn("[receipts] insert failed:", error.message);
-        else setSpendRefresh(k => k + 1);
-      });
-    }
 
     setScanning(false);
   };
@@ -1215,7 +1385,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     );
   };
 
-  if (scanning) return <ReceiptScanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
+  if (scanning) return <Scanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
@@ -1295,12 +1465,15 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             </div>
           )}
 
-          {/* Scan CTA */}
+          {/* Scan CTA — opens the unified scanner. The user picks fridge,
+              pantry, or receipt at the top of that flow. */}
           <div onClick={()=>setScanning(true)} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
-            <div style={{ fontSize:36 }}>🧾</div>
+            <div style={{ fontSize:36, display:"flex", gap:2 }}>
+              <span>🥬</span><span>🥫</span><span>🧾</span>
+            </div>
             <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan a receipt</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Photo your grocery receipt → pantry auto-stocks</div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan something</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Fridge, pantry shelf, or grocery receipt</div>
             </div>
             <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
           </div>
