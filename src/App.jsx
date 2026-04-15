@@ -238,7 +238,13 @@ function AuthedApp({ user, profile, upsertProfile }) {
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
           />
         )}
-        {tab === "cookbook" && <Cookbook />}
+        {tab === "cookbook" && (
+          <Cookbook
+            userId={user.id}
+            familyKey={familyKey}
+            nameFor={nameFor}
+          />
+        )}
         {tab === "pantry"   && (
           <Pantry
             userId={user.id}

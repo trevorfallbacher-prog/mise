@@ -1,86 +1,134 @@
-import { useState } from "react";
-import { SAVED_RECIPES, OCCASIONS, MOODS, UPCOMING_MOMENTS } from "../data";
+import { useMemo, useState } from "react";
+import { useCookLog } from "../lib/useCookLog";
+import { findRecipe } from "../data/recipes";
 
-function OccasionPill({ id }) {
-  const o = OCCASIONS.find(o => o.id === id);
-  if (!o) return null;
-  return (
-    <span style={{ display:"inline-flex", alignItems:"center", gap:4, background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:20, padding:"3px 10px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#888" }}>
-      {o.emoji} {o.label}
-    </span>
-  );
+// Mapping the DB's rating column onto the visual language used throughout
+// the app. Kept local so Cookbook stays self-contained — if we ever want a
+// different set of faces we change it here.
+const RATING_META = {
+  nailed: { emoji: "🤩", label: "Nailed it",   color: "#f5c842", bg: "#1a1608", border: "#3a2f10" },
+  good:   { emoji: "😊", label: "Pretty good", color: "#4ade80", bg: "#0f1a0f", border: "#1e3a1e" },
+  meh:    { emoji: "😐", label: "Meh",         color: "#888",    bg: "#161616", border: "#2a2a2a" },
+  rough:  { emoji: "😬", label: "Rough one",   color: "#ef4444", bg: "#1a0a0a", border: "#3a1a1a" },
+};
+const ratingMeta = (r) => RATING_META[r] || RATING_META.meh;
+
+// Filter chips — "All" plus favorites plus each rating bucket. Counts update
+// live as logs come in. Hiding chips with zero rows would look nicer but
+// removes a visual cue for "you don't have any of these yet" — so we keep
+// every chip visible and gray out the empties.
+const FILTERS = [
+  { id: "all",       label: "All"            },
+  { id: "favorites", label: "★ Favorites"    },
+  { id: "nailed",    label: "🤩 Nailed"      },
+  { id: "good",      label: "😊 Good"        },
+  { id: "meh",       label: "😐 Meh"         },
+  { id: "rough",     label: "😬 Rough"       },
+];
+
+// Short, humane "when" string. We could pull in date-fns but this is enough
+// for the cookbook list — most cooks happen in the recent past.
+function relativeDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diff = (now - d) / 1000; // seconds
+  if (diff < 60)        return "just now";
+  if (diff < 3600)      return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86400)     return `${Math.floor(diff / 3600)}h ago`;
+  if (diff < 86400 * 7) return `${Math.floor(diff / 86400)}d ago`;
+  // "Apr 12" style for anything older than a week; include year if not this year.
+  const opts = d.getFullYear() === now.getFullYear()
+    ? { month: "short", day: "numeric" }
+    : { month: "short", day: "numeric", year: "numeric" };
+  return d.toLocaleDateString(undefined, opts);
 }
 
-function RecipeDetail({ recipe, onBack }) {
-  const [tab, setTab] = useState("memory");
+// ── Detail screen ────────────────────────────────────────────────────────────
+// Tapping a cookbook card pushes here. Shows the full memory of the cook —
+// rating, notes, diners, XP — plus a "Cook it again" CTA that eventually
+// will route back into CookMode pre-loaded. For chunk 2 the CTA just closes
+// the detail; hooking it up is a one-liner once the parent knows how to
+// deep-link into Cook.
+function CookLogDetail({ log, onBack, onToggleFavorite, onDelete, nameFor }) {
+  const meta = ratingMeta(log.rating);
+  const recipe = findRecipe(log.recipeSlug);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   return (
-    <div style={{ minHeight:"100vh", paddingBottom:40 }}>
+    <div style={{ minHeight:"100vh", paddingBottom:100 }}>
       <div style={{ padding:"20px 20px 0", display:"flex", alignItems:"center", gap:12 }}>
         <button onClick={onBack} style={{ background:"none", border:"none", color:"#555", fontSize:20, cursor:"pointer" }}>←</button>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em" }}>YOUR COOKBOOK</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em", flex:1 }}>YOUR COOKBOOK</div>
+        <button
+          onClick={() => onToggleFavorite(log.id)}
+          title={log.isFavorite ? "Unfavorite" : "Favorite"}
+          style={{ background:"none", border:"none", color: log.isFavorite ? "#f5c842" : "#444", fontSize:20, cursor:"pointer" }}
+        >
+          {log.isFavorite ? "★" : "☆"}
+        </button>
       </div>
+
       <div style={{ padding:"24px 20px 0", textAlign:"center" }}>
-        <div style={{ fontSize:56, marginBottom:12 }}>{recipe.emoji}</div>
-        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:30, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.02em", marginBottom:6 }}>{recipe.title}</h1>
-        <div style={{ display:"flex", justifyContent:"center", gap:16 }}>
-          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#555" }}>cooked {recipe.cookedCount}×</span>
-          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842" }}>+{recipe.xpEarned} XP total</span>
+        <div style={{ fontSize:64, marginBottom:12 }}>{log.recipeEmoji}</div>
+        <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:30, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.02em", marginBottom:6 }}>{log.recipeTitle}</h1>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#555", letterSpacing:"0.1em" }}>
+          {(log.recipeCuisine || "").toUpperCase()}
+          {log.recipeCategory ? ` · ${log.recipeCategory.toUpperCase()}` : ""}
+          {` · ${relativeDate(log.cookedAt)}`}
         </div>
       </div>
-      <div style={{ display:"flex", margin:"24px 20px 0", background:"#161616", borderRadius:12, padding:4, gap:4 }}>
-        {[["memory","Memory"],["notes","Notes"],["suggest","What's Next"]].map(([id,label])=>(
-          <button key={id} onClick={()=>setTab(id)} style={{ flex:1, padding:"8px", background: tab===id?"#f5c842":"none", border:"none", borderRadius:9, fontFamily:"'DM Mono',monospace", fontSize:10, color: tab===id?"#111":"#555", cursor:"pointer", letterSpacing:"0.06em", fontWeight: tab===id?600:400, transition:"all 0.2s" }}>
-            {label.toUpperCase()}
-          </button>
-        ))}
+
+      {/* Rating headline card */}
+      <div style={{ margin:"22px 20px 0", padding:"18px 20px", background:meta.bg, border:`1px solid ${meta.border}`, borderRadius:16, display:"flex", alignItems:"center", gap:14 }}>
+        <span style={{ fontSize:40 }}>{meta.emoji}</span>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:meta.color, fontStyle:"italic" }}>{meta.label}</div>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.1em" }}>+{log.xpEarned} XP · {log.diners.length > 0 ? `${log.diners.length} ${log.diners.length === 1 ? "DINER" : "DINERS"}` : "SOLO"}</div>
+        </div>
       </div>
-      <div style={{ padding:"20px 20px 0" }}>
-        {tab === "memory" && (
-          <div style={{ display:"flex", flexDirection:"column", gap:14 }}>
-            {recipe.moment && (
-              <div style={{ padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>YOUR MEMORY</div>
-                <p style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#ccc", fontStyle:"italic", lineHeight:1.6 }}>"{recipe.moment}"</p>
-              </div>
-            )}
-            <div style={{ padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em", marginBottom:10 }}>COOKED FOR</div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                {recipe.occasions.map(o => <OccasionPill key={o} id={o} />)}
-              </div>
-            </div>
-            <div style={{ padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em", marginBottom:10 }}>TAGS</div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                {recipe.tags.map(t => <span key={t} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:20, padding:"3px 10px", fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#888" }}>{t}</span>)}
-              </div>
-            </div>
-          </div>
-        )}
-        {tab === "notes" && (
-          <div style={{ padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em", marginBottom:10 }}>YOUR NOTES</div>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#ccc", lineHeight:1.7 }}>{recipe.notes || "No notes yet."}</p>
-          </div>
-        )}
-        {tab === "suggest" && (
-          <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
-            <div style={{ padding:"18px", background:"#161616", border:"1px solid #f5c84233", borderRadius:14 }}>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>LEVEL UP FROM HERE</div>
-              <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, color:"#f0ece4", fontWeight:400, marginBottom:4 }}>{recipe.nextSuggestion.title}</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:14 }}>{recipe.nextSuggestion.reason}</div>
-              <button style={{ width:"100%", padding:"12px", background:"#f5c842", border:"none", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", color:"#111" }}>EXPLORE THIS DISH →</button>
-            </div>
-            {UPCOMING_MOMENTS.map(m => (
-              <div key={m.id} style={{ padding:"14px 16px", background:"#161616", border:"1px solid #222", borderRadius:12, display:"flex", alignItems:"center", gap:12 }}>
-                <span style={{ fontSize:24 }}>{m.emoji}</span>
-                <div style={{ flex:1 }}>
-                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#ccc" }}>{m.name} is in {m.daysAway} days</div>
-                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555", marginTop:2 }}>{recipe.title} would be perfect for this</div>
-                </div>
-                <button style={{ background:"#1a1a1a", border:"1px solid #333", borderRadius:8, padding:"6px 10px", fontFamily:"'DM Mono',monospace", fontSize:9, color:"#888", cursor:"pointer", flexShrink:0 }}>PLAN IT</button>
-              </div>
+
+      {/* Notes */}
+      <div style={{ margin:"12px 20px 0", padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em", marginBottom:10 }}>NOTES</div>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color: log.notes ? "#ccc" : "#555", fontStyle: log.notes ? "normal" : "italic", lineHeight:1.7, whiteSpace:"pre-wrap", margin:0 }}>
+          {log.notes || "No notes on this one."}
+        </p>
+      </div>
+
+      {/* Diners */}
+      {log.diners.length > 0 && (
+        <div style={{ margin:"12px 20px 0", padding:"16px", background:"#161616", border:"1px solid #2a2a2a", borderRadius:14 }}>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em", marginBottom:10 }}>ATE WITH YOU</div>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+            {log.diners.map(id => (
+              <span key={id} style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"6px 12px", background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:20, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#ccc" }}>
+                👥 {nameFor ? nameFor(id) : "Someone"}
+              </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={{ margin:"20px 20px 0", display:"flex", flexDirection:"column", gap:10 }}>
+        {recipe && (
+          <button onClick={onBack} style={{ width:"100%", padding:"14px", background:"#f5c842", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", letterSpacing:"0.08em" }}>
+            COOK IT AGAIN →
+          </button>
+        )}
+        {!confirmDelete ? (
+          <button onClick={() => setConfirmDelete(true)} style={{ width:"100%", padding:"12px", background:"transparent", color:"#555", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em" }}>
+            REMOVE FROM COOKBOOK
+          </button>
+        ) : (
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={() => setConfirmDelete(false)} style={{ flex:1, padding:"12px", background:"#1a1a1a", color:"#888", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em" }}>
+              CANCEL
+            </button>
+            <button onClick={() => { onDelete(log.id); onBack(); }} style={{ flex:2, padding:"12px", background:"#ef4444", color:"#fff", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, cursor:"pointer", letterSpacing:"0.08em", fontWeight:600 }}>
+              DELETE PERMANENTLY
+            </button>
           </div>
         )}
       </div>
@@ -88,25 +136,47 @@ function RecipeDetail({ recipe, onBack }) {
   );
 }
 
-export default function Cookbook() {
+// ── Main list ────────────────────────────────────────────────────────────────
+export default function Cookbook({ userId, familyKey, nameFor }) {
+  const { logs, loading, toggleFavorite, remove } = useCookLog(userId, familyKey);
   const [filter, setFilter] = useState("all");
-  const [detail, setDetail] = useState(null);
   const [search, setSearch] = useState("");
+  const [detailId, setDetailId] = useState(null);
 
-  const filters = [
-    { id:"all", label:"All" }, { id:"nailed", label:"🤩 Nailed" },
-    { id:"kids", label:"🧒 Kids" }, { id:"partner", label:"🕯️ Date" },
-    { id:"friends", label:"🥂 Friends" }, { id:"holiday", label:"🎉 Holiday" },
-  ];
+  // Precompute counts per filter so we can show them (and subtly grey out
+  // the ones with zero matches). All logs are the user's own.
+  const counts = useMemo(() => {
+    const c = { all: logs.length, favorites: 0, nailed: 0, good: 0, meh: 0, rough: 0 };
+    for (const l of logs) {
+      if (l.isFavorite) c.favorites++;
+      c[l.rating] = (c[l.rating] || 0) + 1;
+    }
+    return c;
+  }, [logs]);
 
-  const filtered = SAVED_RECIPES.filter(r => {
-    if (search && !r.title.toLowerCase().includes(search.toLowerCase())) return false;
-    if (filter === "all") return true;
-    if (filter === "nailed") return r.rating === "nailed";
-    return r.occasions.includes(filter) || r.savedFor?.includes(filter);
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return logs.filter(l => {
+      if (q && !l.recipeTitle.toLowerCase().includes(q) && !(l.notes || "").toLowerCase().includes(q)) return false;
+      if (filter === "all")       return true;
+      if (filter === "favorites") return l.isFavorite;
+      return l.rating === filter;
+    });
+  }, [logs, filter, search]);
 
-  if (detail) return <RecipeDetail recipe={detail} onBack={() => setDetail(null)} />;
+  // Detail mode — find the log and push into the detail screen.
+  const detailLog = useMemo(() => logs.find(l => l.id === detailId) || null, [logs, detailId]);
+  if (detailLog) {
+    return (
+      <CookLogDetail
+        log={detailLog}
+        onBack={() => setDetailId(null)}
+        onToggleFavorite={toggleFavorite}
+        onDelete={remove}
+        nameFor={nameFor}
+      />
+    );
+  }
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
@@ -115,69 +185,114 @@ export default function Cookbook() {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
           <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:38, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.03em" }}>Cookbook</h1>
           <div style={{ textAlign:"right" }}>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{SAVED_RECIPES.length}</div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>SAVED</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{logs.length}</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>COOKED</div>
           </div>
         </div>
       </div>
 
-      {/* Calendar moments */}
-      <div style={{ margin:"20px 20px 0", padding:"14px 16px", background:"#0f0f1a", border:"1px solid #2a2a3a", borderRadius:14 }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7b7bf0", letterSpacing:"0.12em", marginBottom:10 }}>FROM YOUR CALENDAR</div>
-        <div style={{ display:"flex", gap:8 }}>
-          {UPCOMING_MOMENTS.map(m => (
-            <div key={m.id} style={{ flex:1, background:"#161628", border:"1px solid #2a2a4a", borderRadius:10, padding:"10px 8px", textAlign:"center" }}>
-              <div style={{ fontSize:18, marginBottom:4 }}>{m.emoji}</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#888", lineHeight:1.3 }}>{m.name}</div>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7b7bf0", marginTop:3 }}>in {m.daysAway}d</div>
-            </div>
-          ))}
+      {!loading && logs.length === 0 ? (
+        // Empty state — user hasn't logged anything yet. Keep it warm, not
+        // nagging. The screenshot on the Cook tab will do the onboarding.
+        <div style={{ margin:"40px 20px 0", padding:"40px 24px", textAlign:"center", background:"#0f0f0f", border:"1px dashed #222", borderRadius:18 }}>
+          <div style={{ fontSize:56, marginBottom:14, opacity:0.6 }}>📖</div>
+          <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, fontStyle:"italic", color:"#aaa", marginBottom:8 }}>
+            Your cookbook's empty
+          </div>
+          <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", lineHeight:1.6 }}>
+            Every meal you finish in Cook Mode lands here — with your rating,
+            notes, and who ate with you.
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          <div style={{ margin:"20px 20px 0", position:"relative" }}>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search your cookbook…"
+              style={{ width:"100%", background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"12px 16px 12px 40px", color:"#f0ece4", fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none", boxSizing:"border-box" }}
+            />
+            <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", fontSize:16, opacity:0.4 }}>🔍</span>
+          </div>
 
-      <div style={{ margin:"16px 20px 0", position:"relative" }}>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search your cookbook..."
-          style={{ width:"100%", background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"12px 16px 12px 40px", color:"#f0ece4", fontFamily:"'DM Sans',sans-serif", fontSize:14, outline:"none" }} />
-        <span style={{ position:"absolute", left:14, top:"50%", transform:"translateY(-50%)", fontSize:16, opacity:0.4 }}>🔍</span>
-      </div>
+          <div style={{ display:"flex", gap:8, padding:"14px 20px 0", overflowX:"auto", scrollbarWidth:"none" }}>
+            {FILTERS.map(f => {
+              const active = filter === f.id;
+              const count = counts[f.id] ?? 0;
+              const empty = count === 0;
+              return (
+                <button
+                  key={f.id}
+                  onClick={() => setFilter(f.id)}
+                  style={{
+                    flexShrink:0,
+                    background: active ? "#f5c842" : "#161616",
+                    border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                    borderRadius:20, padding:"7px 14px", whiteSpace:"nowrap",
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12,
+                    color: active ? "#111" : empty ? "#444" : "#aaa",
+                    cursor:"pointer", transition:"all 0.2s",
+                    display:"inline-flex", alignItems:"center", gap:6,
+                  }}
+                >
+                  <span>{f.label}</span>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: active ? "#111a" : "#666" }}>
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
 
-      <div style={{ display:"flex", gap:8, padding:"14px 20px 0", overflowX:"auto", scrollbarWidth:"none" }}>
-        {filters.map(f => (
-          <button key={f.id} onClick={()=>setFilter(f.id)} style={{ background: filter===f.id?"#f5c842":"#161616", border:`1px solid ${filter===f.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 14px", whiteSpace:"nowrap", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: filter===f.id?"#111":"#888", cursor:"pointer", transition:"all 0.2s", flexShrink:0 }}>{f.label}</button>
-        ))}
-      </div>
-
-      <div style={{ display:"flex", flexDirection:"column", gap:12, padding:"16px 20px 0" }}>
-        {filtered.map(r => (
-          <button key={r.id} onClick={()=>setDetail(r)} style={{ width:"100%", textAlign:"left", background:"#141414", border:"1px solid #222", borderRadius:16, padding:"16px", cursor:"pointer" }}>
-            <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
-              <div style={{ fontSize:36, flexShrink:0 }}>{r.emoji}</div>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
-                  <span style={{ fontFamily:"'Fraunces',serif", fontSize:17, color:"#f0ece4", fontWeight:400 }}>{r.title}</span>
-                  <span style={{ fontSize:16 }}>{MOODS.find(m=>m.id===r.rating)?.emoji}</span>
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
-                  <div style={{ width:6, height:6, borderRadius:"50%", background:r.skillColor, flexShrink:0 }} />
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>{r.skill}</span>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>cooked {r.cookedCount}×</span>
-                </div>
-                {r.moment && <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", fontStyle:"italic", lineHeight:1.5, marginBottom:8 }}>"{r.moment}"</p>}
-                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
-                  {r.occasions.map(o => <OccasionPill key={o} id={o} />)}
-                </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:10, padding:"14px 20px 0" }}>
+            {filtered.length === 0 && (
+              <div style={{ padding:"30px 20px", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center", fontStyle:"italic" }}>
+                {search.trim() ? `Nothing matches "${search}".` : "No cooks in this bucket yet."}
               </div>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444", flexShrink:0, marginTop:2 }}>{r.lastCooked}</div>
-            </div>
-            <div style={{ marginTop:12, padding:"10px 12px", background:"#0f0f0f", borderRadius:10, display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:12 }}>✨</span>
-              <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", flex:1 }}>Try next: <span style={{ color:"#aaa" }}>{r.nextSuggestion.title}</span></span>
-              <span style={{ fontSize:12, color:"#444" }}>→</span>
-            </div>
-          </button>
-        ))}
-      </div>
+            )}
+            {filtered.map(log => {
+              const meta = ratingMeta(log.rating);
+              return (
+                <button
+                  key={log.id}
+                  onClick={() => setDetailId(log.id)}
+                  style={{ width:"100%", textAlign:"left", background:"#141414", border:`1px solid ${log.isFavorite ? "#f5c84244" : "#222"}`, borderRadius:16, padding:"16px", cursor:"pointer", position:"relative" }}
+                >
+                  <div style={{ display:"flex", alignItems:"flex-start", gap:14 }}>
+                    <div style={{ fontSize:36, flexShrink:0 }}>{log.recipeEmoji}</div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
+                        <span style={{ fontFamily:"'Fraunces',serif", fontSize:17, color:"#f0ece4", fontWeight:400 }}>{log.recipeTitle}</span>
+                        <span style={{ fontSize:16 }} title={meta.label}>{meta.emoji}</span>
+                        {log.isFavorite && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.08em" }}>★ FAVORITE</span>}
+                      </div>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>{relativeDate(log.cookedAt)}</span>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>+{log.xpEarned} XP</span>
+                        {log.diners.length > 0 && (
+                          <>
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#444" }}>·</span>
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666" }}>
+                              👥 {log.diners.length}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      {log.notes && (
+                        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", fontStyle:"italic", lineHeight:1.5, marginTop:8, marginBottom:0, overflow:"hidden", display:"-webkit-box", WebkitLineClamp:2, WebkitBoxOrient:"vertical" }}>
+                          "{log.notes}"
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 }
