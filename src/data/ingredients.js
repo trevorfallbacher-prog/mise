@@ -1451,9 +1451,11 @@ export const INGREDIENTS = [
     units: [
       { id: "bottle", label: "bottles", toBase: 296 }, // 10oz
       { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "tsp",    label: "tsp",     toBase: 5 },
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    estCentsPerBase: 0.7, // ~$4 for a 15oz Kikkoman
   },
   {
     // Compound ingredient — bottled sriracha is one product, homemade is
@@ -1501,6 +1503,60 @@ export const INGREDIENTS = [
       { id: "pack",  label: "packs",     toBase: 10 },
     ],
     defaultUnit: "pack",
+  },
+  // ── condiments batch 2: Asian staples ──────────────────────────────
+  {
+    id: "fish_sauce", name: "Fish Sauce", emoji: "🐟", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 700 }, // ~24oz glass
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "tsp",    label: "tsp",     toBase: 5 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 1.0, // ~$6–10 for a 24oz Red Boat
+  },
+  {
+    id: "miso", name: "Miso Paste", emoji: "🍲", category: "pantry",
+    units: [
+      { id: "tub",    label: "tubs",    toBase: 500 }, // ~17oz standard
+      { id: "cup",    label: "cups",    toBase: 250 },
+      { id: "tbsp",   label: "tbsp",    toBase: 17 },
+      { id: "tsp",    label: "tsp",     toBase: 5.7 },
+    ],
+    defaultUnit: "tub",
+    estCentsPerBase: 1.6, // ~$8–10 for the Hikari tub
+  },
+  {
+    id: "hoisin", name: "Hoisin Sauce", emoji: "🥢", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 553 }, // ~19.5oz Lee Kum Kee
+      { id: "tbsp",   label: "tbsp",    toBase: 18 },
+      { id: "tsp",    label: "tsp",     toBase: 6 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 0.7, // ~$4–5 LKK bottle
+  },
+  {
+    id: "mirin", name: "Mirin", emoji: "🍶", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 300 }, // 10oz typical
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "tsp",    label: "tsp",     toBase: 5 },
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 1.8, // ~$5–8 depending on real-hon-mirin vs. aji-mirin
+  },
+  {
+    id: "oyster_sauce", name: "Oyster Sauce", emoji: "🦪", category: "pantry",
+    units: [
+      { id: "bottle", label: "bottles", toBase: 510 }, // ~18oz LKK Premium
+      { id: "tbsp",   label: "tbsp",    toBase: 18 },
+      { id: "tsp",    label: "tsp",     toBase: 6 },
+    ],
+    defaultUnit: "bottle",
+    estCentsPerBase: 0.9, // ~$5 LKK Premium
   },
   // ── condiments batch 1: American staples ────────────────────────────
   {
