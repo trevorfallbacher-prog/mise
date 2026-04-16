@@ -12,7 +12,15 @@
 //   skills:     [{ id, weight, xp }]  weight sums to 1, xp = XP earned on that skill per cook
 //   minSkillLevels: { knife: 2, heat: 1 }  — skill levels required to unlock in Learn
 //   tools:      string[]
-//   ingredients:[{ amount, item }]  — amount is a display string ("8 oz", "½ cup")
+//   ingredients:[{ amount, item, ingredientId?, qty?, state? }]
+//     amount     display string ("8 oz", "½ cup")
+//     item       display text ("bread", "grated parmesan")
+//     ingredientId  canonical id (optional, enables pantry matching)
+//     qty        { amount, unit } for structured decrement (optional)
+//     state      required physical form ("crumbs", "grated", "shredded",
+//                "diced", "minced", …). Scopes pantry matching — a
+//                recipe asking for crumbs won't match a loaf row even
+//                for the same id. Omit for state-agnostic recipes.
 //   steps:      [{ id, title, instruction, icon, animation?, timer?, tip }]
 //               animation: one of "boil","stir","brown","bloom","toss","plate" (or null)
 //               timer: seconds (or null)

@@ -163,22 +163,55 @@ function Timer({ seconds, onDone }) {
 // Look up a recipe ingredient in the pantry by canonical ingredientId.
 // Ingredients without an ingredientId are treated as untrackable (pasta water,
 // "to taste" salt, herbs we don't model, etc).
+//
+// State-aware: when the recipe specifies a state ("crumbs"), we only count
+// pantry rows in that exact state. When the recipe is state-agnostic, we
+// match any state.
 function findInPantry(ing, pantry) {
   if (!pantry || !ing.ingredientId) return null;
-  return pantry.find(p => p.ingredientId === ing.ingredientId) || null;
+  const pool = pantry.filter(p => p.ingredientId === ing.ingredientId);
+  if (ing.state) {
+    return pool.find(p => (p.state || null) === ing.state) || null;
+  }
+  return pool[0] || null;
+}
+
+// Pantry rows that share the ingredient id but are in the WRONG state for
+// the recipe. Used to surface a "Make X from Y" hint on the ingredient
+// card when we have raw material for a conversion.
+function wrongStateCandidates(ing, pantry) {
+  if (!pantry || !ing.ingredientId || !ing.state) return [];
+  return pantry.filter(p =>
+    p.ingredientId === ing.ingredientId &&
+    (p.state || null) !== ing.state &&
+    Number(p.amount) > 0
+  );
 }
 
 // Decide how a recipe ingredient shows up in the checklist. Does unit
 // conversion under the hood (e.g. "2 tbsp butter" vs "1.5 sticks in pantry").
-//   status: "skip"    — not tracked (no ingredientId)
-//   status: "missing" — not in pantry, or not enough on hand
-//   status: "low"     — have enough, but cooking will drain us below threshold
-//   status: "ok"      — plenty on hand
+//   status: "skip"          — not tracked (no ingredientId)
+//   status: "missing"       — not in pantry, or not enough on hand
+//   status: "wrong-state"   — have the ingredient but in the wrong form
+//                             (loaf when recipe wants crumbs). Carries the
+//                             candidate rows so the UI can offer a convert
+//                             shortcut.
+//   status: "low"           — have enough, but cooking will drain us below threshold
+//   status: "ok"            — plenty on hand
 function statusFor(ing, pantry) {
   if (!ing.ingredientId) return { ing, status: "skip" };
   const canonical = findIngredient(ing.ingredientId);
   const row = findInPantry(ing, pantry);
-  if (!row || row.amount <= 0) return { ing, status: "missing", row: null };
+  if (!row || row.amount <= 0) {
+    // If the recipe wanted a specific state and we have the same
+    // ingredient in a DIFFERENT state, that's an actionable case:
+    // the user can convert. Flag it specifically.
+    const candidates = wrongStateCandidates(ing, pantry);
+    if (candidates.length > 0) {
+      return { ing, status: "wrong-state", row: null, candidates };
+    }
+    return { ing, status: "missing", row: null };
+  }
   if (!canonical || !ing.qty)  return { ing, status: "ok", row }; // can't compare; trust presence
   const cmp = compareQty({
     have: { amount: row.amount,       unit: row.unit },
@@ -217,10 +250,11 @@ export default function CookMode({
   // proper unit conversion; untagged ones (pasta water, "to taste" salt,
   // decorative herbs) render without a badge.
   const ingredientStatus = (recipe.ingredients || []).map(ing => statusFor(ing, pantry));
-  const missingIngs = ingredientStatus.filter(s => s.status === "missing");
-  const lowIngs     = ingredientStatus.filter(s => s.status === "low");
-  const okCount     = ingredientStatus.filter(s => s.status === "ok").length;
-  const trackedCount = ingredientStatus.filter(s => s.status !== "skip").length;
+  const missingIngs    = ingredientStatus.filter(s => s.status === "missing");
+  const lowIngs        = ingredientStatus.filter(s => s.status === "low");
+  const wrongStateIngs = ingredientStatus.filter(s => s.status === "wrong-state");
+  const okCount        = ingredientStatus.filter(s => s.status === "ok").length;
+  const trackedCount   = ingredientStatus.filter(s => s.status !== "skip").length;
 
   const addMissingToShoppingList = () => {
     if (!setShoppingList) return;
@@ -336,11 +370,12 @@ export default function CookMode({
         )}
 
         <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, overflow:"hidden" }}>
-          {ingredientStatus.map(({ ing, status, row }, i) => {
-            const badge = status === "ok"     ? { label:"IN PANTRY", color:"#4ade80", bg:"#0f1a0f" }
-                        : status === "low"    ? { label:"LOW",       color:"#f59e0b", bg:"#1a0f00" }
-                        : status === "missing"? { label:"MISSING",   color:"#ef4444", bg:"#1a0a0a" }
-                        :                       null;
+          {ingredientStatus.map(({ ing, status, row, candidates }, i) => {
+            const badge = status === "ok"          ? { label:"IN PANTRY",  color:"#4ade80", bg:"#0f1a0f" }
+                        : status === "low"         ? { label:"LOW",        color:"#f59e0b", bg:"#1a0f00" }
+                        : status === "missing"     ? { label:"MISSING",    color:"#ef4444", bg:"#1a0a0a" }
+                        : status === "wrong-state" ? { label:"WRONG FORM", color:"#7eb8d4", bg:"#0f1620" }
+                        :                            null;
             // Only rows with a canonical ingredientId are tappable — everything
             // else ("to taste" salt, decorative herbs) just renders static.
             const tappable = !!ing.ingredientId;
@@ -373,13 +408,23 @@ export default function CookMode({
                   <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
                 </div>
                 {badge && (
-                  <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8 }}>
+                  <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
                     <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:badge.color, background:badge.bg, border:`1px solid ${badge.color}44`, padding:"2px 7px", borderRadius:4, letterSpacing:"0.08em" }}>
                       {badge.label}
                     </span>
                     {row && (
                       <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>
                         have {Math.round(row.amount*10)/10} {unitLabel(findIngredient(row.ingredientId), row.unit)}
+                      </span>
+                    )}
+                    {/* WRONG-FORM hint — surfaces when the recipe wants a
+                        specific state (crumbs) and the user has the same
+                        ingredient in a different state (loaf). Tells them
+                        what they CAN work with; the convert chip on the
+                        pantry row is the actual action site. */}
+                    {status === "wrong-state" && candidates && candidates.length > 0 && (
+                      <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#7eb8d4", fontStyle:"italic" }}>
+                        Have {candidates[0].amount} {candidates[0].state || "(other form)"} — convert in Pantry to make {ing.state}
                       </span>
                     )}
                   </div>
