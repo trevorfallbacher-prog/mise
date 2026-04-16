@@ -7,6 +7,7 @@ import Cookbook from "./components/Cookbook";
 import Kitchen from "./components/Kitchen";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
+import AdminPanel from "./components/AdminPanel";
 import NotificationsPanel from "./components/NotificationsPanel";
 import UserProfile from "./components/UserProfile";
 import WhatsNewNotification from "./components/WhatsNewNotification";
@@ -176,6 +177,9 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [notifsOpen, setNotifsOpen]       = useState(false);
+  // Admin-panel open state. Only reachable via Settings → ADMIN entry,
+  // which is itself gated on profile.role === 'admin' (0042).
+  const [adminOpen, setAdminOpen]         = useState(false);
   // deepLink is set when a notification tap wants to navigate. Cookbook
   // consumes it on mount and calls setDeepLink(null) to clear.
   // Shape: { kind: 'cook_log', id: '<uuid>' } | null
@@ -389,6 +393,14 @@ function AuthedApp({ user, profile, upsertProfile }) {
           // useWhatsNew (new users get notes silently marked-as-seen
           // and need this entry to ever see them).
           onOpenReleaseNotes={() => { setSettingsOpen(false); whatsNew.openFromSettings(); }}
+          onOpenAdmin={() => { setSettingsOpen(false); setAdminOpen(true); }}
+        />
+      )}
+
+      {adminOpen && (
+        <AdminPanel
+          userId={user.id}
+          onClose={() => setAdminOpen(false)}
         />
       )}
 

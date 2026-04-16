@@ -105,7 +105,7 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes }) {
+export default function Settings({ profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin }) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
@@ -353,6 +353,23 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
             >
               <span>📋 RELEASE NOTES</span>
               <span style={{ color:"#7eb8d4" }}>→</span>
+            </button>
+          </>
+        )}
+
+        {/* Admin entry — visible only when the viewer's own profile row
+            has role='admin' (set via the 0042 migration + a manual
+            SQL UPDATE). Intentionally at the bottom near Account so
+            it's out of the way for everyday settings edits. */}
+        {profile?.role === "admin" && onOpenAdmin && (
+          <>
+            <SectionHeader label="ADMIN" />
+            <button
+              onClick={onOpenAdmin}
+              style={{ width:"100%", padding:"14px", background:"#1a0a0a", border:"1px solid #3a1a1a", color:"#ef4444", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:"0.1em", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}
+            >
+              <span>🛠 ADMIN TOOLS</span>
+              <span>→</span>
             </button>
           </>
         )}

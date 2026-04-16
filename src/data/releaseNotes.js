@@ -42,9 +42,53 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.4";
+export const CURRENT_VERSION = "0.7.5";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.5",
+    date:    "2026-04-16",
+    title:   "Admin build — elevated permissions, first cut",
+    summary:
+      "First slice of admin tooling for the app owner. A new role " +
+      "column on profiles + an is_admin() SECURITY-DEFINER helper " +
+      "underpins RLS-bypass SELECT policies on profiles and receipts " +
+      "— admin can now see every user and every receipt across all " +
+      "families for moderation + debugging. The UI surfaces as a " +
+      "🛠 ADMIN TOOLS row in Settings, visible only to role='admin' " +
+      "profiles. First panel has two tabs: USERS (every profile row, " +
+      "role-badged) and RECEIPTS (newest 500 across all families). " +
+      "Deliberately read-only in this cut — admin writes land one " +
+      "screen at a time behind their own policy additions.",
+    shipped: [
+      {
+        kind: "architecture",
+        text: "Migration 0042 adds profiles.role ('user' | 'admin', default 'user' with a CHECK constraint) plus public.is_admin(uid) as a SECURITY-DEFINER helper so admin-check reads bypass the profiles RLS without recursing",
+        commits: ["__admin_0042__"],
+      },
+      {
+        kind: "feature",
+        text: "Admin-SELECT bypass policies on profiles and receipts — additive, so non-admins' access stays identical. Admin INSERT/UPDATE/DELETE policies explicitly NOT added yet; bypass writes ship one table at a time alongside the screen that needs them",
+        commits: ["__admin_0042__"],
+      },
+      {
+        kind: "feature",
+        text: "AdminPanel modal with USERS + RECEIPTS tabs. Users tab shows id prefix, name, role badge (admin rows highlighted red), created date, dietary, XP. Receipts tab shows store, date, item count, total, uploader prefix",
+        commits: ["__admin_panel__"],
+      },
+      {
+        kind: "ux",
+        text: "Settings → ADMIN section appears only when the viewer's profile.role === 'admin'. Red accent + 🛠 glyph so it's obviously distinct from regular user tooling",
+        commits: ["__admin_panel__"],
+      },
+    ],
+    coming_soon: [
+      "Admin-DELETE on receipts (for clearing mis-OCR'd duplicate rows)",
+      "Admin view of pantry_items + pantry_scans across families",
+      "User detail drill-down (tap a user → their kitchen, their receipts, their cook logs)",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.7.4",
     date:    "2026-04-16",
