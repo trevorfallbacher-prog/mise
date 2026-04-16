@@ -12,7 +12,7 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
-import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
+import { findFoodType, inferFoodTypeFromName, canonicalIdsForType } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -1228,6 +1228,23 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               if (defaultLocation && !item.location) {
                 patch.location = defaultLocation;
               }
+              // Canonical bridge (18h): update ingredient_ids[] to
+              // reflect the new type's canonical mapping. Remove any
+              // canonicals that came from the PRIOR type (so Hot dog
+              // → Sausage swaps hot_dog for sausage instead of
+              // accumulating both) and add the new type's.
+              const prior     = canonicalIdsForType(item.typeId);
+              const incoming  = canonicalIdsForType(typeId);
+              const existing  = Array.isArray(item.ingredientIds) ? item.ingredientIds : [];
+              const priorSet  = new Set(prior);
+              const nextIds   = [
+                ...existing.filter(id => !priorSet.has(id)),
+                ...incoming,
+              ];
+              const deduped   = Array.from(new Set(nextIds));
+              const changed   = deduped.length !== existing.length
+                || deduped.some((id, i) => id !== existing[i]);
+              if (changed) patch.ingredientIds = deduped;
               onUpdate?.(patch);
               setTypePickerOpen(false);
             }}

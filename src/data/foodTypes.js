@@ -37,6 +37,18 @@
 //   aliases         — optional list of lowercase keyword strings that
 //                     infer this type. "hot dog", "frankfurter",
 //                     "wiener" → Sausages type.
+//   canonicalIds    — optional array of ingredient ids from the
+//                     bundled registry (src/data/ingredients.js) that
+//                     this type IS. The final drill-down bridge: when
+//                     a user marks "Franks Best Cheese Dogs" as
+//                     IDENTIFIED AS Hot Dogs, we tag the item's
+//                     ingredient_ids with ['hot_dog'] so a recipe
+//                     calling for "20 hot dogs" finds it via the
+//                     same exact-match path as a standard tagged
+//                     item. Only annotate types with a clean 1:few
+//                     canonical mapping — broad types (wweia_beef,
+//                     wweia_fruits) stay unannotated rather than
+//                     mistag half the shelf.
 //   parentId        — future nesting ("Cheese > Soft Cheese"). Unused
 //                     today; included for forward-compat.
 
@@ -65,12 +77,14 @@ export const FOOD_TYPES = [
     defaultTileId: "dairy",
     blurb: "Butter, margarine, ghee",
     aliases: ["butter", "margarine", "ghee"],
+    canonicalIds: ["butter"],
   },
   {
     id: "wweia_eggs", label: "Eggs", emoji: "🥚",
     defaultTileId: "dairy",
     blurb: "Whole eggs, whites, substitutes",
     aliases: ["egg", "eggs", "egg whites", "egg substitute"],
+    canonicalIds: ["eggs"],
   },
 
   // ── Proteins ────────────────────────────────────────────────────
@@ -99,10 +113,22 @@ export const FOOD_TYPES = [
     aliases: ["lamb", "mutton"],
   },
   {
+    id: "wweia_hot_dogs", label: "Hot dogs", emoji: "🌭",
+    defaultTileId: "meat_poultry",
+    blurb: "Franks, cheese dogs, plant-based dogs",
+    // Split out from wweia_sausages so "Franks Best Cheese Dogs"
+    // carries the hot_dog canonical specifically — recipes calling
+    // for "20 hot dogs" should find them without a runtime alias
+    // fallback. Sausage links, salami, etc. stay under wweia_sausages.
+    aliases: ["hot dog", "hotdog", "hot dogs", "hotdogs", "frankfurter", "wiener", "frank", "franks", "cheese dog", "cheese dogs"],
+    canonicalIds: ["hot_dog"],
+  },
+  {
     id: "wweia_sausages", label: "Sausages", emoji: "🌭",
     defaultTileId: "meat_poultry",
-    blurb: "Hot dogs, sausage links, salami, chorizo",
-    aliases: ["sausage", "hot dog", "hotdog", "frankfurter", "wiener", "bratwurst", "chorizo", "salami", "pepperoni", "kielbasa", "andouille", "italian sausage"],
+    blurb: "Sausage links, salami, pepperoni, chorizo",
+    aliases: ["sausage", "bratwurst", "chorizo", "salami", "pepperoni", "kielbasa", "andouille", "italian sausage", "breakfast sausage"],
+    canonicalIds: ["sausage"],
   },
   {
     id: "wweia_fish", label: "Fish", emoji: "🐟",
@@ -135,18 +161,25 @@ export const FOOD_TYPES = [
     defaultTileId: "bread",
     blurb: "Loaves, rolls, bagels, tortillas",
     aliases: ["bread", "loaf", "roll", "rolls", "bagel", "tortilla", "pita", "naan", "baguette", "sourdough", "ciabatta", "focaccia", "brioche", "challah", "english muffin"],
+    canonicalIds: ["bread"],
   },
   {
     id: "wweia_pasta", label: "Pasta", emoji: "🍝",
     defaultTileId: "pasta_grains",
     blurb: "Dried, fresh, stuffed",
     aliases: ["pasta", "noodle", "noodles", "spaghetti", "penne", "rigatoni", "fettuccine", "cavatappi", "fusilli", "rotini", "farfalle", "bow-tie", "macaroni", "bucatini", "linguine", "angel hair", "ziti", "orecchiette", "tortellini", "ravioli", "gnocchi", "orzo", "lasagna"],
+    // Generic 'pasta' canonical catches recipes that call for
+    // "1 lb pasta" without a specific shape. Shape-specific items
+    // (penne, rigatoni) already match via name-based canonical
+    // picking during add; this is the brand-name/custom fallback.
+    canonicalIds: ["pasta"],
   },
   {
     id: "wweia_rice", label: "Rice", emoji: "🍚",
     defaultTileId: "pasta_grains",
     blurb: "White, brown, wild, specialty",
     aliases: ["rice", "jasmine rice", "basmati", "arborio", "brown rice", "wild rice"],
+    canonicalIds: ["rice"],
   },
   {
     id: "wweia_grains", label: "Other grains", emoji: "🌾",
@@ -223,6 +256,17 @@ export const FOOD_TYPES = [
     defaultTileId: "produce",
     blurb: "Fresh, canned, paste, sauces",
     aliases: ["tomato", "cherry tomato", "roma tomato", "sun-dried tomato", "canned tomato", "tomato paste", "tomato sauce", "marinara"],
+    canonicalIds: ["tomato"],
+  },
+  {
+    id: "wweia_green_onions", label: "Green onions", emoji: "🌱",
+    defaultTileId: "produce",
+    // Split out from wweia_vegetables — green onions / scallions get
+    // called out in recipes so often ("20 scallions chopped") that
+    // they earn their own canonical bridge.
+    blurb: "Scallions, spring onions",
+    aliases: ["green onion", "green onions", "scallion", "scallions", "spring onion", "spring onions"],
+    canonicalIds: ["green_onion"],
   },
   {
     id: "wweia_herbs_fresh", label: "Fresh herbs", emoji: "🌿",
@@ -243,18 +287,23 @@ export const FOOD_TYPES = [
     defaultTileId: "baking",
     blurb: "AP, bread, whole wheat, specialty",
     aliases: ["flour", "all-purpose", "bread flour", "cake flour", "pastry flour", "whole wheat flour", "00 flour", "semolina", "rice flour", "almond flour", "coconut flour", "cornmeal", "masa"],
+    // Default to the most common flour; specific flour types are
+    // usually matched at add-time via the canonical registry.
+    canonicalIds: ["flour"],
   },
   {
     id: "wweia_sugars", label: "Sugars & sweeteners", emoji: "🍯",
     defaultTileId: "sweeteners",
     blurb: "Granulated, brown, powdered, honey, syrup",
     aliases: ["sugar", "brown sugar", "powdered sugar", "honey", "maple syrup", "molasses", "agave", "stevia", "monk fruit"],
+    canonicalIds: ["sugar"],
   },
   {
     id: "wweia_oils", label: "Oils", emoji: "🫗",
     defaultTileId: "oils_fats",
     blurb: "Cooking, finishing, specialty",
     aliases: ["olive oil", "vegetable oil", "canola oil", "avocado oil", "sesame oil", "coconut oil", "peanut oil", "grapeseed oil"],
+    canonicalIds: ["olive_oil"],
   },
   {
     id: "wweia_vinegars", label: "Vinegars", emoji: "🫙",
@@ -276,24 +325,28 @@ export const FOOD_TYPES = [
     defaultTileId: "condiments_sauces",
     blurb: "Hellmann's, Duke's, Kewpie, aioli, homemade",
     aliases: ["mayo", "mayonnaise", "miracle whip", "kewpie", "hellmann", "hellmanns", "duke's", "dukes", "aioli", "japanese mayo"],
+    canonicalIds: ["mayo"],
   },
   {
     id: "wweia_ketchup", label: "Ketchup", emoji: "🍅",
     defaultTileId: "condiments_sauces",
     blurb: "Heinz, curry ketchup, fancy ketchup",
     aliases: ["ketchup", "catsup", "tomato ketchup", "heinz ketchup", "curry ketchup", "banana ketchup", "mushroom ketchup"],
+    canonicalIds: ["ketchup"],
   },
   {
     id: "wweia_mustard", label: "Mustard", emoji: "🌭",
     defaultTileId: "condiments_sauces",
     blurb: "Dijon, yellow, whole-grain, honey mustard",
     aliases: ["mustard", "dijon", "yellow mustard", "brown mustard", "honey mustard", "whole grain mustard", "grainy mustard", "english mustard", "spicy brown"],
+    canonicalIds: ["mustard"],
   },
   {
     id: "wweia_hot_sauce", label: "Hot sauce", emoji: "🌶️",
     defaultTileId: "condiments_sauces",
     blurb: "Sriracha, Tabasco, Cholula, Frank's, sambal, harissa, gochujang",
     aliases: ["hot sauce", "sriracha", "tabasco", "cholula", "franks", "frank's", "tapatio", "crystal hot sauce", "sambal", "sambal oelek", "harissa", "gochujang", "chili oil", "chili crisp", "lao gan ma", "valentina", "yucateco"],
+    canonicalIds: ["hot_sauce"],
   },
   {
     id: "wweia_bbq_sauce", label: "BBQ sauce", emoji: "🍖",
@@ -306,12 +359,14 @@ export const FOOD_TYPES = [
     defaultTileId: "condiments_sauces",
     blurb: "Shoyu, tamari, dark soy, light soy",
     aliases: ["soy sauce", "shoyu", "tamari", "kikkoman", "dark soy", "light soy", "low sodium soy", "thin soy", "thick soy"],
+    canonicalIds: ["soy_sauce"],
   },
   {
     id: "wweia_fish_sauce", label: "Fish sauce", emoji: "🐟",
     defaultTileId: "condiments_sauces",
     blurb: "Nam pla, Red Boat, Three Crabs",
     aliases: ["fish sauce", "nam pla", "red boat", "three crabs", "nuoc mam", "colatura"],
+    canonicalIds: ["fish_sauce"],
   },
   {
     id: "wweia_asian_sauces", label: "Asian sauces", emoji: "🥢",
@@ -330,6 +385,7 @@ export const FOOD_TYPES = [
     defaultTileId: "condiments_sauces",
     blurb: "Genovese, jarred, homemade",
     aliases: ["pesto", "genovese pesto", "pesto alla genovese", "sun-dried tomato pesto", "arugula pesto"],
+    canonicalIds: ["pesto"],
   },
   {
     id: "wweia_salad_dressing", label: "Salad dressing", emoji: "🥗",
@@ -342,6 +398,7 @@ export const FOOD_TYPES = [
     defaultTileId: "condiments_sauces",
     blurb: "Red, white, shiro, aka",
     aliases: ["miso", "shiro miso", "aka miso", "red miso", "white miso", "awase miso"],
+    canonicalIds: ["miso"],
   },
   {
     id: "wweia_worcestershire", label: "Worcestershire", emoji: "🫙",
@@ -438,6 +495,27 @@ export function findFoodType(id) {
  * Minimum alias length = 3 chars so "oil" triggers wweia_oils but
  * trivial matches like "a" don't fire.
  */
+/**
+ * Return the canonical ingredient ids a bundled WWEIA type bridges
+ * to, or [] when the type has no clean canonical mapping (broad
+ * buckets like "Vegetables" or "Beef"). Used by the save path to
+ * tag custom items with the right canonical for recipe matching —
+ * "Franks Best Cheese Dogs" identified as Hot dogs carries hot_dog
+ * in its ingredient_ids so a recipe calling for "20 hot dogs"
+ * finds it via the same exact-match path as a standard item.
+ *
+ * Takes a typeId string (bundled slug OR user-type uuid). User-type
+ * uuids return [] today — the user_types table doesn't carry a
+ * canonical bridge yet (tracked in backlog for a future migration).
+ * Null / unknown ids also return [].
+ */
+export function canonicalIdsForType(typeId) {
+  if (!typeId) return [];
+  const t = typesById.get(typeId);
+  if (!t || !Array.isArray(t.canonicalIds)) return [];
+  return t.canonicalIds.filter(Boolean);
+}
+
 export function inferFoodTypeFromName(name) {
   const lower = (name || "").toLowerCase().trim();
   if (lower.length < 3) return null;

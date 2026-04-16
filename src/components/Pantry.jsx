@@ -28,7 +28,7 @@ function tilesForTab(tab) {
 }
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import TypePicker from "./TypePicker";
-import { FOOD_TYPES, findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
+import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdsForType } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
@@ -1065,6 +1065,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // (or any family member) saves their first custom item; grows as
   // real-life usage populates the recents ladder.
   const [userTemplates] = useUserTemplates(userId);
+  // YOUR RECENTS search box (18i). Filters the family's templates by
+  // substring match across name + components when present; otherwise
+  // the list shows starred (useCount >= 2) pinned to top + a cap of
+  // 5 total so users don't scroll through 30 rows to find last week's
+  // "Mama Bear's Garden Fresh Green Onion". Typing bypasses the cap.
+  const [recentsQuery, setRecentsQuery] = useState("");
 
   // Fill the custom form from a template. Called when the user taps
   // a row in "YOUR RECENTS". Name/emoji/category/unit/ingredientIds
@@ -1134,6 +1140,18 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     const compIds = customComponents.map(c => c.id);
     const primaryComp = customComponents[0] || null;
 
+    // ── IDENTIFIED-AS canonical bridge (chunk 18h) ─────────────────
+    // When the user set IDENTIFIED AS to a bundled WWEIA type that
+    // carries canonical mappings (e.g. wweia_hot_dogs → 'hot_dog'),
+    // merge those canonicals into the item's ingredient_ids[] so the
+    // recipe matcher's exact-match path finds it. "Franks Best
+    // Cheese Dogs" with components [cheddar, ground_pork] IDENTIFIED
+    // AS Hot dogs ends up with ingredient_ids = [cheddar,
+    // ground_pork, hot_dog] — a recipe calling for 20 hot dogs
+    // finds it, same as a vanilla hot_dog pack would.
+    const typeCanonicals = canonicalIdsForType(customTypeId);
+    const ingredientIds = Array.from(new Set([...compIds, ...typeCanonicals]));
+
     // Unified save shape. Single-canonical picks, multi-canonical
     // composed meals, and pure free-text all land in the same payload —
     // components.length drives whether ingredientId is set, kind flips
@@ -1144,7 +1162,11 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       // legacy ingredient_id scalar stays useful. Zero components = pure
       // free-text.
       ingredientId: primaryComp?.id || null,
-      ingredientIds: compIds,
+      // ingredientIds is the user's picked components UNION the
+      // type-bridged canonicals. compIds drives kind (meal vs
+      // ingredient) since the bridged canonicals are meta-tags, not
+      // structural components.
+      ingredientIds,
       // 2+ components promotes the item to a Meal on save; single or
       // zero stays an ingredient (either free-text or canonical-tagged).
       kind: compIds.length >= 2 ? "meal" : "ingredient",
@@ -1205,7 +1227,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         // AND identification.
         tileId: customTileId || null,
         typeId: customTypeId || null,
-        ingredientIds: compIds,
+        // Persist the type-bridged canonicals on the template too so
+        // the next family member who picks this template inherits the
+        // right ingredient_ids without having to re-pick the type.
+        ingredientIds,
       });
       if (!tmplErr && templateId && compIds.length > 0) {
         await setComponentsForTemplate(
@@ -1290,83 +1315,202 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 rarely worked on iOS keyboards anyway. Users can change the
                 name freely; the emoji stays consistent for custom items. */}
 
-            {/* YOUR RECENTS — family-shared user templates, newest first.
-                Tap any row to autofill name/unit/category/components.
+            {/* YOUR RECENTS — family-shared user templates. Layout (18i):
+                  * Starred (useCount ≥ 2 — items the family actually
+                    reaches for) pin to the top with a ⭐ badge
+                  * Recents (everything else) fill under, newest first
+                  * Capped at 5 visible rows when idle so the picker
+                    doesn't become a wall of noise; typing in the
+                    search box lifts the cap and filters across ALL
+                    templates by name + component ids
                 Hidden when the family has no templates yet (first-ever
                 custom add on an account — a fresh home-kitchen). */}
-            {userTemplates.length > 0 && (
-              <div style={{ marginBottom: 14 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 8,
-                }}>
-                  YOUR RECENTS · {userTemplates.length}
-                </div>
-                <div style={{
-                  display: "flex", flexDirection: "column", gap: 6,
-                  maxHeight: 220, overflowY: "auto",
-                  padding: 4, background: "#0a0a0a",
-                  border: "1px solid #1e1e1e", borderRadius: 10,
-                }}>
-                  {userTemplates.slice(0, 12).map(tpl => (
-                    <button
-                      key={tpl.id}
-                      onClick={() => fillFromTemplate(tpl)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 10,
-                        padding: "8px 10px",
-                        background: "transparent", border: "1px solid transparent",
-                        borderRadius: 8, cursor: "pointer", textAlign: "left",
-                      }}
-                      onMouseOver={e => { e.currentTarget.style.background = "#141414"; e.currentTarget.style.borderColor = "#2a2a2a"; }}
-                      onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "transparent"; }}
-                    >
-                      <span style={{ fontSize: 18, flexShrink: 0 }}>{tpl.emoji || "🥫"}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{
-                          fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-                          color: "#f0ece4",
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
+            {userTemplates.length > 0 && (() => {
+              const q = recentsQuery.trim().toLowerCase();
+              const isSearching = q.length > 0;
+
+              // Filter first if searching. Match against the display
+              // name AND the component id slugs so "hot dog" finds
+              // "Franks Best Cheese Dogs" via hot_dog in components.
+              const matches = isSearching
+                ? userTemplates.filter(tpl => {
+                    const name = (tpl.name || "").toLowerCase();
+                    if (name.includes(q)) return true;
+                    const compHit = (tpl.ingredientIds || []).some(id =>
+                      id.replace(/_/g, " ").toLowerCase().includes(q)
+                    );
+                    return compHit;
+                  })
+                : userTemplates;
+
+              // Starred = used 2+ times. Lightweight heuristic for
+              // "family staple" without a schema change — if the
+              // family pulled it out of the recents ladder more than
+              // once, it earned the pin. Sort starred by useCount desc,
+              // tiebreak on recency (already sorted by last_used_at).
+              const starred = matches
+                .filter(t => (t.useCount || 0) >= 2)
+                .sort((a, b) => (b.useCount || 0) - (a.useCount || 0));
+              const starredIds = new Set(starred.map(t => t.id));
+              const rest = matches.filter(t => !starredIds.has(t.id));
+              // Idle cap — 5 total across starred + rest. Searching
+              // removes the cap (user is actively hunting).
+              const ordered = [...starred, ...rest];
+              const visible = isSearching ? ordered : ordered.slice(0, 5);
+              const hiddenCount = ordered.length - visible.length;
+
+              const renderRow = (tpl) => {
+                const isStarred = (tpl.useCount || 0) >= 2;
+                return (
+                  <button
+                    key={tpl.id}
+                    onClick={() => fillFromTemplate(tpl)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "8px 10px",
+                      background: isStarred ? "#1a150a" : "transparent",
+                      border: `1px solid ${isStarred ? "#f5c84233" : "transparent"}`,
+                      borderRadius: 8, cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseOver={e => { e.currentTarget.style.background = "#141414"; e.currentTarget.style.borderColor = "#2a2a2a"; }}
+                    onMouseOut={e => {
+                      e.currentTarget.style.background = isStarred ? "#1a150a" : "transparent";
+                      e.currentTarget.style.borderColor = isStarred ? "#f5c84233" : "transparent";
+                    }}
+                  >
+                    <span style={{ fontSize: 18, flexShrink: 0 }}>{tpl.emoji || "🥫"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                        color: "#f0ece4",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        display: "flex", alignItems: "center", gap: 6,
+                      }}>
+                        {isStarred && <span style={{ fontSize: 11, flexShrink: 0 }}>⭐</span>}
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {tpl.name}
-                        </div>
-                        <div style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 9,
-                          color: "#666", letterSpacing: "0.06em", marginTop: 2,
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {tpl.ingredientIds.length > 0
-                            ? tpl.ingredientIds.slice(0, 4).map(id => id.replace(/_/g, " ").toUpperCase()).join(" · ")
-                            : "NO COMPONENTS"}
-                          {tpl.ingredientIds.length > 4 && ` · +${tpl.ingredientIds.length - 4}`}
-                        </div>
+                        </span>
                       </div>
-                      <div style={{ flexShrink: 0, textAlign: "right" }}>
-                        <div style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 9,
-                          color: "#f5c842", letterSpacing: "0.08em",
-                        }}>
-                          {tpl.useCount}×
-                        </div>
-                        <div style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 8,
-                          color: "#555", letterSpacing: "0.06em", marginTop: 1,
-                        }}>
-                          {formatAgo(tpl.lastUsedAt)}
-                        </div>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: "#666", letterSpacing: "0.06em", marginTop: 2,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}>
+                        {tpl.ingredientIds.length > 0
+                          ? tpl.ingredientIds.slice(0, 4).map(id => id.replace(/_/g, " ").toUpperCase()).join(" · ")
+                          : "NO COMPONENTS"}
+                        {tpl.ingredientIds.length > 4 && ` · +${tpl.ingredientIds.length - 4}`}
                       </div>
-                    </button>
-                  ))}
+                    </div>
+                    <div style={{ flexShrink: 0, textAlign: "right" }}>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: "#f5c842", letterSpacing: "0.08em",
+                      }}>
+                        {tpl.useCount}×
+                      </div>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 8,
+                        color: "#555", letterSpacing: "0.06em", marginTop: 1,
+                      }}>
+                        {formatAgo(tpl.lastUsedAt)}
+                      </div>
+                    </div>
+                  </button>
+                );
+              };
+
+              return (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    marginBottom: 8,
+                  }}>
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#7eb8d4", letterSpacing: "0.12em",
+                    }}>
+                      YOUR RECENTS · {userTemplates.length}
+                    </div>
+                    {starred.length > 0 && (
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: "#f5c842", letterSpacing: "0.08em",
+                      }}>
+                        ⭐ {starred.length} STARRED
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Search — filters across name + component ids.
+                      Only shown when the family has enough templates
+                      that scrolling starts to hurt. */}
+                  {userTemplates.length > 3 && (
+                    <div style={{ position: "relative", marginBottom: 6 }}>
+                      <input
+                        value={recentsQuery}
+                        onChange={e => setRecentsQuery(e.target.value)}
+                        placeholder="Search your recents…"
+                        style={{
+                          width: "100%", padding: "8px 12px",
+                          background: "#0a0a0a",
+                          border: "1px solid #1e1e1e",
+                          borderRadius: 8,
+                          fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                          color: "#f0ece4", outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      {isSearching && (
+                        <button
+                          onClick={() => setRecentsQuery("")}
+                          style={{
+                            position: "absolute", right: 8, top: "50%",
+                            transform: "translateY(-50%)",
+                            background: "transparent", border: "none",
+                            color: "#666", fontSize: 14, cursor: "pointer",
+                            padding: "2px 6px",
+                          }}
+                          aria-label="Clear search"
+                        >✕</button>
+                      )}
+                    </div>
+                  )}
+
+                  <div style={{
+                    display: "flex", flexDirection: "column", gap: 6,
+                    maxHeight: isSearching ? 320 : 260,
+                    overflowY: "auto",
+                    padding: 4, background: "#0a0a0a",
+                    border: "1px solid #1e1e1e", borderRadius: 10,
+                  }}>
+                    {visible.length === 0 ? (
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#555", letterSpacing: "0.08em",
+                        padding: "14px 10px", textAlign: "center",
+                      }}>
+                        NO MATCHES FOR "{recentsQuery}"
+                      </div>
+                    ) : (
+                      visible.map(renderRow)
+                    )}
+                  </div>
+
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#444", letterSpacing: "0.06em",
+                    marginTop: 6, textAlign: "center",
+                  }}>
+                    {isSearching
+                      ? `${visible.length} of ${userTemplates.length} templates`
+                      : hiddenCount > 0
+                        ? `SHOWING 5 · SEARCH TO FIND ${hiddenCount} MORE`
+                        : "TAP A RECENT TO AUTO-FILL · OR KEEP TYPING FOR SOMETHING NEW"}
+                  </div>
                 </div>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 9,
-                  color: "#444", letterSpacing: "0.06em",
-                  marginTop: 6, textAlign: "center",
-                }}>
-                  TAP A RECENT TO AUTO-FILL · OR KEEP TYPING FOR SOMETHING NEW
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Name input + typeahead. As the user types, filter the
                 family's templates by substring match and surface a
@@ -2493,10 +2637,16 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             // picker now emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element
             // array. Either way we carry it through so composite items
-            // land in the pantry with the correct tag set.
-            ...(Array.isArray(s.ingredientIds) && s.ingredientIds.length
-                ? { ingredientIds: s.ingredientIds }
-                : {}),
+            // land in the pantry with the correct tag set. Bridge
+            // canonicals from the inferred type (18h) get merged in
+            // so scanned "Franks Best Cheese Dogs" picks up hot_dog
+            // the same as a manual add would.
+            ...(function() {
+              const base = Array.isArray(s.ingredientIds) ? s.ingredientIds : [];
+              const bridged = canonicalIdsForType(s.typeId);
+              const merged = Array.from(new Set([...base, ...bridged]));
+              return merged.length ? { ingredientIds: merged } : {};
+            })(),
             // IDENTIFIED AS + STORED IN placement (0036, 0038).
             // Scanner normalization inferred + set these; forward
             // them so the classifier short-circuits at render time

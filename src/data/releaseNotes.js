@@ -42,9 +42,64 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.0";
+export const CURRENT_VERSION = "0.7.1";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.1",
+    date:    "2026-04-16",
+    title:   "The canonical bridge — your brand names finally match recipe calls",
+    summary:
+      "The missing link. When a recipe says \"20 hot dogs\" our system now " +
+      "sees your Franks Best Cheese Dogs — because IDENTIFIED AS Hot Dogs " +
+      "tags the item with the canonical hot_dog behind the scenes. Same " +
+      "for Mama Bear's Garden Fresh Green Onion → green_onion, your " +
+      "Hellmann's → mayo, your homemade pesto → pesto. The type axis now " +
+      "writes through to ingredient_ids[] so the recipe matcher's exact-" +
+      "match path finds every branded/custom item you own. YOUR RECENTS " +
+      "also got a long-overdue cleanup: starred items (used 2+ times) " +
+      "pin to the top, the list caps at 5 idle, and a search bar tucks " +
+      "the rest behind a keystroke.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "Canonical bridge: ~22 WWEIA types now carry a canonicalIds mapping (Hot dogs → hot_dog, Green onions → green_onion, Mayo → mayo, Pasta → pasta, …). Picking IDENTIFIED AS on a custom item auto-tags its ingredient_ids so recipe matching finds it via exact match, same as a vanilla canonical item",
+        commits: ["__18h_canonical_bridge__"],
+      },
+      {
+        kind: "feature",
+        text: "Hot dogs split out from Sausages as their own WWEIA type — \"Franks Best Cheese Dogs\" now identifies specifically as Hot dogs and carries hot_dog, not the broader sausage. Salami, chorizo, pepperoni stay under Sausages",
+        commits: ["__18h_canonical_bridge__"],
+      },
+      {
+        kind: "feature",
+        text: "Green onions split out from Vegetables as their own WWEIA type — recipes calling for scallions/green onions specifically now bridge to your custom green-onion entries",
+        commits: ["__18h_canonical_bridge__"],
+      },
+      {
+        kind: "feature",
+        text: "New hot_dog + green_onion canonicals added to the bundled ingredient registry. These were the most-requested recipe terms that had no canonical to bind to",
+        commits: ["__18h_canonical_bridge__"],
+      },
+      {
+        kind: "ux",
+        text: "YOUR RECENTS redesign: starred items (⭐ used 2+ times) pin to the top, the idle list caps at 5 rows with a hint showing how many more are tucked away, and a search box above filters across name AND component ids (\"hot dog\" finds your Franks Best Cheese Dogs via its components)",
+        commits: ["__18i_recents_ui__"],
+      },
+      {
+        kind: "ux",
+        text: "Re-picking IDENTIFIED AS on an existing item now rewrites the canonical bridge tags automatically — switching from Hot dogs to Sausages swaps hot_dog for sausage in ingredient_ids instead of accumulating both",
+        commits: ["__18h_canonical_bridge__"],
+      },
+    ],
+    coming_soon: [
+      "Canonical bridge on user-created types too (family-curated \"in our house it's a sandwich\" that still matches recipes)",
+      "Drill-into-type: tap IDENTIFIED AS anywhere to filter the pantry to all items of that type",
+      "Type-aware recipe matcher fallback: recipe wants spaghetti, you have Cavatappi Pasta — same type, count as close match",
+      "Persistent per-template starring (not just use-count-derived)",
+      "Admin-promoted types: popular user-created types get blessed into the bundled set",
+    ],
+  },
   {
     version: "0.7.0",
     date:    "2026-04-16",

@@ -690,6 +690,16 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
+    id: "hot_dog", name: "Hot Dog", shortName: "Hot Dog",
+    parentId: "pork_hub", emoji: "🌭", category: "meat",
+    units: [
+      { id: "count", label: "dogs", toBase: 50 },
+      { id: "pack",  label: "packs", toBase: 400 }, // ~8 per pack
+      { id: "lb",    label: "lb",    toBase: 453.6 },
+    ],
+    defaultUnit: "count",
+  },
+  {
     id: "bacon", name: "Bacon / Pancetta", shortName: "Bacon",
     parentId: "pork_hub", emoji: "🥓", category: "meat",
     units: [
@@ -850,6 +860,15 @@ export const INGREDIENTS = [
   {
     id: "pearl_onion", name: "Pearl Onions", emoji: "🧅", category: "produce",
     units: [{ id: "count", label: "onions", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "green_onion", name: "Green Onion", shortName: "Green Onion",
+    emoji: "🌱", category: "produce",
+    units: [
+      { id: "count", label: "stalks",  toBase: 1 },
+      { id: "bunch", label: "bunches", toBase: 8 },
+    ],
     defaultUnit: "count",
   },
   {
