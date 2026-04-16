@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 5;
+export const SEED_VERSION = 6;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -213,16 +213,48 @@ export const SEED_INGREDIENT_INFO = [
     info: {
       description: "Dehydrated garlic, ground fine. Delivers garlic flavor without the moisture, texture, or burn of fresh — it dissolves into dry rubs, marinades, and doughs where fresh garlic can't go. Not a substitute for fresh in sautés; a complement to it.",
       flavorProfile: "Mellow, sweet, roasted-garlic character. Less sharp and pungent than fresh — the dehydration tames the allicin bite.",
-      prepTips: "Hydrate in a few drops of water before adding to wet dishes — prevents clumping. Do NOT confuse with garlic salt (which is ~75% salt).",
-      storage: { location: "pantry", shelfLifeDays: 1095, tips: "Hygroscopic — absorbs moisture and clumps. A clumped jar is past its prime." },
+      prepTips: "Hydrate in a few drops of water before adding to wet dishes — prevents clumping and helps it bloom. For dry rubs and seasoning blends, use straight. Do NOT confuse with garlic salt (which is ~75% salt — measuring it like garlic powder will oversalt every dish).",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 1095,
+        shelfLife: { fridge: null, freezer: 1825, pantry: 1095 },
+        tips: "Hygroscopic — absorbs moisture and clumps. A clumped jar is past its prime. Add a few grains of rice to the jar to absorb moisture in humid kitchens.",
+        spoilageSigns: "Hard rock-like clumps that won't break up, faded color (should be cream/beige, not gray), no aroma when opened.",
+        freezable: true,
+        freezeNotes: "Freezing extends shelf life dramatically. Use straight from the freezer — no need to thaw before measuring.",
+      },
       substitutions: [
-        { id: "garlic", tier: "creative", note: "Fresh garlic — more pungent, adds moisture. ⅛ tsp powder ≈ 1 clove." },
+        { id: "garlic", tier: "creative", note: "Fresh garlic — more pungent, adds moisture. ⅛ tsp powder ≈ 1 clove. Won't disperse evenly in dry applications." },
+        { id: "garlic_salt", tier: "caution", note: "75% salt by weight. Reduce other salt in the recipe by half if substituting 1:1." },
+        { id: "onion_powder", tier: "creative", note: "Different aromatic but fills the same dry-rub role. Often used together anyway." },
       ],
-      pairs: ["onion_powder", "paprika", "black_pepper", "cumin", "oregano"],
-      origin: "Dehydrated garlic originated in commercial food processing (mid-20th century US), but garlic itself is Central Asian — cultivated for 5,000+ years.",
-      culturalNotes: "Snobs dismiss garlic powder but professional kitchens use it constantly. It does something fresh garlic literally cannot: distribute evenly in a dry rub, season a burger patty throughout, or flavor bread dough without wet pockets.",
+      pairs: ["onion_powder", "paprika", "black_pepper", "cumin", "oregano", "salt", "thyme"],
+      flavor: {
+        primary: ["umami", "sweet"],
+        intensity: "moderate",
+        heatChange: {
+          raw: "mild, sweet, slightly dusty",
+          cooked: "deeply savory, roasted-garlic warmth — blooms in fat",
+          charred: "bitter and acrid; burns much faster than fresh garlic because there's no moisture to protect it",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 10, protein_g: 0.5, fat_g: 0, carb_g: 2.3, fiber_g: 0.3 },
+      origin: "Dehydrated garlic originated in commercial food processing (mid-20th century US). Garlic itself is Central Asian — cultivated for 5,000+ years. China grows ~80% of the world's commercial garlic supply.",
+      culturalNotes: "Snobs dismiss garlic powder but professional kitchens use it constantly. It does something fresh garlic literally cannot: distribute evenly in a dry rub, season a burger patty throughout, or flavor bread dough without wet pockets. Different tools for different jobs — chefs who only use fresh garlic are working with one hand tied behind their back.",
+      recipes: ["Dry Rubs (BBQ)", "Garlic Bread", "Burger Seasoning", "Ranch Dressing", "Caesar Dressing", "Pretzel Bread"],
       allergens: ["allium"],
-      nutrition: { per: "1 tsp", kcal: 10, protein_g: 0.5, fat_g: 0, carb_g: 2 },
+      allergenDetail: "Allium family (onions, garlic, leeks, shallots). FODMAP-sensitive folks react strongly to all alliums; garlic powder is just as problematic as fresh.",
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "high", nightshade: false, allium: true, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Avoid the cheapest white-label brands — quality varies wildly. McCormick, Spice Islands, Penzeys, and Burlap & Barrel are reliable. Granulated garlic (slightly coarser than powder) is what most pro kitchens actually stock — same flavor, less clumping.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: true,
+        qualityMatters: true,
+        qualityNote: "The $2 generic vs $6 Penzeys gap is real — the cheap stuff often tastes flat and dusty. Worth the upgrade for any spice you use weekly.",
+      },
+      skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
     },
   },
   {
