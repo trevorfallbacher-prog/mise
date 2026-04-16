@@ -29,7 +29,9 @@ function tilesForTab(tab) {
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
+import ModalSheet from "./ModalSheet";
 import ReceiptView from "./ReceiptView";
+import { Z } from "../lib/tokens";
 import {
   setComponentsForParent,
   componentsFromIngredientIds,
@@ -1068,9 +1070,17 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   };
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:160, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}>
-      <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 40px", maxHeight:"85vh", overflowY:"auto" }}>
-        <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 20px" }} />
+    <>
+    {/* CANCEL button at the bottom is the explicit dismiss, so we
+        suppress ModalSheet's ✕. Form content scrolls inside the
+        sheet; swipe-down-to-dismiss only activates at scrollTop=0
+        (ModalSheet handles that guard internally). */}
+    <ModalSheet
+      onClose={onClose}
+      zIndex={Z.modal}
+      showClose={false}
+      maxHeight="85vh"
+    >
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6 }}>
           {target === "shopping"
             ? "+ TO SHOPPING LIST"
@@ -1468,37 +1478,33 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
           </button>
         </div>
         </>
-      </div>
+    </ModalSheet>
 
-      {/* IngredientDetailSheet removed in chunk 13a — canonical browse-
-          and-detail-sheet path gone. Unified search in the name input
-          handles discovery; tapping a canonical suggestion fills the
-          form directly (no preview sheet). */}
-
-      {/* Components picker, layered over the add-item modal. Seeded
-          with the current customComponents so reopening shows the
-          current selection; commits back into the same state. The
-          pantry row doesn't exist yet, so this is pure in-memory
-          accumulation — the save() path is what persists everything
-          in one atomic user action. */}
-      {customComponentsOpen && (
-        <LinkIngredient
-          item={{
-            name: customName.trim() || "(new custom item)",
-            emoji: "🥫",
-            ingredientIds: customComponents.map(c => c.id),
-          }}
-          onLink={(ids) => {
-            const resolved = ids
-              .map(id => ({ id, canonical: findIngredient(id) }))
-              .filter(x => x.canonical);
-            setCustomComponents(resolved);
-            setCustomComponentsOpen(false);
-          }}
-          onClose={() => setCustomComponentsOpen(false)}
-        />
-      )}
-    </div>
+    {/* Components picker, rendered as a SIBLING of ModalSheet so its
+        fixed positioning isn't contained by ModalSheet's swipe
+        transform (transform on an ancestor contains position:fixed
+        descendants — which would anchor LinkIngredient to the sheet
+        instead of the viewport and drag it along with the swipe).
+        LinkIngredient has its own zIndex higher than AddItemModal's
+        so it layers correctly. */}
+    {customComponentsOpen && (
+      <LinkIngredient
+        item={{
+          name: customName.trim() || "(new custom item)",
+          emoji: "🥫",
+          ingredientIds: customComponents.map(c => c.id),
+        }}
+        onLink={(ids) => {
+          const resolved = ids
+            .map(id => ({ id, canonical: findIngredient(id) }))
+            .filter(x => x.canonical);
+          setCustomComponents(resolved);
+          setCustomComponentsOpen(false);
+        }}
+        onClose={() => setCustomComponentsOpen(false)}
+      />
+    )}
+    </>
   );
 }
 
