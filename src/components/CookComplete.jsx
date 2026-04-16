@@ -121,7 +121,17 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
     if (!pantryRow) continue;
     const canonical = extra.ingredientId ? findIngredient(extra.ingredientId) : null;
     const used = { amount: Number(extra.amount), unit: extra.unit };
-    const newAmount = canonical ? decrementRow(pantryRow, used, canonical) : null;
+    // Meal rows (kind='meal') have no ingredientId / canonical, but also no
+    // unit ambiguity — everything is "serving" on both sides — so we can
+    // subtract directly without going through the converter.
+    let newAmount;
+    if (canonical) {
+      newAmount = decrementRow(pantryRow, used, canonical);
+    } else if (extra.unit === pantryRow.unit) {
+      newAmount = Math.max(0, Number(pantryRow.amount) - used.amount);
+    } else {
+      newAmount = null;
+    }
     out.push({
       pantryRowId: pantryRow.id,
       pantryRow,
@@ -231,6 +241,11 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   const save = async () => {
     setSaving(true);
     setError(null);
+
+    // 1) Insert the cook_log first so we have its id for source_cook_log_id
+    //    back-references on any pantry rows we're about to create. Errors
+    //    here abort everything — we never want to mutate the pantry against
+    //    a cook that didn't log.
     const payload = {
       user_id: userId,
       recipe_slug:    recipe.slug,
@@ -244,13 +259,158 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       diners: [...selectedDiners],
       is_favorite: rating === "good" || rating === "nailed",
     };
-    const { error: err } = await supabase.from("cook_logs").insert(payload);
-    if (err) {
-      console.error("[cook_logs] insert failed:", err);
-      setError(err.message || "Couldn't save. Try again?");
+    const { data: logRow, error: logErr } = await supabase
+      .from("cook_logs")
+      .insert(payload)
+      .select("id")
+      .single();
+    if (logErr) {
+      console.error("[cook_logs] insert failed:", logErr);
+      setError(logErr.message || "Couldn't save. Try again?");
       setSaving(false);
       return;
     }
+    const cookLogId = logRow?.id || null;
+
+    // 2) Apply pantry mutations in a single setPantry call. useSyncedList
+    //    diffs prev vs next and fires INSERT / UPDATE / DELETE behind the
+    //    scenes, so we just return the post-cook array.
+    if (setPantry) {
+      const plan = buildRemovalPlan(usedItems, extraRemovals, pantry);
+      setPantry(prev => {
+        const byId = new Map(prev.map(r => [r.id, r]));
+
+        // 2a) Decrements from the removal plan. Non-convertible entries are
+        //     left untouched — the confirm-removal screen flagged them red
+        //     and we don't want to risk a bad write based on a unit we
+        //     couldn't resolve.
+        for (const entry of plan) {
+          if (!entry.convertible) continue;
+          const row = byId.get(entry.pantryRowId);
+          if (!row) continue;
+          if (entry.newAmount <= 0) {
+            byId.delete(row.id);
+          } else {
+            byId.set(row.id, { ...row, amount: entry.newAmount });
+          }
+        }
+
+        // 2b) Leftover row creation. Compound-produce recipes create or
+        //     merge a kind='ingredient' row under the recipe's produced
+        //     ingredient id (sriracha bottle ↔ homemade sriracha live as
+        //     the same id). Regular meals create a fresh kind='meal' row
+        //     keyed by source_cook_log_id.
+        const wantsLeftover = leftoverChoice === "yes"
+          && leftoverLocation
+          && leftoverLocation !== "garbage";
+        if (wantsLeftover) {
+          const now = new Date();
+          const produces = recipe?.produces;
+          const fraction = leftoverMode === "fraction"
+            ? leftoverFraction
+            : Math.min(1, Math.max(0, leftoverServings / (Number(recipe?.serves) || 1)));
+
+          if (produces?.kind === "ingredient" && produces.ingredientId) {
+            const canonical = findIngredient(produces.ingredientId);
+            const yieldAmount = Number(produces.yield?.amount) || 1;
+            const yieldUnit   = produces.yield?.unit || canonical?.defaultUnit || "g";
+            const savedAmount = yieldAmount * fraction;
+            const shelfDays = leftoverLocation === "freezer"
+              ? (produces.freezerShelfLifeDays ?? produces.shelfLifeDays ?? 90)
+              : (produces.shelfLifeDays ?? 90);
+            const expiresAt = new Date(now.getTime() + shelfDays * 86400000);
+
+            // Merge with an existing same-id same-location row so the
+            // compound-ingredient insight holds: bought bottle + homemade
+            // batch in the same fridge land as one row, earliest-expiry
+            // wins per the 0025 merge rule.
+            const existing = [...byId.values()].find(r =>
+              r.ingredientId === produces.ingredientId &&
+              (r.location || "pantry") === leftoverLocation &&
+              (r.kind || "ingredient") === "ingredient"
+            );
+            if (existing) {
+              byId.set(existing.id, {
+                ...existing,
+                amount: Number(existing.amount) + savedAmount,
+                expiresAt: existing.expiresAt && existing.expiresAt < expiresAt
+                  ? existing.expiresAt
+                  : expiresAt,
+                purchasedAt: now,
+                sourceRecipeSlug: recipe.slug,
+                sourceCookLogId: cookLogId,
+              });
+            } else {
+              const newId = typeof crypto !== "undefined" && crypto.randomUUID
+                ? crypto.randomUUID()
+                : `pantry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+              byId.set(newId, {
+                id: newId,
+                ingredientId: produces.ingredientId,
+                name: canonical?.name || produces.ingredientId,
+                emoji: canonical?.emoji || recipe.emoji || "🥣",
+                amount: savedAmount,
+                unit: yieldUnit,
+                max: Math.max(yieldAmount, savedAmount),
+                category: canonical?.category || "pantry",
+                lowThreshold: 0.25,
+                priceCents: null,
+                location: leftoverLocation,
+                expiresAt,
+                purchasedAt: now,
+                kind: "ingredient",
+                servingsRemaining: null,
+                sourceRecipeSlug: recipe.slug,
+                sourceCookLogId: cookLogId,
+                ownerId: userId,
+              });
+            }
+          } else {
+            // Regular meal: kind='meal' row keyed by cook_log_id so the
+            // same cook can't accidentally merge into a prior night's
+            // carbonara. Shelf-life defaults: fridge 3d, freezer 60d,
+            // pantry no default (shelf-stable dishes are rare enough that
+            // the user can set it manually later).
+            const servesCount = Number(recipe?.serves) || 1;
+            const savedServings = leftoverMode === "fraction"
+              ? servesCount * fraction
+              : Math.max(0, leftoverServings);
+            const shelfDays = leftoverLocation === "freezer" ? 60
+              : leftoverLocation === "fridge" ? 3
+              : 0;
+            const expiresAt = shelfDays > 0
+              ? new Date(now.getTime() + shelfDays * 86400000)
+              : null;
+            const newId = typeof crypto !== "undefined" && crypto.randomUUID
+              ? crypto.randomUUID()
+              : `meal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            byId.set(newId, {
+              id: newId,
+              ingredientId: null,
+              name: `Leftover ${recipe.title}`,
+              emoji: recipe.emoji || "🍽️",
+              amount: savedServings,
+              unit: "serving",
+              max: servesCount,
+              category: recipe.category || "pantry",
+              lowThreshold: 0.25,
+              priceCents: null,
+              location: leftoverLocation,
+              expiresAt,
+              purchasedAt: now,
+              kind: "meal",
+              servingsRemaining: savedServings,
+              sourceRecipeSlug: recipe.slug,
+              sourceCookLogId: cookLogId,
+              ownerId: userId,
+            });
+          }
+        }
+
+        return [...byId.values()];
+      });
+    }
+
     setSaving(false);
     onFinish?.({ saved: true, rating });
   };
