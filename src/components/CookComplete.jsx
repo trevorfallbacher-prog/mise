@@ -160,17 +160,44 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // removal plan. Each entry is an opaque decrement against a specific row.
   const [extraRemovals, setExtraRemovals] = useState([]);
   const [addLeftoverOpen, setAddLeftoverOpen] = useState(false);
+  // Leftovers state. leftoverChoice is the yes/no from the first leftover
+  // screen; leftoverLocation selects fridge/freezer/pantry (or garbage, which
+  // means "I'm tossing the extra" and bypasses the pantry write). Mode +
+  // fraction/servings are two alternative ways to express the amount saved —
+  // users who don't weigh portions stay on "fraction" (⅛ ¼ ⅓ ½ ⅔ ¾ full),
+  // users who track nutrition flip to "servings" and key in a number.
+  const [leftoverChoice,   setLeftoverChoice]   = useState(null);
+  const [leftoverLocation, setLeftoverLocation] = useState(null);
+  const [leftoverMode,     setLeftoverMode]     = useState("fraction");
+  const [leftoverFraction, setLeftoverFraction] = useState(0.5);
+  const [leftoverServings, setLeftoverServings] = useState(() => {
+    const diners = 1;
+    return Math.max(1, Number(recipe?.serves || 2) - diners);
+  });
+
+  // Compound recipes (sriracha, pesto, stock) produce an ingredient row the
+  // user fully intended to save — skipping the yes/no feels right, but we
+  // still ask so "I made sriracha but knocked it over" stays expressible.
+  // Copy varies so the yes/no screen doesn't read weird for compounds.
+  const isCompoundProduce = recipe?.produces?.kind === "ingredient";
 
   // Step numbering helper. The flow is a variable-length sequence depending
   // on whether the recipe has ingredients (adds the pantry pair) and whether
   // the user has family/friends (adds diners). Pass the phase id to get a
   // { num, denom } back and stick them in the STEP label.
+  //
+  // Leftovers screens count as a single step in the ratio (they're a logical
+  // pair) to keep the progress bar from feeling like it's stalling. The
+  // location screen just slides in after the yes/no without bumping the
+  // numerator.
   const stepOf = (id) => {
     const seq = [];
     if (usedItems.length > 0) seq.push("ingredientsUsed", "confirmRemoval");
+    seq.push("leftovers");
     if (connections.length > 0) seq.push("diners");
     seq.push("rating", "notes");
-    const i = seq.indexOf(id);
+    const normalized = id === "leftoverLocation" ? "leftovers" : id;
+    const i = seq.indexOf(normalized);
     return { num: i + 1, denom: seq.length };
   };
 
@@ -777,9 +804,231 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
             ← BACK
           </button>
-          <button onClick={() => setPhase(connections.length > 0 ? "diners" : "rating")}
+          <button onClick={() => setPhase("leftovers")}
             style={{ flex:2, padding:"14px", background:"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#111", cursor:"pointer", letterSpacing:"0.08em" }}>
             {plan.length === 0 ? "CONTINUE →" : `REMOVE ${plan.length} →`}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── phase: leftovers? (yes/no) ───────────────────────────────────────────
+  //
+  // Single binary question — did anything survive the meal? For compounds
+  // (sriracha, pesto, stock) the copy reframes as "bottle this up?" since
+  // the user made this specifically to save; for regular dishes it's the
+  // classic "store leftovers?" No path skips straight to diners/rating;
+  // Yes routes to the location + amount picker.
+  if (phase === "leftovers") {
+    const { num, denom } = stepOf("leftovers");
+    const prevPhase = usedItems.length > 0 ? "confirmRemoval" : "celebrate";
+    const nextOnNo = connections.length > 0 ? "diners" : "rating";
+    return shell(
+      <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px" }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
+          STEP {num} OF {denom}
+        </div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
+          {isCompoundProduce ? "Bottle this up?" : "Store leftovers?"}
+        </h2>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:28 }}>
+          {isCompoundProduce
+            ? "We'll add it to your pantry so you can pull from it next time a recipe calls for it."
+            : "Put a portion in the fridge / freezer and it'll show up in your pantry for a future meal."}
+        </p>
+
+        <div style={{ flex:1, display:"flex", flexDirection:"column", gap:12 }}>
+          <button
+            onClick={() => { setLeftoverChoice("yes"); setPhase("leftoverLocation"); }}
+            style={{ padding:"18px 20px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:14, cursor:"pointer", textAlign:"left", display:"flex", alignItems:"center", gap:14 }}
+          >
+            <span style={{ fontSize:32 }}>🥡</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#4ade80", fontStyle:"italic" }}>
+                {isCompoundProduce ? "Yes, bottle it" : "Yes, save some"}
+              </div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7ec87e", letterSpacing:"0.08em", marginTop:3 }}>
+                ADDS A ROW TO YOUR PANTRY
+              </div>
+            </div>
+          </button>
+          <button
+            onClick={() => { setLeftoverChoice("no"); setPhase(nextOnNo); }}
+            style={{ padding:"18px 20px", background:"#141414", border:"1px solid #2a2a2a", borderRadius:14, cursor:"pointer", textAlign:"left", display:"flex", alignItems:"center", gap:14 }}
+          >
+            <span style={{ fontSize:32 }}>🍽️</span>
+            <div style={{ flex:1 }}>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontStyle:"italic" }}>
+                {isCompoundProduce ? "Used it tonight" : "Ate it all"}
+              </div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.08em", marginTop:3 }}>
+                NOTHING SAVED
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <div style={{ display:"flex", gap:10, marginTop:20 }}>
+          <button onClick={() => setPhase(prevPhase)}
+            style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
+            ← BACK
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── phase: leftover location + amount ────────────────────────────────────
+  //
+  // Location tabs across the top (Fridge / Freezer / Pantry / Garbage) and,
+  // once a location is picked, a fraction-or-servings amount picker below.
+  // Garbage means "I'm tossing the extra" — still a valid user answer, and
+  // selecting it hides the amount picker and just continues.
+  //
+  // For compound-produce recipes the fraction pre-selects to "full" (user
+  // made a full yield of sriracha to save), otherwise "½" feels like a
+  // reasonable middle ground for most dinners.
+  if (phase === "leftoverLocation") {
+    const { num, denom } = stepOf("leftoverLocation");
+    const nextPhase = connections.length > 0 ? "diners" : "rating";
+    const FRACTIONS = [
+      { value: 0.125, label: "⅛" },
+      { value: 0.25,  label: "¼" },
+      { value: 0.333, label: "⅓" },
+      { value: 0.5,   label: "½" },
+      { value: 0.667, label: "⅔" },
+      { value: 0.75,  label: "¾" },
+      { value: 1,     label: "FULL" },
+    ];
+    const LOCATIONS = [
+      { id: "fridge",  emoji: "🧊", label: "Fridge",  hint: "Use within a few days" },
+      { id: "freezer", emoji: "❄️", label: "Freezer", hint: "Good for weeks to months" },
+      { id: "pantry",  emoji: "🥫", label: "Pantry",  hint: "Shelf-stable only" },
+      { id: "garbage", emoji: "🗑️", label: "Garbage", hint: "Tossing the extra — no pantry row" },
+    ];
+    const isGarbage = leftoverLocation === "garbage";
+
+    return shell(
+      <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
+          STEP {num} OF {denom}
+        </div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
+          Where's it going?
+        </h2>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>
+          Pick a location and roughly how much you saved.
+        </p>
+
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(2, 1fr)", gap:10, marginBottom:22 }}>
+          {LOCATIONS.map(loc => {
+            const active = leftoverLocation === loc.id;
+            return (
+              <button
+                key={loc.id}
+                onClick={() => setLeftoverLocation(loc.id)}
+                style={{
+                  padding:"14px 12px",
+                  background: active ? "#1a1608" : "#141414",
+                  border:`1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                  borderRadius:12, cursor:"pointer", textAlign:"left",
+                  display:"flex", alignItems:"center", gap:10,
+                }}
+              >
+                <span style={{ fontSize:26 }}>{loc.emoji}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color: active ? "#f5c842" : "#f0ece4", fontStyle:"italic" }}>
+                    {loc.label}
+                  </div>
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", marginTop:2, letterSpacing:"0.05em", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+                    {loc.hint}
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {leftoverLocation && !isGarbage && (
+          <>
+            <div style={{ display:"flex", gap:8, marginBottom:14, background:"#0a0a0a", border:"1px solid #1e1e1e", borderRadius:10, padding:3 }}>
+              {["fraction","servings"].map(mode => {
+                const active = leftoverMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setLeftoverMode(mode)}
+                    style={{
+                      flex:1, padding:"10px",
+                      background: active ? "#1a1608" : "transparent",
+                      color: active ? "#f5c842" : "#666",
+                      border:"none", borderRadius:8,
+                      fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600,
+                      letterSpacing:"0.08em", cursor:"pointer",
+                    }}
+                  >
+                    {mode === "fraction" ? "BY FRACTION" : "BY SERVINGS"}
+                  </button>
+                );
+              })}
+            </div>
+
+            {leftoverMode === "fraction" ? (
+              <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8, marginBottom:10 }}>
+                {FRACTIONS.map(f => {
+                  const active = Math.abs(leftoverFraction - f.value) < 0.01;
+                  return (
+                    <button
+                      key={f.value}
+                      onClick={() => setLeftoverFraction(f.value)}
+                      style={{
+                        padding:"14px 6px",
+                        background: active ? "#1a1608" : "#141414",
+                        border:`1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                        borderRadius:10,
+                        fontFamily:"'Fraunces',serif", fontSize: f.label === "FULL" ? 14 : 22,
+                        color: active ? "#f5c842" : "#f0ece4",
+                        cursor:"pointer",
+                      }}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", background:"#141414", border:"1px solid #2a2a2a", borderRadius:12, marginBottom:10 }}>
+                <input
+                  type="number" min="0" step="0.25"
+                  value={leftoverServings}
+                  onChange={e => setLeftoverServings(Math.max(0, Number(e.target.value) || 0))}
+                  style={{ flex:1, padding:"10px 12px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842", textAlign:"center", outline:"none" }}
+                />
+                <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888" }}>
+                  serving{leftoverServings === 1 ? "" : "s"}
+                </div>
+              </div>
+            )}
+
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.08em", textAlign:"center", marginBottom:6 }}>
+              {leftoverMode === "fraction"
+                ? `≈ ${Number((recipe?.serves || 2) * leftoverFraction).toFixed(2)} servings saved`
+                : `${leftoverServings} of ${recipe?.serves || "?"} servings saved`}
+            </div>
+          </>
+        )}
+
+        <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
+          <button onClick={() => setPhase("leftovers")}
+            style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
+            ← BACK
+          </button>
+          <button
+            onClick={() => setPhase(nextPhase)}
+            disabled={!leftoverLocation}
+            style={{ flex:2, padding:"14px", background: leftoverLocation ? "#f5c842" : "#1a1a1a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: leftoverLocation ? "#111" : "#444", cursor: leftoverLocation ? "pointer" : "not-allowed", letterSpacing:"0.08em" }}>
+            CONTINUE →
           </button>
         </div>
       </div>
@@ -894,8 +1143,8 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         <div style={{ display:"flex", gap:10, marginTop:20 }}>
           <button onClick={() => setPhase(
               connections.length > 0 ? "diners"
-              : usedItems.length > 0 ? "confirmRemoval"
-              : "celebrate"
+              : leftoverChoice === "yes" ? "leftoverLocation"
+              : "leftovers"
             )}
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
             ← BACK
