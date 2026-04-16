@@ -85,13 +85,31 @@ export async function setComponentsForParent(parentItemId, components) {
     position: c.position ?? idx,
   }));
 
-  const { error: insErr } = await supabase
-    .from("pantry_item_components")
-    .insert(rows);
-  if (insErr) {
-    console.error("[pantry_item_components] insert failed:", insErr);
+  // Retry loop for the foreign-key race. useSyncedList's persistDiff
+  // fires pantry_items INSERTs fire-and-forget, so when a caller
+  // creates a new parent item and *immediately* writes its components
+  // (CookComplete's leftover-Meal path, scan-confirm in a future
+  // chunk), the component INSERT can beat the parent INSERT to the
+  // server and fail with a 23503 FK violation. Back off and retry a
+  // few times — the parent row lands within tens of ms in practice.
+  //
+  // Non-FK errors fail immediately. Any caller that wrote a component
+  // to a truly nonexistent parent is a logic bug; we want the error
+  // loud, not swallowed behind silent retries.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { error: insErr } = await supabase
+      .from("pantry_item_components")
+      .insert(rows);
+    if (!insErr) return { error: null };
+    const isFkRace = insErr.code === "23503";
+    if (!isFkRace || attempt === 3) {
+      console.error("[pantry_item_components] insert failed:", insErr);
+      return { error: insErr };
+    }
+    // Exponential-ish backoff: 150, 300, 450ms. Total worst case <1s.
+    await new Promise(r => setTimeout(r, 150 * (attempt + 1)));
   }
-  return { error: insErr };
+  return { error: null };
 }
 
 /**
@@ -130,6 +148,110 @@ export function componentsFromIngredientIds(ids) {
  */
 export function kindForTagCount(count) {
   return count >= 2 ? "meal" : "ingredient";
+}
+
+/**
+ * Translate a CookComplete removal-plan entry into the component shape
+ * used by setComponentsForParent. The entry describes one consumed
+ * pantry row; the component it generates describes how that row fed
+ * into the leftover Meal that's being created.
+ *
+ * Component kind derivation:
+ *   * Consumed row is kind='meal'       -> child_kind='item'
+ *                                          (sub-meal pointer; nested tree)
+ *   * Consumed row is kind='ingredient' -> child_kind='ingredient'
+ *     AND has a canonical id              (canonical ref, more stable
+ *                                          than the item id which may
+ *                                          clear from the pantry)
+ *   * Consumed row is free-text          -> null (skipped)
+ *     (no ingredientId, kind='ingredient'   The components table's check
+ *      OR undefined kind)                  constraint requires a non-null
+ *                                          child identifier for its kind,
+ *                                          and free-text rows can't
+ *                                          satisfy either. Name snapshot
+ *                                          alone isn't enough; we lose
+ *                                          tree-walking integrity. These
+ *                                          consumed items still show up
+ *                                          in the cook log's "used these"
+ *                                          history, just not as tree
+ *                                          components on the leftover.
+ *
+ * Proportion: derived from the row's pre-cook / post-cook amount when
+ * both are known. Falls back to null when the decrement is non-convertible
+ * (unit mismatch) or when the pre-cook amount is zero.
+ *
+ * Returns one component-shape object, or null when the entry can't
+ * be represented as a component.
+ */
+export function componentFromRemovalEntry(entry, position = 0) {
+  if (!entry || !entry.pantryRow) return null;
+  const row = entry.pantryRow;
+  const rowKind = row.kind || "ingredient";
+
+  const preCook  = Number(row.amount);
+  const postCook = Number(entry.newAmount);
+  const proportion = (
+    Number.isFinite(preCook) && Number.isFinite(postCook)
+    && preCook > 0 && postCook <= preCook
+  )
+    ? Math.min(1, Math.max(0, (preCook - postCook) / preCook))
+    : null;
+
+  const rowIngredientIds = Array.isArray(row.ingredientIds) && row.ingredientIds.length
+    ? row.ingredientIds
+    : (row.ingredientId ? [row.ingredientId] : []);
+
+  const shared = {
+    amount: entry.used?.amount ?? null,
+    unit:   entry.used?.unit   ?? null,
+    proportion,
+    nameSnapshot: row.name || "",
+    ingredientIdsSnapshot: rowIngredientIds,
+    position,
+  };
+
+  if (rowKind === "meal") {
+    return { ...shared, kind: "item", itemId: row.id };
+  }
+  if (row.ingredientId) {
+    return { ...shared, kind: "ingredient", ingredientId: row.ingredientId };
+  }
+  return null; // free-text, un-representable in the tree
+}
+
+/**
+ * Build the component list AND the flattened ingredient_ids[] union for
+ * a leftover Meal from a CookComplete removal plan.
+ *
+ * The flattened array is what pantry_items.ingredient_ids[] needs to be
+ * set to so the recipe matcher's GIN index still finds this leftover
+ * for any recipe calling for any of its component ingredients. Union
+ * is computed by expanding each removal entry's pantryRow.ingredientIds
+ * (or falling back to ingredientId) — for sub-meal components this
+ * already contains the deep flatten from when *that* meal was created,
+ * so we get transitive coverage for free.
+ *
+ * Returns { components: [...], flatIngredientIds: [...] }.
+ */
+export function leftoverCompositionFromPlan(plan) {
+  const components = [];
+  const flatSet = new Set();
+  (plan || []).forEach((entry) => {
+    const comp = componentFromRemovalEntry(entry, components.length);
+    if (comp) components.push(comp);
+    // Flat-ids union uses the full snapshot regardless of whether the
+    // component could be represented, so free-text rows still
+    // contribute their canonical tag if they had one at some point.
+    const row = entry?.pantryRow;
+    if (!row) return;
+    const rowIngredientIds = Array.isArray(row.ingredientIds) && row.ingredientIds.length
+      ? row.ingredientIds
+      : (row.ingredientId ? [row.ingredientId] : []);
+    for (const id of rowIngredientIds) {
+      if (id) flatSet.add(id);
+    }
+  });
+  return { components, flatIngredientIds: [...flatSet] };
 }
 
 /**

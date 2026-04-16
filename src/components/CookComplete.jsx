@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, decrementRow, formatQty } from "../lib/unitConvert";
+import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
@@ -275,6 +276,13 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     // 2) Apply pantry mutations in a single setPantry call. useSyncedList
     //    diffs prev vs next and fires INSERT / UPDATE / DELETE behind the
     //    scenes, so we just return the post-cook array.
+    //
+    // Leftover-Meal component writes happen AFTER setPantry returns —
+    // captured here so the post-state-update code knows what to write.
+    // leftoverMealToCompose is populated only for the kind='meal'
+    // leftover branch; compound-produce (kind='ingredient') leftovers
+    // stay atomic and don't need component rows.
+    let leftoverMealToCompose = null;
     if (setPantry) {
       const plan = buildRemovalPlan(usedItems, extraRemovals, pantry);
       setPantry(prev => {
@@ -384,9 +392,30 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             const newId = typeof crypto !== "undefined" && crypto.randomUUID
               ? crypto.randomUUID()
               : `meal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+            // Compose the leftover Meal's tree from the removal plan.
+            // Each consumed row contributes one component:
+            //   * consumed meal  -> sub-meal pointer (recursive tree)
+            //   * consumed ingredient -> canonical ref
+            //   * consumed free-text -> skipped (tree-unrepresentable)
+            // Flat ingredient_ids[] = union of all consumed rows'
+            // flattened ids, so the GIN-indexed recipe matcher picks
+            // up the leftover for any recipe calling for any of its
+            // component canonicals. Sub-meal components contribute
+            // their own flattened ids, giving transitive coverage for
+            // free (a leftover lasagna made from leftover marinara
+            // inherits tomato / onion / garlic / basil even though
+            // those live two levels down).
+            const { components, flatIngredientIds } = leftoverCompositionFromPlan(plan);
+            leftoverMealToCompose = { id: newId, components };
+
             byId.set(newId, {
               id: newId,
               ingredientId: null,
+              // Flattened tag set for fast recipe matching. Authoritative
+              // structure is in pantry_item_components (written below,
+              // after this setPantry returns).
+              ingredientIds: flatIngredientIds,
               name: `Leftover ${recipe.title}`,
               emoji: recipe.emoji || "🍽️",
               amount: savedServings,
@@ -409,6 +438,24 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
 
         return [...byId.values()];
       });
+    }
+
+    // 3) Write the leftover Meal's component tree. Done *after*
+    //    setPantry so the parent pantry_items row is (usually) already
+    //    on its way to the server; setComponentsForParent retries on
+    //    FK-violation (23503) to cover the race where the parent
+    //    INSERT hasn't landed yet. Non-fatal on failure — the leftover
+    //    is still usable via its flat ingredient_ids[] array, the
+    //    COMPONENTS deep-dive just wouldn't render a tree yet. Logged
+    //    so a regression is visible in the console.
+    if (leftoverMealToCompose && leftoverMealToCompose.components.length > 0) {
+      const { error: compErr } = await setComponentsForParent(
+        leftoverMealToCompose.id,
+        leftoverMealToCompose.components
+      );
+      if (compErr) {
+        console.error("[CookComplete] leftover composition write failed:", compErr);
+      }
     }
 
     setSaving(false);
