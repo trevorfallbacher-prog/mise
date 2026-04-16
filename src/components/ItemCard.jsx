@@ -140,6 +140,15 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   const [activeTagIdx, setActiveTagIdx] = useState(0);
   useEffect(() => { setActiveTagIdx(0); }, [item?.id, tags.length]);
 
+  // IDENTIFIED-AS line collapse. Show the first 5 tags inline; long
+  // tag lists (loaded burritos with 12 components, that platter with
+  // 18) get a "+N MORE" toggle that expands the line. Avoids the wall
+  // of text in the hero area while keeping all info one tap away.
+  // No hard cap on the underlying data — purely a render concession.
+  const TAGS_VISIBLE = 5;
+  const [showAllTags, setShowAllTags] = useState(false);
+  useEffect(() => { setShowAllTags(false); }, [item?.id]);
+
   // Safe bound — if the tag list shrinks below activeTagIdx (user
   // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
   const safeIdx = Math.min(activeTagIdx, Math.max(0, tags.length - 1));
@@ -410,15 +419,52 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                     item.name?.toLowerCase() === tags[0].canonical.name?.toLowerCase()) {
                   return null;
                 }
+                const overflowing = tags.length > TAGS_VISIBLE && !showAllTags;
+                const visible = overflowing ? tags.slice(0, TAGS_VISIBLE) : tags;
+                const hidden  = overflowing ? tags.length - TAGS_VISIBLE : 0;
                 return (
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3 }}>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5 }}>
                     IDENTIFIED AS:{" "}
-                    {tags.map((t, i) => (
+                    {visible.map((t, i) => (
                       <span key={t.id}>
                         {i > 0 && <span style={{ color: "#444" }}> · </span>}
                         <span style={{ color: "#f5c842" }}>{t.canonical.name.toUpperCase()}</span>
                       </span>
                     ))}
+                    {hidden > 0 && (
+                      <>
+                        <span style={{ color: "#444" }}> · </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowAllTags(true); }}
+                          style={{
+                            background: "transparent", border: "none", padding: 0,
+                            color: "#7eb8d4", cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10,
+                            letterSpacing: "0.08em", textDecoration: "underline dotted",
+                            textUnderlineOffset: 2,
+                          }}
+                        >
+                          +{hidden} MORE
+                        </button>
+                      </>
+                    )}
+                    {showAllTags && tags.length > TAGS_VISIBLE && (
+                      <>
+                        <span style={{ color: "#444" }}> · </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setShowAllTags(false); }}
+                          style={{
+                            background: "transparent", border: "none", padding: 0,
+                            color: "#666", cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10,
+                            letterSpacing: "0.08em", textDecoration: "underline dotted",
+                            textUnderlineOffset: 2,
+                          }}
+                        >
+                          SHOW LESS
+                        </button>
+                      </>
+                    )}
                   </div>
                 );
               })()}
