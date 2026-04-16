@@ -26,6 +26,11 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
   const [receipt, setReceipt] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Inline editor state for header fields. Only receipt-scan artifacts
+  // have editable store/date (pantry_scan has none of those concepts).
+  // null = no field being edited.
+  const [editingField, setEditingField] = useState(null);
+  const [saving, setSaving] = useState(false);
   // Which artifact kind is being rendered — drives row filtering + copy.
   const kind = scanId ? "pantry_scan" : "receipt";
   const artifactId = receiptId || scanId;
@@ -36,6 +41,26 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Persist a patch to the receipts row. Optimistic local update so the
+  // header re-renders immediately; real-world latency on Supabase update
+  // is usually sub-200ms but an empty spinner flash looked broken. If
+  // the update fails (rare — usually an offline blip), we surface the
+  // server error via console.warn and leave the optimistic state in
+  // place so the user can retry on reconnect. Only applies to
+  // receipt-kind artifacts (pantry_scan has no editable header).
+  const commitReceiptPatch = async (patch) => {
+    if (kind !== "receipt" || !artifactId) { setEditingField(null); return; }
+    setSaving(true);
+    setReceipt(prev => prev ? { ...prev, ...patch } : prev);
+    setEditingField(null);
+    const { error } = await supabase
+      .from("receipts")
+      .update(patch)
+      .eq("id", artifactId);
+    if (error) console.warn("[receipts] update failed:", error.message, patch);
+    setSaving(false);
+  };
 
   // Load the artifact row (receipts or pantry_scans) + signed image URL.
   useEffect(() => {
@@ -92,7 +117,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "#000000dd", zIndex: 330,
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: 318,
       display: "flex", alignItems: "flex-end",
       maxWidth: 480, margin: "0 auto",
     }}>
@@ -136,27 +161,98 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
               : receipt?.kind === "freezer" ? "Freezer scan"
               : "Pantry scan")
             : (receipt?.store_name || "Unknown store");
+          // Store-name edit lives on the h2 for receipt-scan artifacts.
+          // Pantry-scan headers stay static — there's nothing to correct.
+          // Tapping the h2 swaps in a text input; blur or Enter commits.
+          const isEditingStore = !isPantryScan && editingField === "store";
           return (
             <>
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 6 }}>
                 {headerEmoji} {headerLabel}
               </div>
-              <h2 style={{ fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2 }}>
-                {headerTitle}
-              </h2>
+              {isEditingStore ? (
+                <input
+                  type="text"
+                  autoFocus
+                  defaultValue={receipt?.store_name || ""}
+                  placeholder="Store name"
+                  onBlur={e => commitReceiptPatch({ store_name: (e.target.value || "").trim() || null })}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") e.target.blur();
+                    if (e.key === "Escape") setEditingField(null);
+                  }}
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                    color: "#f5c842", fontWeight: 400, lineHeight: 1.2,
+                    background: "#0a0a0a", border: "1px solid #f5c842",
+                    borderRadius: 8, padding: "4px 10px", outline: "none",
+                  }}
+                />
+              ) : (
+                <h2
+                  onClick={() => { if (!isPantryScan) setEditingField("store"); }}
+                  title={isPantryScan ? undefined : "Tap to fix the store name (anyone in the family can edit)"}
+                  style={{
+                    fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                    color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2,
+                    cursor: isPantryScan ? "default" : "text",
+                  }}
+                >
+                  {headerTitle}
+                  {saving && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", marginLeft:8, letterSpacing:"0.08em" }}>SAVING…</span>}
+                </h2>
+              )}
             </>
           );
         })()}
 
         {/* Metadata strip. Receipt-only fields (store, total) hide cleanly
             when we're showing a pantry-scan artifact since receipt is null
-            for those. */}
-        <div style={{ display: "flex", gap: 12, marginTop: 8, marginBottom: 16, flexWrap: "wrap" }}>
-          {dateLabel && (
-            <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em" }}>
+            for those. Date is tap-to-edit for receipt artifacts — same
+            flow as store-name editing. */}
+        <div style={{ display: "flex", gap: 12, marginTop: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          {kind === "receipt" && editingField === "date" ? (
+            <input
+              type="date"
+              autoFocus
+              defaultValue={receipt?.receipt_date || ""}
+              onBlur={e => commitReceiptPatch({ receipt_date: e.target.value || null })}
+              onKeyDown={e => {
+                if (e.key === "Enter") e.target.blur();
+                if (e.key === "Escape") setEditingField(null);
+              }}
+              style={{
+                background: "#0a0a0a", border: "1px solid #f5c842",
+                color: "#f5c842", borderRadius: 6, padding: "2px 6px",
+                fontFamily: "'DM Mono',monospace", fontSize: 10, outline: "none",
+              }}
+            />
+          ) : dateLabel ? (
+            <button
+              onClick={() => { if (kind === "receipt") setEditingField("date"); }}
+              title={kind === "receipt" ? "Tap to fix the receipt date" : undefined}
+              style={{
+                background: "transparent", border: "none", padding: 0,
+                fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888",
+                letterSpacing: "0.08em",
+                cursor: kind === "receipt" ? "pointer" : "default",
+              }}
+            >
               📅 {dateLabel.toUpperCase()}
-            </span>
-          )}
+            </button>
+          ) : kind === "receipt" ? (
+            <button
+              onClick={() => setEditingField("date")}
+              style={{
+                background: "transparent", border: "1px dashed #2a2a2a",
+                color: "#666", fontFamily: "'DM Mono',monospace", fontSize: 10,
+                padding: "1px 6px", borderRadius: 4, cursor: "pointer", letterSpacing: "0.08em",
+              }}
+            >
+              + set date
+            </button>
+          ) : null}
           {totalLabel && (
             <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7ec87e", letterSpacing: "0.08em" }}>
               💵 {totalLabel}
@@ -213,7 +309,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
               return (
                 <button
                   key={item.id}
-                  onClick={() => { onOpenItem?.(item); onClose?.(); }}
+                  onClick={() => onOpenItem?.(item)}
                   style={{
                     display: "flex", alignItems: "center", gap: 10,
                     padding: "10px 12px",

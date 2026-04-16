@@ -71,7 +71,7 @@ export default function ReceiptHistoryModal({ userId, onOpenReceipt, onClose }) 
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "#000000dd", zIndex: 320,
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: 315,
       display: "flex", alignItems: "flex-end",
       maxWidth: 480, margin: "0 auto",
     }}>
