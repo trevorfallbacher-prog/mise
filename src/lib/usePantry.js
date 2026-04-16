@@ -12,8 +12,15 @@ export function defaultLocationForCategory(category) {
 
 // Database row ↔ app item shape. The only camelCase field we convert is
 // lowThreshold ↔ low_threshold.
+//
+// Newer columns (kind, servings_remaining, source_*, state) are mapped
+// CONDITIONALLY: only set on the app item when the DB row actually carries
+// the column. That way a client running a newer build against a DB whose
+// migrations haven't been applied yet won't blow up — the column-aware
+// conditional spread in toDb skips the field entirely, so UPDATEs only
+// touch columns that exist server-side.
 function fromDb(row) {
-  return {
+  const item = {
     id: row.id,
     ingredientId: row.ingredient_id || null,
     name: row.name,
@@ -33,24 +40,21 @@ function fromDb(row) {
     // carry no date rather than a fabricated one.
     expiresAt:   row.expires_at   ? new Date(row.expires_at)   : null,
     purchasedAt: row.purchased_at ? new Date(row.purchased_at) : null,
-    // Phase-2 compound-ingredient / leftovers support (migration 0026).
-    // 'ingredient' rows track amount+unit as always; 'meal' rows track
-    // servings_remaining instead. source_* columns link a row back to
-    // the cook that produced it so the UI can show provenance.
-    kind:              row.kind || "ingredient",
-    servingsRemaining: row.servings_remaining != null ? Number(row.servings_remaining) : null,
-    sourceRecipeSlug:  row.source_recipe_slug || null,
-    sourceCookLogId:   row.source_cook_log_id || null,
-    // Physical form. Null for ingredients that have no meaningful state
-    // distinction (milk, oil). When set, it scopes recipe-to-pantry
-    // matching so "crumbs" only satisfies a recipe asking for crumbs.
-    // Migration 0027.
-    state: row.state || null,
     // Which user owns this row. When you share a pantry with family, their
     // rows come through via the family-select RLS policy; ownerId lets the
     // UI tag them ("+added by Alice") so it's clear who stocked what.
     ownerId: row.user_id,
   };
+  // Phase-2 compound-ingredient / leftovers support (migration 0026).
+  // Only mapped if the DB has the columns. 'undefined' means "DB hasn't
+  // migrated yet" — toDb skips these fields so UPDATEs don't 400.
+  if (row.kind               !== undefined) item.kind              = row.kind || "ingredient";
+  if (row.servings_remaining !== undefined) item.servingsRemaining = row.servings_remaining != null ? Number(row.servings_remaining) : null;
+  if (row.source_recipe_slug !== undefined) item.sourceRecipeSlug  = row.source_recipe_slug || null;
+  if (row.source_cook_log_id !== undefined) item.sourceCookLogId   = row.source_cook_log_id || null;
+  // Physical form (migration 0027). Same defensive mapping.
+  if (row.state              !== undefined) item.state             = row.state || null;
+  return item;
 }
 
 function toDb(item) {
