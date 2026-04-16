@@ -283,11 +283,19 @@ function AuthedApp({ user, profile, upsertProfile }) {
         }}
       >
         🔔
-        {notifications.unreadCount > 0 && (
-          <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            {notifications.unreadCount > 99 ? "99+" : notifications.unreadCount}
-          </span>
-        )}
+        {(() => {
+          // Badge counts real unread notifications PLUS the synthetic
+          // release-notes pin when an unacknowledged release exists.
+          // Mirrors what the user actually sees when they open the
+          // panel — pin is rendered as if it were one extra row.
+          const total = notifications.unreadCount + (whatsNew.showNotification ? 1 : 0);
+          if (total <= 0) return null;
+          return (
+            <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              {total > 99 ? "99+" : total}
+            </span>
+          );
+        })()}
       </button>
 
       <div style={{ paddingBottom:80 }}>
@@ -398,6 +406,24 @@ function AuthedApp({ user, profile, upsertProfile }) {
           clearAll={notifications.clearAll}
           onClose={() => setNotifsOpen(false)}
           onOpen={openNotificationTarget}
+          // Pinned release-notes entry — only when there's an
+          // unacknowledged release. whatsNew.showNotification is the
+          // single source of truth for "user hasn't seen this version
+          // yet" — if the slim modal is/was eligible to fire, the
+          // panel pin is too. Tap routes to the full modal (closes
+          // panel first so the modal isn't buried), dismiss marks
+          // the version as seen via useWhatsNew.
+          pinned={whatsNew.showNotification ? [{
+            id: `release-${whatsNew.latestVersion || "current"}`,
+            emoji: "📋",
+            msg: whatsNew.latestTitle || "What's new in this release",
+            sublabel: `v${whatsNew.latestVersion || ""} · TAP TO READ`,
+            onTap: () => { setNotifsOpen(false); whatsNew.openFromSettings(); },
+            onDismiss: () => whatsNew.dismiss(),
+          }] : []}
+          // Always-available footer link to browse past notes anytime.
+          // Closes the panel first so the modal lands clean.
+          onOpenReleaseNotes={() => { setNotifsOpen(false); whatsNew.openFromSettings(); }}
         />
       )}
 

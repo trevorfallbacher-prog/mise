@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { CURRENT_VERSION } from "../data/releaseNotes";
+import { CURRENT_VERSION, LATEST_RELEASE } from "../data/releaseNotes";
 
 // LocalStorage key for the last release-notes version this user has
 // seen. Stored as a plain string ("0.2.0"). Local-only — losing it
@@ -102,5 +102,12 @@ export function useWhatsNew() {
     closeFull,
     dismiss,
     openFromSettings,
+    // Convenience accessors so consumers (NotificationsPanel pin,
+    // future Settings header) can render version + headline without
+    // re-importing the data file. Always reflect the bundled latest,
+    // independent of seen state — these are facts about the release,
+    // not about the user.
+    latestVersion: LATEST_RELEASE?.version || CURRENT_VERSION,
+    latestTitle:   LATEST_RELEASE?.title   || "What's new",
   };
 }
