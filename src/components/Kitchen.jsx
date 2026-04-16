@@ -2304,7 +2304,7 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Pantry({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView, deepLink, onDeepLinkConsumed }) {
+export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView, deepLink, onDeepLinkConsumed }) {
   const [scanning, setScanning] = useState(false);
   // Search replaces the old category filter pills — one input searches item
   // names, hub names, and categories.

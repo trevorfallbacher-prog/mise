@@ -4,7 +4,7 @@ import Home from "./components/Home";
 import Cook from "./components/Cook";
 import Plan from "./components/Plan";
 import Cookbook from "./components/Cookbook";
-import Pantry from "./components/Pantry";
+import Kitchen from "./components/Kitchen";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
 import NotificationsPanel from "./components/NotificationsPanel";
@@ -363,7 +363,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
           />
         )}
         {tab === "pantry"   && (
-          <Pantry
+          <Kitchen
             userId={user.id}
             pantry={pantry}
             setPantry={setPantry}
