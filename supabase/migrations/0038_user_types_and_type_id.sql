@@ -86,35 +86,36 @@ create policy "user_types: family-select"
   on public.user_types for select
   using (
     auth.uid() = user_id
-    or user_id in (select public.family_ids_of(auth.uid())))
-;
+    or user_id in (select public.family_ids_of(auth.uid()))
+  );
 
 drop policy if exists "user_types: family-insert" on public.user_types;
 create policy "user_types: family-insert"
   on public.user_types for insert
   with check (
     auth.uid() = user_id
-    or user_id in (select public.family_ids_of(auth.uid())))
-;
+    or user_id in (select public.family_ids_of(auth.uid()))
+  );
 
 drop policy if exists "user_types: family-update" on public.user_types;
 create policy "user_types: family-update"
   on public.user_types for update
   using (
     auth.uid() = user_id
-    or user_id in (select public.family_ids_of(auth.uid())))
+    or user_id in (select public.family_ids_of(auth.uid()))
+  )
   with check (
     auth.uid() = user_id
-    or user_id in (select public.family_ids_of(auth.uid())))
-;
+    or user_id in (select public.family_ids_of(auth.uid()))
+  );
 
 drop policy if exists "user_types: family-delete" on public.user_types;
 create policy "user_types: family-delete"
   on public.user_types for delete
   using (
     auth.uid() = user_id
-    or user_id in (select public.family_ids_of(auth.uid())))
-;
+    or user_id in (select public.family_ids_of(auth.uid()))
+  );
 
 -- ── 3. Realtime publication ─────────────────────────────────────────
 
