@@ -20,9 +20,28 @@ export function defaultLocationForCategory(category) {
 // conditional spread in toDb skips the field entirely, so UPDATEs only
 // touch columns that exist server-side.
 function fromDb(row) {
+  // Multi-canonical tagging (migration 0033). `ingredient_ids` is the
+  // authoritative array; singular `ingredient_id` stays around as the
+  // "primary / display" tag and as a back-compat for pre-0033 rows.
+  // Read priority: the array if non-empty, else fall back to the
+  // single id wrapped in an array so the UI only ever deals with one
+  // shape. Empty array = truly un-tagged (free-text row).
+  const rawArr = Array.isArray(row.ingredient_ids) ? row.ingredient_ids.filter(Boolean) : null;
+  const singleId = row.ingredient_id || null;
+  const ingredientIds = rawArr && rawArr.length
+    ? rawArr
+    : (singleId ? [singleId] : []);
+  const primaryId = ingredientIds[0] || null;
+
   const item = {
     id: row.id,
-    ingredientId: row.ingredient_id || null,
+    // Legacy scalar — kept as the "primary" tag for components that
+    // still read ingredientId directly (every existing call site).
+    ingredientId: primaryId,
+    // New plural — source of truth for the recipe matcher + ItemCard
+    // tabbed deep-dive + dietary filter. Always an array (possibly
+    // empty), never null, so consumers can iterate without guards.
+    ingredientIds,
     name: row.name,
     emoji: row.emoji,
     amount: Number(row.amount),
@@ -67,8 +86,24 @@ function fromDb(row) {
 }
 
 function toDb(item) {
+  // Multi-canonical tagging. If the caller explicitly set ingredientIds
+  // (the new plural), that's the source of truth — send it to the
+  // ingredient_ids array AND mirror the first element into the
+  // legacy ingredient_id scalar so any lingering SQL / RLS that keys
+  // on the scalar still works.
+  //
+  // If the caller only set ingredientId (singular), we do NOT synthesize
+  // an array on the wire — pre-0033 DBs don't have the ingredient_ids
+  // column and sending an unknown column 400s the whole UPDATE. Callers
+  // that want array semantics opt in explicitly by setting
+  // ingredientIds.
+  const hasArray = Array.isArray(item.ingredientIds);
+  const primaryId = hasArray && item.ingredientIds.length
+    ? (item.ingredientIds[0] || null)
+    : (item.ingredientId || null);
   return {
-    ingredient_id: item.ingredientId || null,
+    ingredient_id: primaryId,
+    ...(hasArray ? { ingredient_ids: item.ingredientIds.filter(Boolean) } : {}),
     name: item.name,
     emoji: item.emoji,
     amount: item.amount,
