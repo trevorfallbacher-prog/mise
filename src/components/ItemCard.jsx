@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { findIngredient, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
+import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -137,6 +138,32 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   // (first element). Used for the top-section identity lines where
   // "primary" is the right anchor — the deep-dive below uses activeTag.
   const canonical = tags[0]?.canonical || null;
+
+  // Flavor roll-up for multi-tag items. Union of each tag's
+  // flavor.primary array, intensity = max across tags. A frozen
+  // pizza tagged [mozz, sausage, bbq_sauce, pizza_dough] reads as
+  // "UMAMI · FAT · SWEET · SALT" — the whole flavor footprint of
+  // the composite product. Single-tag items skip this line since
+  // the deep-dive already shows the same info.
+  const { getInfo: getDbInfo } = useIngredientInfo();
+  const rolledFlavor = useMemo(() => {
+    if (tags.length < 2) return null;
+    const intensityRank = { mild: 1, moderate: 2, intense: 3 };
+    const primarySet = new Set();
+    let maxIntensity = null;
+    for (const t of tags) {
+      const info = getIngredientInfo(t.canonical, getDbInfo(t.id));
+      const f = info?.flavor;
+      if (!f) continue;
+      for (const p of f.primary || []) primarySet.add(p);
+      const rank = intensityRank[f.intensity] || 0;
+      if (!maxIntensity || rank > (intensityRank[maxIntensity] || 0)) {
+        maxIntensity = f.intensity;
+      }
+    }
+    if (primarySet.size === 0) return null;
+    return { primary: [...primarySet], intensity: maxIntensity };
+  }, [tags, getDbInfo]);
 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
@@ -323,6 +350,25 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                   </div>
                 );
               })()}
+              {/* FLAVOR roll-up — only renders for multi-tag items. A
+                  pizza tagged with mozz + sausage + bbq + dough reads
+                  as the UNION of their flavor primaries. Single-tag
+                  items get the same info inside the deep-dive so
+                  showing it here would be redundant. */}
+              {rolledFlavor && (
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span>FLAVOR:</span>
+                  {rolledFlavor.primary.map((p, i) => (
+                    <span key={p}>
+                      {i > 0 && <span style={{ color: "#444" }}>·</span>}{" "}
+                      <span style={{ color: "#d4a8c7", textTransform: "uppercase" }}>{p}</span>
+                    </span>
+                  ))}
+                  {rolledFlavor.intensity && (
+                    <span style={{ color: "#666" }}>· {rolledFlavor.intensity.toUpperCase()}</span>
+                  )}
+                </div>
+              )}
               {/* STATE line — tappable when the canonical ingredient has a
                   state vocabulary (bread: loaf/slices/crumbs; cheese: block
                   /grated/shredded; chicken: raw/cooked/shredded_cooked).
