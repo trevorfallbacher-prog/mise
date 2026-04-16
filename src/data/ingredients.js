@@ -4493,50 +4493,55 @@ const INGREDIENT_INFO = {
   },
 };
 
-// Look up display info for an ingredient — ingredient-specific fields win,
-// subcategory fallback fills the gaps. Returns null-safe defaults for
-// every schema field so the UI can safely read `info.storage?.location`
-// without per-key existence checks.
+// Look up display info for an ingredient. Three-layer merge:
+//   1. dbOverride (from Supabase ingredient_info table) — wins everything
+//   2. INGREDIENT_INFO (the JS object in this file) — code-side fallback
+//   3. SUBCATEGORY_INFO (cheese subcategories etc.) — last resort
 //
-// When adding a new metadata field: add it to INGREDIENT_INFO entries,
-// extend this merge, and add a render branch in IngredientCard. The
-// empty-return shape below documents every surface-level key the UI can
-// rely on.
-export function getIngredientInfo(ingredient) {
+// Pass `dbOverride` as the optional second arg when you have a row from
+// useIngredientInfo(). Without it, the lookup is purely code-side and
+// works offline / pre-load — so existing callers keep working as-is.
+//
+// Returns null-safe defaults for every schema field so the UI can safely
+// read `info.storage?.location` without per-key existence checks.
+export function getIngredientInfo(ingredient, dbOverride) {
   if (!ingredient) return null;
   const sub = ingredient.subcategory ? SUBCATEGORY_INFO[ingredient.subcategory] : null;
   const ing = INGREDIENT_INFO[ingredient.id] || null;
+  const db  = dbOverride || null;
   return {
     // ── cooking-centric ────────────────────────────────────────────────
-    description:    ing?.description    || sub?.description    || null,
-    flavorProfile:  ing?.flavorProfile  || sub?.flavorProfile  || null,
-    prepTips:       ing?.prepTips       || sub?.prepTips       || null,
-    storage:        ing?.storage        || sub?.storage        || null,
-    substitutions:  ing?.substitutions  || sub?.substitutions  || [],
-    irreplaceable:       ing?.irreplaceable ?? sub?.irreplaceable ?? false,
-    irreplaceableNote:   ing?.irreplaceableNote || sub?.irreplaceableNote || null,
-    pairs:          ing?.pairs          || sub?.pairs          || [],
-    clashes:        ing?.clashes        || sub?.clashes        || [],
+    description:    db?.description    || ing?.description    || sub?.description    || null,
+    flavorProfile:  db?.flavorProfile  || ing?.flavorProfile  || sub?.flavorProfile  || null,
+    prepTips:       db?.prepTips       || ing?.prepTips       || sub?.prepTips       || null,
+    storage:        db?.storage        || ing?.storage        || sub?.storage        || null,
+    substitutions:  db?.substitutions  || ing?.substitutions  || sub?.substitutions  || [],
+    irreplaceable:       db?.irreplaceable ?? ing?.irreplaceable ?? sub?.irreplaceable ?? false,
+    irreplaceableNote:   db?.irreplaceableNote || ing?.irreplaceableNote || sub?.irreplaceableNote || null,
+    pairs:          db?.pairs          || ing?.pairs          || sub?.pairs          || [],
+    clashes:        db?.clashes        || ing?.clashes        || [],
     // ── flavor (structured v2; freeform flavorProfile above) ───────────
-    flavor:         ing?.flavor         || sub?.flavor         || null,
+    flavor:         db?.flavor         || ing?.flavor         || sub?.flavor         || null,
     // ── nutrition ──────────────────────────────────────────────────────
-    nutrition:      ing?.nutrition      || sub?.nutrition      || null,
+    nutrition:      db?.nutrition      || ing?.nutrition      || sub?.nutrition      || null,
     // ── social / cultural ──────────────────────────────────────────────
-    origin:         ing?.origin         || sub?.origin         || null,
-    culturalNotes:  ing?.culturalNotes  || sub?.culturalNotes  || null,
-    winePairings:   ing?.winePairings   || sub?.winePairings   || [],
-    recipes:        ing?.recipes        || sub?.recipes        || [],
+    origin:         db?.origin         || ing?.origin         || sub?.origin         || null,
+    culturalNotes:  db?.culturalNotes  || ing?.culturalNotes  || sub?.culturalNotes  || null,
+    winePairings:   db?.winePairings   || ing?.winePairings   || sub?.winePairings   || [],
+    recipes:        db?.recipes        || ing?.recipes        || sub?.recipes        || [],
     // ── sourcing / allergens / seasonality ─────────────────────────────
-    allergens:      ing?.allergens      || sub?.allergens      || [],
-    allergenDetail: ing?.allergenDetail || sub?.allergenDetail || null,
-    seasonality:    ing?.seasonality    || sub?.seasonality    || null,
-    sourcing:       ing?.sourcing       || sub?.sourcing       || null,
+    allergens:      db?.allergens      || ing?.allergens      || sub?.allergens      || [],
+    allergenDetail: db?.allergenDetail || ing?.allergenDetail || sub?.allergenDetail || null,
+    seasonality:    db?.seasonality    || ing?.seasonality    || sub?.seasonality    || null,
+    sourcing:       db?.sourcing       || ing?.sourcing       || sub?.sourcing       || null,
     // ── dietary / lifestyle flags (v2) ─────────────────────────────────
-    diet:           ing?.diet           || sub?.diet           || null,
+    diet:           db?.diet           || ing?.diet           || sub?.diet           || null,
     // ── market intelligence (structured v2) ────────────────────────────
-    market:         ing?.market         || sub?.market         || null,
+    market:         db?.market         || ing?.market         || sub?.market         || null,
     // ── skill + course links (v2) ──────────────────────────────────────
-    skillDev:       ing?.skillDev       || sub?.skillDev       || null,
+    skillDev:       db?.skillDev       || ing?.skillDev       || sub?.skillDev       || null,
+    // ── blend composition (new for JSONB-era spice metadata) ──────────
+    blendOf:        db?.blendOf        || ing?.blendOf        || null,
   };
 }
 

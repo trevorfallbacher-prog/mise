@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { findIngredient, getIngredientInfo, isInSeason, unitLabel } from "../data/ingredients";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
 import { SKILL_TREE } from "../data";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
 
 // Month labels for seasonality. 1-indexed to match peakMonths convention
 // in the ingredient schema.
@@ -151,7 +152,12 @@ export default function IngredientCard({
   useEffect(() => { setViewingId(ingredientId); }, [ingredientId]);
 
   const canonical = useMemo(() => findIngredient(viewingId), [viewingId]);
-  const info      = useMemo(() => getIngredientInfo(canonical), [canonical]);
+  // DB-first, JS-fallback. getInfo returns the JSONB row from Supabase
+  // (or null if the table is empty / hasn't been seeded yet). The merge
+  // inside getIngredientInfo layers: DB > JS > subcategory.
+  const { getInfo } = useIngredientInfo();
+  const dbOverride = viewingId ? getInfo(viewingId) : null;
+  const info       = useMemo(() => getIngredientInfo(canonical, dbOverride), [canonical, dbOverride]);
 
   // Aggregate pantry rows for THIS ingredient (family members may each
   // have their own row). Summed in whichever unit the first row has.
