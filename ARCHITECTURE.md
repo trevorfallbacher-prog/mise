@@ -344,3 +344,143 @@ here so we remember and can attack opportunistically:
 3. Check `_TEMPLATE.sql` for a backend example.
 4. If the pattern doesn't exist yet, invent it — and then update
    this doc so the next person (or next you) finds it.
+
+---
+
+## Philosophy — load-bearing principles
+
+These aren't hygiene rules ("write tests", "keep it DRY"). They're
+specific patterns this app has already paid for and would pay for
+again if we forgot. Each one comes with a concrete example you can
+grep for if the abstract statement isn't enough.
+
+### 1. The user's text is sacred
+
+Brand names, custom labels, notes a user typed — never silently
+overwrite them. Merges keep the existing name. Scan-merge fuzzy-
+matches to a renamed row. Linking sets tags but preserves typed
+text. Converts preserve labels. The moment an app "corrects" a
+user's kitchen to disagree with them, trust is gone and doesn't
+return.
+
+Lived here: the scan-merge fuzzy fallback (5188526), leftover name
+override (64c9118), linking never touching `name` in `Pantry.jsx`'s
+`onEditTags` handler.
+
+### 2. Snapshot on composition, survive the child's death
+
+Any FK with `ON DELETE SET NULL` deserves a paired snapshot column
+on the edge row. Any edge into history-sensitive data deserves a
+snapshot. Pointers alone lie about the past — a parent row
+describing its child after the child is gone has nothing to show
+unless the edge carries a frozen copy.
+
+Lived here: `pantry_item_components.name_snapshot` and
+`ingredient_ids_snapshot`. The leftover lasagna still knows it
+contained marinara after the marinara item is consumed and cleared.
+
+### 3. One path per action
+
+If there are two ways to do the same thing in the UI, pick the
+better one and kill the other. Second paths are where bugs hide
+and where docs go stale. The moment someone asks "why can I do
+this from two places?" — you've already paid a cost. Collapse.
+
+Lived here: chunk 8 killed the pantry-row LINK chip once the
+ItemCard's + EDIT button existed. Chunk 7 removed the bypass
+around the delete confirmation.
+
+### 4. Realtime is eventual, not instant
+
+Postgres changes don't arrive in order, don't arrive immediately,
+and sometimes don't arrive at all. Any code that assumes "I just
+inserted X, now I can immediately write Y that depends on X" has
+to handle the race. Optimistic local state + reconcile-on-event
+is the pattern.
+
+Lived here: `setComponentsForParent`'s FK-retry loop in
+`pantryComponents.js` — written because the parent `pantry_items`
+INSERT from `useSyncedList.persistDiff` is fire-and-forget. On
+fast machines / same-origin databases you'd never see the race;
+on slow networks it 404s. Retry on 23503 with exponential backoff
+fixes it durably.
+
+### 5. Defensive reads, strict writes
+
+- **Reads** tolerate missing data:
+  `if (row.X !== undefined) item.X = row.X`. Old clients and
+  un-migrated DBs keep working. Version skew doesn't lock people
+  out.
+- **Writes** are precise: include every required field, don't
+  rely on DB defaults to paper over gaps. The INSERT either gets
+  the full row right or fails loudly so you can fix it.
+
+Asymmetric rigor. It's what lets rolling deploys survive.
+
+Lived here: `usePantry.js` `fromDb` / `toDb` — defensive on the
+conditional-spread for `kind`, `servings_remaining`, `source_*`,
+`state`, `scan_raw`. New columns can land without breaking
+clients that haven't migrated.
+
+### 6. Authorization lives on the database, not in parameters
+
+`auth.uid()` inside RLS is the only identity check you trust. If
+a client passes `user_id: X` as a filter, treat it as a *hint*,
+not an assertion. RLS policies should still enforce "you only see
+your own rows" independent of what the client asked for. Easy to
+violate by accident when you add a client-side filter for
+efficiency — if you forget the RLS fence, the efficiency became
+a vulnerability.
+
+Lived here: every RLS policy in `supabase/migrations/`. Client-
+side filters in hooks are efficiency hints; the database is
+authoritative.
+
+### 7. Every surface needs an empty state
+
+Zero items. Zero components. Zero cooks. Zero diners. Zero
+scanned items from a bad photo. Every list, card, and modal
+renders sensibly with N=0, and that render is *designed*, not
+an accident. Most bugs live in the "what if N=0" seam.
+
+Lived here: ItemCard's "Free-text row — no canonical ingredient
+tagged" panel. The delete confirmation's detail block pulls from
+the candidate item's fields even when many are null. The
+components picker works with `selected=[]` as a first-class
+valid commit state.
+
+### 8. Ship data migrations alongside schema migrations
+
+If a schema change requires populating existing rows, write the
+backfill as an idempotent UPDATE in the *same* SQL file.
+Separate "data-only" migrations get forgotten, and six months
+later you're debugging why only some users have the new column
+populated.
+
+Lived here: migration 0033 chose to not need a backfill at all
+(flat array defaults to `'{}'` and the read path falls back to
+`[ingredient_id]`). When a migration *does* need a backfill,
+keep it adjacent.
+
+### 9. Commits are documentation
+
+The commit message is the first thing a future person reads.
+Capture the **why**, not just the **what**. If someone six
+months from now `git blame`s a line and lands in your commit,
+the message should tell them why the line exists.
+
+Lived here: every chunk commit message in this branch explains
+what shipped, why it shipped, and what the trade-offs were.
+Future you will thank past you.
+
+### 10. If you can't make it idempotent, say so loudly
+
+Most DDL can be wrapped in `if not exists` / `if exists`. Some
+can't — `DROP COLUMN` is destructive by nature. When you have
+to write a non-idempotent migration, flag it at the top of the
+file AND in the commit message so nobody accidentally re-runs
+it. A `-- NON-IDEMPOTENT: drops column X, cannot be safely re-
+run` line is worth more than a page of prose later.
+
+---
+
