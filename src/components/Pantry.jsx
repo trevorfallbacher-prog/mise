@@ -1930,9 +1930,18 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   const renderItemCard = item => {
     const canon = findIngredient(item.ingredientId);
     const isEditing = editingItemId === item.id;
-    // Inside a hub we already know the "family" (🍗 Chicken), so show the
-    // ingredient's short name ("Breast") instead of the full "Chicken Breast".
-    const displayName = canon?.shortName && canon.parentId ? canon.shortName : item.name;
+    // Name display:
+    //   * User-custom name is the primary label ("DelDuca Proscuitto").
+    //     Never replaced by canonical — the user's brand/identifier wins.
+    //   * When the canonical exists AND its short name differs from the
+    //     user's text, append " · Prosciutto" in grey so the scan order is
+    //     still obvious at a glance ("what specific item + what kind").
+    //   * Inside a hub (parentId set) we prefer the canonical shortName
+    //     for the grey suffix ("Breast" not "Chicken Breast") because the
+    //     hub header already shows the family.
+    const displayName = item.name;
+    const canonicalLabel = canon?.shortName && canon.parentId ? canon.shortName : canon?.name;
+    const showCanonical = canonicalLabel && canonicalLabel.toLowerCase() !== (item.name || "").toLowerCase();
     // Row taps open the ItemCard — which works for ANY row (canonical or
     // free-text) since an item is a first-class thing independent of any
     // ingredient tag. Free-text rows render without the canonical deep-
@@ -1954,7 +1963,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
               <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
-                <span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>{displayName}</span>
+                <span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>
+                  {displayName}
+                  {showCanonical && (
+                    <span style={{ color:"#666", fontWeight:400 }}> · {canonicalLabel}</span>
+                  )}
+                </span>
                 {item.state && (
                   <span
                     title={`State: ${stateLabel(item.state)}`}
