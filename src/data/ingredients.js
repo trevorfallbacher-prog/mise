@@ -1052,11 +1052,134 @@ export const INGREDIENTS = [
   },
 
   // ── pantry / dry goods ──────────────────────────────────────────────────
+  // Flours — hub member registry. Protein content varies dramatically
+  // across types and drives gluten behavior, so they are NOT
+  // interchangeable in baking. The hub groups them for the picker
+  // while keeping each as a first-class canonical for recipe matching.
   {
-    id: "flour", name: "All-Purpose Flour", emoji: "🌾", category: "pantry",
+    id: "flour", name: "All-Purpose Flour", shortName: "All-Purpose",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
     units: [
       { id: "cup",  label: "cups", toBase: 120 },
       { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "bread_flour", name: "Bread Flour", shortName: "Bread",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "whole_wheat_flour", name: "Whole Wheat Flour", shortName: "Whole Wheat",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "pastry_flour", name: "Pastry Flour", shortName: "Pastry",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "cake_flour", name: "Cake Flour", shortName: "Cake",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "zero_zero_flour", name: "00 Flour", shortName: "00",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "kg",   label: "kg",   toBase: 1000 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "semolina", name: "Semolina Flour", shortName: "Semolina",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 160 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "rice_flour", name: "Rice Flour", shortName: "Rice",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 160 },
+      { id: "tbsp", label: "tbsp", toBase: 10 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "almond_flour", name: "Almond Flour", shortName: "Almond",
+    parentId: "flour_hub", emoji: "🌰", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 96 },
+      { id: "tbsp", label: "tbsp", toBase: 6 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "coconut_flour", name: "Coconut Flour", shortName: "Coconut",
+    parentId: "flour_hub", emoji: "🥥", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 112 },
+      { id: "tbsp", label: "tbsp", toBase: 7 },
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "cornmeal", name: "Cornmeal", shortName: "Cornmeal",
+    parentId: "flour_hub", emoji: "🌽", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 140 },
+      { id: "tbsp", label: "tbsp", toBase: 9 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "masa_harina", name: "Masa Harina", shortName: "Masa",
+    parentId: "flour_hub", emoji: "🌽", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
       { id: "g",    label: "g",    toBase: 1 },
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
@@ -1937,6 +2060,20 @@ export const HUBS = [
     id: "pasta_hub",
     name: "Pasta",
     emoji: "🍝",
+    category: "pantry",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
+    // Flour hub (chunk 13c) — protein content varies dramatically
+    // across types (all-purpose ~11%, bread ~13%, cake ~8%, 00 varies),
+    // and they are NOT 1:1 interchangeable in baking. Grouping them
+    // under a hub keeps the picker manageable while preserving each
+    // as a first-class canonical for recipe matching.
+    id: "flour_hub",
+    name: "Flour",
+    emoji: "🌾",
     category: "pantry",
     aggregateUnit: "lb",
     aggregateLabel: "lb",
