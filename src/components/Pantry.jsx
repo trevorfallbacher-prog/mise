@@ -1467,6 +1467,7 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
             ADD →
           </button>
         </div>
+        </>
       </div>
 
       {/* IngredientDetailSheet removed in chunk 13a — canonical browse-
