@@ -167,7 +167,16 @@ export default function IngredientCard({
   // Aggregate pantry rows for THIS ingredient (family members may each
   // have their own row). Summed in whichever unit the first row has.
   const pantryRows = useMemo(
-    () => viewingId ? pantry.filter(p => p.ingredientId === viewingId) : [],
+    // Multi-canonical aware (migration 0033): an item with ingredientIds
+    // containing viewingId counts even if ingredientId (the primary
+    // display tag) is something else. Lets a frozen pizza appear under
+    // mozzarella, sausage, AND dough in their respective cards.
+    () => viewingId
+      ? pantry.filter(p =>
+          p.ingredientId === viewingId ||
+          (Array.isArray(p.ingredientIds) && p.ingredientIds.includes(viewingId))
+        )
+      : [],
     [pantry, viewingId]
   );
   const totalAmount = pantryRows.reduce((sum, r) => sum + Number(r.amount || 0), 0);

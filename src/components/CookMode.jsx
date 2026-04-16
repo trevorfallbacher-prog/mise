@@ -160,16 +160,34 @@ function Timer({ seconds, onDone }) {
   );
 }
 
+// True when a pantry row carries the given canonical ingredient id in its
+// tag set. Handles both the new plural shape (row.ingredientIds array) and
+// the legacy singular (row.ingredientId) — lets composite items (frozen
+// pizza tagged with mozzarella + sausage + dough) satisfy a recipe calling
+// for any one of their components.
+function rowHasIngredient(row, ingredientId) {
+  if (!row || !ingredientId) return false;
+  if (Array.isArray(row.ingredientIds) && row.ingredientIds.length) {
+    return row.ingredientIds.includes(ingredientId);
+  }
+  return row.ingredientId === ingredientId;
+}
+
 // Look up a recipe ingredient in the pantry by canonical ingredientId.
 // Ingredients without an ingredientId are treated as untrackable (pasta water,
 // "to taste" salt, herbs we don't model, etc).
+//
+// Multi-canonical aware (migration 0033): matches rows whose
+// ingredient_ids array CONTAINS the recipe's ingredient — so a pizza
+// tagged [mozzarella, sausage, dough] satisfies a mozzarella recipe,
+// and an Italian Blend cheese satisfies any of its component cheeses.
 //
 // State-aware: when the recipe specifies a state ("crumbs"), we only count
 // pantry rows in that exact state. When the recipe is state-agnostic, we
 // match any state.
 function findInPantry(ing, pantry) {
   if (!pantry || !ing.ingredientId) return null;
-  const pool = pantry.filter(p => p.ingredientId === ing.ingredientId);
+  const pool = pantry.filter(p => rowHasIngredient(p, ing.ingredientId));
   if (ing.state) {
     return pool.find(p => (p.state || null) === ing.state) || null;
   }
@@ -182,7 +200,7 @@ function findInPantry(ing, pantry) {
 function wrongStateCandidates(ing, pantry) {
   if (!pantry || !ing.ingredientId || !ing.state) return [];
   return pantry.filter(p =>
-    p.ingredientId === ing.ingredientId &&
+    rowHasIngredient(p, ing.ingredientId) &&
     (p.state || null) !== ing.state &&
     Number(p.amount) > 0
   );
