@@ -147,6 +147,18 @@ const fmt = item => {
 // Keeping them in a separate module prepares the ground for the
 // eventual Scanner component extraction.
 
+// Curated emoji grid for scan-row emoji swap. Food-first, same palette
+// TypePicker and IdentifiedAsPicker use for their CREATE NEW forms so
+// the visual vocabulary stays consistent across the app. 🏷️ is the
+// explicit "no idea" default.
+const SCAN_EMOJI_OPTIONS = [
+  "🏷️", "🍕", "🥪", "🧀", "🥛", "🥩", "🍗",
+  "🐟", "🦐", "🥚", "🍞", "🍝", "🍚", "🥗",
+  "🌮", "🥟", "🍲", "🥡", "🍎", "🍌", "🥕",
+  "🌶️", "🌿", "🧂", "🍯", "🍫", "🍰", "🍦",
+  "🥫", "🥤", "☕", "🍺", "🍷", "🌭", "🍔",
+];
+
 // ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
 function Scanner({ userId, onItemsScanned, onClose }) {
   const [mode, setMode] = useState("receipt");
@@ -178,6 +190,12 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   // holds the index of the row being edited; null = closed.
   const [typingScanIdx, setTypingScanIdx] = useState(null);
   const [tilingScanIdx, setTilingScanIdx] = useState(null);
+  // Emoji swap picker — tapping the big emoji on a scan row opens a
+  // small ModalSheet with the curated EMOJI_OPTIONS grid. The OCR's
+  // default pick is fine a lot of the time but wrong enough (🥫 as
+  // the fallback when it has no idea) that the user should be able
+  // to override without waiting until the row lands in pantry.
+  const [emojiingScanIdx, setEmojiingScanIdx] = useState(null);
   // One-at-a-time "are you sure?" confirm on the ✕ reject button. Without
   // this gate a stray tap on "M&Ms" would quietly vaporize the row you
   // actually bought. Holds the id (not idx — idx drifts as siblings get
@@ -617,7 +635,14 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                     >✕</button>
                   )}
                   <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 40px 14px 14px", minWidth:0 }}>
-                  <span style={{ fontSize:28, flexShrink:0, lineHeight:1 }}>{item.emoji}</span>
+                  <button
+                    onClick={() => setEmojiingScanIdx(idx)}
+                    aria-label={`Change emoji for ${item.name}`}
+                    title="Tap to change emoji"
+                    style={{ fontSize:28, flexShrink:0, lineHeight:1, background:"transparent", border:"none", padding:0, cursor:"pointer" }}
+                  >
+                    {item.emoji}
+                  </button>
                   <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:6 }}>
                     {/* Name — tap to rename. When editing, becomes a full-
                         width text input so you can retype the receipt's
@@ -1047,6 +1072,45 @@ function Scanner({ userId, onItemsScanned, onClose }) {
               setTilingScanIdx(null);
             }}
           />
+        </ModalSheet>
+      )}
+
+      {/* Emoji picker — tap the big emoji on a scan row. Same curated
+          list TypePicker/IdentifiedAsPicker use for CREATE NEW, so the
+          visual vocabulary stays consistent across the app. Propagates
+          to sibling rows with the same raw read so "3 × CHOBANI" all
+          get the same emoji in one tap. */}
+      {emojiingScanIdx != null && scannedItems[emojiingScanIdx] && (
+        <ModalSheet onClose={() => setEmojiingScanIdx(null)} maxHeight="60vh">
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:10 }}>
+            PICK AN EMOJI
+          </div>
+          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+            {scannedItems[emojiingScanIdx].name}
+          </h2>
+          <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:8 }}>
+            {SCAN_EMOJI_OPTIONS.map(em => {
+              const selected = scannedItems[emojiingScanIdx].emoji === em;
+              return (
+                <button
+                  key={em}
+                  onClick={() => {
+                    propagateCorrection(emojiingScanIdx, { emoji: em });
+                    setEmojiingScanIdx(null);
+                  }}
+                  style={{
+                    fontSize:24, lineHeight:1,
+                    padding:"10px 0",
+                    background: selected ? "#1a1608" : "#0f0f0f",
+                    border: `1px solid ${selected ? "#f5c842" : "#242424"}`,
+                    borderRadius:8, cursor:"pointer",
+                  }}
+                >
+                  {em}
+                </button>
+              );
+            })}
+          </div>
         </ModalSheet>
       )}
     </div>
