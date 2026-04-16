@@ -43,6 +43,8 @@ import {
 import {
   saveTemplateFromCustomAdd,
   setComponentsForTemplate,
+  findTemplateMatch,
+  bumpTemplateUse,
 } from "../lib/userTemplates";
 import { useUserTemplates } from "../lib/useUserTemplates";
 
@@ -141,9 +143,17 @@ const fmt = item => {
 // eventual Scanner component extraction.
 
 // ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
-function Scanner({ onItemsScanned, onClose }) {
+function Scanner({ userId, onItemsScanned, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
+
+  // Family's user templates for scan-side matching (chunk 17b). When
+  // the scanner returns a raw name that matches a template, we use
+  // the template's identity (name, emoji, category, tile_id,
+  // ingredient_ids) instead of the generic canonical registry match.
+  // Templates win because they carry brand context + tile memory
+  // the user already decided once.
+  const [userTemplatesForScan] = useUserTemplates(userId);
   const [imageData, setImageData] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [scannedItems, setScannedItems] = useState([]);
@@ -247,6 +257,13 @@ function Scanner({ onItemsScanned, onClose }) {
       // We lean on inferUnitsForScanned to pick sane units from emoji +
       // category and replace a nonsense "count" with oz/lb/fl_oz as appropriate.
       const normalized = items.map((item, i) => {
+        // Template match first (chunk 17b). If the family has a
+        // template whose normalized name matches this scan row, the
+        // template's identity wins over the canonical registry match:
+        // brand name preserved, tile_id inherited, ingredient_ids
+        // carried forward. Canonical fuzzy falls through when no
+        // template matches.
+        const templateMatch = findTemplateMatch(item.name, userTemplatesForScan);
         const canon = findIngredient(item.ingredientId);
         const cat = canon ? canon.category : (item.category || "pantry");
         // Fridge/pantry scans force every item to that physical location.
@@ -309,6 +326,32 @@ function Scanner({ onItemsScanned, onClose }) {
           const validIds = inferred.units.map(u => u.id);
           // Keep the model's unit if it's in our inferred list; otherwise use default.
           if (!validIds.includes(base.unit)) base.unit = inferred.defaultUnit;
+        }
+        // Apply template override LAST — after canonical + unit
+        // inference so we cleanly overwrite with the user's blessed
+        // identity. The _templateId marker persists through scan
+        // confirm so addScannedItems can bump use_count after
+        // committing the pantry_items INSERT.
+        if (templateMatch) {
+          base.name = templateMatch.name;  // preserve user's brand casing
+          if (templateMatch.emoji)    base.emoji    = templateMatch.emoji;
+          if (templateMatch.category) base.category = templateMatch.category;
+          if (templateMatch.tileId)   base.tileId   = templateMatch.tileId;
+          if (templateMatch.defaultLocation) {
+            base.location = templateMatch.defaultLocation;
+          }
+          if (Array.isArray(templateMatch.ingredientIds)
+              && templateMatch.ingredientIds.length > 0) {
+            base.ingredientIds = [...templateMatch.ingredientIds];
+            base.ingredientId = templateMatch.ingredientIds[0];
+            // Composed template -> scanned item will be kind='meal'
+            // when it lands in pantry_items (kindForTagCount rule)
+            base.kind = templateMatch.ingredientIds.length >= 2 ? "meal" : "ingredient";
+          }
+          if (templateMatch.defaultUnit && (!base.unit || base.unit === "count")) {
+            base.unit = templateMatch.defaultUnit;
+          }
+          base._templateId = templateMatch.id;
         }
         return base;
       });
@@ -2296,6 +2339,17 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       pushToast(`${unitMismatchCount} item${unitMismatchCount === 1 ? "" : "s"} had a unit mismatch — check your kitchen`, { emoji: "⚠️", kind: "warn" });
     }
 
+    // Bump use_count on every template that matched a scan row
+    // (chunk 17b). Dedup by template id so scanning 3 boxes of the
+    // same item counts as 3 reuses. Fire-and-forget; errors log.
+    const templateHits = items
+      .map(it => it._templateId)
+      .filter(Boolean);
+    // Count occurrences so one bump per scanned row
+    for (const tid of templateHits) {
+      bumpTemplateUse(tid);
+    }
+
     setScanning(false);
   };
 
@@ -2739,7 +2793,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     );
   };
 
-  if (scanning) return <Scanner onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
+  if (scanning) return <Scanner userId={userId} onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>

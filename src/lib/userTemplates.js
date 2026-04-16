@@ -28,6 +28,66 @@ export function normalizeTemplateName(name) {
 }
 
 /**
+ * Scan-side template matcher (chunk 17b). Given a scanner-emitted
+ * name (raw OCR or vision-API-cleaned string) and a list of the
+ * family's templates, return the best match or null.
+ *
+ * Match priority:
+ *   1. Exact normalized name match ("home run inn pizza" matches
+ *      a template with the same normalized label)
+ *   2. Substring match either direction. Receipt OCR commonly
+ *      shortens / truncates ("HOME RUN INN PIZZA CHSE" vs template
+ *      "Home Run Inn Pizza"); both should match. Scanner OCR can
+ *      also be NOISIER than the template ("Cavatappi Pasta Box"
+ *      vs "Cavatappi Pasta"); still match.
+ *   3. Null when nothing fits.
+ *
+ * Family scope is already enforced by the caller's useUserTemplates
+ * hook (RLS scopes reads to self + family); this function is a pure
+ * string match over the list it's given.
+ *
+ * When there's a match, the scan pipeline should:
+ *   * Override the item's name/emoji/category/tile_id/ingredient_ids
+ *     with the template's fields (brand names + tile memory survive)
+ *   * Stamp _templateId on the item so we can bump use_count after
+ *     the scan is confirmed + committed to pantry_items
+ *
+ * Returns the template object (camelCase shape from fromDb) or null.
+ */
+export function findTemplateMatch(scanName, templates) {
+  const normalized = normalizeTemplateName(scanName);
+  if (!normalized || !Array.isArray(templates) || templates.length === 0) {
+    return null;
+  }
+  // 1. Exact normalized match
+  const exact = templates.find(t => t.nameNormalized === normalized);
+  if (exact) return exact;
+  // 2. Bidirectional substring — prefer the LONGEST template label
+  //    that's a substring of the scan (more specific wins); fall back
+  //    to the longest scan-as-substring-of-template.
+  let best = null;
+  let bestLen = 0;
+  for (const t of templates) {
+    const tnorm = t.nameNormalized || "";
+    if (!tnorm) continue;
+    if (normalized.includes(tnorm) && tnorm.length > bestLen) {
+      best = t;
+      bestLen = tnorm.length;
+    }
+  }
+  if (best) return best;
+  for (const t of templates) {
+    const tnorm = t.nameNormalized || "";
+    if (!tnorm) continue;
+    if (tnorm.includes(normalized) && normalized.length > bestLen) {
+      best = t;
+      bestLen = normalized.length;
+    }
+  }
+  return best;
+}
+
+/**
  * Find a template in family scope by normalized name. Uses the
  * RLS-aware SELECT (family members' rows are visible), so a single
  * query covers the strict-family-dedup intent:
