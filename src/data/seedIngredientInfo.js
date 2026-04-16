@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 7;
+export const SEED_VERSION = 8;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -304,6 +304,155 @@ export const SEED_INGREDIENT_INFO = [
         qualityNote: "Quality drops fast as the blend ages. A fresh small-batch jar from a spice market makes a noticeably better marinara than a dusty supermarket jar that's been on the shelf for two years.",
       },
       skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
+    },
+  },
+
+  // ── chili family ────────────────────────────────────────────────────
+  {
+    ingredient_id: "cayenne",
+    info: {
+      description: "Finely ground dried cayenne peppers. Pure, clean heat (30,000-50,000 Scoville) with minimal flavor complexity — it's a heat delivery mechanism, not a flavor spice. The kitchen equivalent of a volume knob for spiciness.",
+      flavorProfile: "Sharp, biting heat with a slight fruity undertone. No smokiness, no sweetness — just capsaicin punch.",
+      prepTips: "Start with ⅛ tsp and taste. You can always add more; you cannot remove heat. Dissolves into liquids invisibly — great for soups, sauces, mac and cheese, bloody marys. For slow-build warmth, add early; for sharp bite, add at the end.",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 1095,
+        shelfLife: { fridge: null, freezer: 1825, pantry: 1095 },
+        tips: "Long shelf life — capsaicin is stable. Replace when bright red fades to dull brown.",
+        spoilageSigns: "Dull brown color, no heat when tasted on the tongue (a fresh pinch should make you cough).",
+        freezable: true,
+        freezeNotes: "Doubles shelf life. Capsaicin laughs at freezer temperatures.",
+      },
+      substitutions: [
+        { id: "red_pepper_flakes", tier: "direct", note: "Coarser texture, slightly different heat distribution. ½ tsp cayenne ≈ 1 tsp flakes." },
+        { id: "chili_powder", tier: "caution", note: "Chili powder is a BLEND with cumin/garlic/oregano — much more complex, much less hot. Use 4-5x more." },
+        { id: "hot_sauce", tier: "creative", note: "Adds vinegar acidity but delivers similar heat. Reduce other liquids." },
+      ],
+      pairs: ["garlic", "lemon", "butter", "chocolate", "honey", "lime", "tomato"],
+      flavor: {
+        primary: ["spicy"],
+        intensity: "intense",
+        heatChange: {
+          raw: "immediate, sharp burn that builds — front of tongue first",
+          cooked: "diffuses into liquid, becomes more pervasive but slightly less sharp",
+          charred: "bitter and acrid; burnt cayenne is the worst kind of burnt",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 6, protein_g: 0.2, fat_g: 0.3, carb_g: 1, fiber_g: 0.5, vitamin_c_mg: 1.4 },
+      origin: "Named after Cayenne, French Guiana, but cultivated worldwide in tropical and subtropical regions. India is now the largest commercial producer.",
+      culturalNotes: "The capsaicin in cayenne triggers endorphin release — the pain-pleasure loop that makes spicy food addictive. Medicinally, capsaicin is the active ingredient in topical pain creams. Cayenne in hot chocolate dates to Aztec xocolatl traditions; the modern dark-chocolate-with-cayenne trend is borrowing a 700-year-old idea.",
+      recipes: ["Buffalo Wing Sauce", "Mac and Cheese", "Bloody Mary", "Mexican Hot Chocolate", "Gumbo", "Deviled Eggs"],
+      allergens: ["nightshade"],
+      allergenDetail: "Nightshade family — relevant for autoimmune elimination diets.",
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: true, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Generic supermarket cayenne is fine — heat is heat. Specialty single-origin cayennes from spice markets occasionally have more fruity character but the difference is subtle.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: true,
+        qualityMatters: false,
+        qualityNote: "It's heat. Almost any brand delivers what you need. The expensive small-batch versions are mostly novelty.",
+      },
+      skillDev: { skills: ["seasoning", "heat"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
+    },
+  },
+
+  {
+    ingredient_id: "smoked_paprika",
+    info: {
+      description: "Pimentón de la Vera — peppers dried over smoldering oak for two weeks, then ground. The smokiness is deep and real (not liquid smoke). Spanish cuisine's secret weapon and the easiest way to add depth to any savory dish.",
+      flavorProfile: "Intensely smoky, sweet-warm, complex. Transforms anything it touches — half a teaspoon makes a bean soup taste like it simmered over a campfire all day.",
+      prepTips: "A little goes far — start with ¼ tsp and build. Bloom in oil for maximum impact. Pairs insanely well with roasted vegetables, aioli, and anything tomato-based. Three grades to know: dulce (sweet), agridulce (bittersweet), picante (hot).",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 730,
+        shelfLife: { fridge: null, freezer: 1460, pantry: 730 },
+        tips: "Keep sealed tightly — the smoke compounds are volatile and escape over time. Tin containers (the traditional Spanish packaging) preserve better than glass.",
+        spoilageSigns: "When the smoke aroma fades on opening the jar, it's past its prime. Dull color, weak punch.",
+        freezable: true,
+        freezeNotes: "Freezing dramatically slows the loss of smoke compounds. Doubles usable life.",
+      },
+      substitutions: [
+        { id: "paprika", tier: "direct", note: "Loses the smoke; add a drop of liquid smoke to compensate (or accept the loss — sometimes you just want the color)." },
+        { id: "chipotle", tier: "creative", note: "Smoked jalapeño powder — adds smoke + significant heat. Different but in the same family." },
+      ],
+      pairs: ["chickpeas", "potato", "tomato", "aioli", "eggs", "chorizo", "garlic", "olive_oil"],
+      flavor: {
+        primary: ["umami", "sweet"],
+        intensity: "intense",
+        heatChange: {
+          raw: "smoky, deep, slightly bitter — strong even before cooking",
+          cooked: "rounds out, the smoke integrates into the dish, sweetness emerges",
+          charred: "burns fast and turns acrid; the smoke compounds are already at their peak — heat past that point destroys them",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 6, protein_g: 0.3, fat_g: 0.3, carb_g: 1.2, fiber_g: 0.8 },
+      origin: "La Vera valley, Extremadura, Spain. The peppers are exclusively oak-smoked — the method is protected by D.O. Pimentón de la Vera designation. Hungarian smoked paprika exists but is generally considered inferior.",
+      culturalNotes: "Spanish chorizo gets its character from pimentón, not chili heat — it's a fundamentally different sausage from Mexican chorizo because of this one spice. The Spanish royal family has been issuing pimentón decrees since the 1500s; the king's monastery in Yuste made the first commercial production economically viable.",
+      recipes: ["Patatas Bravas", "Chickpea Stew", "Aioli", "Spanish Chorizo", "Romesco Sauce", "Smoky Roasted Vegetables", "Paella (Marisco)"],
+      allergens: ["nightshade"],
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: true, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Look for the D.O. Pimentón de la Vera seal — the difference between authentic Spanish and supermarket 'smoked paprika' is enormous. La Chinata and La Dalia are the gold standard. Around $8-12 for a tin that lasts a year.",
+      market: {
+        priceTier: "moderate",
+        availability: "specialty",
+        organicCommon: false,
+        qualityMatters: true,
+        qualityNote: "This is the spice where authenticity matters most. Generic 'smoked paprika' often means smoke flavoring added to regular paprika — a different product entirely. The real D.O. La Vera version is transformative.",
+      },
+      skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
+    },
+  },
+
+  {
+    ingredient_id: "chili_powder",
+    info: {
+      description: "A BLEND, not a single spice. Typically ground dried chili peppers + cumin + garlic powder + oregano + sometimes paprika, onion powder, and cocoa. The all-in-one seasoning behind Tex-Mex chili con carne.",
+      flavorProfile: "Warm, earthy, mildly spicy, savory. Complex because it IS multiple spices. Much less hot than cayenne — the other ingredients buffer the heat.",
+      prepTips: "Bloom in oil with onions and garlic at the start of chili, taco meat, or enchilada sauce. The cumin and oregano in the blend need heat to open up. Toast 30-60 seconds until fragrant — your kitchen will smell like a Texas chili cook-off.",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 730,
+        shelfLife: { fridge: null, freezer: 1095, pantry: 730 },
+        tips: "Blends lose potency faster than single spices because the volatile oils from each component degrade at different rates. Replace yearly.",
+        spoilageSigns: "No aroma when opened, dust-like texture instead of slightly oily, faded brick-red to brown-gray.",
+        freezable: true,
+        freezeNotes: "Slows degradation across all the component spices. Adds about a year of useful life.",
+      },
+      substitutions: [
+        { id: "cayenne", tier: "caution", note: "Pure heat, no depth — add cumin + garlic powder + oregano separately to reconstruct. Use 1/5 the amount." },
+        { id: "paprika", tier: "emergency", note: "Color but almost no heat or cumin earthiness. Add cumin separately." },
+        { id: "taco_seasoning", tier: "creative", note: "Similar territory — both are chili-cumin-based blends. Taco seasoning often has more cumin and added salt." },
+      ],
+      blendOf: ["cayenne", "cumin", "garlic_powder", "oregano", "paprika"],
+      pairs: ["cumin", "garlic", "onion", "beef", "beans", "tomato", "corn", "lime"],
+      flavor: {
+        primary: ["umami", "spicy"],
+        intensity: "moderate",
+        heatChange: {
+          raw: "dusty, mildly bitter — the dried herbs in the blend need fat and heat",
+          cooked: "warm, complex, layered — the components meld and the cumin opens up first",
+          charred: "the chili and paprika burn before the cumin scorches; the blend turns acrid quickly",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 8, protein_g: 0.3, fat_g: 0.4, carb_g: 1.3, fiber_g: 0.7 },
+      origin: "American Southwest / Tex-Mex invention, 19th century. Not traditional to Mexican cuisine — Mexican cooks use individual dried chili varieties (ancho, guajillo, chipotle, pasilla) toasted and ground per dish.",
+      culturalNotes: "Gebhardt's Eagle Chili Powder (San Antonio, 1890s) is credited as the first commercial blend. The idea was to make chili con carne accessible without sourcing individual dried peppers. Every brand has a different ratio — some hotter (Mexene), some sweeter, some heavier on cumin (Penzeys medium-hot).",
+      recipes: ["Chili con Carne", "Taco Meat", "Enchilada Sauce", "Tex-Mex Rubs", "Frito Pie", "Chili-Lime Popcorn"],
+      allergens: ["nightshade"],
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "moderate", nightshade: true, allium: true, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Penzeys 'Medium Hot Chili Powder' is the home-cook benchmark. Mexene is the classic Texas-style. Avoid generic supermarket blends — they're often heavy on filler salt and stale.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: true,
+        qualityMatters: true,
+        qualityNote: "The blend quality varies wildly. A good chili powder makes the difference between 'I made chili' and 'this tastes like chili'. Worth the upgrade to Penzeys or a fresh small-batch.",
+      },
+      skillDev: { skills: ["seasoning", "heat"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
     },
   },
 ];
