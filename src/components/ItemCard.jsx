@@ -11,6 +11,9 @@ import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import { Z } from "../lib/tokens";
+import TypePicker from "./TypePicker";
+import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
+import { useUserTypes } from "../lib/useUserTypes";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -188,6 +191,24 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
   // higher z-index so the pick flow doesn't close the card.
   const [tilePickerOpen, setTilePickerOpen] = useState(false);
 
+  // IDENTIFIED AS (type) resolution. Mirrors the tile resolver
+  // above — bundled WWEIA types checked first (O(1) lookup),
+  // user types via useUserTypes fallback. Null when the id doesn't
+  // resolve (stale template referencing a deleted user_type, etc.).
+  const [userTypes] = useUserTypes(userId);
+  const currentType = useMemo(() => {
+    if (!item?.typeId) return null;
+    const bundled = findFoodType(item.typeId);
+    if (bundled) return { ...bundled, source: "bundled" };
+    const userHit = userTypes.find(t => t.id === item.typeId);
+    if (userHit) return { ...userHit, source: "custom" };
+    return null;
+  }, [item?.typeId, userTypes]);
+
+  // Stacked type picker — separate from tilePicker so both can
+  // exist but don't step on each other.
+  const [typePickerOpen, setTypePickerOpen] = useState(false);
+
   // Safe bound — if the tag list shrinks below activeTagIdx (user
   // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
   const safeIdx = Math.min(activeTagIdx, Math.max(0, tags.length - 1));
@@ -352,11 +373,47 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   {item.name}
                 </h2>
               )}
-              {/* IDENTIFIED AS — the item's tile placement ("what kind
-                  of thing is this"). Distinct from MADE OF below which
-                  lists component ingredients. Tap to re-pick — opens
-                  a stacked IdentifiedAsPicker modal. Hidden entirely
-                  when there's no onUpdate (read-only embeds). */}
+              {/* IDENTIFIED AS — what KIND of thing this is (Pizza,
+                  Cheese, Sausages). Separate from STORED IN below
+                  which answers WHERE it lives. Tap to re-pick —
+                  opens a stacked TypePicker modal. */}
+              {onUpdate && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: currentType ? "#f5c842" : "#666",
+                    letterSpacing: "0.08em", marginTop: 3,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ color: "#888" }}>IDENTIFIED AS:</span>
+                  {currentType ? (
+                    <>
+                      <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
+                      <span style={{
+                        color: "#f5c842",
+                        borderBottom: "1px dashed #f5c84244",
+                      }}>
+                        {currentType.label?.toUpperCase() || "CUSTOM TYPE"}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      color: "#888",
+                      borderBottom: "1px dashed #66666644",
+                    }}>
+                      TAP TO IDENTIFY
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* STORED IN — the item's tile placement (where it lives).
+                  Distinct from MADE OF below which lists component
+                  ingredients. Tap to re-pick — opens a stacked
+                  IdentifiedAsPicker modal. Hidden entirely when
+                  there's no onUpdate (read-only embeds). */}
               {onUpdate && (
                 <div
                   onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
@@ -1122,6 +1179,57 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                     : {}),
               });
               setTilePickerOpen(false);
+            }}
+          />
+        </ModalSheet>
+      )}
+
+      {/* IDENTIFIED AS (type) picker — stacked modal over the
+          ItemCard, sibling to the tile picker so both can exist
+          independently. When the user picks a type, we do the
+          auto-suggest-tile-on-empty dance here too: if item.tileId
+          is null and the picked type has a defaultTileId, set both
+          in one onUpdate call. */}
+      {typePickerOpen && (
+        <ModalSheet
+          onClose={() => setTypePickerOpen(false)}
+          zIndex={Z.picker}
+          label="IDENTIFIED AS"
+          maxHeight="85vh"
+        >
+          <h2 style={{
+            fontFamily: "'Fraunces',serif", fontSize: 22,
+            fontStyle: "italic", color: "#f0ece4",
+            fontWeight: 400, margin: "2px 0 10px",
+          }}>
+            What kind of thing is this?
+          </h2>
+          <p style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+          }}>
+            Pick a type for {item.name}. Default categories come from
+            USDA's food classifications; you can also create your own.
+          </p>
+          <TypePicker
+            userId={userId}
+            selectedTypeId={item.typeId || null}
+            // Keyword-inferred suggestion — only fires when no type
+            // is set yet (re-pickers have explicit intent).
+            suggestedTypeId={!item.typeId ? inferFoodTypeFromName(item.name) : null}
+            onPick={(typeId, defaultTileId, defaultLocation) => {
+              const patch = { typeId };
+              // Cross-axis auto-fill: if the item has no tile yet
+              // and the picked type defaults to one, set it. User can
+              // still re-pick tile separately via the STORED IN line.
+              if (defaultTileId && !item.tileId) {
+                patch.tileId = defaultTileId;
+              }
+              if (defaultLocation && !item.location) {
+                patch.location = defaultLocation;
+              }
+              onUpdate?.(patch);
+              setTypePickerOpen(false);
             }}
           />
         </ModalSheet>
