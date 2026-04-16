@@ -1270,6 +1270,152 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "box",
   },
+  {
+    // Generic pasta fallback for "I just have pasta" / recipe-matching
+    // when the user's item doesn't specify a shape. Sits alongside the
+    // specific cuts — recipes calling for "pasta" match this OR any
+    // of the specific members (via the hub membership).
+    id: "pasta", name: "Pasta", shortName: "Pasta",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+      { id: "g",   label: "g",     toBase: 1 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "cavatappi", name: "Cavatappi", shortName: "Cavatappi",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "fusilli", name: "Fusilli", shortName: "Fusilli",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "rotini", name: "Rotini", shortName: "Rotini",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "farfalle", name: "Farfalle", shortName: "Bow-Tie",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "macaroni", name: "Elbow Macaroni", shortName: "Macaroni",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+      { id: "cup", label: "cups",  toBase: 140 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "bucatini", name: "Bucatini", shortName: "Bucatini",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "linguine", name: "Linguine", shortName: "Linguine",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "angel_hair", name: "Angel Hair", shortName: "Angel Hair",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "ziti", name: "Ziti", shortName: "Ziti",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "orecchiette", name: "Orecchiette", shortName: "Orecchiette",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "tortellini", name: "Tortellini", shortName: "Tortellini",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "pkg", label: "pkgs",  toBase: 255 },  // ~9oz fresh pkg
+    ],
+    defaultUnit: "pkg",
+  },
+  {
+    id: "ravioli", name: "Ravioli", shortName: "Ravioli",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "pkg", label: "pkgs",  toBase: 255 },
+    ],
+    defaultUnit: "pkg",
+  },
+  {
+    id: "gnocchi", name: "Gnocchi", shortName: "Gnocchi",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "pkg", label: "pkgs",  toBase: 500 },  // ~1.1lb shelf-stable pkg
+    ],
+    defaultUnit: "pkg",
+  },
 
   // Bread ───────────────────
   {
