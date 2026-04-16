@@ -9,6 +9,7 @@ import { useUserTiles } from "../lib/useUserTiles";
 import { FRIDGE_TILES } from "../lib/fridgeTiles";
 import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
+import { inferTileFromName } from "../lib/tileKeywords";
 import { Z } from "../lib/tokens";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -1104,6 +1105,11 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             userId={userId}
             locationHint={item.location || currentTile?.location || null}
             selectedTileId={item.tileId || null}
+            // Name-keyword suggestion using chunk 16e's dictionary.
+            // Only fires when no tile is set yet — re-pickers have
+            // an explicit intent, don't want the system second-
+            // guessing them.
+            suggestedTileId={!item.tileId ? inferTileFromName(item.name) : null}
             onPick={(tileId, location) => {
               onUpdate?.({
                 tileId,

@@ -34,6 +34,7 @@ import ModalSheet from "./ModalSheet";
 import ReceiptView from "./ReceiptView";
 import { Z } from "../lib/tokens";
 import { bumpTileUse } from "../lib/userTiles";
+import { inferTileFromName } from "../lib/tileKeywords";
 import {
   setComponentsForParent,
   componentsFromIngredientIds,
@@ -1502,6 +1503,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   userId={userId}
                   locationHint={customLocation}
                   selectedTileId={customTileId}
+                  // Keyword-inferred suggestion. Recomputed inline from
+                  // the current customName so the highlighted chip
+                  // updates as the user types. Nothing auto-selects —
+                  // the user still taps, we just rank the most likely
+                  // tile first with a ⭐ SUGGESTED treatment.
+                  suggestedTileId={inferTileFromName(customName)}
                   onPick={(tileId, location) => {
                     setCustomTileId(tileId);
                     if (location) setCustomLocation(location);
