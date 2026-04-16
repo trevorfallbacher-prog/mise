@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { findIngredient, inferUnitsForScanned, stateLabel, unitLabel } from "../data/ingredients";
+import { findIngredient, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -169,13 +169,103 @@ export default function ItemCard({ item, pantry = [], onUpdate, onClose }) {
                   IDENTIFIED AS: <span style={{ color: "#f5c842" }}>{canonical.name.toUpperCase()}</span>
                 </div>
               )}
-              {stateText && (
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.08em", marginTop: 3, textTransform: "uppercase" }}>
-                  STATE: {stateText}
-                </div>
-              )}
+              {/* STATE line — tappable when the canonical ingredient has a
+                  state vocabulary (bread: loaf/slices/crumbs; cheese: block
+                  /grated/shredded; chicken: raw/cooked/shredded_cooked).
+                  Ingredients without states stay hidden. */}
+              {(() => {
+                const states = statesForIngredient(canonical);
+                if (!states || states.length === 0) return null;
+                const label = stateText || "SET STATE";
+                return (
+                  <div
+                    onClick={e => { e.stopPropagation(); startEdit("state"); }}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: stateText ? "#7eb8d4" : "#555",
+                      letterSpacing: "0.08em", marginTop: 3,
+                      textTransform: "uppercase",
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                  >
+                    STATE: <span style={{
+                      color: stateText ? "#7eb8d4" : "#888",
+                      borderBottom: readOnly ? "none" : "1px dashed #7eb8d444",
+                    }}>{label}</span>
+                  </div>
+                );
+              })()}
             </div>
           </div>
+
+          {/* State picker — expands inline when the STATE chip is tapped.
+              Grid of options pulled from statesForIngredient(). Tap to
+              commit; tap the current state again to clear. */}
+          {editingField === "state" && (() => {
+            const states = statesForIngredient(canonical) || [];
+            return (
+              <div style={{
+                padding: "10px 12px", marginBottom: 12,
+                background: "#0a0a0a", border: "1px solid #1f3040",
+                borderRadius: 10,
+              }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.1em", marginBottom: 8 }}>
+                  PICK A STATE
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+                  {states.map(s => {
+                    const active = item.state === s;
+                    return (
+                      <button
+                        key={s}
+                        onClick={() => commit({ state: active ? null : s })}
+                        style={{
+                          padding: "8px 6px",
+                          background: active ? "#0f1620" : "#141414",
+                          color: active ? "#7eb8d4" : "#ccc",
+                          border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                          borderRadius: 8,
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          letterSpacing: "0.05em", cursor: "pointer",
+                          textTransform: "uppercase",
+                        }}
+                      >
+                        {stateLabel(s)}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button
+                    onClick={() => setEditingField(null)}
+                    style={{
+                      flex: 1, padding: "8px",
+                      background: "transparent", border: "1px solid #2a2a2a",
+                      color: "#888", borderRadius: 6,
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      cursor: "pointer",
+                    }}
+                  >
+                    CANCEL
+                  </button>
+                  {item.state && (
+                    <button
+                      onClick={() => commit({ state: null })}
+                      style={{
+                        flex: 1, padding: "8px",
+                        background: "transparent", border: "1px solid #3a1a1a",
+                        color: "#ef4444", borderRadius: 6,
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        cursor: "pointer",
+                      }}
+                    >
+                      CLEAR STATE
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
