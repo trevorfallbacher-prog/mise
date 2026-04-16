@@ -537,6 +537,39 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
             </div>
           </div>
 
+          {/* Raw scanner read — when the row came from a scan, show what
+              Claude actually saw on the label before canonical substitution.
+              Folded into a compact line so it doesn't dominate the card; if
+              the user ever needs to verify "is this row actually the right
+              item?" the raw text is the source of truth. */}
+          {item.scanRaw && (
+            <div style={{
+              padding: "8px 12px", marginBottom: 10,
+              background: "#0a0a0a", border: "1px solid #1f1f1f", borderRadius: 8,
+              fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#666",
+              letterSpacing: "0.06em", display: "flex", gap: 10, flexWrap: "wrap",
+            }}>
+              <span style={{ color: "#444" }}>RAW SCAN:</span>
+              <span style={{ color: "#aaa" }}>
+                "{item.scanRaw.raw_name || "—"}"
+              </span>
+              {item.scanRaw.confidence && (
+                <span style={{
+                  color: item.scanRaw.confidence === "high" ? "#7ec87e"
+                    : item.scanRaw.confidence === "medium" ? "#f59e0b"
+                    : "#ef4444",
+                }}>
+                  · {String(item.scanRaw.confidence).toUpperCase()}
+                </span>
+              )}
+              {item.scanRaw.detected_state && (
+                <span style={{ color: "#7eb8d4" }}>
+                  · DETECTED {String(item.scanRaw.detected_state).toUpperCase()}
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Provenance line. Tap to open the source artifact (receipt /
               cook log) when there's a linkTo. Rendered as a button element
               when tappable so keyboard users get focus + Enter for free. */}

@@ -59,6 +59,10 @@ function fromDb(row) {
   if (row.source_kind        !== undefined) item.sourceKind        = row.source_kind || null;
   if (row.source_receipt_id  !== undefined) item.sourceReceiptId   = row.source_receipt_id || null;
   if (row.source_scan_id     !== undefined) item.sourceScanId      = row.source_scan_id || null;
+  // Raw scanner output (migration 0031). JSONB on the row that preserves
+  // what Claude actually read before the canonical substitution. Lets
+  // the ItemCard show "raw scan: SHRD MOZZ" for debugging and trust.
+  if (row.scan_raw           !== undefined) item.scanRaw           = row.scan_raw || null;
   return item;
 }
 
@@ -86,6 +90,7 @@ function toDb(item) {
     ...(item.sourceKind        !== undefined ? { source_kind: item.sourceKind || null } : {}),
     ...(item.sourceReceiptId   !== undefined ? { source_receipt_id: item.sourceReceiptId || null } : {}),
     ...(item.sourceScanId      !== undefined ? { source_scan_id: item.sourceScanId || null } : {}),
+    ...(item.scanRaw           !== undefined ? { scan_raw: item.scanRaw || null } : {}),
   };
 }
 

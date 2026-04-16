@@ -313,6 +313,19 @@ function Scanner({ onItemsScanned, onClose }) {
         // Provenance tag — activeMode.id is 'receipt' for receipt scans,
         // 'fridge' / 'pantry' / 'freezer' for pantry-shelf scans.
         const sourceKind = activeMode.id === "receipt" ? "receipt_scan" : "pantry_scan";
+        // Raw scanner read — the text and metadata EXACTLY as the vision
+        // API returned it, BEFORE canonical substitution / unit
+        // inference / anything else. Stored verbatim so the ItemCard
+        // can render "raw scan: SHRD MOZZ 8OZ" for sanity-checking.
+        const scanRaw = {
+          raw_name: item.name,
+          confidence: rawConf || confidence,
+          mode: activeMode.id,
+          detected_state: detectedState || null,
+          price_cents: typeof item.priceCents === "number" ? item.priceCents : null,
+          amount_raw: item.amount != null ? String(item.amount) + (item.unit ? ` ${item.unit}` : "") : null,
+          scanned_at: new Date().toISOString(),
+        };
         const base = {
           ...item,
           name: canon ? canon.name : item.name,
@@ -324,6 +337,7 @@ function Scanner({ onItemsScanned, onClose }) {
           id: i,
           selected: true,
           sourceKind,
+          scanRaw,
           ...(detectedState ? { state: detectedState } : {}),
         };
         if (!canon) {
@@ -1949,6 +1963,9 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           // stale pointers; last-wins matches the user's mental model.
           if (receiptId) ex.sourceReceiptId = receiptId;
           if (s.sourceKind) ex.sourceKind = s.sourceKind;
+          // scan_raw also takes last-wins — most recent scan's read is
+          // what the user is currently verifying.
+          if (s.scanRaw) ex.scanRaw = s.scanRaw;
         } else {
           addedCount++;
           next.push({
@@ -1970,6 +1987,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             // fields stay undefined when the scanner didn't set them.
             ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
             ...(s.state      ? { state: s.state           } : {}),
+            ...(s.scanRaw    ? { scanRaw: s.scanRaw       } : {}),
             // Back-link to the receipt row we just inserted (if any).
             // Powers the ItemCard's "TAP TO VIEW RECEIPT" deep link so
             // the user can see the original scan. receiptId is null for
