@@ -248,7 +248,7 @@ export default function IdentifiedAsPicker({
           }}
         >
           <span style={{ fontSize: 16 }}>➕</span>
-          <span>CREATE NEW IDENTIFIED AS</span>
+          <span>CREATE NEW STORAGE AREA</span>
         </button>
       ) : (
         <div style={{
@@ -257,7 +257,7 @@ export default function IdentifiedAsPicker({
           display: "flex", flexDirection: "column", gap: 10,
         }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: COLOR.gold, letterSpacing: "0.12em" }}>
-            NEW IDENTIFIED AS
+            NEW STORAGE AREA
           </div>
           <input
             autoFocus

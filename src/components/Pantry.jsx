@@ -1473,7 +1473,7 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
                   color: "#f5c842", letterSpacing: "0.12em",
                 }}>
-                  IDENTIFIED AS {customTileId ? "" : "(OPTIONAL)"}
+                  STORED IN {customTileId ? "" : "(OPTIONAL)"}
                 </div>
                 <div style={{ flex: 1 }} />
                 <button

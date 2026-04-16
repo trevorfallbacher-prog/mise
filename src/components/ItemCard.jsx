@@ -368,7 +368,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#888" }}>IDENTIFIED AS:</span>
+                  <span style={{ color: "#888" }}>STORED IN:</span>
                   {currentTile ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
@@ -1084,7 +1084,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
         <ModalSheet
           onClose={() => setTilePickerOpen(false)}
           zIndex={Z.picker}
-          label="IDENTIFIED AS"
+          label="STORED IN"
           maxHeight="85vh"
         >
           <h2 style={{
@@ -1092,7 +1092,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             fontStyle: "italic", color: "#f0ece4",
             fontWeight: 400, margin: "2px 0 10px",
           }}>
-            What kind of thing is this?
+            Where does this live?
           </h2>
           <p style={{
             fontFamily: "'DM Sans',sans-serif", fontSize: 12,
