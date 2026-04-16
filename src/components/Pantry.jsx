@@ -2038,13 +2038,31 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 </button>
               )}
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2, flexWrap:"wrap" }}>
               <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{(item.category || "").toUpperCase()}</span>
               {item.priceCents != null && (
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }} title="Last paid price">
                   {formatPrice(item.priceCents)}
                 </span>
               )}
+              {/* ADDED chip — small at-a-glance reminder of when this item
+                  entered the pantry. Uses purchasedAt (set by scan / manual
+                  add / cook-complete). Provenance (scanned from which
+                  receipt / which cook) is the richer version, lands with
+                  2b's source_kind + source_*_id columns. */}
+              {item.purchasedAt && (() => {
+                const d = item.purchasedAt instanceof Date ? item.purchasedAt : new Date(item.purchasedAt);
+                if (Number.isNaN(d.getTime())) return null;
+                const label = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                return (
+                  <span
+                    style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666" }}
+                    title={`Added ${d.toLocaleDateString()}`}
+                  >
+                    ADDED {label.toUpperCase()}
+                  </span>
+                );
+              })()}
               {!item.ingredientId && (
                 <button
                   onClick={e => { e.stopPropagation(); setLinkingItem(item); }}
