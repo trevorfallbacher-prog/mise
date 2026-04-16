@@ -2839,6 +2839,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           <ItemCard
             item={fresh}
             pantry={pantry}
+            onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
             onClose={() => setOpenItem(null)}
           />
         );
