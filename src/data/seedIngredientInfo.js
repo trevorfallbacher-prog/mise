@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 6;
+export const SEED_VERSION = 7;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -262,18 +262,48 @@ export const SEED_INGREDIENT_INFO = [
     info: {
       description: "A dried herb blend representing the baseline of Italian-American cooking. Not traditional to any specific Italian region — it's an American pantry shortcut that combines the herbs you'd find in a Neapolitan nonna's garden into one shaker.",
       flavorProfile: "Herbal, warm, earthy, slightly floral. The oregano-basil-thyme trio does most of the work; the others add nuance.",
-      prepTips: "Crush between your palms to wake up the oils. Add to marinara, pizza dough, roasted vegetables, garlic bread, vinaigrettes.",
-      storage: { location: "pantry", shelfLifeDays: 730, tips: "Blends age faster than single spices because each herb degrades at a different rate. Replace yearly." },
+      prepTips: "Crush between your palms before adding to wake up the oils — the friction releases volatile compounds that are dormant in the dried form. Add early to marinara, pizza sauce, and braises so the flavors meld; add late to vinaigrettes and finishing applications.",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 730,
+        shelfLife: { fridge: null, freezer: 1095, pantry: 730 },
+        tips: "Blends age faster than single spices because each herb degrades at a different rate — the basil fades before the rosemary. Replace yearly for best results.",
+        spoilageSigns: "Faded gray-brown color (fresh blends are vibrant green-brown), no aroma when crushed between palms. Stale Italian seasoning tastes like dried grass.",
+        freezable: true,
+        freezeNotes: "Freezing slows the degradation of volatile herb oils. Doubles the practical shelf life. Use straight from the freezer.",
+      },
       substitutions: [
-        { id: "oregano", tier: "direct", note: "Oregano alone covers 60% of the blend's job." },
-        { id: "herbs_de_provence", tier: "creative", note: "French counterpart — adds lavender and savory but similar overall character." },
+        { id: "oregano", tier: "direct", note: "Oregano alone covers 60% of the blend's job. The single best substitute if you have to pick one." },
+        { id: "herbs_de_provence", tier: "creative", note: "French counterpart — adds lavender and savory but similar overall character. Subbing in a French direction." },
+        { id: "dried_basil", tier: "creative", note: "Plus dried oregano (1:1) gets you most of the way there." },
       ],
       blendOf: ["oregano", "dried_basil", "dried_thyme", "dried_rosemary", "dried_marjoram", "dried_sage"],
-      pairs: ["garlic", "tomato", "olive_oil", "mozzarella", "pasta", "bread"],
-      origin: "American invention, mid-20th century. McCormick and other spice companies popularized it as a convenience product. Traditional Italian cooks use individual herbs.",
-      culturalNotes: "Italian grandmothers do not use 'Italian seasoning' — they use what's growing outside. But for a weeknight garlic bread or a quick marinara, a pre-mixed blend is genuinely practical.",
+      pairs: ["garlic", "tomato", "olive_oil", "mozzarella", "pasta", "bread", "parmesan", "chicken"],
+      flavor: {
+        primary: ["umami", "bitter"],
+        intensity: "moderate",
+        heatChange: {
+          raw: "grassy, dusty, faintly bitter — nothing magical until heat or fat unlocks it",
+          cooked: "warm, herbal, layered — oregano forward, basil in the back, rosemary as the bass note",
+          charred: "burnt-grass bitter; the herbs scorch fast in dry heat",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 3, protein_g: 0.1, fat_g: 0.1, carb_g: 0.6, fiber_g: 0.4 },
+      origin: "American invention, mid-20th century. McCormick and other spice companies popularized it as a convenience product. The proportions vary by brand — some lean heavy on oregano, others on basil.",
+      culturalNotes: "Italian grandmothers do not use 'Italian seasoning' — they use what's growing outside, in fresh form, picked that day. The dried-blend version is a uniquely American compromise: convenient, consistent, and good enough for weeknight cooking. Don't be precious about it; nonnas are also not making homemade pasta on a Tuesday.",
+      recipes: ["Marinara Sauce", "Pizza Dough", "Garlic Bread", "Italian Vinaigrette", "Chicken Parmesan", "Lasagna Sauce", "Bruschetta", "Italian Sausage Seasoning"],
       allergens: [],
-      nutrition: { per: "1 tsp", kcal: 3, protein_g: 0.1, fat_g: 0.1, carb_g: 0.6 },
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: false, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Bulk-bin spice shops are dramatically fresher and cheaper than supermarket jars. The 'Italian Herb' blend at Penzeys, Burlap & Barrel, or any well-trafficked spice market beats McCormick by a wide margin.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: true,
+        qualityMatters: true,
+        qualityNote: "Quality drops fast as the blend ages. A fresh small-batch jar from a spice market makes a noticeably better marinara than a dusty supermarket jar that's been on the shelf for two years.",
+      },
+      skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
     },
   },
 ];
