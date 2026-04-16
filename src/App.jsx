@@ -9,6 +9,9 @@ import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
 import NotificationsPanel from "./components/NotificationsPanel";
 import UserProfile from "./components/UserProfile";
+import WhatsNewNotification from "./components/WhatsNewNotification";
+import ReleaseNotesModal from "./components/ReleaseNotesModal";
+import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
 import { usePantry } from "./lib/usePantry";
@@ -118,6 +121,12 @@ export default function App() {
 function AuthedApp({ user, profile, upsertProfile }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
+
+  // What's-new notification state. Compares the bundled CURRENT_VERSION
+  // against the user's locally-stored last-seen version; surfaces a
+  // slim notification + (on tap) the full ReleaseNotesModal. First-paint
+  // unknown-history is silent — see useWhatsNew.js for the rationale.
+  const whatsNew = useWhatsNew();
 
   // NOTE: the ingredient_info seed + fetch used to live here as a separate
   // useEffect. It's now consolidated inside IngredientInfoProvider so the
@@ -397,6 +406,20 @@ function AuthedApp({ user, profile, upsertProfile }) {
           </button>
         ))}
       </div>
+
+      {/* Post-update notification + full release-notes modal. The slim
+          notification opens automatically via useWhatsNew when the
+          bundled version differs from the user's last-seen; the full
+          modal opens from "SEE WHAT'S NEW" or (later) Settings. */}
+      {whatsNew.showNotification && (
+        <WhatsNewNotification
+          onSeeWhatsNew={whatsNew.openFull}
+          onDismiss={whatsNew.dismiss}
+        />
+      )}
+      {whatsNew.showFullModal && (
+        <ReleaseNotesModal onClose={whatsNew.closeFull} />
+      )}
     </div>
   );
 }
