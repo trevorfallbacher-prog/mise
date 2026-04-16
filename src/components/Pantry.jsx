@@ -1326,6 +1326,163 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
   );
 }
 
+// ── ConvertStateModal ────────────────────────────────────────────────────
+//
+// Opens when the user taps "⇌ CONVERT" on any pantry row whose ingredient
+// has a state vocabulary. Lets them turn a loaf into crumbs, a block of
+// cheese into shreds, raw chicken into cooked, etc. The yield is
+// user-entered (no hard-coded ratios) because reality varies — one loaf
+// gives you 20 slices one day and 16 the next depending on how you cut.
+//
+// Props:
+//   item                — the source pantry row
+//   onCancel()
+//   onConfirm({         — caller applies the writes
+//     targetState,      new state ("crumbs", "grated", …)
+//     yieldAmount,      the user-entered amount produced
+//     yieldUnit,        unit for yieldAmount (picked from the ingredient's units)
+//     sourceUsed        how much of the source row was consumed
+//   })
+function ConvertStateModal({ item, onCancel, onConfirm }) {
+  const canon = findIngredient(item.ingredientId);
+  const states = statesForIngredient(canon) || [];
+  const unitOptions = canon?.units || [{ id: item.unit, label: item.unit || "—", toBase: 1 }];
+  // Exclude the source's own state from the target list — converting
+  // "loaf → loaf" is meaningless. Also drop any states that don't exist
+  // in the ingredient's vocabulary (defensive for data drift).
+  const targetCandidates = states.filter(s => s !== (item.state || null));
+
+  const [targetState, setTargetState] = useState(targetCandidates[0] || "");
+  const [sourceUsed, setSourceUsed] = useState(() => {
+    // Default the source-used amount to the full row. Users who only
+    // grated half a block can tune down.
+    const v = Number(item.amount);
+    return Number.isFinite(v) ? v : 1;
+  });
+  const [yieldAmount, setYieldAmount] = useState(1);
+  const [yieldUnit, setYieldUnit] = useState(() =>
+    canon?.defaultUnit || unitOptions[0]?.id || item.unit || ""
+  );
+
+  const canConfirm = targetState && Number(yieldAmount) > 0 && Number(sourceUsed) > 0;
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{ position:"fixed", inset:0, background:"#000c", zIndex:260, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ width:"100%", maxWidth:480, maxHeight:"88vh", overflowY:"auto", background:"#0a0a0a", borderTop:"1px solid #2a2a2a", borderTopLeftRadius:18, borderTopRightRadius:18, padding:"24px 20px 20px" }}
+      >
+        <div style={{ width:42, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 16px" }} />
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.15em", marginBottom:6 }}>
+          ⇌ CONVERT STATE
+        </div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:24, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:4 }}>
+          {canon?.name || item.name}
+        </h2>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:18 }}>
+          From <span style={{ color:"#f5c842" }}>{item.state ? stateLabel(item.state) : "current"}</span> to …
+        </p>
+
+        {/* Target state picker — grid of chips, one per candidate. */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(3, 1fr)", gap:8, marginBottom:18 }}>
+          {targetCandidates.map(s => {
+            const active = targetState === s;
+            return (
+              <button
+                key={s}
+                onClick={() => setTargetState(s)}
+                style={{
+                  padding:"12px 8px",
+                  background: active ? "#0f1620" : "#141414",
+                  border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                  borderRadius:10,
+                  fontFamily:"'DM Mono',monospace", fontSize:10,
+                  color: active ? "#7eb8d4" : "#f0ece4",
+                  letterSpacing:"0.08em",
+                  cursor:"pointer",
+                  textTransform:"uppercase",
+                }}
+              >
+                {stateLabel(s)}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Source used. Tells us how much of the original row to decrement. */}
+        <div style={{ marginBottom:14 }}>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.1em", marginBottom:6 }}>
+            USED FROM SOURCE
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <input
+              type="number" min="0" step="any"
+              value={sourceUsed}
+              onChange={e => setSourceUsed(e.target.value === "" ? 0 : Number(e.target.value))}
+              style={{ flex:1, padding:"10px 12px", background:"#141414", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:15, color:"#f0ece4", outline:"none" }}
+            />
+            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#888", minWidth:56 }}>
+              {canon ? unitLabel(canon, item.unit) : item.unit} of {stateLabel(item.state || "current")}
+            </span>
+          </div>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.08em", marginTop:4 }}>
+            HAVE: {item.amount} {canon ? unitLabel(canon, item.unit) : item.unit}
+          </div>
+        </div>
+
+        {/* Yield — how much the conversion produced. User-entered because
+            ratios vary; we don't pretend to know. */}
+        <div style={{ marginBottom:18 }}>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.1em", marginBottom:6 }}>
+            YIELDED
+          </div>
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <input
+              type="number" min="0" step="any"
+              value={yieldAmount}
+              onChange={e => setYieldAmount(e.target.value === "" ? 0 : Number(e.target.value))}
+              style={{ flex:1, padding:"10px 12px", background:"#141414", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:15, color:"#f0ece4", outline:"none" }}
+            />
+            <select
+              value={yieldUnit}
+              onChange={e => setYieldUnit(e.target.value)}
+              style={{ padding:"10px 10px", background:"#141414", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f0ece4", outline:"none", minWidth:90, cursor:"pointer" }}
+            >
+              {unitOptions.map(u => (
+                <option key={u.id} value={u.id} style={{ background:"#141414" }}>
+                  {u.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.08em", marginTop:4 }}>
+            OF {stateLabel(targetState || "target")}
+          </div>
+        </div>
+
+        <div style={{ display:"flex", gap:10 }}>
+          <button
+            onClick={onCancel}
+            style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={() => onConfirm({ targetState, yieldAmount, yieldUnit, sourceUsed })}
+            disabled={!canConfirm}
+            style={{ flex:2, padding:"14px", background: canConfirm ? "#7eb8d4" : "#1a1a1a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: canConfirm ? "#0a0a0a" : "#444", cursor: canConfirm ? "pointer" : "not-allowed", letterSpacing:"0.08em" }}
+          >
+            ⇌ CONVERT
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
 export default function Pantry({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
   const [scanning, setScanning] = useState(false);
@@ -1366,6 +1523,11 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // Tapping a pantry row opens IngredientCard with rich metadata. Null when
   // the card is closed; otherwise { ingredientId, fallbackName, fallbackEmoji }.
   const [cardIng, setCardIng] = useState(null);
+  // Convert-state modal. Set to a pantry item to open; null to close.
+  // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
+  // user picks a target state + enters how much it yielded, we decrement
+  // the source row and insert a new row with the target state.
+  const [convertingItem, setConvertingItem] = useState(null);
   // Bumped after each successful scan so the monthly-spend banner re-queries.
   const [spendRefresh, setSpendRefresh] = useState(0);
   const monthlySpend = useMonthlySpend(userId, spendRefresh);
@@ -1941,6 +2103,25 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                     style={{ background:"transparent", border:"1px dashed #2a2a2a", color:"#555", fontFamily:"'DM Mono',monospace", fontSize:9, padding:"0 6px", borderRadius:4, cursor:"pointer" }}
                   >
                     + set expires
+                  </button>
+                );
+              })()}
+              {/* CONVERT chip — only surfaces for ingredients that have
+                  a state vocabulary (bread, cheese, chicken, onion, etc.).
+                  Opens the convert modal where the user picks a target
+                  state + enters the resulting yield. */}
+              {(() => {
+                if (!canon) return null;
+                const states = statesForIngredient(canon);
+                if (!states || states.length < 2) return null;
+                return (
+                  <button
+                    onClick={e => { e.stopPropagation(); setConvertingItem(item); }}
+                    aria-label={`Convert ${item.name} to a different form`}
+                    title="Turn this into another form (slice, grate, shred, …)"
+                    style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", background:"transparent", border:"1px dashed #1f3040", padding:"0 6px", borderRadius:4, cursor:"pointer" }}
+                  >
+                    ⇌ CONVERT
                   </button>
                 );
               })()}
@@ -2651,6 +2832,70 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           fallbackEmoji={cardIng.fallbackEmoji}
           pantry={pantry}
           onClose={() => setCardIng(null)}
+        />
+      )}
+      {convertingItem && (
+        <ConvertStateModal
+          item={convertingItem}
+          onCancel={() => setConvertingItem(null)}
+          onConfirm={({ targetState, yieldAmount, yieldUnit, sourceUsed }) => {
+            const sourceCanon = findIngredient(convertingItem.ingredientId);
+            setPantry(prev => {
+              const byId = new Map(prev.map(r => [r.id, r]));
+              // Decrement the source row. Source-used is in the source
+              // row's own unit, clamped to not go negative. If it hits
+              // 0 we delete the row entirely (same pattern as the
+              // cook-complete removal flow).
+              const src = byId.get(convertingItem.id);
+              if (src) {
+                const nextAmount = Math.max(0, Number(src.amount) - Number(sourceUsed));
+                if (nextAmount === 0) byId.delete(src.id);
+                else byId.set(src.id, { ...src, amount: Number(nextAmount.toFixed(4)) });
+              }
+              // Insert (or merge) the target-state row. Same
+              // ingredientId + same location + same target state →
+              // one row, additive amount. Otherwise new row.
+              const existingTarget = [...byId.values()].find(r =>
+                r.ingredientId === convertingItem.ingredientId &&
+                (r.location || "pantry") === (convertingItem.location || "pantry") &&
+                (r.state || null) === targetState &&
+                (r.kind || "ingredient") === "ingredient"
+              );
+              if (existingTarget) {
+                byId.set(existingTarget.id, {
+                  ...existingTarget,
+                  amount: Number(existingTarget.amount) + Number(yieldAmount),
+                });
+              } else {
+                const newId = typeof crypto !== "undefined" && crypto.randomUUID
+                  ? crypto.randomUUID()
+                  : `convert-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                byId.set(newId, {
+                  id: newId,
+                  ingredientId: convertingItem.ingredientId,
+                  name: sourceCanon?.name || convertingItem.name,
+                  emoji: sourceCanon?.emoji || convertingItem.emoji,
+                  amount: Number(yieldAmount),
+                  unit: yieldUnit,
+                  max: Number(yieldAmount),
+                  category: convertingItem.category,
+                  lowThreshold: 0.25,
+                  priceCents: null,
+                  location: convertingItem.location || "pantry",
+                  // Converted rows inherit source expiration — a loaf
+                  // turned into crumbs doesn't become fresher. User
+                  // can override via the date picker after.
+                  expiresAt: convertingItem.expiresAt || null,
+                  purchasedAt: convertingItem.purchasedAt || null,
+                  kind: "ingredient",
+                  state: targetState,
+                  ownerId: userId,
+                });
+              }
+              return [...byId.values()];
+            });
+            setConvertingItem(null);
+          }}
         />
       )}
       {linkingItem && (
