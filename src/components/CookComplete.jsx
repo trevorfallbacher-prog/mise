@@ -92,6 +92,10 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // the initial pantry snapshot; realtime pantry changes during the flow are
   // intentionally ignored so the user's edits don't flip out from under them.
   const [usedItems, setUsedItems] = useState(() => buildInitialUsedItems(recipe, pantry));
+  // pickerForIdx is the row whose multi-match picker is currently open (null
+  // for closed). Sheet overlays the phase and lets the user choose which
+  // pantry row to draw from when more than one matches the ingredient id.
+  const [pickerForIdx, setPickerForIdx] = useState(null);
 
   const xp = useMemo(() => totalXpForRecipe(recipe), [recipe]);
   // Merge family + friends, dedupe by otherId (someone could be tagged as
@@ -278,13 +282,26 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color: row.skipped ? "#555" : "#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {displayName}
                   </div>
-                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.05em" }}>
-                    {tracked
-                      ? (match
-                          ? `FROM ${(match.location || "pantry").toUpperCase()}${extraMatches > 0 ? ` · +${extraMatches} MORE` : ""}`
-                          : "NOT IN PANTRY")
-                      : "UNTRACKED"}
-                    {" · RECIPE: "}{row.recipeIng.amount || "—"}
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.05em", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                    {tracked && match && extraMatches > 0 ? (
+                      <button
+                        onClick={() => setPickerForIdx(row.idx)}
+                        style={{
+                          padding:"2px 6px", background:"#1a1608", color:"#f5c842",
+                          border:"1px solid #3a2f10", borderRadius:4, cursor:"pointer",
+                          fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.05em",
+                        }}
+                      >
+                        {`FROM ${(match.location || "pantry").toUpperCase()} · +${extraMatches} MORE ▾`}
+                      </button>
+                    ) : (
+                      <span>
+                        {tracked
+                          ? (match ? `FROM ${(match.location || "pantry").toUpperCase()}` : "NOT IN PANTRY")
+                          : "UNTRACKED"}
+                      </span>
+                    )}
+                    <span>· RECIPE: {row.recipeIng.amount || "—"}</span>
                   </div>
                 </div>
                 {canEditAmount && !row.skipped ? (
@@ -335,6 +352,97 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             CONTINUE →
           </button>
         </div>
+
+        {/* Multi-match picker sheet. Opens over the phase when the user taps
+            the "+N MORE ▾" pill on a row with more than one matching pantry
+            row. We never auto-pick even though 99% of the time nearest-
+            expiring is right — the user asked to confirm per the kitchen
+            reality that people reach for the wrong container all the time.
+            Rows are sorted earliest-expiring first (FIFO nudge) with a
+            sentinel for rows missing an expires_at. */}
+        {pickerForIdx != null && (() => {
+          const row = usedItems.find(r => r.idx === pickerForIdx);
+          if (!row) return null;
+          const sorted = [...row.matches].sort((a, b) => {
+            const ax = a.expiresAt ? a.expiresAt.getTime() : Infinity;
+            const bx = b.expiresAt ? b.expiresAt.getTime() : Infinity;
+            return ax - bx;
+          });
+          const now = Date.now();
+          return (
+            <div
+              onClick={() => setPickerForIdx(null)}
+              style={{ position:"absolute", inset:0, background:"#000d", zIndex:5, display:"flex", alignItems:"flex-end", animation:"rise 0.18s ease" }}
+            >
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ width:"100%", maxHeight:"75%", overflowY:"auto", background:"#0a0a0a", borderTop:"1px solid #2a2a2a", borderTopLeftRadius:18, borderTopRightRadius:18, padding:"22px 20px 16px" }}
+              >
+                <div style={{ width:42, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 16px" }} />
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:6 }}>
+                  PICK YOUR {(row.canonical?.name || row.recipeIng.item || "").toUpperCase()}
+                </div>
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", marginBottom:16 }}>
+                  You have {row.matches.length} containers. Which one did you pull from?
+                </p>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {sorted.map(m => {
+                    const active = row.selectedRowId === m.id;
+                    const days = m.expiresAt ? Math.round((m.expiresAt.getTime() - now) / 86400000) : null;
+                    const dayLabel = days == null
+                      ? "no expiration"
+                      : days < 0 ? `${Math.abs(days)}d past`
+                      : days === 0 ? "expires today"
+                      : `${days}d left`;
+                    const dayColor = days == null ? "#666"
+                      : days <= 1 ? "#ef4444"
+                      : days <= 3 ? "#f59e0b"
+                      : "#4ade80";
+                    return (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          setUsedItems(prev => prev.map(r => r.idx === row.idx ? { ...r, selectedRowId: m.id, usedUnit: r.usedUnit || m.unit } : r));
+                          setPickerForIdx(null);
+                        }}
+                        style={{
+                          textAlign:"left", padding:"12px 14px",
+                          background: active ? "#1a1608" : "#141414",
+                          border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                          borderRadius:12, cursor:"pointer",
+                        }}
+                      >
+                        <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.1em" }}>
+                            {(m.location || "pantry").toUpperCase()}
+                          </span>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:dayColor, letterSpacing:"0.1em" }}>
+                            {dayLabel.toUpperCase()}
+                          </span>
+                          {active && <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.1em" }}>✓ SELECTED</span>}
+                        </div>
+                        <div style={{ fontFamily:"'Fraunces',serif", fontSize:14, color:"#f0ece4", fontStyle:"italic" }}>
+                          {m.amount} {unitLabel(row.canonical, m.unit)}
+                          {m.purchasedAt ? (
+                            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", marginLeft:8, letterSpacing:"0.05em" }}>
+                              · bought {m.purchasedAt.toLocaleDateString(undefined, { month:"short", day:"numeric" })}
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => setPickerForIdx(null)}
+                  style={{ marginTop:14, width:"100%", padding:"12px", background:"transparent", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}
+                >
+                  CLOSE
+                </button>
+              </div>
+            </div>
+          );
+        })()}
       </div>
     );
   }
