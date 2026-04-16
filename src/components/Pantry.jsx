@@ -26,12 +26,14 @@ function tilesForTab(tab) {
   if (tab === "freezer") return { tiles: FREEZER_TILES, classify: freezerTileIdForItem };
   return { tiles: null, classify: null };
 }
+import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
 import ReceiptView from "./ReceiptView";
 import { Z } from "../lib/tokens";
+import { bumpTileUse } from "../lib/userTiles";
 import {
   setComponentsForParent,
   componentsFromIngredientIds,
@@ -900,6 +902,13 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // the user opened from a different tile). fillFromCanonical leaves
   // it untouched — canonicals have no memory.
   const [customTileId, setCustomTileId] = useState(tileContext?.tileId || null);
+  // Location override set alongside the tile pick. Tiles are inherently
+  // scoped to a location (Pasta & Grains is pantry; Dairy & Eggs is
+  // fridge); picking one via IdentifiedAsPicker sets both. Null falls
+  // back to defaultLocationForCategory at save time.
+  const [customLocation, setCustomLocation] = useState(tileContext?.tabId || null);
+  // IDENTIFIED AS picker open/close — renders inline when expanded.
+  const [tilePickerOpen, setTilePickerOpen] = useState(false);
 
   // Custom-item fields. Name is the user's typed display name; unit +
   // category + components fill the rest of the identity. Picking a
@@ -1023,9 +1032,14 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
       // User's tile placement — either seeded from tileContext on
-      // modal open, inherited from a filled template, or null when
-      // neither applies. Classifier prefers this over its heuristic.
+      // modal open, inherited from a filled template, or set via the
+      // IDENTIFIED AS picker. Classifier prefers this over heuristic.
       tileId: customTileId || null,
+      // Location paired with the tile pick. Null falls through to
+      // Pantry's onAdd handler which derives from registry +
+      // category. Setting it here gives picker-based placement
+      // authority over the heuristic.
+      ...(customLocation ? { location: customLocation } : {}),
     };
 
     onAdd(item);
@@ -1051,7 +1065,7 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         category: customCategory,
         unit: customUnit.trim(),
         amount: amt,
-        location: defaultLocationForCategory(customCategory),
+        location: customLocation || defaultLocationForCategory(customCategory),
         // Persist the tile placement on the template too. Next family
         // member who types this name on ANY tile context will inherit
         // the original author's placement.
@@ -1064,6 +1078,14 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
           componentsFromIngredientIds(compIds)
         );
       }
+    }
+
+    // Bump use_count on user-created tiles. Built-in tiles are bundled
+    // data (no DB row), so isValidUuid is the simple discriminator —
+    // built-ins use string slugs like 'pasta_grains', user tiles are
+    // uuids. Fire-and-forget.
+    if (customTileId && /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(customTileId)) {
+      bumpTileUse(customTileId);
     }
 
     onClose();
@@ -1391,6 +1413,102 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   {c.label}
                 </button>
               ))}
+            </div>
+
+            {/* IDENTIFIED AS section. Shows current tile placement
+                (via built-in classifier for canonical picks, or
+                user's explicit choice). Tap to expand the full
+                picker inline. Users can also create new tiles from
+                the picker's + CREATE NEW affordance. Purely optional —
+                leaving untouched falls through to the heuristic
+                classifier at render time, same as before tile memory
+                existed. */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842", letterSpacing: "0.12em",
+                }}>
+                  IDENTIFIED AS {customTileId ? "" : "(OPTIONAL)"}
+                </div>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => setTilePickerOpen(v => !v)}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid #3a2f10",
+                    padding: "4px 10px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    letterSpacing: "0.1em", borderRadius: 6,
+                  }}
+                >
+                  {tilePickerOpen ? "HIDE" : (customTileId ? "CHANGE" : "PICK")}
+                </button>
+              </div>
+
+              {/* Current pick preview — when a tile is chosen and the
+                  picker is collapsed. Gives the user a read at a glance
+                  without forcing expand. */}
+              {!tilePickerOpen && customTileId && (() => {
+                // Look up the label/emoji for a tile id. Built-ins are
+                // in the three *_TILES arrays imported at module scope;
+                // user tiles would require the hook which we don't want
+                // inside a preview closure. Fall through to a generic
+                // "✓ TILE SET" when we can't resolve (user tile, live
+                // picker has the real data).
+                const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                const found = allBuiltIns.find(t => t.id === customTileId);
+                return (
+                  <div style={{
+                    padding: "8px 12px",
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    borderRadius: 10,
+                    display: "flex", alignItems: "center", gap: 10,
+                  }}>
+                    <span style={{ fontSize: 18 }}>{found?.emoji || "🗂️"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f5c842" }}>
+                        {found?.label || "Custom tile"}
+                      </div>
+                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.06em", marginTop: 2 }}>
+                        {customLocation ? customLocation.toUpperCase() : "LOCATION TBD"}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Collapsed + no pick = quiet invitation. The heuristic
+                  classifier will route at render time — this is just
+                  an affordance to override when the user knows better. */}
+              {!tilePickerOpen && !customTileId && (
+                <div style={{
+                  padding: "10px 12px",
+                  background: "#0a0a0a", border: "1px dashed #242424",
+                  borderRadius: 10,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
+                  fontStyle: "italic", lineHeight: 1.5,
+                }}>
+                  We'll route this to a tile based on components. Tap PICK to place it somewhere specific.
+                </div>
+              )}
+
+              {/* Expanded picker — inline, scrollable list of tiles +
+                  CREATE NEW. Picking auto-collapses so the form stays
+                  focused on what's next. */}
+              {tilePickerOpen && (
+                <IdentifiedAsPicker
+                  userId={userId}
+                  locationHint={customLocation}
+                  selectedTileId={customTileId}
+                  onPick={(tileId, location) => {
+                    setCustomTileId(tileId);
+                    if (location) setCustomLocation(location);
+                    setTilePickerOpen(false);
+                  }}
+                />
+              )}
             </div>
 
             {/* Components builder. Lets the user construct a composed
