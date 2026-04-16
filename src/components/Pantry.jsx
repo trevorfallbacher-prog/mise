@@ -26,6 +26,7 @@ function tilesForTab(tab) {
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
+import ReceiptView from "./ReceiptView";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -697,7 +698,14 @@ function Scanner({ onItemsScanned, onClose }) {
               {scannedItems.filter(i=>i.selected).length} items will be added to your pantry
             </span>
           </div>
-          <button onClick={() => { onItemsScanned(scannedItems.filter(i=>i.selected), receiptMeta); setPhase("done"); }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
+          <button onClick={() => {
+            // Pass imageData along so addScannedItems can upload the
+            // original scan to Storage and link it to the receipt row.
+            // Without this, the receipt row lands with image_path=null
+            // and "TAP TO VIEW RECEIPT" has nothing to render.
+            onItemsScanned(scannedItems.filter(i=>i.selected), { ...receiptMeta, imageData });
+            setPhase("done");
+          }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
             STOCK MY PANTRY →
           </button>
         </div>
@@ -1577,6 +1585,9 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   //     (add-item flow, hub drill-down) where there's no specific row yet.
   const [openItem, setOpenItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
+  // Receipt-view modal. Set to a receipt uuid to open; null to close.
+  // Driven by ItemCard's provenance line (onOpenProvenance callback).
+  const [openReceiptId, setOpenReceiptId] = useState(null);
   // Convert-state modal. Set to a pantry item to open; null to close.
   // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
   // user picks a target state + enters how much it yielded, we decrement
@@ -1770,6 +1781,41 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       else {
         receiptId = data?.id || null;
         setSpendRefresh(k => k + 1);
+      }
+    }
+
+    // Upload the scan image to Storage so the ItemCard's "TAP TO VIEW
+    // RECEIPT" deep link has something to render. Best-effort — the
+    // receipt row + pantry items are already persisted, so a failed
+    // upload just means the image isn't viewable (console warns but
+    // doesn't break the flow). Path convention: scans/<userId>/<receiptId>.ext
+    if (receiptId && meta.imageData?.base64) {
+      try {
+        const { base64, mediaType } = meta.imageData;
+        const ext = (mediaType || "image/jpeg").split("/")[1]?.split(";")[0] || "jpg";
+        const path = `${userId}/${receiptId}.${ext}`;
+        // Convert base64 to Blob for Supabase Storage upload.
+        const bin = atob(base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mediaType || "image/jpeg" });
+        const { error: upErr } = await supabase.storage
+          .from("scans")
+          .upload(path, blob, { contentType: mediaType, upsert: true });
+        if (upErr) {
+          console.warn("[scans storage] upload failed:", upErr.message);
+        } else {
+          // Stamp the path onto the receipt row so we know where to fetch
+          // the signed URL from later. Fire-and-forget — if this fails the
+          // worst case is the receipt exists without a renderable image.
+          const { error: pathErr } = await supabase
+            .from("receipts")
+            .update({ image_path: path })
+            .eq("id", receiptId);
+          if (pathErr) console.warn("[receipts] image_path update failed:", pathErr.message);
+        }
+      } catch (e) {
+        console.warn("[scans] image upload exception:", e?.message || e);
       }
     }
 
@@ -2972,6 +3018,14 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           </div>
         </div>
       )}
+      {openReceiptId && (
+        <ReceiptView
+          receiptId={openReceiptId}
+          pantry={pantry}
+          onOpenItem={(item) => setOpenItem(item)}
+          onClose={() => setOpenReceiptId(null)}
+        />
+      )}
       {openItem && (() => {
         // Resolve the open item freshly from the current pantry array so
         // realtime updates + inline edits land inside the card without a
@@ -2985,6 +3039,13 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             item={fresh}
             pantry={pantry}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
+            onOpenProvenance={(link) => {
+              // kind: 'receipt' is the only case wired today. 'cook' will
+              // route to a cook-log detail view when that ships.
+              if (link?.kind === "receipt" && link.id) {
+                setOpenReceiptId(link.id);
+              }
+            }}
             onClose={() => setOpenItem(null)}
           />
         );
