@@ -36,6 +36,7 @@ import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
 import ReceiptView from "./ReceiptView";
+import ReceiptHistoryModal from "./ReceiptHistoryModal";
 import { Z } from "../lib/tokens";
 import { bumpTileUse } from "../lib/userTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
@@ -920,13 +921,19 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             // raw scanner read. Receipt "2 × ACQUAMAR FLA" → correcting
             // one row to Imitation Crab corrects the other automatically.
             // Amount/unit stay per-row.
+            //
+            // NAME is intentionally NOT overwritten. "Frank's Best Cheese
+            // Dogs" stays as the display name after you link it to the
+            // canonical hot_dog — the ItemCard already shows the canonical
+            // as an IS-A subline, so the user's branded name survives the
+            // correction. (Previous behavior stomped on the user's text
+            // and was flagged as a bug.)
             propagateCorrection(linkingScanIdx, {
               ingredientId: primaryId,
               ingredientIds: ids,
               kind: kindForTagCount(ids.length),
               emoji:    canon?.emoji    || scannedItems[linkingScanIdx].emoji,
               category: canon?.category || scannedItems[linkingScanIdx].category,
-              ...(canon?.name ? { name: canon.name } : {}),
             });
             setLinkingScanIdx(null);
           }}
@@ -2357,6 +2364,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Driven by ItemCard's provenance line (onOpenProvenance callback)
   // and by a bell notification tap (deepLink prop, routed from App).
   const [openReceiptId, setOpenReceiptId] = useState(null);
+  // Receipt-history modal — browse every receipt ever scanned. Opened
+  // by tapping the GROCERIES THIS MONTH banner so users who want to
+  // re-inspect a prior scan don't have to remember what they bought or
+  // drill in through a specific item.
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   // Consume a deep link from a notification tap. App.jsx routes
   // target_kind='receipt' / 'pantry_scan' here by switching to the
@@ -3366,9 +3378,16 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       {/* Monthly groceries — only when there's been any spend recorded.
           Pulses green + floats a "+$X.XX" pill over the total when a new
           receipt lands, so the user sees the jump register in realtime
-          instead of wondering whether their scan actually stuck. */}
+          instead of wondering whether their scan actually stuck.
+          Whole banner is tappable — opens ReceiptHistoryModal so users
+          can browse every receipt (including family members') without
+          drilling in through a specific item. */}
       {!monthlySpend.loading && monthlySpend.cents > 0 && (
-        <div style={{ margin:"14px 20px 0", padding:"10px 14px", background:"#0f140f", border:"1px solid #1e3a1e", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"space-between", position:"relative", overflow:"visible" }}>
+        <button
+          onClick={() => setHistoryOpen(true)}
+          aria-label="View all receipts"
+          style={{ margin:"14px 20px 0", padding:"10px 14px", background:"#0f140f", border:"1px solid #1e3a1e", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"space-between", position:"relative", overflow:"visible", width:"calc(100% - 40px)", cursor:"pointer", textAlign:"left", fontFamily:"inherit" }}
+        >
           <style>{`
             @keyframes spendFloat {
               0%   { transform: translateY(0) scale(0.9); opacity: 0; }
@@ -3413,7 +3432,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               </span>
             )}
           </div>
-        </div>
+        </button>
       )}
 
       {/* View toggle */}
@@ -3951,6 +3970,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           pantry={pantry}
           onOpenItem={(item) => setOpenItem(item)}
           onClose={() => setOpenReceiptId(null)}
+        />
+      )}
+      {historyOpen && (
+        <ReceiptHistoryModal
+          userId={userId}
+          onOpenReceipt={(id) => {
+            // Stack the ReceiptView over the history modal rather than
+            // replacing it — when the user dismisses the view they land
+            // back on the history list, which is the behavior they'd
+            // expect from a "browse receipts" flow.
+            setOpenReceiptId({ receiptId: id });
+          }}
+          onClose={() => setHistoryOpen(false)}
         />
       )}
       {openItem && (() => {
