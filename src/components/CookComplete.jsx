@@ -1,12 +1,17 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { findIngredient, unitLabel } from "../data/ingredients";
 
-// Four-step completion flow shown when the user taps the final "DONE! LOG IT"
+// Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
-//   1. celebrate — confetti + "+XP" pulse, "Continue →"
-//   2. diners    — multi-select family + friends who ate with you
-//   3. rating    — 4-face scale (rough / meh / good / nailed)
-//   4. notes     — optional free-text, then save
+//   1. celebrate      — confetti + "+XP" pulse, "Continue →"
+//   2. ingredientsUsed— (Phase 2) what did you actually use / from which
+//                       pantry row? Each recipe ingredient shows up as an
+//                       editable row; ✕ drops a row the user didn't
+//                       actually consume (subs, leftovers, already-out).
+//   3. diners         — multi-select family + friends who ate with you
+//   4. rating         — 4-face scale (rough / meh / good / nailed)
+//   5. notes          — optional free-text, then save
 //
 // On save, we insert one row into `cook_logs`. The DB's INSERT trigger fans
 // out a rating-aware notification to every diner. Positive ratings mark the
@@ -38,13 +43,55 @@ function totalXpForRecipe(recipe) {
   return skills.reduce((sum, s) => sum + (Number(s.xp) || 0), 0);
 }
 
-export default function CookComplete({ recipe, userId, family = [], friends = [], onFinish }) {
+// Build one row per recipe ingredient for the "what did you use" phase.
+// Each row carries:
+//   recipeIng    — the original entry from recipe.ingredients[]
+//   canonical    — the INGREDIENTS registry def (null for untracked free-text)
+//   matches      — pantry rows for this ingredient (kind='ingredient' only)
+//   selectedRowId— which pantry row the user is drawing from (first match by
+//                  default; the multi-match picker will swap it in a follow-up)
+//   usedAmount / usedUnit — initial estimate from recipe.qty, editable in the
+//                  phase. Untracked rows have both null and a ✕-only card.
+//   skipped      — user tapped ✕. Final removal plan ignores skipped rows.
+// Pure function — no React, easy to unit test once we add a test harness.
+export function buildInitialUsedItems(recipe, pantry) {
+  const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+  const list = Array.isArray(pantry) ? pantry : [];
+  return ingredients.map((ing, idx) => {
+    const canonical = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
+    const matches = ing.ingredientId
+      ? list.filter(p =>
+          p.ingredientId === ing.ingredientId &&
+          (p.kind || "ingredient") === "ingredient" &&
+          Number(p.amount) > 0
+        )
+      : [];
+    const defaultMatch = matches[0] || null;
+    return {
+      idx,
+      recipeIng: ing,
+      canonical,
+      matches,
+      skipped: false,
+      selectedRowId: defaultMatch?.id || null,
+      usedAmount: ing.qty?.amount ?? null,
+      usedUnit:   ing.qty?.unit   ?? (defaultMatch?.unit ?? null),
+    };
+  });
+}
+
+export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, onFinish }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
   const [rating, setRating] = useState(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // usedItems captures the user's "what did I actually use" decisions across
+  // the ingredients-used → confirm-removal → save sequence. Seeded once from
+  // the initial pantry snapshot; realtime pantry changes during the flow are
+  // intentionally ignored so the user's edits don't flip out from under them.
+  const [usedItems, setUsedItems] = useState(() => buildInitialUsedItems(recipe, pantry));
 
   const xp = useMemo(() => totalXpForRecipe(recipe), [recipe]);
   // Merge family + friends, dedupe by otherId (someone could be tagged as
@@ -154,7 +201,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             SKILL POINTS EARNED
           </div>
           <button
-            onClick={() => setPhase(connections.length > 0 ? "diners" : "rating")}
+            onClick={() => setPhase(usedItems.length > 0 ? "ingredientsUsed" : (connections.length > 0 ? "diners" : "rating"))}
             style={{ width:"100%", maxWidth:320, padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", boxShadow:"0 0 30px #f5c84244" }}
           >
             CONTINUE →
@@ -164,11 +211,141 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     );
   }
 
-  // ── phase 2: who ate with you? ───────────────────────────────────────────
+  // ── phase 2: what did you actually use? ──────────────────────────────────
+  //
+  // First screen of the pantry-reconcile flow. Shows every recipe.ingredients
+  // row as an editable card; the user can tweak how much they really used,
+  // or ✕ any row they didn't consume (sub, already-out, "I used yesterday's
+  // leftover chicken"). Untracked free-text ingredients (no ingredientId)
+  // render as greyed info-only cards — they don't have a pantry row to
+  // decrement, but we still show them so the user sees the whole ingredient
+  // list and can ✕ the ones they swapped out mentally.
+  //
+  // Default behavior: each tracked ingredient pre-fills the recipe's quantity
+  // and defaults to the first matching pantry row. The multi-match picker
+  // (expiration + location labels) lands in a follow-up commit; for now the
+  // card surfaces a "+N more" count so nothing is hidden.
+  if (phase === "ingredientsUsed") {
+    const setRow = (idx, patch) =>
+      setUsedItems(prev => prev.map(r => r.idx === idx ? { ...r, ...patch } : r));
+
+    // Step counter. The downstream ingredients-used → confirm-removal →
+    // leftovers chain is still being built; for now we hold the denominator
+    // at the existing "diners/rating/notes" counts so the step ratio stays
+    // honest in this commit.
+    const baseSteps = connections.length > 0 ? 3 : 2;
+    const totalSteps = baseSteps + 1;
+
+    return shell(
+      <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>STEP 1 OF {totalSteps}</div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
+          What did you use?
+        </h2>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>
+          Tweak the amounts or tap ✕ on anything you swapped out or skipped. We'll pull these from your pantry next.
+        </p>
+
+        <div style={{ flex:1, display:"flex", flexDirection:"column", gap:10, marginBottom:18 }}>
+          {usedItems.map(row => {
+            const ing = row.canonical;
+            const tracked = Boolean(ing);
+            const match = tracked && row.selectedRowId
+              ? row.matches.find(m => m.id === row.selectedRowId) || null
+              : null;
+            const extraMatches = tracked ? Math.max(0, row.matches.length - 1) : 0;
+            const emoji = ing?.emoji || row.recipeIng.emoji || "🥣";
+            const displayName = ing?.name || row.recipeIng.item || "Ingredient";
+            const unitOptions = ing?.units || [];
+            const canEditAmount = tracked && row.usedUnit;
+            // Card styling: active rows have the yellow underline, skipped
+            // rows dim way down so they read as "we won't touch this".
+            return (
+              <div
+                key={row.idx}
+                style={{
+                  display:"flex", alignItems:"center", gap:10,
+                  padding:"12px 14px",
+                  background: row.skipped ? "#0c0c0c" : "#141414",
+                  border: `1px solid ${row.skipped ? "#1a1a1a" : (tracked ? "#2a2a2a" : "#1e1e1e")}`,
+                  borderRadius:12,
+                  opacity: row.skipped ? 0.45 : 1,
+                  transition:"all 0.15s",
+                }}
+              >
+                <span style={{ fontSize:22, flexShrink:0 }}>{emoji}</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color: row.skipped ? "#555" : "#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {displayName}
+                  </div>
+                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.05em" }}>
+                    {tracked
+                      ? (match
+                          ? `FROM ${(match.location || "pantry").toUpperCase()}${extraMatches > 0 ? ` · +${extraMatches} MORE` : ""}`
+                          : "NOT IN PANTRY")
+                      : "UNTRACKED"}
+                    {" · RECIPE: "}{row.recipeIng.amount || "—"}
+                  </div>
+                </div>
+                {canEditAmount && !row.skipped ? (
+                  <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+                    <input
+                      type="number" min="0" step="any"
+                      value={row.usedAmount ?? ""}
+                      onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
+                      style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
+                    />
+                    <select
+                      value={row.usedUnit || ""}
+                      onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
+                      style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
+                    >
+                      {unitOptions.map(u => (
+                        <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                <button
+                  onClick={() => setRow(row.idx, { skipped: !row.skipped })}
+                  aria-label={row.skipped ? "Re-include" : "Skip this ingredient"}
+                  style={{
+                    width:30, height:30, flexShrink:0,
+                    background: row.skipped ? "#1a1608" : "transparent",
+                    color: row.skipped ? "#f5c842" : "#666",
+                    border:`1px solid ${row.skipped ? "#3a2f10" : "#2a2a2a"}`,
+                    borderRadius:8, cursor:"pointer",
+                    fontFamily:"'DM Mono',monospace", fontSize:12,
+                  }}
+                >
+                  {row.skipped ? "↺" : "✕"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
+          <button onClick={() => setPhase("celebrate")}
+            style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
+            ← BACK
+          </button>
+          <button onClick={() => setPhase(connections.length > 0 ? "diners" : "rating")}
+            style={{ flex:2, padding:"14px", background:"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#111", cursor:"pointer", letterSpacing:"0.08em" }}>
+            CONTINUE →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── phase 3: who ate with you? ───────────────────────────────────────────
   if (phase === "diners") {
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>STEP 1 OF 3</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
+          STEP {usedItems.length > 0 ? "2" : "1"} OF {(usedItems.length > 0 ? 1 : 0) + 3}
+        </div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           Who ate with you?
         </h2>
@@ -230,7 +407,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px" }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
-          STEP {connections.length > 0 ? "2" : "1"} OF {connections.length > 0 ? "3" : "2"}
+          STEP {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 2 : 1)} OF {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 3 : 2)}
         </div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           How'd it go?
@@ -266,7 +443,11 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         </div>
 
         <div style={{ display:"flex", gap:10, marginTop:20 }}>
-          <button onClick={() => setPhase(connections.length > 0 ? "diners" : "celebrate")}
+          <button onClick={() => setPhase(
+              connections.length > 0 ? "diners"
+              : usedItems.length > 0 ? "ingredientsUsed"
+              : "celebrate"
+            )}
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
             ← BACK
           </button>
@@ -287,7 +468,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px" }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
-          STEP {connections.length > 0 ? "3" : "2"} OF {connections.length > 0 ? "3" : "2"}
+          STEP {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 3 : 2)} OF {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 3 : 2)}
         </div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           Any notes?
