@@ -1,9 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
+import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useItemComponents } from "../lib/useItemComponents";
+import { useUserTiles } from "../lib/useUserTiles";
+import { FRIDGE_TILES } from "../lib/fridgeTiles";
+import { PANTRY_TILES } from "../lib/pantryTiles";
+import { FREEZER_TILES } from "../lib/freezerTiles";
 import { Z } from "../lib/tokens";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -119,7 +124,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -152,6 +157,35 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   const TAGS_VISIBLE = 5;
   const [showAllTags, setShowAllTags] = useState(false);
   useEffect(() => { setShowAllTags(false); }, [item?.id]);
+
+  // Family's custom tiles for tile-id resolution. RLS handles family
+  // scope so we get self+family rows. Empty array when no user tiles
+  // exist yet; built-in resolution still works fine.
+  const [userTiles] = useUserTiles(userId);
+
+  // Resolve a tile_id -> display info ({emoji, label, location, source}).
+  // Checks built-ins first (FRIDGE/PANTRY/FREEZER_TILES), then user
+  // tiles. Returns null when the id doesn't match either — which
+  // happens for in-flight realtime writes or a tile a family member
+  // deleted; UI falls back to a generic "Custom Tile" label.
+  const currentTile = useMemo(() => {
+    if (!item?.tileId) return null;
+    const id = item.tileId;
+    const fridgeHit  = FRIDGE_TILES.find(t => t.id === id);
+    if (fridgeHit)  return { ...fridgeHit,  location: "fridge",  source: "builtin" };
+    const pantryHit  = PANTRY_TILES.find(t => t.id === id);
+    if (pantryHit)  return { ...pantryHit,  location: "pantry",  source: "builtin" };
+    const freezerHit = FREEZER_TILES.find(t => t.id === id);
+    if (freezerHit) return { ...freezerHit, location: "freezer", source: "builtin" };
+    const userHit = userTiles.find(t => t.id === id);
+    if (userHit)    return { ...userHit, source: "custom" };
+    return null;
+  }, [item?.tileId, userTiles]);
+
+  // Stacked tile-picker state. Opened when the IDENTIFIED AS line is
+  // tapped. Renders in its own ModalSheet over the ItemCard at a
+  // higher z-index so the pick flow doesn't close the card.
+  const [tilePickerOpen, setTilePickerOpen] = useState(false);
 
   // Safe bound — if the tag list shrinks below activeTagIdx (user
   // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
@@ -317,11 +351,52 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                   {item.name}
                 </h2>
               )}
-              {/* IDENTIFIED AS — lists every canonical tag on this item.
-                  Single-tag items render exactly like before; multi-tag
-                  items (Italian blend, frozen pizza, etc.) render all
-                  their tags joined with "·" so the full identity is
-                  visible at a glance before opening the deep-dive. */}
+              {/* IDENTIFIED AS — the item's tile placement ("what kind
+                  of thing is this"). Distinct from MADE OF below which
+                  lists component ingredients. Tap to re-pick — opens
+                  a stacked IdentifiedAsPicker modal. Hidden entirely
+                  when there's no onUpdate (read-only embeds). */}
+              {onUpdate && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: currentTile ? "#f5c842" : "#666",
+                    letterSpacing: "0.08em", marginTop: 3,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ color: "#888" }}>IDENTIFIED AS:</span>
+                  {currentTile ? (
+                    <>
+                      <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
+                      <span style={{
+                        color: "#f5c842",
+                        borderBottom: "1px dashed #f5c84244",
+                      }}>
+                        {currentTile.label?.toUpperCase() || "CUSTOM TILE"}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      color: "#888",
+                      borderBottom: "1px dashed #66666644",
+                    }}>
+                      TAP TO PLACE
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* MADE OF — lists every canonical tag on this item.
+                  Renamed from IDENTIFIED AS in chunk 16d to separate
+                  compositional identity ("what is this made from")
+                  from organizational identity ("what kind of thing
+                  is this", now the IDENTIFIED AS line above).
+                  Single-tag items render exactly like before; multi-
+                  tag items (Italian blend, frozen pizza, etc.) render
+                  all their tags joined with "·" so the full identity
+                  is visible at a glance before opening the deep-dive. */}
               {tags.length > 0 && (() => {
                 // Skip the line if the ONLY tag's name matches the
                 // user-typed name — avoids "Prosciutto · PROSCIUTTO"
@@ -335,7 +410,7 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 const hidden  = overflowing ? tags.length - TAGS_VISIBLE : 0;
                 return (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5 }}>
-                    IDENTIFIED AS:{" "}
+                    MADE OF:{" "}
                     {visible.map((t, i) => (
                       <span key={t.id}>
                         {i > 0 && <span style={{ color: "#444" }}> · </span>}
@@ -985,6 +1060,7 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
         <ItemCard
           item={drilledItem}
           pantry={pantry}
+          userId={userId}
           onUpdate={snapshotMode ? undefined : onUpdate}
           onOpenProvenance={onOpenProvenance}
           onClose={() => { setDrilledItem(null); setSnapshotMode(false); }}
@@ -996,6 +1072,53 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           pantry={pantry}
           onClose={() => setDrilledIngredientId(null)}
         />
+      )}
+
+      {/* IDENTIFIED AS picker — stacked modal over the ItemCard.
+          Mounted as a sibling so its fixed positioning isn't contained
+          by ModalSheet's swipe transform (same pattern as drilled
+          modals). Writes via onUpdate so the parent's usePantry flow
+          persists the new tile_id + location. */}
+      {tilePickerOpen && (
+        <ModalSheet
+          onClose={() => setTilePickerOpen(false)}
+          zIndex={Z.picker}
+          label="IDENTIFIED AS"
+          maxHeight="85vh"
+        >
+          <h2 style={{
+            fontFamily: "'Fraunces',serif", fontSize: 22,
+            fontStyle: "italic", color: "#f0ece4",
+            fontWeight: 400, margin: "2px 0 10px",
+          }}>
+            What kind of thing is this?
+          </h2>
+          <p style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+          }}>
+            Pick a tile to place {item.name} in your kitchen. Or
+            create a new one at the bottom.
+          </p>
+          <IdentifiedAsPicker
+            userId={userId}
+            locationHint={item.location || currentTile?.location || null}
+            selectedTileId={item.tileId || null}
+            onPick={(tileId, location) => {
+              onUpdate?.({
+                tileId,
+                // Honor the picker's location when it differs from
+                // the item's current location (e.g. user re-placing
+                // a fridge item to Pantry tile). Keeps the pantry
+                // row consistent with its new tile assignment.
+                ...(location && location !== item.location
+                    ? { location }
+                    : {}),
+              });
+              setTilePickerOpen(false);
+            }}
+          />
+        </ModalSheet>
       )}
     </>
   );

@@ -3320,6 +3320,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           <ItemCard
             item={fresh}
             pantry={pantry}
+            userId={userId}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
             onEditTags={() => setLinkingItem(fresh)}
             onOpenProvenance={(link) => {
