@@ -42,9 +42,45 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.5.0";
+export const CURRENT_VERSION = "0.6.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.6.0",
+    date:    "2026-04-16",
+    title:   "Your kitchen, your scans — brand names survive the scanner",
+    summary:
+      "The app's top-level storage concept is now called \"Kitchen\" " +
+      "(the sub-tab stays \"Pantry\" — the pantry is a location inside " +
+      "your kitchen). And when you scan a receipt, your family's saved " +
+      "templates win over generic canonicals — \"Home Run Inn Pizza\" " +
+      "stays \"Home Run Inn Pizza\" and lands on whatever tile you put " +
+      "it on before, instead of collapsing to generic pizza.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "Pantry → Kitchen rename at the top-level (the nav tab, the view header, \"your pantry\" → \"your kitchen\" throughout). The Pantry sub-tab inside your Kitchen stays named Pantry — it's the shelf-stable LOCATION",
+        commits: ["a6f926b"],
+      },
+      {
+        kind: "feature",
+        text: "Scan-side template matching: when a receipt has \"HOME RUN INN PIZZA\" on it, we match your family's saved template first — keeping your brand name, your tile placement, your component tags. No more re-naming and re-tagging every grocery run",
+        commits: ["ba88f61"],
+      },
+      {
+        kind: "ux",
+        text: "Bottom-nav icon updated from 🥫 to 🍽️ to match the broader Kitchen concept (🥫 reads specifically as pantry-shelf)",
+        commits: ["a6f926b"],
+      },
+    ],
+    coming_soon: [
+      "Tile-aware substitution suggestions in CookMode — \"you have Cavatappi Pasta, recipe wants spaghetti, swap?\"",
+      "Admin-promoted community tier — popular user templates + tiles get blessed into a global set",
+      "Per-component proportion slider — \"I used 30% of the salt jar\" without weighing",
+      "Enrichment seed pass for the new flour + pasta canonicals (descriptions, flavor profiles, substitutes)",
+      "Admin dashboard for template/tile promotion workflow",
+    ],
+  },
   {
     version: "0.5.0",
     date:    "2026-04-16",
