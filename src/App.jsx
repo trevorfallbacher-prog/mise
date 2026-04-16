@@ -27,7 +27,7 @@ const NAV = [
   { id:"cook",     emoji:"🧑‍🍳", label:"Cook"     },
   { id:"plan",     emoji:"📅",   label:"Plan"     },
   { id:"cookbook", emoji:"📖",   label:"Cookbook" },
-  { id:"pantry",   emoji:"🥫",   label:"Pantry"   },
+  { id:"pantry",   emoji:"🍽️",  label:"Kitchen"  },
 ];
 
 const pageShell = {

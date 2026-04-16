@@ -979,7 +979,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               // when decrement hits 0.
               const leaves = entry.convertible
                 ? (entry.newAmount === 0
-                    ? "PANTRY ROW CLEARS"
+                    ? "ITEM CLEARS"
                     : `LEAVES ${formatQty({ amount: entry.newAmount, unit: entry.pantryRow.unit }, entry.ingredient)} ${rowUnitLabel}`)
                 : "UNIT MISMATCH · TAP BACK TO FIX";
               return (
@@ -1052,8 +1052,8 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         </h2>
         <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:28 }}>
           {isCompoundProduce
-            ? "We'll add it to your pantry so you can pull from it next time a recipe calls for it."
-            : "Put a portion in the fridge / freezer and it'll show up in your pantry for a future meal."}
+            ? "We'll add it to your kitchen so you can pull from it next time a recipe calls for it."
+            : "Put a portion in the fridge / freezer and it'll show up in your kitchen for a future meal."}
         </p>
 
         <div style={{ flex:1, display:"flex", flexDirection:"column", gap:12 }}>
@@ -1123,7 +1123,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       { id: "fridge",  emoji: "🧊", label: "Fridge",  hint: "Use within a few days" },
       { id: "freezer", emoji: "❄️", label: "Freezer", hint: "Good for weeks to months" },
       { id: "pantry",  emoji: "🥫", label: "Pantry",  hint: "Shelf-stable only" },
-      { id: "garbage", emoji: "🗑️", label: "Garbage", hint: "Tossing the extra — no pantry row" },
+      { id: "garbage", emoji: "🗑️", label: "Garbage", hint: "Tossing the extra — nothing stored" },
     ];
     const isGarbage = leftoverLocation === "garbage";
 

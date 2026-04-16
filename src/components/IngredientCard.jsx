@@ -196,7 +196,7 @@ export default function IngredientCard({
   const emoji = canonical?.emoji || fallbackEmoji || "🥫";
 
   const stockLabel =
-    pantryRows.length === 0 ? "Not in pantry"
+    pantryRows.length === 0 ? "Not in kitchen"
     : totalAmount <= 0       ? "Out of stock"
     :                          `${Math.round(totalAmount * 10) / 10} ${unitText}`;
   const stockColor =
@@ -315,7 +315,7 @@ export default function IngredientCard({
           <span style={{ fontSize: 20 }}>🥫</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.1em" }}>
-              IN YOUR PANTRY
+              IN YOUR KITCHEN
             </div>
             <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 15, color: stockColor, marginTop: 2 }}>
               {stockLabel}

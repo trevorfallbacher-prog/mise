@@ -673,7 +673,7 @@ function Scanner({ onItemsScanned, onClose }) {
           </div>
           <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, flexShrink:0 }}>
             <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#7ec87e" }}>
-              {scannedItems.filter(i=>i.selected).length} items will be added to your pantry
+              {scannedItems.filter(i=>i.selected).length} items will be added to your kitchen
             </span>
           </div>
           <button onClick={() => {
@@ -837,7 +837,7 @@ function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
 
           {!hasContent && (
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", fontStyle:"italic", textAlign:"center", padding:"20px 0" }}>
-              No details yet — but you can still add it to your pantry.
+              No details yet — but you can still add it to your kitchen.
             </p>
           )}
         </div>
@@ -846,7 +846,7 @@ function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
           onClick={() => onAdd(ingredient)}
           style={{ width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}
         >
-          + ADD TO PANTRY
+          + ADD TO KITCHEN
         </button>
       </div>
     </div>
@@ -1109,7 +1109,7 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
             ? "+ TO SHOPPING LIST"
             : tileContext
               ? `+ TO ${tileContext.tabId.toUpperCase()} · ${tileContext.tileLabel.toUpperCase()}`
-              : "+ TO PANTRY"}
+              : "+ TO KITCHEN"}
         </div>
         <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:14 }}>
           {tileContext
@@ -2293,7 +2293,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       pushToast(`Stocked ${items.length} items · ${parts.join(" · ")}`, { emoji: "🛒", kind: "success" });
     }
     if (unitMismatchCount > 0) {
-      pushToast(`${unitMismatchCount} item${unitMismatchCount === 1 ? "" : "s"} had a unit mismatch — check the pantry`, { emoji: "⚠️", kind: "warn" });
+      pushToast(`${unitMismatchCount} item${unitMismatchCount === 1 ? "" : "s"} had a unit mismatch — check your kitchen`, { emoji: "⚠️", kind: "warn" });
     }
 
     setScanning(false);
@@ -2747,7 +2747,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em", marginBottom:6 }}>YOUR</div>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
           <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:38, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.03em" }}>
-            {view === "shopping" ? "Shopping" : "Pantry"}
+            {view === "shopping" ? "Shopping" : "Kitchen"}
           </h1>
           <div style={{ textAlign:"right" }}>
             {view === "shopping" ? (
@@ -3249,7 +3249,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 </div>
               ))}
               <div style={{ marginTop:8, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", textAlign:"center", letterSpacing:"0.08em" }}>
-                TAP ✓ WHEN YOU'VE PICKED IT UP — IT'LL MOVE TO YOUR PANTRY
+                TAP ✓ WHEN YOU'VE PICKED IT UP — IT'LL MOVE TO YOUR KITCHEN
               </div>
             </div>
           )}
@@ -3290,7 +3290,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 24px" }} />
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:8 }}>PANTRY DEDUCTION</div>
             <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:6 }}>You just cooked {DEDUCTION_EXAMPLE.dish}</h3>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>Deduct these from your pantry?</p>
+            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>Deduct these from your kitchen?</p>
             <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:20 }}>
               {DEDUCTION_EXAMPLE.deductions.map((d,i) => (
                 <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:"#1a1a1a", borderRadius:10 }}>

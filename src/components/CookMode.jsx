@@ -389,7 +389,7 @@ export default function CookMode({
 
         <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, overflow:"hidden" }}>
           {ingredientStatus.map(({ ing, status, row, candidates }, i) => {
-            const badge = status === "ok"          ? { label:"IN PANTRY",  color:"#4ade80", bg:"#0f1a0f" }
+            const badge = status === "ok"          ? { label:"IN KITCHEN", color:"#4ade80", bg:"#0f1a0f" }
                         : status === "low"         ? { label:"LOW",        color:"#f59e0b", bg:"#1a0f00" }
                         : status === "missing"     ? { label:"MISSING",    color:"#ef4444", bg:"#1a0a0a" }
                         : status === "wrong-state" ? { label:"WRONG FORM", color:"#7eb8d4", bg:"#0f1620" }

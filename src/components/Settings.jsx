@@ -187,7 +187,7 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
           </button>
         </div>
         <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888", lineHeight:1.5, margin:"8px 0 4px" }}>
-          Family shares your pantry, shopping list, and meal plan — both can add or edit. Friends see only your dietary preferences.
+          Family shares your kitchen, shopping list, and meal plan — both can add or edit. Friends see only your dietary preferences.
         </p>
 
         {/* Display name — shown to your family & friends on their screens */}
