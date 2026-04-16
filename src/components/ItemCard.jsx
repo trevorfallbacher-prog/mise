@@ -447,7 +447,12 @@ export default function ItemCard({ item, pantry = [], onUpdate, onClose }) {
           )}
         </div>
 
-        {/* ─── THE DEEP DIVE (canonical ingredient info) ─── */}
+        {/* ─── INGREDIENT (canonical deep-dive) ───
+            Singular "INGREDIENT" for today's one-tag-per-item world.
+            Pluralizes to "INGREDIENTS" with a tab switcher when Chunk 5
+            ships the multi-canonical (ingredient_ids[]) model — a pizza
+            tagged with bbq_sauce + pineapple + mozzarella + dough shows
+            one tab per ingredient, each with its own deep dive. */}
         {canonical ? (
           <>
             <div style={{
@@ -455,8 +460,8 @@ export default function ItemCard({ item, pantry = [], onUpdate, onClose }) {
               margin: "8px 0 4px", color: "#444",
             }}>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.15em" }}>
-                THE DEEP DIVE
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
+                INGREDIENT
               </div>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
             </div>
