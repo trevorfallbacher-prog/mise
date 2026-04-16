@@ -35,6 +35,10 @@ import {
   componentsFromIngredientIds,
   kindForTagCount,
 } from "../lib/pantryComponents";
+import {
+  saveTemplateFromCustomAdd,
+  setComponentsForTemplate,
+} from "../lib/userTemplates";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -851,7 +855,7 @@ function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
 //      recipes can match against it.
 //   2. Custom: free-text fallback for ingredients not in the registry. These
 //      save with ingredientId: null and won't be matched by any recipe.
-function AddItemModal({ target, tileContext, onClose, onAdd }) {
+function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   const [mode, setMode] = useState("custom"); // "custom" | "canonical"
   const [search, setSearch] = useState("");
   // When the user taps a hub (Chicken, Cheese, …) we drill into it and show
@@ -1030,6 +1034,40 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
     // ingredient_id field which onAdd already persists.
     if (mode === "custom" && compIds.length >= 2) {
       await setComponentsForParent(item.id, componentsFromIngredientIds(compIds));
+    }
+
+    // Auto-save a user template from this custom add. Runs only for
+    // custom-mode adds (canonical-mode picks from the bundled registry
+    // and doesn't warrant a user-owned template). Dedup is strict
+    // per-family: if the name matches an existing family template,
+    // this upserts onto it — bumping use_count + refreshing
+    // last_used_at — rather than creating a duplicate row.
+    //
+    // If the template is composed, mirror its components into
+    // user_item_template_components so next time someone in the
+    // family types "Home Run Inn Pizza" they get the same
+    // composition pre-filled, not just the name.
+    //
+    // Fire-and-forget from the user's perspective — any failure
+    // logs but doesn't block the pantry_items write, which is the
+    // user-facing intent.
+    if (mode === "custom" && userId) {
+      const { id: templateId, error: tmplErr } = await saveTemplateFromCustomAdd({
+        userId: userId,
+        name: customName.trim(),
+        emoji: primaryComp?.canonical?.emoji || null,
+        category: customCategory,
+        unit: customUnit.trim(),
+        amount: amt,
+        location: defaultLocationForCategory(customCategory),
+        ingredientIds: compIds,
+      });
+      if (!tmplErr && templateId && compIds.length > 0) {
+        await setComponentsForTemplate(
+          templateId,
+          componentsFromIngredientIds(compIds)
+        );
+      }
     }
 
     onClose();
@@ -3138,6 +3176,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
         <AddItemModal
           target={addingTo}
           tileContext={addingTo === "pantry" ? addingToTile : null}
+          userId={userId}
           onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
             if (addingTo === "shopping") {
