@@ -900,6 +900,22 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Optional components for the custom item. Lets the user build a
+  // "curry ketchup" inline by picking [ketchup, curry_powder] instead
+  // of having to save the free-text row first and then link it later.
+  // Zero-length = pure free-text ingredient; one = single-tagged
+  // ingredient with a canonical reference for recipe matching; 2+ =
+  // promotes to a composed Meal (kind='meal') on save with one
+  // pantry_item_components row per canonical, same write path as 6c's
+  // LinkIngredient commit.
+  const [customComponents, setCustomComponents] = useState([]);
+  // Whether the LinkIngredient picker is layered over the custom-add
+  // flow. Scoped local because the picker needs to seed from
+  // customComponents (so re-opening shows the current selection) and
+  // commit back into this same state — the parent Pantry-level
+  // linkingItem path isn't the right fit here since the item doesn't
+  // exist yet.
+  const [customComponentsOpen, setCustomComponentsOpen] = useState(false);
 
   // Top-level picker view. If the user has typed a search, flatten everything
   // so "cheddar" still finds cheddar even though it's hidden under Cheese.
@@ -953,9 +969,18 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
     return estimatePriceCents({ amount: amt, unit: unitId, ingredient: picked });
   }, [mode, picked, amount, unitId]);
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
     const amt = parseFloat(amount) || 0;
+
+    // Custom-mode component scaffolding. When the user picked one or
+    // more canonicals during the custom-add flow, promote the item
+    // accordingly: single component -> tagged ingredient (ingredientId
+    // set so recipes match); 2+ components -> Meal (kind='meal') with
+    // an ingredient_ids[] union and component rows written after
+    // insert (same write path as 6c's re-link).
+    const compIds = customComponents.map(c => c.id);
+    const primaryComp = customComponents[0] || null;
 
     const item = mode === "canonical"
       ? {
@@ -975,9 +1000,20 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
         }
       : {
           id: crypto.randomUUID(),
-          ingredientId: null,
+          // First picked component (if any) becomes the primary tag so
+          // the legacy ingredient_id scalar stays useful. Zero components
+          // = pure free-text, same as before.
+          ingredientId: primaryComp?.id || null,
+          ingredientIds: compIds,
+          // 2+ components promotes the item to a Meal on save; single
+          // or zero stays an ingredient (either free-text or tagged).
+          kind: compIds.length >= 2 ? "meal" : "ingredient",
           name: customName.trim(),
-          emoji: "🥫",
+          // Inherit emoji from the primary canonical when one exists —
+          // the 🥫 fallback is fine for truly un-tagged free text but
+          // "Heinz Ketchup" reading as 🥫 when ketchup is in the
+          // registry feels wrong.
+          emoji: primaryComp?.canonical?.emoji || "🥫",
           amount: amt,
           unit: customUnit.trim(),
           max: Math.max(amt * 2, 1),
@@ -986,6 +1022,16 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
         };
 
     onAdd(item);
+
+    // Write the structured components tree after onAdd has kicked the
+    // parent pantry_items INSERT. setComponentsForParent retries on
+    // FK-violation so the race with the parent INSERT is self-healing.
+    // Only for Meals — single-tag customs just need the legacy
+    // ingredient_id field which onAdd already persists.
+    if (mode === "custom" && compIds.length >= 2) {
+      await setComponentsForParent(item.id, componentsFromIngredientIds(compIds));
+    }
+
     onClose();
   };
 
@@ -1333,9 +1379,79 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
               ))}
             </div>
 
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginBottom:16, fontStyle:"italic" }}>
-              Custom items won't match recipes — pick from the list when possible.
-            </p>
+            {/* Components builder. Lets the user construct a composed
+                custom item ("Curry Ketchup" = [ketchup, curry_powder,
+                coriander]) inline during add, instead of saving a
+                free-text row first and linking it after. Optional —
+                zero components keeps the row free-text. */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
+              }}>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em" }}>
+                  COMPONENTS · {customComponents.length}
+                </div>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => setCustomComponentsOpen(true)}
+                  style={{
+                    background: "transparent", border: "1px solid #3a2f10",
+                    padding: "4px 10px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    letterSpacing: "0.1em", borderRadius: 6,
+                  }}
+                >
+                  {customComponents.length > 0 ? "+ EDIT" : "+ ADD"}
+                </button>
+              </div>
+
+              {customComponents.length === 0 ? (
+                <div style={{
+                  padding: "12px 14px",
+                  background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
+                  fontStyle: "italic", lineHeight: 1.5,
+                }}>
+                  Optional. Pick canonical ingredients this item is made from —
+                  e.g. a "Curry Ketchup" = [ketchup, curry_powder]. One pick =
+                  tagged ingredient; two or more = a composed Meal with a tree.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {customComponents.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => setCustomComponents(prev => prev.filter(x => x.id !== c.id))}
+                      aria-label={`Remove ${c.canonical.name}`}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6,
+                        padding: "5px 9px",
+                        background: "#0a0a0a", border: "1px solid #3a2f10",
+                        borderRadius: 16, cursor: "pointer",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#f5c842", letterSpacing: "0.04em",
+                      }}
+                    >
+                      <span style={{ fontSize: 13 }}>{c.canonical.emoji || "🥣"}</span>
+                      <span>{c.canonical.name}</span>
+                      <span style={{ color: "#888", marginLeft: 2, fontSize: 11 }}>✕</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {customComponents.length >= 2 && (
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e", letterSpacing:"0.08em", marginTop: 8 }}>
+                  ✓ WILL BE SAVED AS A MEAL · {customComponents.length} COMPONENTS
+                </div>
+              )}
+              {customComponents.length === 1 && (
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", letterSpacing:"0.08em", marginTop: 8 }}>
+                  TAGGED AS {customComponents[0].canonical.name.toUpperCase()} · RECIPES MATCH
+                </div>
+              )}
+            </div>
           </>
         )}
 
@@ -1359,6 +1475,30 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
           ingredient={detailIngredient}
           onClose={() => setDetailIngredient(null)}
           onAdd={(ing) => { pickIngredient(ing); setDetailIngredient(null); }}
+        />
+      )}
+
+      {/* Components picker, layered over the add-item modal. Seeded
+          with the current customComponents so reopening shows the
+          current selection; commits back into the same state. The
+          pantry row doesn't exist yet, so this is pure in-memory
+          accumulation — the save() path is what persists everything
+          in one atomic user action. */}
+      {customComponentsOpen && (
+        <LinkIngredient
+          item={{
+            name: customName.trim() || "(new custom item)",
+            emoji: "🥫",
+            ingredientIds: customComponents.map(c => c.id),
+          }}
+          onLink={(ids) => {
+            const resolved = ids
+              .map(id => ({ id, canonical: findIngredient(id) }))
+              .filter(x => x.canonical);
+            setCustomComponents(resolved);
+            setCustomComponentsOpen(false);
+          }}
+          onClose={() => setCustomComponentsOpen(false)}
         />
       )}
     </div>
@@ -2248,22 +2388,6 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                   </span>
                 );
               })()}
-              {!item.ingredientId && (
-                // Display-only "unlinked" marker. Formerly a tappable
-                // shortcut to LinkIngredient; the shortcut was removed
-                // because per-row edits should flow through the
-                // ItemCard (tap the row -> + LINK INGREDIENTS button
-                // inside the card). Keeps the visual cue ("this row is
-                // free-text, recipes won't match") without offering a
-                // second, parallel path for linking that could race
-                // with other row edits.
-                <span
-                  title="This row isn't matched to a canonical ingredient — recipes won't find it. Tap the row to link."
-                  style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7aa4c0", background:"#0f1420", border:"1px solid #1e2a3a", padding:"1px 6px", borderRadius:4 }}
-                >
-                  🔗 UNLINKED
-                </span>
-              )}
               {isLow(item) && (
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
                   {isCritical(item)?"ALMOST OUT":"RUNNING LOW"}
