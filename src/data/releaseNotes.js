@@ -42,9 +42,72 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.2";
+export const CURRENT_VERSION = "0.7.3";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.3",
+    date:    "2026-04-16",
+    title:   "P0 sweep — receipts save, scans prune, bells deep-link",
+    summary:
+      "A bug-queue cleanup pass, not a new concept. Receipts were " +
+      "silently failing to save on certain date formats — that's fixed " +
+      "and now fails loudly with a toast if it ever happens again. The " +
+      "scan-confirm ✕ button became destructive: one tap arms a " +
+      "\"REMOVE?\" prompt, the next tap physically splices the row out " +
+      "so your list shrinks as you prune batteries and M&Ms instead of " +
+      "making you scroll through 50 dimmed entries. Receipt " +
+      "notifications in the bell are now tappable — one tap lands " +
+      "straight on the receipt photo + item list. And when a scan " +
+      "bumps your monthly groceries total, the number pulses green " +
+      "with a floating +$X.XX pill so you see the scan actually " +
+      "register. Also: fixing one ACQUAMAR FLA row in scan-confirm now " +
+      "propagates the link to every duplicate of the same raw scanner " +
+      "read — no more relinking the same item twice.",
+    shipped: [
+      {
+        kind: "fix",
+        text: "Receipts save again. A stray timestamp in the scanner's date field was breaking the Postgres DATE column silently — now we validate YYYY-MM-DD before insert and toast any insert failure so it can never disappear quietly again",
+        commits: ["9b31631"],
+      },
+      {
+        kind: "ux",
+        text: "Scan-confirm's ✕ button is destructive with a confirm gate. Tap ✕ → red \"REMOVE?\" pill appears → tap ✓ to splice the row out, gray ✕ to cancel. Your list shrinks as you prune — no more scrolling past dimmed rows you already rejected",
+        commits: ["bec8a45"],
+      },
+      {
+        kind: "feature",
+        text: "Tap a receipt notification in the bell → ReceiptView opens directly on the photo, total, and item list. Same for fridge/pantry/freezer shelf scans. Three-tap drill-down (Kitchen → item → provenance) reduced to one",
+        commits: ["6c905db"],
+      },
+      {
+        kind: "ux",
+        text: "Correction propagation on scan-confirm. Fix one ACQUAMAR FLA row (rename or relink to Imitation Crab) and every duplicate of the same raw scanner read inherits the identity — not the quantity, so \"2 × ACQUAMAR FLA\" stays two separate entries you can verify independently",
+        commits: ["9b31631"],
+      },
+      {
+        kind: "ux",
+        text: "Kitchen monthly-groceries banner pulses green + floats a +$X.XX pill when your scan adds to the total. No more re-tapping STOCK wondering if it saved",
+        commits: ["5c45802"],
+      },
+      {
+        kind: "feature",
+        text: "Dedup-warning notifications (\"Heads up — you already logged a $47 receipt from Trader Joe's recently\") are now tappable too — lands on the new receipt for side-by-side compare against the earlier one",
+        commits: ["6c905db"],
+      },
+      {
+        kind: "architecture",
+        text: "Pantry.jsx renamed to Kitchen.jsx. Matches the tab label; domain names (pantry_items, pantry_scans) stay as-is. Migration 0040 redefines notify_family_receipt + notify_family_pantry_scan to populate target_kind/target_id on notifications",
+        commits: ["837839f", "6c905db"],
+      },
+    ],
+    coming_soon: [
+      "Expiration cancel-to-null (still reproducing the defaults-to-today case)",
+      "Inline corrections from ReceiptView — tap an item in the viewer and edit without leaving the modal",
+      "Swipe-left-to-reject on scan rows (benched behind the tap-confirm pattern, may return as an alt gesture)",
+      "Receipt store-name editing (the store OCR'd wrong? Fix it from ReceiptView)",
+    ],
+  },
   {
     version: "0.7.2",
     date:    "2026-04-16",
