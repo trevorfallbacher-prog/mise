@@ -2383,6 +2383,29 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   const monthlySpend = useMonthlySpend(userId, spendRefresh);
   const { push: pushToast } = useToast();
 
+  // +$X pulse on the monthly groceries banner. When monthlySpend.cents
+  // jumps (user just scanned a new receipt) we float a "+$4.99" pill
+  // next to the total and pulse the number green. Delta lives in state
+  // so the animation replays only on real changes, not on every render.
+  // We key off a ref holding the previous cents so the first real load
+  // (undefined → 0 or 0 → 4212) doesn't fire a bogus pulse.
+  const prevSpendRef = useRef(null);
+  const [spendPulse, setSpendPulse] = useState(null); // { delta:number, nonce:number }
+  useEffect(() => {
+    if (monthlySpend.loading) return;
+    const prev = prevSpendRef.current;
+    prevSpendRef.current = monthlySpend.cents;
+    if (prev == null) return; // first settled value — no baseline to diff
+    const delta = monthlySpend.cents - prev;
+    if (delta <= 0) return;
+    setSpendPulse({ delta, nonce: Date.now() });
+  }, [monthlySpend.cents, monthlySpend.loading]);
+  useEffect(() => {
+    if (!spendPulse) return;
+    const t = setTimeout(() => setSpendPulse(null), 2400);
+    return () => clearTimeout(t);
+  }, [spendPulse]);
+
   // Fridge / Pantry / Freezer tab. Default to fridge — the tab users hit
   // most often. `drilledTile` holds the fridge-tile id the user has tapped
   // into (null = tile grid view; string = tile detail view). Switching
@@ -3340,15 +3363,55 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
         </div>
       </div>
 
-      {/* Monthly groceries — only when there's been any spend recorded */}
+      {/* Monthly groceries — only when there's been any spend recorded.
+          Pulses green + floats a "+$X.XX" pill over the total when a new
+          receipt lands, so the user sees the jump register in realtime
+          instead of wondering whether their scan actually stuck. */}
       {!monthlySpend.loading && monthlySpend.cents > 0 && (
-        <div style={{ margin:"14px 20px 0", padding:"10px 14px", background:"#0f140f", border:"1px solid #1e3a1e", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div style={{ margin:"14px 20px 0", padding:"10px 14px", background:"#0f140f", border:"1px solid #1e3a1e", borderRadius:12, display:"flex", alignItems:"center", justifyContent:"space-between", position:"relative", overflow:"visible" }}>
+          <style>{`
+            @keyframes spendFloat {
+              0%   { transform: translateY(0) scale(0.9); opacity: 0; }
+              15%  { transform: translateY(-4px) scale(1.05); opacity: 1; }
+              70%  { transform: translateY(-18px) scale(1); opacity: 1; }
+              100% { transform: translateY(-28px) scale(0.95); opacity: 0; }
+            }
+            @keyframes spendPulse {
+              0%   { color: #7ec87e; text-shadow: none; }
+              20%  { color: #b6f5c2; text-shadow: 0 0 14px rgba(126,200,126,0.7); }
+              100% { color: #7ec87e; text-shadow: none; }
+            }
+          `}</style>
           <div>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", letterSpacing:"0.12em" }}>GROCERIES THIS MONTH</div>
             <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", marginTop:2 }}>{monthlySpend.receiptCount} receipt{monthlySpend.receiptCount === 1 ? "" : "s"}</div>
           </div>
-          <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, color:"#7ec87e", fontStyle:"italic" }}>
-            ${(monthlySpend.cents / 100).toFixed(2)}
+          <div style={{ position:"relative" }}>
+            <div
+              key={spendPulse?.nonce ?? "static"}
+              style={{
+                fontFamily:"'Fraunces',serif", fontSize:22, color:"#7ec87e", fontStyle:"italic",
+                animation: spendPulse ? "spendPulse 2.2s ease-out" : undefined,
+              }}
+            >
+              ${(monthlySpend.cents / 100).toFixed(2)}
+            </div>
+            {spendPulse && (
+              <span
+                key={`pill-${spendPulse.nonce}`}
+                style={{
+                  position:"absolute", right:0, top:-4,
+                  fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:700,
+                  color:"#111", background:"#b6f5c2",
+                  padding:"3px 8px", borderRadius:10,
+                  letterSpacing:"0.04em", whiteSpace:"nowrap",
+                  pointerEvents:"none",
+                  animation:"spendFloat 2.2s ease-out forwards",
+                }}
+              >
+                +${(spendPulse.delta / 100).toFixed(2)}
+              </span>
+            )}
           </div>
         </div>
       )}
