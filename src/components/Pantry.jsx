@@ -1376,9 +1376,15 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // tabs always resets the drill-down.
   const [storageTab, setStorageTabRaw] = useState("fridge");
   const [drilledTile, setDrilledTile] = useState(null);
+  // Global-search state for the tile-grid view. Scoped ACROSS all three
+  // storage tabs so a user looking for "tortillas" finds them whether they
+  // landed in Pantry / Bread or Fridge / Bread & Baked or wherever. Clearing
+  // the input returns to the normal tile grid view.
+  const [tileSearch, setTileSearch] = useState("");
   const setStorageTab = (next) => {
     setStorageTabRaw(next);
     setDrilledTile(null);
+    setTileSearch("");
   };
 
   // Effective location for an item — respects the stored value, falls back
@@ -1393,6 +1399,40 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // Current tab's tile set + classifier. Null when the tab has no tiles
   // wired yet (freezer) — the render path falls back to a flat list.
   const { tiles: currentTiles, classify: currentClassify } = tilesForTab(storageTab);
+
+  // Global search — runs when tileSearch is non-empty AND we're on the tile
+  // grid (not drilled into a tile). Matches across the WHOLE pantry (all
+  // three storage tabs), not just the active tab, so a user hunting for
+  // "tortillas" finds them even if they're in a tile on a different tab
+  // than the one they started on. Each result carries its resolved location
+  // + tile id/label so the row can show a "FROM PANTRY · BREAD" origin tag.
+  const trimmedSearch = tileSearch.trim().toLowerCase();
+  const searchResults = useMemo(() => {
+    if (!trimmedSearch) return [];
+    const out = [];
+    for (const p of pantry) {
+      const loc = effectiveLocation(p);
+      const { tiles: locTiles, classify: locClassify } = tilesForTab(loc);
+      const tileId = (locTiles && locClassify)
+        ? locClassify(p, { findIngredient, hubForIngredient })
+        : null;
+      const tile = tileId ? (locTiles?.find(t => t.id === tileId) || null) : null;
+      // Match against everything textual we carry on the row: name, emoji,
+      // ingredient id, canonical name, category, and the tile's own label
+      // so searching "bread" surfaces tortillas / pita / naan via the tile.
+      const hay = [
+        p.name,
+        p.emoji,
+        p.ingredientId || "",
+        p.category || "",
+        tile?.label || "",
+      ].join(" ").toLowerCase();
+      if (hay.includes(trimmedSearch)) {
+        out.push({ item: p, location: loc, tile });
+      }
+    }
+    return out;
+  }, [trimmedSearch, pantry]);
 
   // Count items per tile (regardless of drill state) for the active tab
   // — powers the grid's badge numbers and the "empty tile" greyed-out
@@ -2179,6 +2219,94 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
               an "Add your first" affordance. */}
           {currentTiles && drilledTile === null && (
             <div style={{ padding:"14px 20px 0" }}>
+              {/* Sticky tile-grid search. Kept above the grid so it stays
+                  reachable while the tiles are visible; hitting the ✕ or
+                  clearing the text brings the grid back. Typing anything
+                  collapses the grid and shows a flat results list below. */}
+              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, padding:"10px 14px", background:"#0a0a0a", border:"1px solid #242424", borderRadius:12 }}>
+                <span style={{ fontSize:14, color:"#666" }}>🔍</span>
+                <input
+                  type="text"
+                  value={tileSearch}
+                  onChange={e => setTileSearch(e.target.value)}
+                  placeholder="Search your whole kitchen…"
+                  style={{ flex:1, background:"transparent", border:"none", outline:"none", color:"#f0ece4", fontFamily:"'DM Sans',sans-serif", fontSize:14 }}
+                />
+                {tileSearch && (
+                  <button
+                    onClick={() => setTileSearch("")}
+                    aria-label="Clear search"
+                    style={{ background:"transparent", border:"none", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:14, cursor:"pointer" }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            {trimmedSearch ? (
+              // Cross-tile results view. Grouped by STORAGE tab so the user
+              // reads them the way they'd walk the kitchen: fridge items
+              // together, pantry items together, freezer last. Each row's
+              // origin tag tells them where they'd tap to get there the
+              // normal way.
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {searchResults.length === 0 ? (
+                  <div style={{ padding:"32px 12px", textAlign:"center", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, fontStyle:"italic" }}>
+                    Nothing in your kitchen matches “{tileSearch}”.
+                  </div>
+                ) : (
+                  ["fridge", "pantry", "freezer"].map(loc => {
+                    const rowsAtLoc = searchResults.filter(r => r.location === loc);
+                    if (rowsAtLoc.length === 0) return null;
+                    return (
+                      <div key={loc}>
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.15em", margin:"10px 4px 6px" }}>
+                          {loc.toUpperCase()}  ·  {rowsAtLoc.length}
+                        </div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                          {rowsAtLoc.map(({ item, tile }) => (
+                            <button
+                              key={item.id}
+                              onClick={() => {
+                                // Jump straight to the storage tab + drill
+                                // into the tile the result actually lives
+                                // in. Clears the search so the tile view
+                                // renders clean.
+                                if (item.location && item.location !== storageTab) {
+                                  setStorageTabRaw(item.location);
+                                }
+                                setDrilledTile(tile?.id || null);
+                                setTileSearch("");
+                              }}
+                              style={{
+                                display:"flex", alignItems:"center", gap:10,
+                                padding:"10px 12px",
+                                background:"#141414",
+                                border:"1px solid #242424",
+                                borderRadius:10,
+                                cursor:"pointer", textAlign:"left",
+                              }}
+                            >
+                              <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji || "🫙"}</span>
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                  {item.name}
+                                </div>
+                                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", marginTop:2, letterSpacing:"0.05em" }}>
+                                  {tile ? `${loc.toUpperCase()} · ${tile.label.toUpperCase()}` : loc.toUpperCase()}
+                                </div>
+                              </div>
+                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", flexShrink:0 }}>
+                                {item.amount} {item.unit}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 {currentTiles.map(tile => {
                   const count = tileCounts[tile.id] || 0;
@@ -2240,6 +2368,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                   );
                 })}
               </div>
+            )}
             </div>
           )}
 
