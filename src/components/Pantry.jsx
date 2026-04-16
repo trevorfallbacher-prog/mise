@@ -1519,13 +1519,81 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
               </div>
             )}
 
-            <div style={{ marginBottom:12 }}>
+            {/* Name input + typeahead. As the user types, filter the
+                family's templates by substring match and surface a
+                dropdown. Tap a suggestion -> fillFromTemplate (same
+                handler as RECENTS). Exact-match gets a subtle
+                "WILL MERGE INTO EXISTING" hint so the user knows
+                saving bumps the existing template instead of making
+                a dup — transparency around the strict-dedup rule. */}
+            <div style={{ marginBottom:12, position:"relative" }}>
               <input
                 value={customName}
                 onChange={e => setCustomName(e.target.value)}
-                placeholder="Name (e.g. Capers)"
+                placeholder="Name (e.g. Capers, Home Run Inn Pizza)"
                 style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
               />
+              {(() => {
+                const typed = (customName || "").trim().toLowerCase();
+                if (!typed) return null;
+                // Filter templates by substring on user-typed name
+                // (case-insensitive) AND by name_normalized equality
+                // (for the exact-match hint). Up to 5 suggestions —
+                // more than that and the user should scroll the full
+                // RECENTS list above.
+                const suggestions = userTemplates.filter(t =>
+                  t.name.toLowerCase().includes(typed)
+                ).slice(0, 5);
+                const exactMatch = suggestions.find(t =>
+                  t.nameNormalized === typed.replace(/\s+/g, " ")
+                );
+                if (suggestions.length === 0) return null;
+                return (
+                  <div style={{
+                    marginTop: 6,
+                    background: "#0a0a0a", border: "1px solid #2a2a2a",
+                    borderRadius: 10, padding: 4,
+                  }}>
+                    {suggestions.map(tpl => {
+                      const isExact = exactMatch && exactMatch.id === tpl.id;
+                      return (
+                        <button
+                          key={tpl.id}
+                          onClick={() => fillFromTemplate(tpl)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            width: "100%", padding: "7px 10px",
+                            background: "transparent",
+                            border: `1px solid ${isExact ? "#3a2f10" : "transparent"}`,
+                            borderRadius: 8, cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseOver={e => { if (!isExact) e.currentTarget.style.background = "#141414"; }}
+                          onMouseOut={e => { if (!isExact) e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{tpl.emoji || "🥫"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                              color: isExact ? "#f5c842" : "#f0ece4",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {tpl.name}
+                            </div>
+                            <div style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 8,
+                              color: "#666", letterSpacing: "0.06em", marginTop: 1,
+                            }}>
+                              {isExact
+                                ? "EXACT MATCH · SAVING WILL MERGE INTO THIS"
+                                : `USED ${tpl.useCount}× · ${formatAgo(tpl.lastUsedAt)}`}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
             <div style={{ display:"flex", gap:10, marginBottom:12 }}>
