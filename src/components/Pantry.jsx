@@ -170,6 +170,11 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const [editingNameIdx, setEditingNameIdx] = useState(null);
   const [editingExpiryScanIdx, setEditingExpiryScanIdx] = useState(null);
   const [linkingScanIdx, setLinkingScanIdx] = useState(null);
+  // One-at-a-time "are you sure?" confirm on the ✕ reject button. Without
+  // this gate a stray tap on "M&Ms" would quietly vaporize the row you
+  // actually bought. Holds the id (not idx — idx drifts as siblings get
+  // removed) of the row currently awaiting confirmation.
+  const [confirmingRemoveId, setConfirmingRemoveId] = useState(null);
   const [error, setError] = useState(null);
   const fileRef = useRef();
   const activeMode = SCAN_MODES.find(m => m.id === mode) || SCAN_MODES[2];
@@ -179,6 +184,12 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const updateScanItem = (idx, patch) => setScannedItems(prev =>
     prev.map((item, i) => i === idx ? { ...item, ...patch } : item)
   );
+
+  // Destructive remove — physically splices the row out of scannedItems so
+  // the user's list visibly shrinks as they prune non-grocery lines
+  // (batteries, gum, etc.). Paired with a two-tap confirm to prevent
+  // accidentally nuking a row they actually bought.
+  const removeScanItem = id => setScannedItems(prev => prev.filter(it => it.id !== id));
 
   // Propagate name / link corrections to other scan rows with the same
   // raw scanner read. Example: receipt shows "ACQUAMAR FLA" twice. User
@@ -417,7 +428,6 @@ function Scanner({ userId, onItemsScanned, onClose }) {
     }
   };
 
-  const toggleItem = idx => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,selected:!item.selected} : item));
   const updateAmount = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,amount:parseFloat(val)||0} : item));
   const updateUnit = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,unit:val} : item));
 
@@ -568,19 +578,36 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                   {/* Confidence accent stripe — reads at a glance whether to
                       trust the row, even before you read the name. */}
                   <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
-                  {/* Reject / un-reject — top-right ✕. Tapping dims the row
-                      (selected=false) rather than removing it, so the user
-                      can un-reject if they change their mind. Replaces the
-                      old left-side checkbox per direct user feedback
-                      ("the checkmark idea sucks — x on top right"). */}
-                  <button
-                    onClick={() => toggleItem(idx)}
-                    aria-label={item.selected ? `Reject ${item.name}` : `Restore ${item.name}`}
-                    title={item.selected ? "Reject" : "Restore"}
-                    style={{ position:"absolute", top:6, right:6, width:24, height:24, borderRadius:"50%", border:"none", background: item.selected ? "transparent" : "#1e1e1e", color: item.selected ? "#777" : "#4ade80", fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, lineHeight:1, cursor:"pointer", zIndex:2, display:"flex", alignItems:"center", justifyContent:"center" }}
-                  >
-                    {item.selected ? "✕" : "↺"}
-                  </button>
+                  {/* Remove ✕ — top-right, destructive. First tap arms a
+                      confirm prompt; second tap on the red ✓ physically
+                      splices the row out so the list shrinks. Cancel with
+                      the gray ✕. The two-tap gate prevents a stray tap on
+                      "M&Ms" from vaporizing a row the user actually
+                      bought. */}
+                  {confirmingRemoveId === item.id ? (
+                    <div style={{ position:"absolute", top:6, right:6, display:"flex", alignItems:"center", gap:4, zIndex:3 }}>
+                      <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#ef4444", letterSpacing:"0.08em", marginRight:2 }}>REMOVE?</span>
+                      <button
+                        onClick={() => { removeScanItem(item.id); setConfirmingRemoveId(null); }}
+                        aria-label={`Confirm remove ${item.name}`}
+                        title="Yes, remove"
+                        style={{ width:26, height:26, borderRadius:"50%", border:"none", background:"#ef4444", color:"#fff", fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, lineHeight:1, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}
+                      >✓</button>
+                      <button
+                        onClick={() => setConfirmingRemoveId(null)}
+                        aria-label="Cancel remove"
+                        title="Cancel"
+                        style={{ width:26, height:26, borderRadius:"50%", border:"1px solid #333", background:"#0f0f0f", color:"#888", fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, lineHeight:1, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}
+                      >✕</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmingRemoveId(item.id)}
+                      aria-label={`Remove ${item.name}`}
+                      title="Remove from list"
+                      style={{ position:"absolute", top:6, right:6, width:24, height:24, borderRadius:"50%", border:"none", background:"transparent", color:"#777", fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, lineHeight:1, cursor:"pointer", zIndex:2, display:"flex", alignItems:"center", justifyContent:"center" }}
+                    >✕</button>
+                  )}
                   <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 40px 14px 14px", minWidth:0 }}>
                   <span style={{ fontSize:28, flexShrink:0, lineHeight:1 }}>{item.emoji}</span>
                   <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:6 }}>
@@ -837,7 +864,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           </div>
           <div style={{ marginTop:16, padding:"12px 14px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, flexShrink:0 }}>
             <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#7ec87e" }}>
-              {scannedItems.filter(i=>i.selected).length} items will be added to your kitchen
+              {scannedItems.length} item{scannedItems.length === 1 ? "" : "s"} will be added to your kitchen
             </span>
           </div>
           <button onClick={() => {
@@ -845,7 +872,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             // original scan to Storage and link it to the receipt row.
             // Without this, the receipt row lands with image_path=null
             // and "TAP TO VIEW RECEIPT" has nothing to render.
-            onItemsScanned(scannedItems.filter(i=>i.selected), { ...receiptMeta, imageData });
+            // Everything still in scannedItems is accepted — rejected rows
+            // were physically spliced out via removeScanItem. No selection
+            // filter needed.
+            onItemsScanned(scannedItems, { ...receiptMeta, imageData });
             setPhase("done");
           }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
             STOCK MY PANTRY →
