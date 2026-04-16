@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 4;
+export const SEED_VERSION = 5;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -165,17 +165,47 @@ export const SEED_INGREDIENT_INFO = [
     info: {
       description: "Dried seeds of Cuminum cyminum, used whole or ground. The warm, earthy backbone of Mexican, Indian, Middle Eastern, and North African cooking. If your chili, curry, or falafel tastes flat, it needs more cumin.",
       flavorProfile: "Warm, earthy, slightly nutty, faintly bitter. Toasting intensifies the nuttiness dramatically.",
-      prepTips: "Toast whole seeds in dry pan for 60 seconds until fragrant before grinding — the flavor difference is enormous. Pairs with coriander so often they are practically one spice (the classic 2:1 cumin:coriander ratio).",
-      storage: { location: "pantry", shelfLifeDays: 1095, tips: "Whole seeds last 3-4 years. Ground loses punch within 6 months — buy whole and grind as needed if you can." },
+      prepTips: "Toast whole seeds in a dry pan for 60 seconds until fragrant before grinding — the flavor difference is night and day. Pairs with coriander so often they're practically one spice (the classic 2:1 cumin:coriander ratio in most Indian and Middle Eastern blends).",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 1095,
+        shelfLife: { fridge: null, freezer: 1825, pantry: 1095 },
+        tips: "Whole seeds last 3-4 years. Ground loses punch within 6 months — buy whole and grind as needed if you can.",
+        spoilageSigns: "Faded color, no aroma when toasted in a dry pan. If toasting doesn't wake it up, it's gone.",
+        freezable: true,
+        freezeNotes: "Whole seeds in a sealed jar — adds 2 years. Bring to room temp before grinding to avoid clumping.",
+      },
       substitutions: [
-        { id: "ground_cumin", tier: "direct", note: "Same spice, pre-ground." },
-        { id: "coriander", tier: "creative", note: "Different flavor but fills the same warm-earthy role in a blend." },
+        { id: "ground_cumin", tier: "direct", note: "Same spice, pre-ground. Convenience over flavor." },
+        { id: "coriander", tier: "creative", note: "Different flavor but fills the same warm-earthy role in a blend. Use 1.5x the cumin amount." },
+        { id: "chili_powder", tier: "creative", note: "Already contains cumin (~25-30%) plus other warming spices. Can stand in for cumin in Tex-Mex applications." },
       ],
-      pairs: ["coriander", "garlic", "chili_powder", "lime", "beans", "onion", "yogurt"],
-      origin: "Eastern Mediterranean — cultivated in Egypt and the Levant for at least 4,000 years.",
-      culturalNotes: "Cumin is the second most consumed spice worldwide after black pepper. In Ayurvedic medicine it is considered a digestive aid (jeera water).",
+      pairs: ["coriander", "garlic", "chili_powder", "lime", "beans", "onion", "yogurt", "tomato"],
+      flavor: {
+        primary: ["umami", "bitter"],
+        intensity: "moderate",
+        heatChange: {
+          raw: "dusty, faintly medicinal — needs heat to come alive",
+          cooked: "warm, nutty, deeply earthy — toasted seeds are floral",
+          charred: "smoky and bitter; burnt cumin tastes like petrol",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 8, protein_g: 0.4, fat_g: 0.5, carb_g: 0.9, fiber_g: 0.2, iron_mg: 1.4 },
+      origin: "Eastern Mediterranean — cultivated in Egypt and the Levant for at least 4,000 years. India is now the dominant producer, growing 70% of the world's supply.",
+      culturalNotes: "Cumin is the second most consumed spice worldwide after black pepper. In Ayurvedic medicine it's considered a digestive aid — jeera water (cumin tea) is sipped daily across India. The spice that defines the spice route from Asia to the Americas, brought to Mexico by Spanish friars in the 1500s.",
+      recipes: ["Chili con Carne", "Falafel", "Tikka Masala", "Hummus", "Mole Rojo", "Cumin Lamb (Xinjiang)"],
       allergens: [],
-      nutrition: { per: "1 tsp", kcal: 8, protein_g: 0.4, fat_g: 0.5, carb_g: 0.9 },
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: false, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Whole seeds from a high-turnover spice shop will outperform a 5-year-old supermarket ground jar by a mile. If you only buy one whole spice to grind fresh, make it cumin.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: true,
+        qualityMatters: true,
+        qualityNote: "Indian/Middle Eastern grocers sell cumin for half the supermarket price and it's almost always fresher. The supermarket ground version in the small jar is the worst-case scenario — old, dusty, dim.",
+      },
+      skillDev: { skills: ["seasoning", "heat"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
     },
   },
   {
