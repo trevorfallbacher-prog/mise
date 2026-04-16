@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -69,16 +69,46 @@ export const SEED_INGREDIENT_INFO = [
     info: {
       description: "Dried unripe berries of Piper nigrum, the most traded spice in human history. The piperine compound delivers the heat; volatile oils deliver the aroma. Freshly ground is non-negotiable — pre-ground loses potency within weeks.",
       flavorProfile: "Sharp, warm, piney, slightly floral. Tellicherry peppercorns (left to ripen longer on the vine) are fruitier and more complex.",
-      prepTips: "Always grind fresh — a pepper mill is the single biggest upgrade for a new cook. Add early for background warmth, add at the end for aromatic punch.",
-      storage: { location: "pantry", shelfLifeDays: 1095, tips: "Whole peppercorns last 3+ years. Ground pepper loses potency in 3-6 months. Keep in a mill, not a shaker." },
+      prepTips: "Always grind fresh — a pepper mill is the single biggest upgrade for a new cook. Add early for background warmth, add at the end for aromatic punch. Toast whole peppercorns in a dry pan to bloom the oils before crushing for cacio e pepe.",
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 1095,
+        shelfLife: { fridge: null, freezer: 1825, pantry: 1095 },
+        tips: "Whole peppercorns last 3+ years. Ground pepper loses potency in 3-6 months. Keep in a mill, not a shaker.",
+        spoilageSigns: "No aroma when freshly ground = it's done. Grayish powder instead of a sharp peppery smell.",
+        freezable: true,
+        freezeNotes: "Whole peppercorns freeze indefinitely. Doubles their shelf life. Bring to room temp before grinding.",
+      },
       substitutions: [
         { id: "white_pepper", tier: "direct", note: "Same plant, different processing — hotter, less aromatic, no dark specks in light sauces." },
+        { id: "peppercorns", tier: "direct", note: "Whole form of the same thing. Grind fresh for better flavor." },
       ],
-      pairs: ["salt", "lemon", "garlic", "steak", "eggs", "pasta", "butter"],
+      pairs: ["salt", "lemon", "garlic", "steak", "eggs", "pasta", "butter", "parmesan"],
+      flavor: {
+        primary: ["spicy", "umami"],
+        intensity: "moderate",
+        heatChange: {
+          raw: "sharp, biting, immediate heat that hits the front of the tongue",
+          cooked: "background warmth, mellower; piperine survives heat but volatile oils evaporate fast",
+          charred: "becomes acrid and harsh — never let pepper hit a dry pan alone",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 6, protein_g: 0.2, fat_g: 0.1, carb_g: 1.5, fiber_g: 0.6 },
       origin: "Native to Kerala, India (Malabar Coast). The spice that launched the Age of Exploration — Europeans sailed around Africa and across oceans to bypass the Arab spice monopoly.",
-      culturalNotes: "Pepper was literally worth its weight in gold in medieval Europe. Rent, taxes, and dowries were paid in peppercorns. The phrase peppercorn rent (a token payment) survives in English law.",
+      culturalNotes: "Pepper was literally worth its weight in gold in medieval Europe. Rent, taxes, and dowries were paid in peppercorns. The phrase 'peppercorn rent' (a token payment) survives in English law to this day.",
+      recipes: ["Cacio e Pepe", "Steak au Poivre", "Pepper-crusted tuna", "Bistro French onion soup"],
       allergens: [],
-      nutrition: { per: "1 tsp", kcal: 6, protein_g: 0.2, fat_g: 0.1, carb_g: 1.5 },
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: false, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Tellicherry peppercorns (graded TGSEB or TGEB) are the largest 10% of the Malabar harvest — sweeter, fruitier, more complex. Worth the ~$2 premium per ounce. Pre-ground is the kitchen equivalent of decaf.",
+      market: {
+        priceTier: "moderate",
+        availability: "supermarket",
+        organicCommon: true,
+        qualityMatters: true,
+        qualityNote: "Generic supermarket peppercorns are fine for everyday seasoning. For finishing dishes where pepper IS the flavor (cacio e pepe, steak au poivre), Tellicherry is a noticeable upgrade.",
+      },
+      skillDev: { skills: ["seasoning", "knife"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
     },
   },
   {
