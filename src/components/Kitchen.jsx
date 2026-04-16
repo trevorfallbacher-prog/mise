@@ -171,6 +171,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const [editingNameIdx, setEditingNameIdx] = useState(null);
   const [editingExpiryScanIdx, setEditingExpiryScanIdx] = useState(null);
   const [linkingScanIdx, setLinkingScanIdx] = useState(null);
+  // Per-row pickers for FOOD CATEGORY (type) and STORED IN (tile)
+  // during scan-confirm. OCR + heuristics are going to misfire — the
+  // user needs to tap a chip and override without having to wait until
+  // after STOCK → find the row in pantry → tap its chip there. Each
+  // holds the index of the row being edited; null = closed.
+  const [typingScanIdx, setTypingScanIdx] = useState(null);
+  const [tilingScanIdx, setTilingScanIdx] = useState(null);
   // One-at-a-time "are you sure?" confirm on the ✕ reject button. Without
   // this gate a stray tap on "M&Ms" would quietly vaporize the row you
   // actually bought. Holds the id (not idx — idx drifts as siblings get
@@ -737,52 +744,81 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         );
                       })()}
 
-                      {/* IDENTIFIED AS chip — shows the auto-inferred
-                          type. Tapping opens the scan-linking picker
-                          (reuses linkingScanIdx path; for type picks
-                          it becomes scan-type-picker, added via a
-                          future polish — today we at least SHOW the
-                          inference so users aren't in the dark). */}
+                      {/* FOOD CATEGORY chip — auto-inferred type, now
+                          tappable. OCR and keyword inference will misfire
+                          often (receipt says "ZITS CRACKERS" → auto-picks
+                          Snack Chips when the user actually wants
+                          Crackers); the user must be able to override
+                          BEFORE stocking, not after. Tap opens TypePicker
+                          in a ModalSheet. If no type was inferred, still
+                          show a "+ set category" affordance so the user
+                          isn't silently forced into a category. */}
                       {(() => {
                         const typeEntry = item.typeId ? findFoodType(item.typeId) : null;
-                        if (!typeEntry) return null;
                         return (
-                          <span
-                            title={`Identified as ${typeEntry.label}`}
-                            style={{
+                          <button
+                            onClick={() => setTypingScanIdx(idx)}
+                            aria-label={typeEntry ? `Change food category (currently ${typeEntry.label})` : "Set food category"}
+                            title={typeEntry ? `Food category: ${typeEntry.label} — tap to change` : "Tap to set food category"}
+                            style={typeEntry ? {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
                               color: "#f5c842", background: "#1a1608",
                               border: "1px solid #3a2f10",
                               borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em",
+                              letterSpacing: "0.08em", cursor: "pointer",
+                            } : {
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#888", background: "transparent",
+                              border: "1px dashed #2a2a2a",
+                              borderRadius: 4, padding: "1px 6px",
+                              letterSpacing: "0.08em", cursor: "pointer",
                             }}
                           >
-                            {typeEntry.emoji} {typeEntry.label.toUpperCase()}
-                          </span>
+                            {typeEntry
+                              ? <>{typeEntry.emoji} {typeEntry.label.toUpperCase()}</>
+                              : "+ set category"}
+                          </button>
                         );
                       })()}
 
-                      {/* STORED IN chip — shows the auto-inferred
-                          (or template-set) tile placement. Same
-                          visual weight as the type chip. */}
+                      {/* STORED IN chip — tappable. Tile placement is
+                          the single most likely thing to be wrong (OCR
+                          doesn't know your fridge layout, and the
+                          auto-classifier defaults to obvious tiles
+                          like MEAT & POULTRY that may not match how
+                          your family actually stores things). Tap
+                          opens IdentifiedAsPicker in a ModalSheet.
+                          Also shows a "+ set location" affordance
+                          when nothing is inferred so the user can
+                          place the row explicitly. User-created tiles
+                          fall through to a generic label — resolved
+                          at pantry-render time by the full lookup. */}
                       {(() => {
-                        if (!item.tileId) return null;
                         const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
-                        const tileEntry = allBuiltIns.find(t => t.id === item.tileId);
-                        if (!tileEntry) return null;  // user tile — not in bundled arrays
+                        const tileEntry = item.tileId ? allBuiltIns.find(t => t.id === item.tileId) : null;
                         return (
-                          <span
-                            title={`Stored in ${tileEntry.label}`}
-                            style={{
+                          <button
+                            onClick={() => setTilingScanIdx(idx)}
+                            aria-label={tileEntry ? `Change location (currently ${tileEntry.label})` : item.tileId ? "Change location" : "Set location"}
+                            title={tileEntry ? `Stored in ${tileEntry.label} — tap to change` : item.tileId ? "Tap to change location" : "Tap to set location"}
+                            style={item.tileId ? {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
                               color: "#7eb8d4", background: "#0f1620",
                               border: "1px solid #1f3040",
                               borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em",
+                              letterSpacing: "0.08em", cursor: "pointer",
+                            } : {
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#888", background: "transparent",
+                              border: "1px dashed #2a2a2a",
+                              borderRadius: 4, padding: "1px 6px",
+                              letterSpacing: "0.08em", cursor: "pointer",
                             }}
                           >
-                            → {tileEntry.emoji} {tileEntry.label.toUpperCase()}
-                          </span>
+                            {item.tileId
+                              ? <>→ {tileEntry ? `${tileEntry.emoji} ${tileEntry.label.toUpperCase()}` : "MY LOCATION"}</>
+                              : "+ set location"}
+                          </button>
                         );
                       })()}
                     </div>
@@ -939,6 +975,72 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           }}
           onClose={() => setLinkingScanIdx(null)}
         />
+      )}
+
+      {/* FOOD CATEGORY picker — wraps TypePicker in a ModalSheet so
+          it can be reopened per scan row. Reuses the same picker the
+          AddItemModal uses, so the UX is familiar from elsewhere.
+          On pick we auto-fill STORED IN / location from the type's
+          defaults ONLY when the row doesn't already have them set —
+          same non-overwrite rule the add-item flow uses. Identity
+          (canonical) auto-fills too unless the user already linked. */}
+      {typingScanIdx != null && scannedItems[typingScanIdx] && (
+        <ModalSheet onClose={() => setTypingScanIdx(null)} maxHeight="86vh">
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:10 }}>
+            FOOD CATEGORY
+          </div>
+          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+            What kind of thing is {scannedItems[typingScanIdx].name}?
+          </h2>
+          <TypePicker
+            userId={userId}
+            selectedTypeId={scannedItems[typingScanIdx].typeId}
+            suggestedTypeId={inferFoodTypeFromName(scannedItems[typingScanIdx].name)}
+            onPick={(typeId, defaultTileId, defaultLocation) => {
+              const row = scannedItems[typingScanIdx];
+              const patch = { typeId };
+              if (defaultTileId && !row.tileId) patch.tileId = defaultTileId;
+              if (defaultLocation && !row.location) patch.location = defaultLocation;
+              if (!row.ingredientId) {
+                const fromType = canonicalIdForType(typeId);
+                if (fromType) {
+                  patch.ingredientId = fromType;
+                  patch.ingredientIds = [fromType];
+                }
+              }
+              propagateCorrection(typingScanIdx, patch);
+              setTypingScanIdx(null);
+            }}
+          />
+        </ModalSheet>
+      )}
+
+      {/* STORED IN picker — same pattern, IdentifiedAsPicker wrapped
+          in a ModalSheet. Tile placement propagates to sibling rows
+          with the same raw scanner read (receipt "3 × CHOBANI" all
+          land in the same fridge tile) but only when the user hasn't
+          explicitly moved one of them already. */}
+      {tilingScanIdx != null && scannedItems[tilingScanIdx] && (
+        <ModalSheet onClose={() => setTilingScanIdx(null)} maxHeight="86vh">
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em", marginBottom:10 }}>
+            STORED IN
+          </div>
+          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+            Where does {scannedItems[tilingScanIdx].name} live?
+          </h2>
+          <IdentifiedAsPicker
+            userId={userId}
+            locationHint={scannedItems[tilingScanIdx].location}
+            selectedTileId={scannedItems[tilingScanIdx].tileId}
+            suggestedTileId={inferTileFromName(scannedItems[tilingScanIdx].name)}
+            onPick={(tileId, location) => {
+              const patch = { tileId };
+              if (location) patch.location = location;
+              propagateCorrection(tilingScanIdx, patch);
+              setTilingScanIdx(null);
+            }}
+          />
+        </ModalSheet>
       )}
     </div>
   );
