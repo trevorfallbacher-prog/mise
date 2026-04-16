@@ -2,26 +2,33 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 
-// ReceiptView — modal that opens when the user taps "TAP TO VIEW RECEIPT"
-// on an ItemCard's provenance line. Shows:
+// ReceiptView — modal that opens when the user taps the provenance line
+// on an ItemCard. Renders one of two scan-artifact kinds:
 //
-//   * The original scan image (fetched via a signed Storage URL)
-//   * Store / date / total metadata
-//   * Every pantry item that came from this receipt — tapping one
-//     closes this modal and opens that item's own ItemCard.
+//   * Receipt scan (receiptId prop)     — from public.receipts
+//   * Pantry-shelf scan (scanId prop)   — from public.pantry_scans
 //
-// Chunk F (post-hoc editing) adds the ability to re-link or correct an
-// item from this view; that lands later.
+// Layout is the same for both: the original image (fetched via a signed
+// Storage URL) + top metadata + a list of every pantry row this scan
+// produced. Tapping an item closes this modal and opens that item's
+// ItemCard.
 //
-// Props:
-//   receiptId            — the uuid to load
-//   pantry               — full pantry array (for resolving source_receipt_id)
+// Chunk F adds post-hoc editing / re-linking from this view; that lands
+// later.
+//
+// Props (pass exactly one of receiptId / scanId):
+//   receiptId            — receipts.id uuid
+//   scanId               — pantry_scans.id uuid
+//   pantry               — full pantry array (for filtering related items)
 //   onClose()            — dismiss
 //   onOpenItem(item)     — open a specific pantry row in ItemCard
-export default function ReceiptView({ receiptId, pantry = [], onClose, onOpenItem }) {
+export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, onOpenItem }) {
   const [receipt, setReceipt] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Which artifact kind is being rendered — drives row filtering + copy.
+  const kind = scanId ? "pantry_scan" : "receipt";
+  const artifactId = receiptId || scanId;
 
   // Close on Escape.
   useEffect(() => {
@@ -30,19 +37,23 @@ export default function ReceiptView({ receiptId, pantry = [], onClose, onOpenIte
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Load the receipt row + signed image URL (if any).
+  // Load the artifact row (receipts or pantry_scans) + signed image URL.
   useEffect(() => {
     let alive = true;
     (async () => {
       setLoading(true);
+      const table = kind === "pantry_scan" ? "pantry_scans" : "receipts";
+      const selectCols = kind === "pantry_scan"
+        ? "id, kind, scanned_at, item_count, image_path"
+        : "id, store_name, receipt_date, scanned_at, total_cents, item_count, image_path";
       const { data, error } = await supabase
-        .from("receipts")
-        .select("id, store_name, receipt_date, scanned_at, total_cents, item_count, image_path")
-        .eq("id", receiptId)
+        .from(table)
+        .select(selectCols)
+        .eq("id", artifactId)
         .single();
       if (!alive) return;
       if (error) {
-        console.warn("[receipts] load failed:", error.message);
+        console.warn(`[${table}] load failed:`, error.message);
         setReceipt(null);
         setLoading(false);
         return;
@@ -59,13 +70,16 @@ export default function ReceiptView({ receiptId, pantry = [], onClose, onOpenIte
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [receiptId]);
+  }, [artifactId, kind]);
 
-  // Items in the pantry that point back at this receipt.
-  const relatedItems = useMemo(
-    () => (pantry || []).filter(p => p.sourceReceiptId === receiptId),
-    [pantry, receiptId]
-  );
+  // Items in the pantry that point back at this artifact. Filter changes
+  // with kind so the same component surfaces the right items for either
+  // scan artifact.
+  const relatedItems = useMemo(() => {
+    if (!pantry) return [];
+    if (kind === "pantry_scan") return pantry.filter(p => p.sourceScanId === artifactId);
+    return pantry.filter(p => p.sourceReceiptId === artifactId);
+  }, [pantry, artifactId, kind]);
 
   // Compact display for the metadata strip.
   const displayDate = receipt?.receipt_date || receipt?.scanned_at;
@@ -107,14 +121,36 @@ export default function ReceiptView({ receiptId, pantry = [], onClose, onOpenIte
           ✕
         </button>
 
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 6 }}>
-          🧾 RECEIPT
-        </div>
-        <h2 style={{ fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2 }}>
-          {receipt?.store_name || "Unknown store"}
-        </h2>
+        {(() => {
+          const isPantryScan = kind === "pantry_scan";
+          const headerEmoji = isPantryScan
+            ? (receipt?.kind === "fridge" ? "🧊"
+              : receipt?.kind === "freezer" ? "❄️"
+              : "🥫")
+            : "🧾";
+          const headerLabel = isPantryScan
+            ? `${String(receipt?.kind || "PANTRY").toUpperCase()} SCAN`
+            : "RECEIPT";
+          const headerTitle = isPantryScan
+            ? (receipt?.kind === "fridge" ? "Fridge scan"
+              : receipt?.kind === "freezer" ? "Freezer scan"
+              : "Pantry scan")
+            : (receipt?.store_name || "Unknown store");
+          return (
+            <>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 6 }}>
+                {headerEmoji} {headerLabel}
+              </div>
+              <h2 style={{ fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2 }}>
+                {headerTitle}
+              </h2>
+            </>
+          );
+        })()}
 
-        {/* Metadata strip */}
+        {/* Metadata strip. Receipt-only fields (store, total) hide cleanly
+            when we're showing a pantry-scan artifact since receipt is null
+            for those. */}
         <div style={{ display: "flex", gap: 12, marginTop: 8, marginBottom: 16, flexWrap: "wrap" }}>
           {dateLabel && (
             <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em" }}>

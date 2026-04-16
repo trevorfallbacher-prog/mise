@@ -1806,7 +1806,13 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     // freezer scans get their own table in a future chunk (E); here they
     // just land with sourceKind='pantry_scan' and no receipt link.
     let receiptId = null;
-    const isReceiptScan = items[0]?.sourceKind === "receipt_scan";
+    let scanId = null;
+    // Detect which batch-artifact table to write into from the sourceKind
+    // the Scanner stamped on every item during normalization.
+    const firstKind = items[0]?.sourceKind;
+    const isReceiptScan = firstKind === "receipt_scan";
+    const isPantryScan  = firstKind === "pantry_scan";
+
     if (userId && isReceiptScan) {
       const { data, error } = await supabase.from("receipts").insert({
         user_id: userId,
@@ -1822,17 +1828,37 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       }
     }
 
-    // Upload the scan image to Storage so the ItemCard's "TAP TO VIEW
-    // RECEIPT" deep link has something to render. Best-effort — the
-    // receipt row + pantry items are already persisted, so a failed
-    // upload just means the image isn't viewable (console warns but
-    // doesn't break the flow). Path convention: scans/<userId>/<receiptId>.ext
-    if (receiptId && meta.imageData?.base64) {
+    // Pantry-shelf scans (fridge/pantry/freezer) get their own row in
+    // pantry_scans so the DB-side notify_family_pantry_scan trigger fires
+    // ONE rollup ("Marissa scanned the fridge and added 8 items") instead
+    // of per-item pings. Also gives source_scan_id on the resulting
+    // pantry items a real FK target.
+    if (userId && isPantryScan) {
+      // Infer the kind from the first item's location — Scanner already
+      // pushed activeMode.location onto each item during normalization.
+      const scanKind = items[0]?.location || "pantry";
+      const { data, error } = await supabase.from("pantry_scans").insert({
+        user_id: userId,
+        kind: scanKind,
+        item_count: items.length,
+      }).select("id").single();
+      if (error) console.warn("[pantry_scans] insert failed:", error.message);
+      else scanId = data?.id || null;
+    }
+
+    // Upload the scan image to Storage so the ItemCard provenance deep
+    // link has something to render. Works for BOTH receipt scans and
+    // pantry-shelf scans — same 'scans' bucket, same path convention:
+    //   scans/<userId>/<receiptId-or-scanId>.ext
+    // Best-effort — pantry items are already persisted, so a failed
+    // upload just means the image isn't viewable.
+    const batchId = receiptId || scanId;
+    const batchTable = receiptId ? "receipts" : (scanId ? "pantry_scans" : null);
+    if (batchId && batchTable && meta.imageData?.base64) {
       try {
         const { base64, mediaType } = meta.imageData;
         const ext = (mediaType || "image/jpeg").split("/")[1]?.split(";")[0] || "jpg";
-        const path = `${userId}/${receiptId}.${ext}`;
-        // Convert base64 to Blob for Supabase Storage upload.
+        const path = `${userId}/${batchId}.${ext}`;
         const bin = atob(base64);
         const bytes = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -1843,14 +1869,11 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
         if (upErr) {
           console.warn("[scans storage] upload failed:", upErr.message);
         } else {
-          // Stamp the path onto the receipt row so we know where to fetch
-          // the signed URL from later. Fire-and-forget — if this fails the
-          // worst case is the receipt exists without a renderable image.
           const { error: pathErr } = await supabase
-            .from("receipts")
+            .from(batchTable)
             .update({ image_path: path })
-            .eq("id", receiptId);
-          if (pathErr) console.warn("[receipts] image_path update failed:", pathErr.message);
+            .eq("id", batchId);
+          if (pathErr) console.warn(`[${batchTable}] image_path update failed:`, pathErr.message);
         }
       } catch (e) {
         console.warn("[scans] image upload exception:", e?.message || e);
@@ -1986,6 +2009,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           // once a receipt-detail page exists. First-wins would leave
           // stale pointers; last-wins matches the user's mental model.
           if (receiptId) ex.sourceReceiptId = receiptId;
+          if (scanId)    ex.sourceScanId    = scanId;
           if (s.sourceKind) ex.sourceKind = s.sourceKind;
           // scan_raw also takes last-wins — most recent scan's read is
           // what the user is currently verifying.
@@ -2012,12 +2036,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
             ...(s.state      ? { state: s.state           } : {}),
             ...(s.scanRaw    ? { scanRaw: s.scanRaw       } : {}),
-            // Back-link to the receipt row we just inserted (if any).
-            // Powers the ItemCard's "TAP TO VIEW RECEIPT" deep link so
-            // the user can see the original scan. receiptId is null for
-            // pantry-shelf scans (fridge/pantry/freezer) since those
-            // don't create receipts rows.
+            // Back-link to the scan artifact that created this row —
+            // either a receipts row (receipt scans) or a pantry_scans
+            // row (fridge/pantry/freezer scans). At most one is set.
+            // Both feed ItemCard's provenance deep-link.
             ...(receiptId ? { sourceReceiptId: receiptId } : {}),
+            ...(scanId    ? { sourceScanId: scanId       } : {}),
           });
         }
       });
@@ -3062,7 +3086,8 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       )}
       {openReceiptId && (
         <ReceiptView
-          receiptId={openReceiptId}
+          receiptId={openReceiptId.receiptId}
+          scanId={openReceiptId.scanId}
           pantry={pantry}
           onOpenItem={(item) => setOpenItem(item)}
           onClose={() => setOpenReceiptId(null)}
@@ -3082,10 +3107,14 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             pantry={pantry}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
             onOpenProvenance={(link) => {
-              // kind: 'receipt' is the only case wired today. 'cook' will
-              // route to a cook-log detail view when that ships.
+              // kind: 'receipt' and 'scan' both route through ReceiptView
+              // (it handles both artifact kinds based on which prop is
+              // passed). 'cook' will route to a cook-log detail view
+              // when that ships.
               if (link?.kind === "receipt" && link.id) {
-                setOpenReceiptId(link.id);
+                setOpenReceiptId({ receiptId: link.id });
+              } else if (link?.kind === "scan" && link.id) {
+                setOpenReceiptId({ scanId: link.id });
               }
             }}
             onClose={() => setOpenItem(null)}

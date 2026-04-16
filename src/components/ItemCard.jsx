@@ -70,10 +70,15 @@ function provenanceLine(item) {
     };
   }
 
-  // Pantry scan without a receipt record — show date, no deep link yet
-  // (a pantry_scans table is a future feature).
+  // Pantry-shelf scan (fridge/pantry/freezer). Deep-linkable when we
+  // captured a scan id — the pantry_scans table (migration 0032) is
+  // the source of truth for these, same pattern as receipts.
   if (item.sourceKind === "pantry_scan") {
-    return { icon: "📱", text: `ADDED VIA PANTRY SCAN${added ? ` · ${added}` : ""}`, linkTo: null };
+    return {
+      icon: "📱",
+      text: `ADDED VIA PANTRY SCAN${added ? ` · ${added}` : ""}`,
+      linkTo: item.sourceScanId ? { kind: "scan", id: item.sourceScanId } : null,
+    };
   }
 
   // State-conversion output (when we eventually set source_kind here).
