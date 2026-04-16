@@ -16,6 +16,8 @@ import { useShoppingList } from "./lib/useShoppingList";
 import { useRelationships } from "./lib/useRelationships";
 import { useNotifications } from "./lib/useNotifications";
 import { ToastProvider, useToast } from "./lib/toast";
+import { supabase } from "./lib/supabase";
+import { IngredientInfoProvider } from "./lib/useIngredientInfo";
 
 const NAV = [
   { id:"home",     emoji:"🏠",   label:"Home"     },
@@ -104,7 +106,9 @@ export default function App() {
   // the hooks that hang off of user data (usePantry's realtime callback etc.).
   return (
     <ToastProvider>
-      <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+      <IngredientInfoProvider>
+        <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+      </IngredientInfoProvider>
     </ToastProvider>
   );
 }
@@ -114,6 +118,12 @@ export default function App() {
 function AuthedApp({ user, profile, upsertProfile }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
+
+  // NOTE: the ingredient_info seed + fetch used to live here as a separate
+  // useEffect. It's now consolidated inside IngredientInfoProvider so the
+  // seeded data is actually in React state (not just in the DB) by the
+  // time IngredientCard mounts — zero delay on card opens after first
+  // paint. See src/lib/useIngredientInfo.js.
 
   const relationships = useRelationships(user?.id);
   const { familyKey } = relationships;
@@ -288,6 +298,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             userId={user.id}
             onCooked={() => setTab("cookbook")}
             pantry={pantry}
+            setPantry={setPantry}
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
@@ -306,6 +317,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             family={relationships.family}
             friends={relationships.friends}
             pantry={pantry}
+            setPantry={setPantry}
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}

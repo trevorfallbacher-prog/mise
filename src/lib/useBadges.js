@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 // Catalog row → UI shape.
 //
@@ -99,8 +99,7 @@ export function useBadges(targetUserId) {
   // for family members' earn events that the viewer shouldn't see.
   useEffect(() => {
     if (!targetUserId) return;
-    const ch = supabase
-      .channel(`rt:user_badges:${targetUserId}`)
+    const ch = safeChannel(`rt:user_badges:${targetUserId}`)
       .on("postgres_changes",
         { event: "*", schema: "public", table: "user_badges", filter: `user_id=eq.${targetUserId}` },
         (payload) => {

@@ -86,7 +86,7 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
   );
 }
 
-export default function Cook({ profile, userId, onCooked, pantry, shoppingList, setShoppingList, onGoToShopping, family = [], friends = [], hasFamily = false }) {
+export default function Cook({ profile, userId, onCooked, pantry, setPantry, shoppingList, setShoppingList, onGoToShopping, family = [], friends = [], hasFamily = false }) {
   const [route, setRoute]     = useState("plan");   // "plan" | "learn"
   const [cuisine, setCuisine] = useState("all");    // "all" | "italian" | "french" | ...
   const [openRecipe, setOpenRecipe] = useState(null);
@@ -131,6 +131,7 @@ export default function Cook({ profile, userId, onCooked, pantry, shoppingList, 
             onCooked?.(openRecipe);
           }}
           pantry={pantry}
+          setPantry={setPantry}
           shoppingList={shoppingList}
           setShoppingList={setShoppingList}
           onGoToShopping={onGoToShopping}

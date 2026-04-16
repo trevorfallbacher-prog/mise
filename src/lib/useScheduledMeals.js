@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 /**
  * Loads the user's (and family's) scheduled meals in a window.
@@ -56,8 +56,7 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
   // reconcile our own writes.
   useEffect(() => {
     if (!userId) return;
-    const ch = supabase
-      .channel(`rt:scheduled_meals:${userId}`)
+    const ch = safeChannel(`rt:scheduled_meals:${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "scheduled_meals" }, (payload) => {
         const row    = payload.new && Object.keys(payload.new).length ? payload.new : null;
         const oldRow = payload.old && Object.keys(payload.old).length ? payload.old : null;

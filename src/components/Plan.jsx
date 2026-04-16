@@ -416,7 +416,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNo
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], shoppingList = [], setShoppingList, onGoToShopping }) {
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping }) {
   // Show a rolling 14-day window so next week is visible without scrolling mechanics.
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
@@ -462,6 +462,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         onExit={() => setCookingRecipe(null)}
         onDone={() => setCookingRecipe(null)}
         pantry={pantry}
+        setPantry={setPantry}
         shoppingList={shoppingList}
         setShoppingList={setShoppingList}
         onGoToShopping={onGoToShopping}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "./supabase";
+import { supabase, safeChannel } from "./supabase";
 
 /**
  * Unified activity feed for the Home screen. Merges cook_logs + badge
@@ -94,8 +94,7 @@ export function useActivityFeed(userId, familyIds = [], limit = 20) {
   // feed is a tail of latest), so we keep the handler simple.
   useEffect(() => {
     if (cohort.length === 0) return;
-    const ch = supabase
-      .channel(`rt:activity:${cohortKey}`)
+    const ch = safeChannel(`rt:activity:${cohortKey}`)
       .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "cook_logs" },
         (payload) => {
