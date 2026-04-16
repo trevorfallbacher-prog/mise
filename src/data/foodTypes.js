@@ -268,11 +268,98 @@ export const FOOD_TYPES = [
     blurb: "Salts, peppers, ground, whole, blends",
     aliases: ["salt", "pepper", "peppercorn", "paprika", "cumin", "coriander", "oregano", "thyme", "rosemary", "basil", "bay leaf", "cinnamon", "nutmeg", "cloves", "cardamom", "turmeric", "chili powder", "cayenne", "garlic powder", "onion powder", "italian seasoning", "curry powder"],
   },
+  // ── Condiments & sauces (split into specific types so brand
+  //    variants wrap up usefully — "all my mayos" is the right
+  //    drawer view, "all my condiments" is too broad) ────────────
   {
-    id: "wweia_condiments", label: "Condiments & sauces", emoji: "🥫",
+    id: "wweia_mayo", label: "Mayo", emoji: "🥚",
     defaultTileId: "condiments_sauces",
-    blurb: "Ketchup, mustard, mayo, hot sauce, dressings",
-    aliases: ["ketchup", "mustard", "mayo", "mayonnaise", "hot sauce", "sriracha", "tabasco", "bbq sauce", "barbecue sauce", "soy sauce", "worcestershire", "fish sauce", "oyster sauce", "hoisin", "teriyaki", "ranch", "dressing", "salsa", "pesto", "tahini", "miso", "gochujang", "harissa"],
+    blurb: "Hellmann's, Duke's, Kewpie, aioli, homemade",
+    aliases: ["mayo", "mayonnaise", "miracle whip", "kewpie", "hellmann", "hellmanns", "duke's", "dukes", "aioli", "japanese mayo"],
+  },
+  {
+    id: "wweia_ketchup", label: "Ketchup", emoji: "🍅",
+    defaultTileId: "condiments_sauces",
+    blurb: "Heinz, curry ketchup, fancy ketchup",
+    aliases: ["ketchup", "catsup", "tomato ketchup", "heinz ketchup", "curry ketchup", "banana ketchup", "mushroom ketchup"],
+  },
+  {
+    id: "wweia_mustard", label: "Mustard", emoji: "🌭",
+    defaultTileId: "condiments_sauces",
+    blurb: "Dijon, yellow, whole-grain, honey mustard",
+    aliases: ["mustard", "dijon", "yellow mustard", "brown mustard", "honey mustard", "whole grain mustard", "grainy mustard", "english mustard", "spicy brown"],
+  },
+  {
+    id: "wweia_hot_sauce", label: "Hot sauce", emoji: "🌶️",
+    defaultTileId: "condiments_sauces",
+    blurb: "Sriracha, Tabasco, Cholula, Frank's, sambal, harissa, gochujang",
+    aliases: ["hot sauce", "sriracha", "tabasco", "cholula", "franks", "frank's", "tapatio", "crystal hot sauce", "sambal", "sambal oelek", "harissa", "gochujang", "chili oil", "chili crisp", "lao gan ma", "valentina", "yucateco"],
+  },
+  {
+    id: "wweia_bbq_sauce", label: "BBQ sauce", emoji: "🍖",
+    defaultTileId: "condiments_sauces",
+    blurb: "Sweet Baby Ray's, Stubb's, Carolina, Kansas City",
+    aliases: ["bbq", "bbq sauce", "barbecue", "barbecue sauce", "sweet baby rays", "sweet baby ray's", "stubbs", "stubb's", "open pit", "bullseye", "kraft bbq"],
+  },
+  {
+    id: "wweia_soy_sauce", label: "Soy sauce", emoji: "🍜",
+    defaultTileId: "condiments_sauces",
+    blurb: "Shoyu, tamari, dark soy, light soy",
+    aliases: ["soy sauce", "shoyu", "tamari", "kikkoman", "dark soy", "light soy", "low sodium soy", "thin soy", "thick soy"],
+  },
+  {
+    id: "wweia_fish_sauce", label: "Fish sauce", emoji: "🐟",
+    defaultTileId: "condiments_sauces",
+    blurb: "Nam pla, Red Boat, Three Crabs",
+    aliases: ["fish sauce", "nam pla", "red boat", "three crabs", "nuoc mam", "colatura"],
+  },
+  {
+    id: "wweia_asian_sauces", label: "Asian sauces", emoji: "🥢",
+    defaultTileId: "condiments_sauces",
+    blurb: "Oyster, hoisin, teriyaki, char siu, plum, duck sauce",
+    aliases: ["oyster sauce", "hoisin", "teriyaki", "char siu", "plum sauce", "duck sauce", "sweet chili", "sweet chili sauce", "ponzu", "sushi soy", "eel sauce", "unagi sauce", "black bean sauce", "xo sauce", "ketjap manis"],
+  },
+  {
+    id: "wweia_salsa", label: "Salsa", emoji: "🫑",
+    defaultTileId: "condiments_sauces",
+    blurb: "Pico, verde, rojo, chipotle",
+    aliases: ["salsa", "pico de gallo", "salsa verde", "salsa rojo", "salsa roja", "chipotle salsa", "restaurant style salsa"],
+  },
+  {
+    id: "wweia_pesto", label: "Pesto", emoji: "🌿",
+    defaultTileId: "condiments_sauces",
+    blurb: "Genovese, jarred, homemade",
+    aliases: ["pesto", "genovese pesto", "pesto alla genovese", "sun-dried tomato pesto", "arugula pesto"],
+  },
+  {
+    id: "wweia_salad_dressing", label: "Salad dressing", emoji: "🥗",
+    defaultTileId: "condiments_sauces",
+    blurb: "Ranch, Caesar, Italian, vinaigrette, blue cheese",
+    aliases: ["ranch", "caesar", "caesar dressing", "italian dressing", "vinaigrette", "thousand island", "blue cheese dressing", "french dressing", "russian dressing", "honey mustard dressing", "green goddess"],
+  },
+  {
+    id: "wweia_miso", label: "Miso", emoji: "🍲",
+    defaultTileId: "condiments_sauces",
+    blurb: "Red, white, shiro, aka",
+    aliases: ["miso", "shiro miso", "aka miso", "red miso", "white miso", "awase miso"],
+  },
+  {
+    id: "wweia_worcestershire", label: "Worcestershire", emoji: "🫙",
+    defaultTileId: "condiments_sauces",
+    blurb: "Lea & Perrins and knockoffs",
+    aliases: ["worcestershire", "lea and perrins", "lea & perrins"],
+  },
+  {
+    id: "wweia_tahini", label: "Tahini", emoji: "🫙",
+    defaultTileId: "condiments_sauces",
+    blurb: "Sesame paste, for hummus + dressings",
+    aliases: ["tahini", "sesame paste", "soom", "al kanater"],
+  },
+  {
+    id: "wweia_other_sauces", label: "Other sauces & condiments", emoji: "🥫",
+    defaultTileId: "condiments_sauces",
+    blurb: "Catch-all for anything that doesn't fit the specific types",
+    aliases: ["chutney", "relish", "marmalade", "jam", "preserves", "dipping sauce", "cocktail sauce", "tartar sauce", "horseradish", "wasabi"],
   },
   {
     id: "wweia_canned_goods", label: "Canned goods", emoji: "🥫",
@@ -344,7 +431,7 @@ export function findFoodType(id) {
  *
  * Example:
  *   "Home Run Inn Pizza" -> "wweia_pizza" (alias "pizza")
- *   "Hellman's Mayo"     -> "wweia_condiments" (alias "mayo")
+ *   "Hellman's Mayo"     -> "wweia_mayo" (alias "mayo" beats shorter)
  *   "Cavatappi Pasta"    -> "wweia_pasta" (alias "pasta" OR "cavatappi")
  *   "some random text"   -> null
  *
