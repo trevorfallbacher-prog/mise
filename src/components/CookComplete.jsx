@@ -96,6 +96,13 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // for closed). Sheet overlays the phase and lets the user choose which
   // pantry row to draw from when more than one matches the ingredient id.
   const [pickerForIdx, setPickerForIdx] = useState(null);
+  // extraRemovals captures "I subbed X for Y" cases: the user ✕'d the recipe
+  // ingredient and wants to decrement a different pantry row instead (e.g.
+  // "I used yesterday's leftover chicken" — a kind='meal' row — for the raw
+  // chicken this recipe called for). Lives alongside usedItems in the final
+  // removal plan. Each entry is an opaque decrement against a specific row.
+  const [extraRemovals, setExtraRemovals] = useState([]);
+  const [addLeftoverOpen, setAddLeftoverOpen] = useState(false);
 
   const xp = useMemo(() => totalXpForRecipe(recipe), [recipe]);
   // Merge family + friends, dedupe by otherId (someone could be tagged as
@@ -340,6 +347,76 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               </div>
             );
           })}
+
+          {/* Extra-removal rows: pantry rows the user tapped "Add leftover /
+              sub" to decrement instead of (or in addition to) the recipe
+              ingredients. Rendered inline so the cumulative removal plan
+              reads as one list. Tag reads "+ ADDED" to distinguish from the
+              recipe-derived rows above. */}
+          {extraRemovals.map(extra => (
+            <div
+              key={extra.tempId}
+              style={{
+                display:"flex", alignItems:"center", gap:10,
+                padding:"12px 14px",
+                background:"#0f140a",
+                border:"1px solid #1e3a1e",
+                borderRadius:12,
+              }}
+            >
+              <span style={{ fontSize:22, flexShrink:0 }}>{extra.emoji || "🥣"}</span>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#d4ebd4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                  {extra.name}
+                </div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7ec87e", marginTop:2, letterSpacing:"0.05em" }}>
+                  + ADDED · FROM {(extra.location || "pantry").toUpperCase()}
+                </div>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
+                <input
+                  type="number" min="0" step="any"
+                  value={extra.amount ?? ""}
+                  onChange={e => {
+                    const v = e.target.value === "" ? null : Number(e.target.value);
+                    setExtraRemovals(prev => prev.map(x => x.tempId === extra.tempId ? { ...x, amount: v } : x));
+                  }}
+                  style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #1e3a1e", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#d4ebd4", textAlign:"right", outline:"none" }}
+                />
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#7ec87e", minWidth:38 }}>
+                  {extra.unitLabel}
+                </span>
+              </div>
+              <button
+                onClick={() => setExtraRemovals(prev => prev.filter(x => x.tempId !== extra.tempId))}
+                aria-label="Remove from list"
+                style={{ width:30, height:30, flexShrink:0, background:"transparent", color:"#666", border:"1px solid #2a2a2a", borderRadius:8, cursor:"pointer", fontFamily:"'DM Mono',monospace", fontSize:12 }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+
+          {/* Add-leftover / substitution entry. Keeps the CTA low-key so it
+              doesn't out-shout the primary "Continue". Disabled if the
+              pantry is empty — nothing to pick from. */}
+          <button
+            onClick={() => setAddLeftoverOpen(true)}
+            disabled={!pantry || pantry.length === 0}
+            style={{
+              padding:"12px 14px",
+              background:"transparent",
+              border:"1px dashed #2a2a2a",
+              borderRadius:12,
+              fontFamily:"'DM Mono',monospace", fontSize:11,
+              color: pantry && pantry.length > 0 ? "#888" : "#444",
+              letterSpacing:"0.08em",
+              cursor: pantry && pantry.length > 0 ? "pointer" : "not-allowed",
+              textAlign:"left",
+            }}
+          >
+            + ADD LEFTOVER / SUB
+          </button>
         </div>
 
         <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
@@ -352,6 +429,110 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             CONTINUE →
           </button>
         </div>
+
+        {/* Add-leftover / substitution picker. Lists every current pantry row
+            (both kind='ingredient' and future kind='meal' leftovers) grouped
+            by location so the user can scan fridge → freezer → pantry the
+            way they'd think about it. Tapping a row adds it to the removal
+            plan with a default amount the user can tweak inline on the
+            main list afterward. */}
+        {addLeftoverOpen && (
+          <div
+            onClick={() => setAddLeftoverOpen(false)}
+            style={{ position:"absolute", inset:0, background:"#000d", zIndex:6, display:"flex", alignItems:"flex-end", animation:"rise 0.18s ease" }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ width:"100%", maxHeight:"80%", overflowY:"auto", background:"#0a0a0a", borderTop:"1px solid #2a2a2a", borderTopLeftRadius:18, borderTopRightRadius:18, padding:"22px 20px 16px" }}
+            >
+              <div style={{ width:42, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 16px" }} />
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:6 }}>
+                ADD LEFTOVER / SUB
+              </div>
+              <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", marginBottom:16 }}>
+                Used something the recipe didn't call for — yesterday's cooked chicken, a homemade sauce? Pick it here and we'll decrement it too.
+              </p>
+
+              {["fridge","freezer","pantry"].map(loc => {
+                const rowsAtLoc = (pantry || [])
+                  .filter(p => (p.location || "pantry") === loc && Number(p.amount) > 0)
+                  .sort((a, b) => {
+                    const ax = a.expiresAt ? a.expiresAt.getTime() : Infinity;
+                    const bx = b.expiresAt ? b.expiresAt.getTime() : Infinity;
+                    return ax - bx;
+                  });
+                if (rowsAtLoc.length === 0) return null;
+                return (
+                  <div key={loc} style={{ marginBottom:14 }}>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.15em", marginBottom:8 }}>
+                      {loc.toUpperCase()}
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {rowsAtLoc.map(p => {
+                        const canonical = p.ingredientId ? findIngredient(p.ingredientId) : null;
+                        const uLabel = canonical ? unitLabel(canonical, p.unit) : p.unit;
+                        const alreadyAdded = extraRemovals.some(x => x.pantryRowId === p.id);
+                        const isMeal = (p.kind || "ingredient") === "meal";
+                        return (
+                          <button
+                            key={p.id}
+                            disabled={alreadyAdded}
+                            onClick={() => {
+                              // Default to the recipe's qty if the ingredient
+                              // matches; otherwise 1 of the row's unit.
+                              const defaultAmount = 1;
+                              setExtraRemovals(prev => [...prev, {
+                                tempId: `extra-${p.id}-${Date.now()}`,
+                                pantryRowId: p.id,
+                                ingredientId: p.ingredientId || null,
+                                name: p.name,
+                                emoji: p.emoji,
+                                amount: defaultAmount,
+                                unit: p.unit,
+                                unitLabel: uLabel,
+                                location: p.location || "pantry",
+                                kind: p.kind || "ingredient",
+                              }]);
+                              setAddLeftoverOpen(false);
+                            }}
+                            style={{
+                              textAlign:"left", padding:"10px 12px",
+                              background: alreadyAdded ? "#0c0c0c" : "#141414",
+                              border:`1px solid ${alreadyAdded ? "#1a1a1a" : "#2a2a2a"}`,
+                              borderRadius:10,
+                              cursor: alreadyAdded ? "not-allowed" : "pointer",
+                              opacity: alreadyAdded ? 0.45 : 1,
+                              display:"flex", alignItems:"center", gap:10,
+                            }}
+                          >
+                            <span style={{ fontSize:20 }}>{p.emoji || "🥣"}</span>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontFamily:"'Fraunces',serif", fontSize:14, color:"#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                {p.name}
+                                {isMeal && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e", marginLeft:8, letterSpacing:"0.1em" }}>LEFTOVER</span>}
+                              </div>
+                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2 }}>
+                                {p.amount} {uLabel}
+                              </div>
+                            </div>
+                            {alreadyAdded && <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.1em" }}>ADDED</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+
+              <button
+                onClick={() => setAddLeftoverOpen(false)}
+                style={{ marginTop:4, width:"100%", padding:"12px", background:"transparent", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}
+              >
+                CLOSE
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Multi-match picker sheet. Opens over the phase when the user taps
             the "+N MORE ▾" pill on a row with more than one matching pantry
