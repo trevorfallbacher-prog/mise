@@ -39,6 +39,7 @@ import {
   saveTemplateFromCustomAdd,
   setComponentsForTemplate,
 } from "../lib/userTemplates";
+import { useUserTemplates } from "../lib/useUserTemplates";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -855,6 +856,27 @@ function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
 //      recipes can match against it.
 //   2. Custom: free-text fallback for ingredients not in the registry. These
 //      save with ingredientId: null and won't be matched by any recipe.
+// Short "last used" label for template rows in the recents list.
+// "2h", "3d", "2w", "4mo" — compact enough to fit next to the
+// use-count chip without wrapping. Returns empty string for null
+// dates (new templates with no recency yet).
+function formatAgo(d) {
+  if (!d) return "";
+  const date = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(date.getTime())) return "";
+  const mins = Math.round((Date.now() - date.getTime()) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days}d`;
+  const weeks = Math.round(days / 7);
+  if (weeks < 9) return `${weeks}w`;
+  const months = Math.round(days / 30);
+  return `${months}mo`;
+}
+
 function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   const [mode, setMode] = useState("custom"); // "custom" | "canonical"
   const [search, setSearch] = useState("");
@@ -920,6 +942,39 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // linkingItem path isn't the right fit here since the item doesn't
   // exist yet.
   const [customComponentsOpen, setCustomComponentsOpen] = useState(false);
+
+  // Family-shared user templates, newest-first. Empty until the user
+  // (or any family member) saves their first custom item; grows as
+  // real-life usage populates the recents ladder.
+  const [userTemplates] = useUserTemplates(userId);
+
+  // Fill the custom form from a template. Called when the user taps
+  // a row in "YOUR RECENTS". Name/emoji/category/unit/ingredientIds
+  // land immediately; amount stays whatever the user had typed (if
+  // anything) OR falls back to the template's default_amount — the
+  // user almost always needs to type their actual count ("how many
+  // Home Run Inn Pizzas did I actually buy this week?") so pre-
+  // filling default_amount saves a tap but doesn't replace intent.
+  // Components rebuild from the template's flat ingredient_ids via
+  // componentsFromIngredientIds — position/amount/unit on individual
+  // components resets to the defaults; the edge-level precision (if
+  // the user wants to tweak "I used 30% of the salt jar") is a
+  // per-cook concern, not a per-template one.
+  const fillFromTemplate = (tpl) => {
+    if (!tpl) return;
+    setCustomName(tpl.name || "");
+    if (tpl.defaultUnit)     setCustomUnit(tpl.defaultUnit);
+    if (tpl.category)        setCustomCategory(tpl.category);
+    if (tpl.defaultAmount != null && amount === "") {
+      setAmount(String(tpl.defaultAmount));
+    }
+    // Rebuild the selected-components chips from the flat ingredient_ids.
+    // findIngredient is imported at module scope.
+    const rebuilt = (tpl.ingredientIds || [])
+      .map(id => ({ id, canonical: findIngredient(id) }))
+      .filter(c => c.canonical);
+    setCustomComponents(rebuilt);
+  };
 
   // Top-level picker view. If the user has typed a search, flatten everything
   // so "cheddar" still finds cheddar even though it's hidden under Cheese.
@@ -1385,6 +1440,85 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
             {/* Custom mode — emoji is auto-assigned (🥫) since the picker
                 rarely worked on iOS keyboards anyway. Users can change the
                 name freely; the emoji stays consistent for custom items. */}
+
+            {/* YOUR RECENTS — family-shared user templates, newest first.
+                Tap any row to autofill name/unit/category/components.
+                Hidden when the family has no templates yet (first-ever
+                custom add on an account — a fresh home-kitchen). */}
+            {userTemplates.length > 0 && (
+              <div style={{ marginBottom: 14 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 8,
+                }}>
+                  YOUR RECENTS · {userTemplates.length}
+                </div>
+                <div style={{
+                  display: "flex", flexDirection: "column", gap: 6,
+                  maxHeight: 220, overflowY: "auto",
+                  padding: 4, background: "#0a0a0a",
+                  border: "1px solid #1e1e1e", borderRadius: 10,
+                }}>
+                  {userTemplates.slice(0, 12).map(tpl => (
+                    <button
+                      key={tpl.id}
+                      onClick={() => fillFromTemplate(tpl)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "8px 10px",
+                        background: "transparent", border: "1px solid transparent",
+                        borderRadius: 8, cursor: "pointer", textAlign: "left",
+                      }}
+                      onMouseOver={e => { e.currentTarget.style.background = "#141414"; e.currentTarget.style.borderColor = "#2a2a2a"; }}
+                      onMouseOut={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderColor = "transparent"; }}
+                    >
+                      <span style={{ fontSize: 18, flexShrink: 0 }}>{tpl.emoji || "🥫"}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                          color: "#f0ece4",
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {tpl.name}
+                        </div>
+                        <div style={{
+                          fontFamily: "'DM Mono',monospace", fontSize: 9,
+                          color: "#666", letterSpacing: "0.06em", marginTop: 2,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>
+                          {tpl.ingredientIds.length > 0
+                            ? tpl.ingredientIds.slice(0, 4).map(id => id.replace(/_/g, " ").toUpperCase()).join(" · ")
+                            : "NO COMPONENTS"}
+                          {tpl.ingredientIds.length > 4 && ` · +${tpl.ingredientIds.length - 4}`}
+                        </div>
+                      </div>
+                      <div style={{ flexShrink: 0, textAlign: "right" }}>
+                        <div style={{
+                          fontFamily: "'DM Mono',monospace", fontSize: 9,
+                          color: "#f5c842", letterSpacing: "0.08em",
+                        }}>
+                          {tpl.useCount}×
+                        </div>
+                        <div style={{
+                          fontFamily: "'DM Mono',monospace", fontSize: 8,
+                          color: "#555", letterSpacing: "0.06em", marginTop: 1,
+                        }}>
+                          {formatAgo(tpl.lastUsedAt)}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#444", letterSpacing: "0.06em",
+                  marginTop: 6, textAlign: "center",
+                }}>
+                  TAP A RECENT TO AUTO-FILL · OR KEEP TYPING FOR SOMETHING NEW
+                </div>
+              </div>
+            )}
+
             <div style={{ marginBottom:12 }}>
               <input
                 value={customName}
