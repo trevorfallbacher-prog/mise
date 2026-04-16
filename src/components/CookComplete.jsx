@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
+import { convert, decrementRow, formatQty } from "../lib/unitConvert";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
@@ -80,6 +81,62 @@ export function buildInitialUsedItems(recipe, pantry) {
   });
 }
 
+// Flatten usedItems + extraRemovals into a single list of decrement
+// instructions the confirm-removal screen can render and the final save()
+// can apply. Each entry resolves to a specific pantry row + how much to
+// subtract in that row's own unit, so the caller never needs to reason
+// about conversion again.
+//
+// Returns:
+//   [{ pantryRowId, pantryRow, ingredient, used: {amount, unit},
+//      newAmount,   — row.amount after decrement (null if un-convertible)
+//      convertible, — false when used.unit isn't in the ingredient's ladder
+//      source: "recipe" | "added" }]
+export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
+  const lookup = (id) => (pantry || []).find(p => p.id === id) || null;
+  const out = [];
+  for (const row of usedItems) {
+    if (row.skipped || !row.selectedRowId) continue;
+    if (row.usedAmount == null || !Number.isFinite(Number(row.usedAmount))) continue;
+    if (!row.usedUnit) continue;
+    const pantryRow = lookup(row.selectedRowId);
+    if (!pantryRow) continue;
+    const used = { amount: Number(row.usedAmount), unit: row.usedUnit };
+    const newAmount = row.canonical ? decrementRow(pantryRow, used, row.canonical) : null;
+    out.push({
+      pantryRowId: pantryRow.id,
+      pantryRow,
+      ingredient: row.canonical,
+      used,
+      newAmount,
+      convertible: newAmount != null,
+      source: "recipe",
+      displayName: row.canonical?.name || row.recipeIng.item || "Ingredient",
+      displayEmoji: row.canonical?.emoji || row.recipeIng.emoji || "🥣",
+    });
+  }
+  for (const extra of extraRemovals) {
+    if (extra.amount == null || !Number.isFinite(Number(extra.amount))) continue;
+    const pantryRow = lookup(extra.pantryRowId);
+    if (!pantryRow) continue;
+    const canonical = extra.ingredientId ? findIngredient(extra.ingredientId) : null;
+    const used = { amount: Number(extra.amount), unit: extra.unit };
+    const newAmount = canonical ? decrementRow(pantryRow, used, canonical) : null;
+    out.push({
+      pantryRowId: pantryRow.id,
+      pantryRow,
+      ingredient: canonical,
+      used,
+      newAmount,
+      convertible: newAmount != null,
+      source: "added",
+      displayName: extra.name,
+      displayEmoji: extra.emoji,
+    });
+  }
+  return out;
+}
+
 export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, onFinish }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
@@ -103,6 +160,19 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // removal plan. Each entry is an opaque decrement against a specific row.
   const [extraRemovals, setExtraRemovals] = useState([]);
   const [addLeftoverOpen, setAddLeftoverOpen] = useState(false);
+
+  // Step numbering helper. The flow is a variable-length sequence depending
+  // on whether the recipe has ingredients (adds the pantry pair) and whether
+  // the user has family/friends (adds diners). Pass the phase id to get a
+  // { num, denom } back and stick them in the STEP label.
+  const stepOf = (id) => {
+    const seq = [];
+    if (usedItems.length > 0) seq.push("ingredientsUsed", "confirmRemoval");
+    if (connections.length > 0) seq.push("diners");
+    seq.push("rating", "notes");
+    const i = seq.indexOf(id);
+    return { num: i + 1, denom: seq.length };
+  };
 
   const xp = useMemo(() => totalXpForRecipe(recipe), [recipe]);
   // Merge family + friends, dedupe by otherId (someone could be tagged as
@@ -240,16 +310,11 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     const setRow = (idx, patch) =>
       setUsedItems(prev => prev.map(r => r.idx === idx ? { ...r, ...patch } : r));
 
-    // Step counter. The downstream ingredients-used → confirm-removal →
-    // leftovers chain is still being built; for now we hold the denominator
-    // at the existing "diners/rating/notes" counts so the step ratio stays
-    // honest in this commit.
-    const baseSteps = connections.length > 0 ? 3 : 2;
-    const totalSteps = baseSteps + 1;
+    const { num, denom } = stepOf("ingredientsUsed");
 
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
-        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>STEP 1 OF {totalSteps}</div>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>STEP {num} OF {denom}</div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           What did you use?
         </h2>
@@ -424,7 +489,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
             ← BACK
           </button>
-          <button onClick={() => setPhase(connections.length > 0 ? "diners" : "rating")}
+          <button onClick={() => setPhase("confirmRemoval")}
             style={{ flex:2, padding:"14px", background:"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#111", cursor:"pointer", letterSpacing:"0.08em" }}>
             CONTINUE →
           </button>
@@ -628,13 +693,108 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     );
   }
 
+  // ── phase: confirm removal ───────────────────────────────────────────────
+  //
+  // Read-only summary of "here's exactly what we're taking off your pantry."
+  // Lets the user eyeball the list + "leaves N remaining" math before
+  // committing. No writes yet — the Remove button just transitions to the
+  // leftovers phase so the whole decrement + leftover-row + cook_log insert
+  // can fire atomically in save(). A user bailing out of the modal at any
+  // point past here still hasn't touched their pantry.
+  if (phase === "confirmRemoval") {
+    const plan = buildRemovalPlan(usedItems, extraRemovals, pantry);
+    const { num, denom } = stepOf("confirmRemoval");
+
+    return shell(
+      <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
+          STEP {num} OF {denom}
+        </div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
+          Take these off the pantry?
+        </h2>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>
+          Last check before we update your shelves. Back up to tweak anything.
+        </p>
+
+        {plan.length === 0 ? (
+          <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, fontStyle:"italic", textAlign:"center", padding:"0 20px" }}>
+            Nothing to remove. Either the recipe has no tracked ingredients, or you ✕'d them all. Continue past this screen to log the cook anyway.
+          </div>
+        ) : (
+          <div style={{ flex:1, display:"flex", flexDirection:"column", gap:10, marginBottom:18 }}>
+            {plan.map((entry, i) => {
+              const uLabel = entry.ingredient
+                ? unitLabel(entry.ingredient, entry.used.unit)
+                : entry.used.unit;
+              const rowUnitLabel = entry.ingredient
+                ? unitLabel(entry.ingredient, entry.pantryRow.unit)
+                : entry.pantryRow.unit;
+              // Remaining readout: "leaves 0.75 sticks" or "pantry row clears"
+              // when decrement hits 0.
+              const leaves = entry.convertible
+                ? (entry.newAmount === 0
+                    ? "PANTRY ROW CLEARS"
+                    : `LEAVES ${formatQty({ amount: entry.newAmount, unit: entry.pantryRow.unit }, entry.ingredient)} ${rowUnitLabel}`)
+                : "UNIT MISMATCH · TAP BACK TO FIX";
+              return (
+                <div
+                  key={`${entry.pantryRowId}-${i}`}
+                  style={{
+                    display:"flex", alignItems:"center", gap:10,
+                    padding:"12px 14px",
+                    background: entry.source === "added" ? "#0f140a" : "#141414",
+                    border: `1px solid ${entry.convertible ? (entry.source === "added" ? "#1e3a1e" : "#2a2a2a") : "#3a1a1a"}`,
+                    borderRadius:12,
+                  }}
+                >
+                  <span style={{ fontSize:22 }}>{entry.displayEmoji}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic" }}>
+                      {entry.displayName}
+                    </div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: entry.convertible ? "#888" : "#ef4444", marginTop:2, letterSpacing:"0.05em" }}>
+                      {entry.source === "added" ? "+ ADDED · " : ""}
+                      {(entry.pantryRow.location || "pantry").toUpperCase()} · {leaves}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f5c842", fontStyle:"italic" }}>
+                      −{formatQty(entry.used, entry.ingredient)}
+                    </div>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.05em" }}>
+                      {uLabel}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
+          <button onClick={() => setPhase("ingredientsUsed")}
+            style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
+            ← BACK
+          </button>
+          <button onClick={() => setPhase(connections.length > 0 ? "diners" : "rating")}
+            style={{ flex:2, padding:"14px", background:"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#111", cursor:"pointer", letterSpacing:"0.08em" }}>
+            {plan.length === 0 ? "CONTINUE →" : `REMOVE ${plan.length} →`}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // ── phase 3: who ate with you? ───────────────────────────────────────────
   if (phase === "diners") {
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        {(() => { const { num, denom } = stepOf("diners"); return (
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
-          STEP {usedItems.length > 0 ? "2" : "1"} OF {(usedItems.length > 0 ? 1 : 0) + 3}
+          STEP {num} OF {denom}
         </div>
+        ); })()}
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           Who ate with you?
         </h2>
@@ -696,7 +856,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px" }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
-          STEP {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 2 : 1)} OF {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 3 : 2)}
+          {(() => { const { num, denom } = stepOf("rating"); return `STEP ${num} OF ${denom}`; })()}
         </div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           How'd it go?
@@ -734,7 +894,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         <div style={{ display:"flex", gap:10, marginTop:20 }}>
           <button onClick={() => setPhase(
               connections.length > 0 ? "diners"
-              : usedItems.length > 0 ? "ingredientsUsed"
+              : usedItems.length > 0 ? "confirmRemoval"
               : "celebrate"
             )}
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
@@ -757,7 +917,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px" }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
-          STEP {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 3 : 2)} OF {(usedItems.length > 0 ? 1 : 0) + (connections.length > 0 ? 3 : 2)}
+          {(() => { const { num, denom } = stepOf("notes"); return `STEP ${num} OF ${denom}`; })()}
         </div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           Any notes?
