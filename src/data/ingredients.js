@@ -4683,3 +4683,111 @@ export const COMPOUND_INGREDIENT_IDS = new Set([
 export function ingredientKind(id) {
   return COMPOUND_INGREDIENT_IDS.has(id) ? "compound" : "primitive";
 }
+
+// ─── ingredient states ─────────────────────────────────────────────────
+//
+// Physical form an ingredient lives in on the shelf. Bread is the canonical
+// example — one "bread" id, three rows: loaf, slices, crumbs. Recipes that
+// care about state declare it; the matcher scopes accordingly. Users can
+// convert between states via the "Make X from Y" flow (e.g., turn a loaf
+// into crumbs, decrementing the loaf and creating a new crumbs row).
+//
+// Everything here is data-only — the convert UX, the state badges on
+// pantry rows, and the state-aware recipe matcher live in their own
+// commits and read from these maps.
+//
+//   INGREDIENT_STATES       — per-ingredient-id ordered state list. Order
+//                             is "most raw → most processed" so the UI can
+//                             render a sensible progression.
+//   STATE_LABELS            — short human strings (singular). "grated"
+//                             not "gratedcheese" — the ingredient name
+//                             already tells the user which item is in
+//                             that state.
+//   DEFAULT_STATE_FOR       — preselected state when a user manually adds
+//                             a new row for an ingredient that has states.
+//                             Usually the least-processed / shelf-stable
+//                             form ("loaf", "block", "whole") so a naive
+//                             pantry entry lands sensibly.
+//
+// An ingredient without an entry here has no state distinction; pantry
+// rows for it carry state=null and matching ignores state entirely.
+
+export const INGREDIENT_STATES = {
+  bread:         ["loaf", "slices", "crumbs", "cubes", "toasted"],
+  // Covers every specific cheese AND the generic cheese hub — all cheeses
+  // share the same state vocabulary. The cheese-level registry entries
+  // (parmesan, pecorino, mozzarella, etc.) inherit this list via their
+  // parentId === "cheese_hub" link.
+  cheese_hub:    ["block", "grated", "shredded", "sliced", "cubed", "crumbled"],
+  chicken:       ["raw", "cooked", "shredded_cooked", "diced_cooked", "ground"],
+  chicken_breast:["raw", "cooked", "shredded_cooked", "diced_cooked"],
+  chicken_thigh: ["raw", "cooked", "shredded_cooked", "diced_cooked"],
+  beef:          ["raw", "ground", "cooked", "shredded_cooked", "diced_cooked"],
+  salt:          ["fine", "coarse", "flaky"],
+  kosher_salt:   ["coarse", "fine"],
+  onion:         ["whole", "diced", "sliced", "minced"],
+  garlic:        ["head", "cloves", "minced", "paste", "roasted"],
+  lemon:         ["whole", "juiced", "zested"],
+  lime:          ["whole", "juiced", "zested"],
+  tomato:        ["whole", "diced", "sliced", "crushed"],
+  carrot:        ["whole", "diced", "sliced", "shredded", "julienned"],
+  potato:        ["whole", "diced", "sliced", "mashed", "shredded"],
+};
+
+export const STATE_LABELS = {
+  loaf: "loaf",       slices: "sliced",    crumbs: "crumbs",    cubes: "cubed",    toasted: "toasted",
+  block: "block",     grated: "grated",    shredded: "shredded",sliced: "sliced",  cubed: "cubed",    crumbled: "crumbled",
+  raw: "raw",         cooked: "cooked",    ground: "ground",
+  shredded_cooked: "shredded (cooked)", diced_cooked: "diced (cooked)",
+  fine: "fine",       coarse: "coarse",    flaky: "flaky",
+  whole: "whole",     diced: "diced",      minced: "minced",    julienned: "julienned",
+  head: "head",       cloves: "cloves",    paste: "paste",      roasted: "roasted",
+  juiced: "juiced",   zested: "zested",
+  crushed: "crushed", mashed: "mashed",
+};
+
+export const DEFAULT_STATE_FOR = {
+  bread: "loaf",
+  cheese_hub: "block",
+  chicken: "raw",
+  chicken_breast: "raw",
+  chicken_thigh: "raw",
+  beef: "raw",
+  salt: "fine",
+  kosher_salt: "coarse",
+  onion: "whole",
+  garlic: "head",
+  lemon: "whole",
+  lime: "whole",
+  tomato: "whole",
+  carrot: "whole",
+  potato: "whole",
+};
+
+// Does this ingredient id have a meaningful state vocabulary? Walks the
+// parent chain so a specific cheese (parmesan) inherits from cheese_hub
+// without needing its own entry.
+export function statesForIngredient(ingredientOrId) {
+  const id = typeof ingredientOrId === "string" ? ingredientOrId : ingredientOrId?.id;
+  if (!id) return null;
+  if (INGREDIENT_STATES[id]) return INGREDIENT_STATES[id];
+  const ing = typeof ingredientOrId === "object" ? ingredientOrId : findIngredient(id);
+  const parentId = ing?.parentId;
+  if (parentId && INGREDIENT_STATES[parentId]) return INGREDIENT_STATES[parentId];
+  return null;
+}
+
+export function defaultStateFor(ingredientOrId) {
+  const id = typeof ingredientOrId === "string" ? ingredientOrId : ingredientOrId?.id;
+  if (!id) return null;
+  if (DEFAULT_STATE_FOR[id]) return DEFAULT_STATE_FOR[id];
+  const ing = typeof ingredientOrId === "object" ? ingredientOrId : findIngredient(id);
+  const parentId = ing?.parentId;
+  if (parentId && DEFAULT_STATE_FOR[parentId]) return DEFAULT_STATE_FOR[parentId];
+  return null;
+}
+
+export function stateLabel(state) {
+  if (!state) return "";
+  return STATE_LABELS[state] || state;
+}

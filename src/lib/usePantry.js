@@ -41,6 +41,11 @@ function fromDb(row) {
     servingsRemaining: row.servings_remaining != null ? Number(row.servings_remaining) : null,
     sourceRecipeSlug:  row.source_recipe_slug || null,
     sourceCookLogId:   row.source_cook_log_id || null,
+    // Physical form. Null for ingredients that have no meaningful state
+    // distinction (milk, oil). When set, it scopes recipe-to-pantry
+    // matching so "crumbs" only satisfies a recipe asking for crumbs.
+    // Migration 0027.
+    state: row.state || null,
     // Which user owns this row. When you share a pantry with family, their
     // rows come through via the family-select RLS policy; ownerId lets the
     // UI tag them ("+added by Alice") so it's clear who stocked what.
@@ -68,6 +73,7 @@ function toDb(item) {
     ...(item.servingsRemaining !== undefined ? { servings_remaining: item.servingsRemaining } : {}),
     ...(item.sourceRecipeSlug  !== undefined ? { source_recipe_slug: item.sourceRecipeSlug } : {}),
     ...(item.sourceCookLogId   !== undefined ? { source_cook_log_id: item.sourceCookLogId } : {}),
+    ...(item.state             !== undefined ? { state: item.state || null } : {}),
   };
 }
 
