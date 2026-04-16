@@ -1613,6 +1613,74 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "half_gallon",
   },
+  // ── spices & dried herbs ────────────────────────────────────────────
+  //
+  // The home-cook spice rack. Every entry here is the DRIED / GROUND
+  // shelf-stable form — fresh basil, fresh thyme, etc. live under
+  // produce and route to the fridge's Fresh Herbs tile. Category is
+  // "pantry" so the default-location heuristic doesn't try to stash
+  // garlic powder in the fridge.
+  //
+  // Shared unit ladder for small-jar spices: tsp, tbsp, oz, jar.
+  // A "jar" averages ~2 oz by weight for powders; heavier for whole
+  // seeds, but close enough for pantry tracking purposes.
+  ...[
+    ["garlic_powder",       "Garlic Powder",          "🧄"],
+    ["onion_powder",        "Onion Powder",           "🧅"],
+    ["ginger_powder",       "Ground Ginger",          "🫚"],
+    ["italian_seasoning",   "Italian Seasoning",      "🌿"],
+    ["herbs_de_provence",   "Herbes de Provence",     "🌿"],
+    ["dried_thyme",         "Dried Thyme",            "🌿"],
+    ["dried_rosemary",      "Dried Rosemary",         "🌿"],
+    ["dried_sage",          "Dried Sage",             "🌿"],
+    ["dried_basil",         "Dried Basil",            "🌿"],
+    ["dried_parsley",       "Dried Parsley",          "🌿"],
+    ["dried_dill",          "Dried Dill",             "🌿"],
+    ["dried_tarragon",      "Dried Tarragon",         "🌿"],
+    ["dried_marjoram",      "Dried Marjoram",         "🌿"],
+    ["celery_salt",         "Celery Salt",            "🧂"],
+    ["garlic_salt",         "Garlic Salt",            "🧂"],
+    ["onion_salt",          "Onion Salt",             "🧂"],
+    ["seasoned_salt",       "Seasoned Salt",          "🧂"],
+    ["msg",                 "MSG",                    "🧂"],
+    ["saffron",             "Saffron",                "🌸"],
+    ["five_spice",          "Chinese Five Spice",     "🧂"],
+    ["taco_seasoning",      "Taco Seasoning",         "🌮"],
+    ["ranch_seasoning",     "Ranch Seasoning",        "🥗"],
+    ["everything_bagel",    "Everything Bagel Seasoning","🥯"],
+    ["lemon_pepper",        "Lemon Pepper",           "🍋"],
+    ["cajun_seasoning",     "Cajun Seasoning",        "🌶️"],
+    ["jerk_seasoning",      "Jerk Seasoning",         "🌶️"],
+    ["ras_el_hanout",       "Ras el Hanout",          "🧂"],
+    ["berbere",             "Berbere",                "🌶️"],
+    ["dukkah",              "Dukkah",                 "🥜"],
+    ["furikake",            "Furikake",               "🍚"],
+    ["togarashi",           "Shichimi Togarashi",     "🌶️"],
+    ["ground_mustard",      "Ground Mustard",         "🟡"],
+    ["cream_of_tartar",     "Cream of Tartar",        "🧂"],
+    ["poppy_seed",          "Poppy Seeds",            "🌸"],
+    ["caraway_seed",        "Caraway Seeds",          "🧂"],
+    ["celery_seed",         "Celery Seed",            "🧂"],
+    ["dried_chives",        "Dried Chives",           "🌿"],
+    ["dried_mint",          "Dried Mint",             "🌿"],
+    ["white_sesame",        "White Sesame Seeds",     "🫘"],
+    ["black_sesame",        "Black Sesame Seeds",     "🫘"],
+    ["mace",                "Mace",                   "🧂"],
+    ["fenugreek",           "Fenugreek",              "🧂"],
+    ["juniper_berries",     "Juniper Berries",        "🫐"],
+    ["annatto",             "Annatto Seeds",          "🟠"],
+    ["smoked_salt",         "Smoked Salt",            "🧂"],
+    ["truffle_salt",        "Truffle Salt",           "🧂"],
+  ].map(([id, name, emoji]) => ({
+    id, name, emoji, category: "pantry",
+    units: [
+      { id: "tsp",  label: "tsp",  toBase: 1 },
+      { id: "tbsp", label: "tbsp", toBase: 3 },
+      { id: "oz",   label: "oz",   toBase: 6 },  // ~6 tsp per oz by volume
+      { id: "jar",  label: "jars", toBase: 12 },  // ~2 oz jar
+    ],
+    defaultUnit: "jar",
+  })),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────

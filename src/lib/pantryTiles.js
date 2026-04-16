@@ -72,15 +72,42 @@ const BAKING_IDS = new Set([
 // Dried spices — bay leaves and dried herbs live here, not in Fresh Herbs
 // (which is a fridge-only tile).
 const SPICE_DRIED_HERB_IDS = new Set([
+  // Salts
   "salt", "kosher_salt", "sea_salt", "table_salt", "flaky_salt",
-  "black_pepper", "white_pepper", "peppercorns",
+  "smoked_salt", "truffle_salt", "celery_salt", "garlic_salt",
+  "onion_salt", "seasoned_salt", "msg",
+  // Peppers & heat
+  "black_pepper", "white_pepper", "peppercorns", "lemon_pepper",
+  "red_pepper_flakes", "cayenne", "chili_powder",
+  // Core ground spices
   "cumin", "ground_cumin", "cumin_seed",
   "paprika", "smoked_paprika", "sweet_paprika",
-  "oregano", "dried_oregano", "bay_leaves", "cinnamon", "ground_cinnamon",
+  "cinnamon", "ground_cinnamon",
   "turmeric", "coriander", "ground_coriander", "cardamom",
-  "cloves", "nutmeg", "allspice", "star_anise", "fennel_seed",
-  "mustard_seed", "curry_powder", "garam_masala", "chili_powder",
-  "red_pepper_flakes", "cayenne", "old_bay", "zaatar", "sumac",
+  "cloves", "nutmeg", "allspice", "star_anise", "mace",
+  "fennel_seed", "mustard_seed", "ground_mustard",
+  "cream_of_tartar",
+  "saffron", "annatto",
+  // Dried herbs
+  "oregano", "dried_oregano", "bay_leaves",
+  "dried_thyme", "dried_rosemary", "dried_sage",
+  "dried_basil", "dried_parsley", "dried_dill",
+  "dried_tarragon", "dried_marjoram",
+  "dried_chives", "dried_mint",
+  // Powders
+  "garlic_powder", "onion_powder", "ginger_powder",
+  // Seeds
+  "poppy_seed", "caraway_seed", "celery_seed",
+  "white_sesame", "black_sesame",
+  "fenugreek", "juniper_berries",
+  // Blends
+  "curry_powder", "garam_masala",
+  "old_bay", "zaatar", "sumac",
+  "five_spice", "ras_el_hanout", "berbere", "dukkah",
+  "italian_seasoning", "herbs_de_provence",
+  "taco_seasoning", "ranch_seasoning", "everything_bagel",
+  "cajun_seasoning", "jerk_seasoning",
+  "furikake", "togarashi",
 ]);
 
 const CONDIMENT_SAUCE_IDS = new Set([
@@ -181,9 +208,23 @@ export function pantryTileIdForItem(item, { findIngredient, hubForIngredient }) 
   if (ing && NUT_SEED_IDS.has(ing.id))         return "nuts_seeds";
   if (ing && COOKING_ALCOHOL_IDS.has(ing.id))  return "cooking_alcohol";
 
-  // Free-text fallback. Registry category is "pantry" for almost
-  // everything here so we can't route that way — send unknown pantry
-  // items to Canned & Jarred as the least-surprising catch-all (most
-  // "I don't know what this is" pantry rows are preserved items).
+  // Free-text fallback: the item has no canonical ingredient match. Before
+  // dumping into canned_jarred, do a keyword scan on the item's name so
+  // common un-linked entries route to the right tile instead of the catch-all.
+  // This catches "Italian Seasoning", "Garlic Powder", "Ground Cumin", etc.
+  // that users added manually without picking a registry ingredient.
+  const lower = (item?.name || "").toLowerCase();
+  const spiceKeywords = [
+    "powder", "ground", "dried", "seasoning", "spice", "herb",
+    "pepper", "salt", "cumin", "paprika", "oregano", "thyme",
+    "rosemary", "cinnamon", "turmeric", "nutmeg", "allspice",
+    "cayenne", "chili", "garlic powder", "onion powder",
+    "garam", "curry", "saffron", "zaatar", "sumac", "flakes",
+  ];
+  if (spiceKeywords.some(kw => lower.includes(kw))) return "spices_dried_herbs";
+
+  // Canned & Jarred is the residual catch-all. Items that land here are
+  // usually scanned free-text entries that truly are preserved goods, or
+  // novel items the registry hasn't modeled yet.
   return "canned_jarred";
 }
