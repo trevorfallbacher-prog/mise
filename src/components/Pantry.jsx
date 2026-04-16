@@ -1987,7 +1987,10 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                     {stateLabel(item.state)}
                   </span>
                 )}
-                {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
+                {/* ⓘ button removed — row tap is the sole entry point into
+                    the ItemCard now, making this icon redundant UI noise.
+                    The whole row reads as tappable via cursor + hover; no
+                    glyph needed to advertise it. */}
               </span>
               {isEditing ? (
                 <div
