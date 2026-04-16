@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 2;
+export const SEED_VERSION = 3;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -23,17 +23,45 @@ export const SEED_INGREDIENT_INFO = [
       description: "Coarse-grained salt with no additives. The default cooking salt for professionals — the large flakes are easy to pinch and distribute evenly, and the open crystal structure dissolves quickly on contact with moisture.",
       flavorProfile: "Pure salt, clean, no metallic or bitter aftertaste",
       prepTips: "Pinch from a bowl, not a shaker. Season from 12 inches above so it distributes. Taste as you go — you can always add, never subtract.",
-      storage: { location: "pantry", shelfLifeDays: 9999, tips: "Indefinite shelf life. Keep in a wide-mouth bowl or cellar near the stove for easy pinching." },
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 9999,
+        shelfLife: { fridge: null, freezer: null, pantry: 9999 },
+        tips: "Indefinite shelf life. Keep in a wide-mouth bowl or cellar near the stove for easy pinching.",
+        spoilageSigns: "Doesn't spoil. Clumping just means it absorbed moisture — break it up and use it.",
+        freezable: false,
+      },
       substitutions: [
         { id: "sea_salt", tier: "direct", note: "Slightly different crystal size; adjust by taste." },
         { id: "table_salt", tier: "caution", note: "Much denser per volume — use half the amount or measure by weight." },
+        { id: "flaky_salt", tier: "creative", note: "Use as a finisher, not for cooking — too expensive and the texture's wasted." },
       ],
-      pairs: ["black_pepper", "garlic", "lemon", "butter"],
-      origin: "Historically produced for the kosher meat-curing process (koshering), not because the salt itself is kosher. Diamond Crystal and Morton are the two dominant brands in the US, with meaningfully different densities.",
-      culturalNotes: "Diamond Crystal vs Morton is the great kitchen schism. Diamond is ~40% less dense per teaspoon — recipes that just say kosher salt usually mean Diamond. If you use Morton, scale down by about a third.",
-      allergens: [],
+      pairs: ["black_pepper", "garlic", "lemon", "butter", "olive_oil"],
+      flavor: {
+        primary: ["salt"],
+        intensity: "mild",
+        heatChange: {
+          raw: "clean salt, no aftertaste",
+          cooked: "dissolves into the dish, becomes invisible — its job is to amplify, not to be tasted",
+          charred: "doesn't change — salt doesn't burn",
+        },
+      },
       nutrition: { per: "1 tsp", kcal: 0, sodium_mg: 1120 },
+      origin: "Historically produced for the kosher meat-curing process (koshering), not because the salt itself is kosher. Diamond Crystal and Morton are the two dominant brands in the US, with meaningfully different densities.",
+      culturalNotes: "Diamond Crystal vs Morton is the great kitchen schism. Diamond is ~40% less dense per teaspoon — recipes that just say 'kosher salt' usually mean Diamond. If you use Morton, scale down by about a third or you'll oversalt every dish.",
+      recipes: ["Almost everything savory", "Brines", "Pasta water", "Meat dry rubs"],
+      allergens: [],
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: false, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
       sourcing: "Diamond Crystal for cooking (hollow flakes, dissolves fast, easy to pinch). Morton for baking where you need consistent weight-per-volume.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: false,
+        qualityMatters: false,
+        qualityNote: "It's salt. Brand matters for measurement consistency, not flavor — every kosher salt tastes the same. Pick Diamond Crystal because every recipe is calibrated for it.",
+      },
+      skillDev: { skills: ["seasoning"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
     },
   },
   {
