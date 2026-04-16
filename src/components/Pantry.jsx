@@ -24,6 +24,7 @@ function tilesForTab(tab) {
   return { tiles: null, classify: null };
 }
 import IngredientCard from "./IngredientCard";
+import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
@@ -1520,8 +1521,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // Null = closed; otherwise the row's id. Only one moving picker open
   // at a time — mirrors the edit/expiry single-editor pattern.
   const [movingItemId, setMovingItemId] = useState(null);
-  // Tapping a pantry row opens IngredientCard with rich metadata. Null when
-  // the card is closed; otherwise { ingredientId, fallbackName, fallbackEmoji }.
+  // Tapping a pantry row opens a card. Two kinds:
+  //   - openItem: the full ItemCard — this specific pantry row at top + the
+  //     canonical deep-dive embedded below. Primary entry point for row taps.
+  //   - cardIng:  the bare IngredientCard opened from secondary places
+  //     (add-item flow, hub drill-down) where there's no specific row yet.
+  const [openItem, setOpenItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
   // Convert-state modal. Set to a pantry item to open; null to close.
   // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
@@ -1928,16 +1933,13 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     // Inside a hub we already know the "family" (🍗 Chicken), so show the
     // ingredient's short name ("Breast") instead of the full "Chicken Breast".
     const displayName = canon?.shortName && canon.parentId ? canon.shortName : item.name;
-    // Only canonical-id rows are tappable — free-text rows have no metadata
-    // to show in IngredientCard. Tapping anywhere on the row body opens the
-    // card; the inline edit/trash controls stop propagation so they still
-    // work normally.
-    const tappable = !!item.ingredientId && !isEditing;
-    const openCard = () => setCardIng({
-      ingredientId: item.ingredientId,
-      fallbackName: item.name,
-      fallbackEmoji: item.emoji,
-    });
+    // Row taps open the ItemCard — which works for ANY row (canonical or
+    // free-text) since an item is a first-class thing independent of any
+    // ingredient tag. Free-text rows render without the canonical deep-
+    // dive; canonical rows get the full view. The inline edit/trash
+    // controls stop propagation so they still work normally.
+    const tappable = !isEditing;
+    const openCard = () => setOpenItem(item);
     return (
       <div
         key={item.id}
@@ -2825,6 +2827,22 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           </div>
         </div>
       )}
+      {openItem && (() => {
+        // Resolve the open item freshly from the current pantry array so
+        // realtime updates + inline edits land inside the card without a
+        // close+reopen. If the item was deleted while open, render nothing
+        // — the stale openItem pointer will be cleared next time the user
+        // opens another card or dismisses explicitly.
+        const fresh = pantry.find(p => p.id === openItem.id);
+        if (!fresh) return null;
+        return (
+          <ItemCard
+            item={fresh}
+            pantry={pantry}
+            onClose={() => setOpenItem(null)}
+          />
+        );
+      })()}
       {cardIng && (
         <IngredientCard
           ingredientId={cardIng.ingredientId}

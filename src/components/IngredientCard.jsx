@@ -144,6 +144,11 @@ const LOCATION_META = {
 export default function IngredientCard({
   ingredientId, fallbackName, fallbackEmoji,
   pantry = [], currentRecipeSlug, onPickRecipe, onClose,
+  // When true, the card renders its CONTENT only — no backdrop, no fixed
+  // positioning, no bottom Close button. Used by ItemCard to embed the
+  // canonical deep-dive below its own item-specific section. The parent
+  // owns the modal shell and dismissal.
+  embedded = false,
 }) {
   // Internal id we actually display. Seeded from prop; substitution pill
   // taps flip it without closing the card, so "butter → clarified butter
@@ -266,17 +271,11 @@ export default function IngredientCard({
     });
   }, [info]);
 
-  return (
-    <div style={{
-      position: "fixed", inset: 0, background: "#000000dd", zIndex: 320,
-      display: "flex", alignItems: "flex-end",
-      maxWidth: 480, margin: "0 auto",
-    }}>
-      <div style={{
-        width: "100%", background: "#141414",
-        borderRadius: "20px 20px 0 0", padding: "20px 22px 36px",
-        maxHeight: "88vh", overflowY: "auto",
-      }}>
+  // In embedded mode, skip the outer backdrop + inner scroll container —
+  // the parent (ItemCard) provides both. The drag handle and the bottom
+  // Close button are also suppressed via the `embedded` checks inside.
+  const content = (
+    <>
         <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 16px" }} />
 
         {/* Header */}
@@ -973,7 +972,7 @@ export default function IngredientCard({
           </div>
         )}
 
-        <button
+        {!embedded && <button
           onClick={onClose}
           style={{
             width: "100%", padding: "14px", marginTop: 6,
@@ -984,7 +983,29 @@ export default function IngredientCard({
           }}
         >
           CLOSE
-        </button>
+        </button>}
+    </>
+  );
+
+  // Embedded: caller owns the shell. We emit content with a small top pad
+  // so it reads as a section, not a hard-edge fragment.
+  if (embedded) {
+    return <div style={{ padding: "6px 0 0" }}>{content}</div>;
+  }
+
+  // Standalone: render the full modal shell.
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: 320,
+      display: "flex", alignItems: "flex-end",
+      maxWidth: 480, margin: "0 auto",
+    }}>
+      <div style={{
+        width: "100%", background: "#141414",
+        borderRadius: "20px 20px 0 0", padding: "20px 22px 36px",
+        maxHeight: "88vh", overflowY: "auto",
+      }}>
+        {content}
       </div>
     </div>
   );
