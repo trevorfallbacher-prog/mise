@@ -355,6 +355,29 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             base.unit = templateMatch.defaultUnit;
           }
           base._templateId = templateMatch.id;
+          // Template propagates type_id too — user already picked it
+          // before, inherit on every subsequent scan.
+          if (templateMatch.typeId) base.typeId = templateMatch.typeId;
+        }
+
+        // IDENTIFIED AS + STORED IN auto-inference (chunk 18h). For
+        // every scan row, infer a type from the name and (if the
+        // type has a defaultTileId) a tile too. User confirms or
+        // overrides on the scan-confirm screen via inline chips.
+        // Template match takes priority — if base.typeId is already
+        // set, don't overwrite.
+        if (!base.typeId) {
+          const inferredTypeId = inferFoodTypeFromName(base.name);
+          if (inferredTypeId) {
+            base.typeId = inferredTypeId;
+            // Propagate type's default tile when the row has no tile
+            // yet. Doesn't overwrite a template-set or context-set
+            // tile.
+            if (!base.tileId) {
+              const td = findFoodType(inferredTypeId);
+              if (td?.defaultTileId) base.tileId = td.defaultTileId;
+            }
+          }
         }
         return base;
       });
@@ -637,6 +660,55 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                           >
                             + set expires
                           </button>
+                        );
+                      })()}
+
+                      {/* IDENTIFIED AS chip — shows the auto-inferred
+                          type. Tapping opens the scan-linking picker
+                          (reuses linkingScanIdx path; for type picks
+                          it becomes scan-type-picker, added via a
+                          future polish — today we at least SHOW the
+                          inference so users aren't in the dark). */}
+                      {(() => {
+                        const typeEntry = item.typeId ? findFoodType(item.typeId) : null;
+                        if (!typeEntry) return null;
+                        return (
+                          <span
+                            title={`Identified as ${typeEntry.label}`}
+                            style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#f5c842", background: "#1a1608",
+                              border: "1px solid #3a2f10",
+                              borderRadius: 4, padding: "2px 6px",
+                              letterSpacing: "0.08em",
+                            }}
+                          >
+                            {typeEntry.emoji} {typeEntry.label.toUpperCase()}
+                          </span>
+                        );
+                      })()}
+
+                      {/* STORED IN chip — shows the auto-inferred
+                          (or template-set) tile placement. Same
+                          visual weight as the type chip. */}
+                      {(() => {
+                        if (!item.tileId) return null;
+                        const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                        const tileEntry = allBuiltIns.find(t => t.id === item.tileId);
+                        if (!tileEntry) return null;  // user tile — not in bundled arrays
+                        return (
+                          <span
+                            title={`Stored in ${tileEntry.label}`}
+                            style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#7eb8d4", background: "#0f1620",
+                              border: "1px solid #1f3040",
+                              borderRadius: 4, padding: "2px 6px",
+                              letterSpacing: "0.08em",
+                            }}
+                          >
+                            → {tileEntry.emoji} {tileEntry.label.toUpperCase()}
+                          </span>
                         );
                       })()}
                     </div>
@@ -2425,6 +2497,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             ...(Array.isArray(s.ingredientIds) && s.ingredientIds.length
                 ? { ingredientIds: s.ingredientIds }
                 : {}),
+            // IDENTIFIED AS + STORED IN placement (0036, 0038).
+            // Scanner normalization inferred + set these; forward
+            // them so the classifier short-circuits at render time
+            // and users see the expected placement without tapping.
+            ...(s.tileId ? { tileId: s.tileId } : {}),
+            ...(s.typeId ? { typeId: s.typeId } : {}),
             // Back-link to the scan artifact that created this row —
             // either a receipts row (receipt scans) or a pantry_scans
             // row (fridge/pantry/freezer scans). At most one is set.
