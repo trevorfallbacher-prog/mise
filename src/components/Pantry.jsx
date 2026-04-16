@@ -510,7 +510,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
               const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
               const conf = confidenceStyle(item.confidence);
               return (
-                <div key={idx} style={{ display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden" }}>
+                <div key={idx} style={{ display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden", flexShrink:0 }}>
                   {/* Confidence accent stripe — reads at a glance whether to
                       trust the row, even before you read the name. */}
                   <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
