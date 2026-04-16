@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
+import ModalSheet from "./ModalSheet";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useItemComponents } from "../lib/useItemComponents";
+import { Z } from "../lib/tokens";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -118,12 +120,9 @@ const LOCATIONS = [
 ];
 
 export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance, onEditTags, onClose }) {
-  // Close on Escape for keyboard users — mirrors other modals in the app.
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
+  // drag handle, top-right ✕) are owned by ModalSheet; this component
+  // only describes the card's content.
 
   // All ingredient tags on this item (migration 0033's ingredient_ids
   // array), normalized to a list of canonical-ingredient objects plus
@@ -255,50 +254,6 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
 
-  // Swipe-down-to-dismiss state.
-  //
-  //   dragY        — current vertical offset the inner modal is translated
-  //                  by. Tracks the finger while dragging, then either
-  //                  snaps back to 0 (not dismissed) or animates out
-  //                  past the viewport (dismissed).
-  //   dragStartRef — ref holding the touch-start Y and whether the scroll
-  //                  container was at its top when the drag began. The
-  //                  gesture only activates at scrollTop === 0 so scrolling
-  //                  through the deep-dive content never accidentally
-  //                  triggers dismiss.
-  const DISMISS_THRESHOLD = 100;
-  const [dragY, setDragY] = useState(0);
-  const dragStartRef = useRef(null);
-  const scrollRef = useRef(null);
-
-  const onTouchStart = (e) => {
-    const el = scrollRef.current;
-    if (!el) return;
-    // Only arm the drag when the scroll is at the top. If the user has
-    // scrolled down and starts a new touch, we assume they want to keep
-    // scrolling, not dismiss.
-    if (el.scrollTop > 0) return;
-    dragStartRef.current = { y: e.touches[0].clientY };
-  };
-  const onTouchMove = (e) => {
-    if (!dragStartRef.current) return;
-    const diff = e.touches[0].clientY - dragStartRef.current.y;
-    if (diff <= 0) { setDragY(0); return; } // upward drag: ignore
-    setDragY(diff);
-  };
-  const onTouchEnd = () => {
-    if (!dragStartRef.current) return;
-    const finalY = dragY;
-    dragStartRef.current = null;
-    if (finalY >= DISMISS_THRESHOLD) {
-      // Snap out + dismiss. Animation handles the motion; cleanup on unmount.
-      setDragY(window.innerHeight);
-      setTimeout(() => onClose?.(), 180);
-    } else {
-      setDragY(0); // snap back
-    }
-  };
-
   if (!item) return null;
 
   const readOnly = !onUpdate;
@@ -319,57 +274,8 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   const currentLocation = item.location || "pantry";
 
   return (
-    <div style={{
-      position: "fixed", inset: 0,
-      // Fade the backdrop with the drag so the dismiss feels physical.
-      background: `rgba(0,0,0,${0.87 * Math.max(0, 1 - dragY / 400)})`,
-      zIndex: 320,
-      display: "flex", alignItems: "flex-end",
-      maxWidth: 480, margin: "0 auto",
-      transition: dragStartRef.current ? "none" : "background 0.18s ease",
-    }}>
-      <div
-        ref={scrollRef}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onTouchCancel={onTouchEnd}
-        style={{
-          width: "100%", background: "#141414",
-          borderRadius: "20px 20px 0 0", padding: "18px 22px 36px",
-          maxHeight: "92vh", overflowY: "auto",
-          position: "relative",
-          // Translate the card with the finger; snap-back and snap-out use
-          // the same transition timing so they feel like the same gesture.
-          transform: `translateY(${dragY}px)`,
-          transition: dragStartRef.current ? "none" : "transform 0.18s ease",
-          // Prevent overscroll-chaining on iOS when the user starts pulling
-          // at the top of the scroll area — otherwise the whole page
-          // bounces instead of the card translating.
-          overscrollBehaviorY: "contain",
-        }}
-      >
-        {/* Drag handle — visual affordance that the sheet can be swiped
-            down. Centered at the top. */}
-        <div style={{
-          width: 44, height: 4, background: "#2a2a2a", borderRadius: 2,
-          margin: "0 auto 14px", flexShrink: 0,
-        }} />
-        {/* Close button, top-right. */}
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          style={{
-            position: "absolute", top: 12, right: 14,
-            width: 32, height: 32,
-            background: "#0a0a0a", border: "1px solid #2a2a2a",
-            color: "#aaa", borderRadius: 16,
-            fontFamily: "'DM Mono',monospace", fontSize: 14,
-            cursor: "pointer", zIndex: 1,
-          }}
-        >
-          ✕
-        </button>
+    <>
+      <ModalSheet onClose={onClose} zIndex={Z.card}>
 
         {/* ─── ITEM SECTION (this specific row) ─── */}
         <div style={{ paddingTop: 12 }}>
@@ -1064,7 +970,7 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
             )}
           </div>
         )}
-      </div>
+      </ModalSheet>
 
       {/* ─── Stacked drill modals ───────────────────────────────────────
           Tapping a component opens a child card layered on top of this
@@ -1072,17 +978,13 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           dismissing the whole stack. Item-kind drills recurse through
           ItemCard (so a 3-level Meal tree is just 3 stacked cards);
           ingredient-kind drills land on IngredientCard's standard
-          modal mode. Mounted *outside* the inner scroll container so
-          they're z-indexed above this card's body. */}
+          modal mode. Siblings of ModalSheet in the render tree so
+          they're not affected by the parent sheet's swipe transform
+          and render at their own z-index layer on top. */}
       {drilledItem && (
         <ItemCard
           item={drilledItem}
           pantry={pantry}
-          // Snapshot mode: child item was consumed — we're rendering
-          // from the component's frozen identity, so editing would be
-          // meaningless. Live drills get the same onUpdate the parent
-          // had, so the user can edit a sub-meal in place if it still
-          // exists in pantry.
           onUpdate={snapshotMode ? undefined : onUpdate}
           onOpenProvenance={onOpenProvenance}
           onClose={() => { setDrilledItem(null); setSnapshotMode(false); }}
@@ -1095,6 +997,6 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           onClose={() => setDrilledIngredientId(null)}
         />
       )}
-    </div>
+    </>
   );
 }
