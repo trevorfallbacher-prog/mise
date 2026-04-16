@@ -180,6 +180,33 @@ function Scanner({ userId, onItemsScanned, onClose }) {
     prev.map((item, i) => i === idx ? { ...item, ...patch } : item)
   );
 
+  // Propagate name / link corrections to other scan rows with the same
+  // raw scanner read. Example: receipt shows "ACQUAMAR FLA" twice. User
+  // relinks row 0 to Imitation Crab — row 1 should inherit the same
+  // name + ingredient link + canonical id. Quantities (amount/unit) and
+  // expiration are NEVER propagated — they're per-row even when the
+  // same product repeats.
+  const IDENTITY_KEYS = [
+    "name", "ingredientId", "ingredientIds", "canonicalId",
+    "emoji", "category", "tileId", "typeId", "kind",
+  ];
+  const propagateCorrection = (sourceIdx, patch) => setScannedItems(prev => {
+    const source = prev[sourceIdx];
+    if (!source) return prev;
+    const rawKey = (source.scanRaw?.raw_name || source.name || "").trim().toLowerCase();
+    const safePatch = {};
+    for (const k of IDENTITY_KEYS) {
+      if (k in patch) safePatch[k] = patch[k];
+    }
+    return prev.map((item, i) => {
+      if (i === sourceIdx) return { ...item, ...patch };
+      if (!rawKey) return item;
+      const rowRaw = (item.scanRaw?.raw_name || item.name || "").trim().toLowerCase();
+      if (rowRaw !== rawKey) return item;
+      return { ...item, ...safePatch };
+    });
+  });
+
   const handleFile = async file => {
     if (!file) return;
     // Compress before anything else: the vision API call uses it, the
@@ -537,12 +564,24 @@ function Scanner({ userId, onItemsScanned, onClose }) {
               const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
               const conf = confidenceStyle(item.confidence);
               return (
-                <div key={idx} style={{ display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden", flexShrink:0 }}>
+                <div key={idx} style={{ position:"relative", display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden", flexShrink:0 }}>
                   {/* Confidence accent stripe — reads at a glance whether to
                       trust the row, even before you read the name. */}
                   <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
-                  <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 14px", minWidth:0 }}>
-                  <button onClick={()=>toggleItem(idx)} style={{ width:24, height:24, borderRadius:6, flexShrink:0, border:`2px solid ${item.selected?"#4ade80":"#333"}`, background: item.selected?"#4ade80":"transparent", display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, color:"#111", fontWeight:900, cursor:"pointer", transition:"all 0.2s", marginTop:2 }}>{item.selected?"✓":""}</button>
+                  {/* Reject / un-reject — top-right ✕. Tapping dims the row
+                      (selected=false) rather than removing it, so the user
+                      can un-reject if they change their mind. Replaces the
+                      old left-side checkbox per direct user feedback
+                      ("the checkmark idea sucks — x on top right"). */}
+                  <button
+                    onClick={() => toggleItem(idx)}
+                    aria-label={item.selected ? `Reject ${item.name}` : `Restore ${item.name}`}
+                    title={item.selected ? "Reject" : "Restore"}
+                    style={{ position:"absolute", top:6, right:6, width:24, height:24, borderRadius:"50%", border:"none", background: item.selected ? "transparent" : "#1e1e1e", color: item.selected ? "#777" : "#4ade80", fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, lineHeight:1, cursor:"pointer", zIndex:2, display:"flex", alignItems:"center", justifyContent:"center" }}
+                  >
+                    {item.selected ? "✕" : "↺"}
+                  </button>
+                  <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 40px 14px 14px", minWidth:0 }}>
                   <span style={{ fontSize:28, flexShrink:0, lineHeight:1 }}>{item.emoji}</span>
                   <div style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:6 }}>
                     {/* Name — tap to rename. When editing, becomes a full-
@@ -555,7 +594,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         value={item.name}
                         autoFocus
                         onChange={e => updateScanItem(idx, { name: e.target.value })}
-                        onBlur={() => setEditingNameIdx(null)}
+                        onBlur={() => {
+                          // On commit, fan the rename out to any sibling rows
+                          // with the same raw scanner read. Only applies the
+                          // name (not amount/unit).
+                          propagateCorrection(idx, { name: item.name });
+                          setEditingNameIdx(null);
+                        }}
                         onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingNameIdx(null); }}
                         style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"6px 10px", color:"#f5c842", fontFamily:"'DM Sans',sans-serif", fontSize:16, outline:"none", width:"100%", boxSizing:"border-box" }}
                       />
@@ -841,12 +886,17 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             // ids back to a components-write step.
             const primaryId = ids[0] || null;
             const canon = primaryId ? findIngredient(primaryId) : null;
-            updateScanItem(linkingScanIdx, {
+            // Propagate identity fields to sibling rows with the same
+            // raw scanner read. Receipt "2 × ACQUAMAR FLA" → correcting
+            // one row to Imitation Crab corrects the other automatically.
+            // Amount/unit stay per-row.
+            propagateCorrection(linkingScanIdx, {
               ingredientId: primaryId,
               ingredientIds: ids,
               kind: kindForTagCount(ids.length),
               emoji:    canon?.emoji    || scannedItems[linkingScanIdx].emoji,
               category: canon?.category || scannedItems[linkingScanIdx].category,
+              ...(canon?.name ? { name: canon.name } : {}),
             });
             setLinkingScanIdx(null);
           }}
@@ -2464,15 +2514,28 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     const isPantryScan  = firstKind === "pantry_scan";
 
     if (userId && isReceiptScan) {
-      const { data, error } = await supabase.from("receipts").insert({
+      // Postgres DATE parsing is strict — anything the model returned that
+      // isn't YYYY-MM-DD would fail the insert and silently drop the whole
+      // receipt. Coerce to null for anything non-conforming.
+      const safeDate = typeof meta.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(meta.date)
+        ? meta.date
+        : null;
+      const payload = {
         user_id: userId,
         store_name: meta.store || null,
-        receipt_date: meta.date || null,
+        receipt_date: safeDate,
         total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
         item_count: items.length,
-      }).select("id").single();
-      if (error) console.warn("[receipts] insert failed:", error.message);
-      else {
+      };
+      const { data, error } = await supabase.from("receipts").insert(payload).select("id").single();
+      if (error) {
+        console.warn("[receipts] insert failed:", error.message, { payload, details: error });
+        // Surface the failure so the user knows the receipt didn't save
+        // (vs. the old silent console-only warn that made "receipts aren't
+        // storing" look like a ghost bug). Pantry items still get inserted
+        // below — the user can always re-scan to capture the totals.
+        pushToast(`Receipt didn't save: ${error.message}`, { emoji: "⚠️", kind: "warn", ttl: 6000 });
+      } else {
         receiptId = data?.id || null;
         setSpendRefresh(k => k + 1);
       }
@@ -2492,8 +2555,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
         kind: scanKind,
         item_count: items.length,
       }).select("id").single();
-      if (error) console.warn("[pantry_scans] insert failed:", error.message);
-      else scanId = data?.id || null;
+      if (error) {
+        console.warn("[pantry_scans] insert failed:", error.message, error);
+        pushToast(`Scan didn't save: ${error.message}`, { emoji: "⚠️", kind: "warn", ttl: 6000 });
+      } else {
+        scanId = data?.id || null;
+      }
     }
 
     // Upload the scan image to Storage so the ItemCard provenance deep
