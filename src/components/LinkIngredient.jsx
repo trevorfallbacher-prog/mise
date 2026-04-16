@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { fuzzyMatchIngredient } from "../data/ingredients";
+import { findIngredient, fuzzyMatchIngredient } from "../data/ingredients";
+import { BLEND_PRESETS } from "../data/blendPresets";
 
 // Confidence bucketing for the match list — the raw 0–120 score reads as
 // noise; these labels give the user something to decide on. Thresholds
@@ -12,21 +13,48 @@ function confidenceTone(score) {
 }
 
 /**
- * LinkIngredient — bottom-sheet picker that resolves a free-text pantry row
- * to a canonical ingredient id. Runs fuzzyMatchIngredient against either the
- * row's original name or the user's live search query, shows the top
- * candidates as tap-to-pick rows, and always keeps "KEEP AS FREE TEXT" as
- * an escape hatch.
+ * LinkIngredient — bottom-sheet picker that tags a pantry row with one or
+ * more canonical ingredient ids. Runs fuzzyMatchIngredient against the
+ * row's name (or the user's live search), shows the top single-tag
+ * candidates, AND surfaces named blend presets ("Italian Blend", frozen
+ * pizza, etc.) at the top for composite items.
+ *
+ * "KEEP AS FREE TEXT" remains the escape hatch.
  *
  * Props:
- *   item       — the pantry row being relinked ({ name, emoji, … })
- *   onLink(id) — called when the user taps a canonical candidate
- *   onClose()  — dismiss without linking
+ *   item           — the pantry row being linked ({ name, emoji, … })
+ *   onLink(ids)    — called with an ARRAY of canonical ids when the user
+ *                    taps a match or preset. Always an array, even for
+ *                    single-tag picks ([id]) — callers that only care
+ *                    about the primary tag can read ids[0].
+ *   onClose()      — dismiss without linking
  */
 export default function LinkIngredient({ item, onLink, onClose }) {
   const [search, setSearch] = useState("");
   const needle = search.trim() || item.name;
   const matches = useMemo(() => fuzzyMatchIngredient(needle, 8), [needle]);
+
+  // Surface a preset whenever the item name / search matches a blend
+  // label or any of its component names. "Italian blend shredded"
+  // matches the Italian Blend preset; "frozen pizza pepperoni" matches
+  // the pepperoni pizza preset; plain "cheese" surfaces all cheese
+  // blends. Filters out presets whose component ids don't all resolve.
+  const presetMatches = useMemo(() => {
+    const n = (needle || "").toLowerCase();
+    if (!n) return [];
+    return BLEND_PRESETS.filter(preset => {
+      // All component ingredients must exist — broken presets don't render.
+      const resolved = preset.ingredientIds.every(id => !!findIngredient(id));
+      if (!resolved) return false;
+      // Label match, description match, or any component name match.
+      if (preset.label.toLowerCase().includes(n)) return true;
+      if (preset.description.toLowerCase().includes(n)) return true;
+      return preset.ingredientIds.some(id => {
+        const ing = findIngredient(id);
+        return ing?.name.toLowerCase().includes(n);
+      });
+    }).slice(0, 4);
+  }, [needle]);
 
   return (
     <div style={{
@@ -66,6 +94,48 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           }}
         />
 
+        {/* Blend presets — composite tags applied in one tap. Shown
+            above the fuzzy-match list when the item name / search query
+            matches a preset label or any of its component names. Tapping
+            commits an array of ingredient ids via onLink([a, b, c, …]). */}
+        {presetMatches.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 2 }}>
+              BLENDS & COMPOSITES
+            </div>
+            {presetMatches.map(preset => (
+              <button
+                key={preset.id}
+                onClick={() => onLink(preset.ingredientIds)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "10px 12px", background: "#0f1620",
+                  border: "1px solid #1f3040", borderRadius: 10,
+                  cursor: "pointer", textAlign: "left", width: "100%",
+                }}
+              >
+                <span style={{ fontSize: 22 }}>{preset.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {preset.label}
+                  </div>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.05em", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {preset.description}
+                  </div>
+                </div>
+                <span style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.08em",
+                  color: "#7eb8d4", background: "#1a2430",
+                  border: "1px solid #2a3a4a",
+                  padding: "2px 7px", borderRadius: 4,
+                }}>
+                  {preset.ingredientIds.length} TAGS
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
         {matches.length === 0 ? (
           <div style={{ padding: "24px 8px", textAlign: "center", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#666" }}>
             No matches. Try a different search term, or keep this as free text.
@@ -77,7 +147,7 @@ export default function LinkIngredient({ item, onLink, onClose }) {
               return (
                 <button
                   key={ingredient.id}
-                  onClick={() => onLink(ingredient.id)}
+                  onClick={() => onLink([ingredient.id])}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
                     padding: "10px 12px", background: "#161616",

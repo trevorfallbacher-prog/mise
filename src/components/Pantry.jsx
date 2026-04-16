@@ -694,10 +694,17 @@ function Scanner({ onItemsScanned, onClose }) {
       {linkingScanIdx != null && scannedItems[linkingScanIdx] && (
         <LinkIngredient
           item={scannedItems[linkingScanIdx]}
-          onLink={canonicalId => {
-            const canon = findIngredient(canonicalId);
+          onLink={ids => {
+            // Multi-tag aware. ids is always an array. Primary id =
+            // first element — adopts its emoji + category for display.
+            // ingredientIds (the array) goes on the scan item so it
+            // round-trips into pantry_items.ingredient_ids when the
+            // user confirms.
+            const primaryId = ids[0];
+            const canon = findIngredient(primaryId);
             updateScanItem(linkingScanIdx, {
-              ingredientId: canonicalId,
+              ingredientId: primaryId,
+              ingredientIds: ids,
               emoji:    canon?.emoji    || scannedItems[linkingScanIdx].emoji,
               category: canon?.category || scannedItems[linkingScanIdx].category,
             });
@@ -1913,9 +1920,15 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           }
           ex.max = Math.max(ex.max, ex.amount);
 
-          // Backfill ingredientId if the existing row was free-text — lets a
-          // fresh scan "upgrade" an older untagged row to canonical.
+          // Backfill ingredientId + ingredientIds if the existing row
+          // was free-text — lets a fresh scan "upgrade" an older
+          // untagged row to canonical, and attach a richer multi-tag
+          // set (via a blend preset) in one shot.
           if (!ex.ingredientId && s.ingredientId) ex.ingredientId = s.ingredientId;
+          if ((!Array.isArray(ex.ingredientIds) || ex.ingredientIds.length === 0) &&
+              Array.isArray(s.ingredientIds) && s.ingredientIds.length) {
+            ex.ingredientIds = s.ingredientIds;
+          }
           if (scanPriceCents != null) ex.priceCents = scanPriceCents;
           // Earliest-wins on expiration: the row tells the user when the
           // OLDEST batch in the pile goes bad. Most-recent-wins on
@@ -1961,6 +1974,14 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
             ...(s.state      ? { state: s.state           } : {}),
             ...(s.scanRaw    ? { scanRaw: s.scanRaw       } : {}),
+            // Multi-canonical tag array (0033). The Scanner's LinkIngredient
+            // picker now emits a full ingredientIds array — preset taps
+            // land a 4-element array; single matches land a 1-element
+            // array. Either way we carry it through so composite items
+            // land in the pantry with the correct tag set.
+            ...(Array.isArray(s.ingredientIds) && s.ingredientIds.length
+                ? { ingredientIds: s.ingredientIds }
+                : {}),
             // Back-link to the scan artifact that created this row —
             // either a receipts row (receipt scans) or a pantry_scans
             // row (fridge/pantry/freezer scans). At most one is set.
@@ -3122,14 +3143,18 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       {linkingItem && (
         <LinkIngredient
           item={linkingItem}
-          onLink={canonicalId => {
-            // Link sets the ingredientId + adopts the canonical emoji so the
-            // row visibly snaps into place. Name stays the user's (don't
-            // overwrite what they typed). category too — linking is about
-            // recipe-matching, not relabeling.
-            const canon = findIngredient(canonicalId);
+          onLink={ids => {
+            // Multi-tag aware — ids is always an array. Primary id =
+            // first element (display anchor for emoji/category); full
+            // array lands in ingredient_ids so composite items (Italian
+            // blend, frozen pizza) satisfy any component recipe. Name
+            // stays the user's — linking never overwrites what they
+            // typed.
+            const primaryId = ids[0];
+            const canon = findIngredient(primaryId);
             updatePantryItem(linkingItem.id, {
-              ingredientId: canonicalId,
+              ingredientId: primaryId,
+              ingredientIds: ids,
               emoji: canon?.emoji || linkingItem.emoji,
             });
             setLinkingItem(null);
