@@ -11,6 +11,7 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { compressImage } from "../lib/compressImage";
+import { daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice } from "../lib/pantryFormat";
 import { useToast } from "../lib/toast";
 import { FRIDGE_TILES, tileIdForItem as fridgeTileIdForItem } from "../lib/fridgeTiles";
 import { PANTRY_TILES, pantryTileIdForItem } from "../lib/pantryTiles";
@@ -81,38 +82,10 @@ const barColor   = item => isCritical(item) ? "#ef4444" : isLow(item) ? "#f59e0b
 // running-time meter that fills from the day of purchase down to expiration.
 // Colors are absolute by days-remaining (not percent): home cooks care about
 // "is this still good THIS WEEK", not "is this at 60% of its shelf life".
-const DAYS_MS = 1000 * 60 * 60 * 24;
-// How many days until `expiresAt`; negative if past. Null when the item
-// doesn't carry an expiration date (free-text, unknown ingredient).
-const daysUntilExpiration = item => {
-  if (!item?.expiresAt) return null;
-  const exp = item.expiresAt instanceof Date ? item.expiresAt : new Date(item.expiresAt);
-  if (Number.isNaN(exp.getTime())) return null;
-  return Math.floor((exp.getTime() - Date.now()) / DAYS_MS);
-};
-// Short countdown label: "5 days" / "1 day" / "today" / "expired" / "2d ago".
-const formatDaysUntil = days => {
-  if (days == null) return null;
-  if (days < -1)  return `expired ${-days}d ago`;
-  if (days === -1) return "expired yesterday";
-  if (days === 0) return "expires today";
-  if (days === 1) return "1 day left";
-  if (days < 14)  return `${days} days left`;
-  if (days < 60)  return `${Math.round(days / 7)} weeks left`;
-  return `${Math.round(days / 30)} months left`;
-};
-// Same palette as the amount bar, gated on days remaining:
-//   expired  → deep red      (< 0)
-//   urgent   → red           (0–2)
-//   warn     → amber         (3–7)
-//   fresh    → green         (> 7)
-const expirationColor = days => {
-  if (days == null) return "#333";
-  if (days < 0)     return "#991b1b";
-  if (days <= 2)    return "#ef4444";
-  if (days <= 7)    return "#f59e0b";
-  return "#4ade80";
-};
+// daysUntilExpiration, formatDaysUntil, expirationColor — moved to
+// src/lib/pantryFormat.js so the extracted Scanner component (and any
+// future modules) can import them instead of duplicating. Legacy
+// DAYS_MS constant lives there too.
 // Meter fill percentage: days-remaining as fraction of total shelf life. Uses
 // purchasedAt when available; falls back to a 14-day window so the bar still
 // tells SOME story (decays visibly as the date approaches) when older rows
@@ -143,10 +116,8 @@ const fmt = item => {
 };
 
 // Small price formatter: 429 → "$4.29", null → "".
-const formatPrice = cents =>
-  typeof cents === "number" && Number.isFinite(cents)
-    ? `$${(cents / 100).toFixed(2)}`
-    : "";
+// formatPrice moved to src/lib/pantryFormat.js alongside the
+// expiration helpers so every renderer shares one source of truth.
 
 // Color + label + ordering for the confidence tag a scanned item carries.
 // Receipts get treated as "high" by default — OCR is deterministic enough
