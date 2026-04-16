@@ -27,6 +27,9 @@ function tilesForTab(tab) {
   return { tiles: null, classify: null };
 }
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
+import TypePicker from "./TypePicker";
+import { FOOD_TYPES, findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
+import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
@@ -953,6 +956,15 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   const [customLocation, setCustomLocation] = useState(tileContext?.tabId || null);
   // IDENTIFIED AS picker open/close — renders inline when expanded.
   const [tilePickerOpen, setTilePickerOpen] = useState(false);
+  // IDENTIFIED AS (type) state — the "what kind of thing is this"
+  // layer, separate from STORED IN (tile). Initialized from tileContext
+  // when provided — some tile-contexts carry an implicit type hint
+  // (Frozen Meals tab = plausibly Pizza/Meal items), but tile-to-type
+  // is many-to-many so we don't force-seed. Primary seeding happens
+  // via name-inference (18f inferFoodTypeFromName) as the user types.
+  const [customTypeId, setCustomTypeId] = useState(null);
+  // Type picker expand/collapse state.
+  const [typePickerOpen, setTypePickerOpen] = useState(false);
 
   // Custom-item fields. Name is the user's typed display name; unit +
   // category + components fill the rest of the identity. Picking a
@@ -1075,10 +1087,15 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       max: Math.max(amt * 2, 1),
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
-      // User's tile placement — either seeded from tileContext on
-      // modal open, inherited from a filled template, or set via the
-      // IDENTIFIED AS picker. Classifier prefers this over heuristic.
+      // User's STORED IN (tile) placement — seeded from tileContext
+      // on modal open, inherited from a filled template, set via the
+      // STORED IN picker, or auto-suggested when a TYPE was picked
+      // (type.defaultTileId applies). Classifier prefers this over
+      // the heuristic at render time.
       tileId: customTileId || null,
+      // IDENTIFIED AS (type) — what kind of thing this is. Can hold
+      // a bundled WWEIA id ('wweia_pizza') or a user_types uuid.
+      typeId: customTypeId || null,
       // Location paired with the tile pick. Null falls through to
       // Pantry's onAdd handler which derives from registry +
       // category. Setting it here gives picker-based placement
@@ -1110,10 +1127,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         unit: customUnit.trim(),
         amount: amt,
         location: customLocation || defaultLocationForCategory(customCategory),
-        // Persist the tile placement on the template too. Next family
-        // member who types this name on ANY tile context will inherit
-        // the original author's placement.
+        // Persist the tile (STORED IN) + type (IDENTIFIED AS) on the
+        // template too. Next family member who types this name on
+        // ANY tile context inherits the original author's placement
+        // AND identification.
         tileId: customTileId || null,
+        typeId: customTypeId || null,
         ingredientIds: compIds,
       });
       if (!tmplErr && templateId && compIds.length > 0) {
@@ -1124,12 +1143,16 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       }
     }
 
-    // Bump use_count on user-created tiles. Built-in tiles are bundled
-    // data (no DB row), so isValidUuid is the simple discriminator —
-    // built-ins use string slugs like 'pasta_grains', user tiles are
-    // uuids. Fire-and-forget.
+    // Bump use_count on user-created tiles + types. Built-in tiles
+    // use string slugs ('pasta_grains') and built-in types use
+    // 'wweia_*' slugs — both have no DB row. uuid-regex is the
+    // discriminator. Fire-and-forget (bumpTypeUse is also internally
+    // guarded; this check is for symmetry + early return).
     if (customTileId && /^[0-9a-f]{8}-[0-9a-f]{4}-/.test(customTileId)) {
       bumpTileUse(customTileId);
+    }
+    if (customTypeId) {
+      bumpTypeUse(customTypeId);
     }
 
     onClose();
@@ -1459,7 +1482,99 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
               ))}
             </div>
 
-            {/* IDENTIFIED AS section. Shows current tile placement
+            {/* IDENTIFIED AS section — what KIND of thing this is.
+                Separate from STORED IN below which answers WHERE it
+                lives. Most items have a clean type-to-tile mapping
+                (Pizza → Frozen Meals, Cheese → Dairy) so picking a
+                type here auto-suggests the tile below, BUT user can
+                override either independently — the axes are
+                orthogonal (Italian Blend is Cheese but might be
+                stored in Frozen). */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842", letterSpacing: "0.12em",
+                }}>
+                  IDENTIFIED AS {customTypeId ? "" : "(OPTIONAL)"}
+                </div>
+                <div style={{ flex: 1 }} />
+                <button
+                  onClick={() => setTypePickerOpen(v => !v)}
+                  style={{
+                    background: "transparent",
+                    border: "1px solid #3a2f10",
+                    padding: "4px 10px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    letterSpacing: "0.1em", borderRadius: 6,
+                  }}
+                >
+                  {typePickerOpen ? "HIDE" : (customTypeId ? "CHANGE" : "PICK")}
+                </button>
+              </div>
+
+              {/* Current pick preview — bundled lookup is O(1); user
+                  types show a generic label until the full picker
+                  opens (rare; users usually see their own types). */}
+              {!typePickerOpen && customTypeId && (() => {
+                const bundled = findFoodType(customTypeId);
+                const label = bundled?.label || "Custom type";
+                const emoji = bundled?.emoji || "🏷️";
+                return (
+                  <div style={{
+                    padding: "8px 12px",
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    borderRadius: 10,
+                    display: "flex", alignItems: "center", gap: 10,
+                  }}>
+                    <span style={{ fontSize: 18 }}>{emoji}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f5c842" }}>
+                        {label}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {!typePickerOpen && !customTypeId && (
+                <div style={{
+                  padding: "10px 12px",
+                  background: "#0a0a0a", border: "1px dashed #242424",
+                  borderRadius: 10,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
+                  fontStyle: "italic", lineHeight: 1.5,
+                }}>
+                  What kind of thing is this? Pizza, Cheese, Sausages…
+                  Helps recipes and drill-into-type later.
+                </div>
+              )}
+
+              {typePickerOpen && (
+                <TypePicker
+                  userId={userId}
+                  selectedTypeId={customTypeId}
+                  suggestedTypeId={inferFoodTypeFromName(customName)}
+                  onPick={(typeId, defaultTileId, defaultLocation) => {
+                    setCustomTypeId(typeId);
+                    // Auto-suggest STORED IN from the type's default
+                    // UNLESS the user has already explicitly set a
+                    // tile (don't overwrite their intent). Same for
+                    // location.
+                    if (defaultTileId && !customTileId) {
+                      setCustomTileId(defaultTileId);
+                    }
+                    if (defaultLocation && !customLocation) {
+                      setCustomLocation(defaultLocation);
+                    }
+                    setTypePickerOpen(false);
+                  }}
+                />
+              )}
+            </div>
+
+            {/* STORED IN section. Shows current tile placement
                 (via built-in classifier for canonical picks, or
                 user's explicit choice). Tap to expand the full
                 picker inline. Users can also create new tiles from

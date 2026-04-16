@@ -86,6 +86,9 @@ function fromDb(row) {
   // the user at add-time or inherited from a template. Short-circuits
   // the heuristic classifier when present.
   if (row.tile_id            !== undefined) item.tileId            = row.tile_id || null;
+  // type_id (migration 0038) — IDENTIFIED AS layer. Holds either a
+  // bundled WWEIA id ('wweia_pizza') or a user_types.id uuid.
+  if (row.type_id            !== undefined) item.typeId            = row.type_id || null;
   return item;
 }
 
@@ -131,6 +134,7 @@ function toDb(item) {
     ...(item.sourceScanId      !== undefined ? { source_scan_id: item.sourceScanId || null } : {}),
     ...(item.scanRaw           !== undefined ? { scan_raw: item.scanRaw || null } : {}),
     ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
+    ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
   };
 }
 
