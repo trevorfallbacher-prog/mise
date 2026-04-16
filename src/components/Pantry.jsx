@@ -1748,16 +1748,29 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
     // window in notify_family_pantry() is open before the per-item pantry
     // inserts land. Otherwise a 12-item receipt would fan out 12 individual
     // "Trevor added X" notifications on top of the receipt summary one.
-    if (userId) {
-      const { error } = await supabase.from("receipts").insert({
+    //
+    // Capture the receipt's id so we can stamp source_receipt_id on every
+    // item that came from this scan — that's what powers the ItemCard's
+    // "Scanned from receipt Apr 15 · TAP TO VIEW" deep link.
+    //
+    // Only receipt-mode scans create a receipts row today. Fridge/pantry/
+    // freezer scans get their own table in a future chunk (E); here they
+    // just land with sourceKind='pantry_scan' and no receipt link.
+    let receiptId = null;
+    const isReceiptScan = items[0]?.sourceKind === "receipt_scan";
+    if (userId && isReceiptScan) {
+      const { data, error } = await supabase.from("receipts").insert({
         user_id: userId,
         store_name: meta.store || null,
         receipt_date: meta.date || null,
         total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
         item_count: items.length,
-      });
+      }).select("id").single();
       if (error) console.warn("[receipts] insert failed:", error.message);
-      else setSpendRefresh(k => k + 1);
+      else {
+        receiptId = data?.id || null;
+        setSpendRefresh(k => k + 1);
+      }
     }
 
     // Purchased-on date — receipt date when the scanner found one, else now.
@@ -1883,6 +1896,13 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           ex.purchasedAt = ex.purchasedAt
             ? new Date(Math.max(new Date(ex.purchasedAt).getTime(), purchasedAt.getTime()))
             : purchasedAt;
+          // Point the merged row at the MOST RECENT receipt that touched
+          // it — "tap to view receipt" opens whichever one the user just
+          // did. Earlier receipts can still be found via a history view
+          // once a receipt-detail page exists. First-wins would leave
+          // stale pointers; last-wins matches the user's mental model.
+          if (receiptId) ex.sourceReceiptId = receiptId;
+          if (s.sourceKind) ex.sourceKind = s.sourceKind;
         } else {
           addedCount++;
           next.push({
@@ -1904,6 +1924,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             // fields stay undefined when the scanner didn't set them.
             ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
             ...(s.state      ? { state: s.state           } : {}),
+            // Back-link to the receipt row we just inserted (if any).
+            // Powers the ItemCard's "TAP TO VIEW RECEIPT" deep link so
+            // the user can see the original scan. receiptId is null for
+            // pantry-shelf scans (fridge/pantry/freezer) since those
+            // don't create receipts rows.
+            ...(receiptId ? { sourceReceiptId: receiptId } : {}),
           });
         }
       });
