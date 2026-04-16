@@ -13,8 +13,7 @@
 export const FRIDGE_TILES = [
   { id: "meat_poultry", emoji: "🥩", label: "Meat & Poultry", blurb: "Chicken, beef, pork, lamb, turkey, bacon" },
   { id: "seafood",      emoji: "🐟", label: "Seafood",        blurb: "Fish, shrimp, scallops, shellfish" },
-  { id: "dairy",        emoji: "🧀", label: "Dairy",          blurb: "Milk, cream, yogurt, cheese, butter" },
-  { id: "eggs",         emoji: "🥚", label: "Eggs",           blurb: "Chicken, quail, or duck eggs" },
+  { id: "dairy",        emoji: "🧀", label: "Dairy & Eggs",   blurb: "Milk, cream, yogurt, cheese, butter, eggs" },
   { id: "produce",      emoji: "🥦", label: "Produce",        blurb: "Vegetables and fruit" },
   { id: "fresh_herbs",  emoji: "🌿", label: "Fresh Herbs",    blurb: "Basil, parsley, cilantro, mint" },
   { id: "condiments",   emoji: "🫙", label: "Condiments & Sauces", blurb: "Mustard, soy sauce, hot sauce, miso" },
@@ -81,9 +80,12 @@ export function tileIdForItem(item, { findIngredient, hubForIngredient }) {
   if (ing && SEAFOOD_IDS.has(ing.id)) return "seafood";
   if (hub && hub.id === "seafood_hub") return "seafood";
 
-  // Eggs next — also registered under category:"dairy" which would
-  // otherwise route them to Dairy.
-  if (ing && ing.id === "eggs") return "eggs";
+  // Eggs were their own tile in an earlier iteration — merged into Dairy
+  // now (too small a category to earn a tile of its own, and people
+  // reach for the egg carton on the same trip as the milk). Left here
+  // as a no-op so the id still maps cleanly if an old row carries
+  // fridgeTile: "eggs".
+  if (item?.fridgeTile === "eggs") return "dairy";
 
   // Plant milks + OJ — registered under "dairy" (so substitutions work in
   // recipes) but users think of them as drinks.

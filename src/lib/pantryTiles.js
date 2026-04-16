@@ -20,7 +20,7 @@ export const PANTRY_TILES = [
   { id: "sweeteners",        emoji: "🍯", label: "Sweeteners",          blurb: "Honey, maple syrup, molasses, agave" },
   { id: "nuts_seeds",        emoji: "🥜", label: "Nuts & Seeds",        blurb: "Almonds, pine nuts, sesame, nut butters" },
   { id: "cooking_alcohol",   emoji: "🍷", label: "Cooking Alcohol",     blurb: "White wine, red wine, sake, vermouth" },
-  { id: "bread_dry_goods",   emoji: "🍞", label: "Bread & Dry Goods",   blurb: "Crackers, breadcrumbs, panko, croutons" },
+  { id: "bread",             emoji: "🍞", label: "Bread",               blurb: "Tortillas, pita, naan, sandwich bread, bagels" },
   { id: "dried_chilies",     emoji: "🌶️", label: "Dried Chilies",      blurb: "Ancho, guajillo, pasilla, chipotle, árbol" },
 ];
 
@@ -61,6 +61,12 @@ const BAKING_IDS = new Set([
   "baking_soda", "baking_powder", "yeast", "cornstarch",
   "cocoa", "cocoa_powder", "chocolate_chips", "dark_chocolate",
   "vanilla", "vanilla_extract", "almond_extract",
+  // Dry-crumb / cracker family lives with baking — they share a shelf
+  // with flour and cornstarch in most kitchens and they ARE derivatives
+  // of stale bread. Moved out of the old bread_dry_goods tile so Bread
+  // can be a proper "actual bread" tile (tortillas, pita, sandwich bread).
+  "crackers", "saltines", "breadcrumbs", "panko", "croutons",
+  "melba_toast", "rice_cakes", "water_crackers",
 ]);
 
 // Dried spices — bay leaves and dried herbs live here, not in Fresh Herbs
@@ -120,13 +126,18 @@ const COOKING_ALCOHOL_IDS = new Set([
   "beer", "brandy", "cognac", "rum", "sherry", "port", "marsala",
 ]);
 
-// Bread & dry goods — the cracker/breadcrumb/panko family. Fresh sandwich
-// bread lives in the Fridge tab's Bread & Baked tile (or in the pantry
-// depending on the user's storage); everything shelf-stable dry lands
-// here.
-const BREAD_DRY_GOOD_IDS = new Set([
-  "crackers", "saltines", "breadcrumbs", "panko", "croutons",
-  "melba_toast", "rice_cakes", "water_crackers",
+// Bread — actual bread products people store on the counter or in the
+// bread drawer. Tortillas, pita, and naan were falling through to the
+// canned_jarred catch-all; they live here now. Dry cracker-family items
+// (breadcrumbs, panko, croutons, saltines) moved into the Baking tile
+// where they share a shelf with flour in most kitchens.
+const BREAD_IDS = new Set([
+  "tortillas", "corn_tortillas", "flour_tortillas",
+  "pita", "pita_bread", "naan", "lavash", "flatbread", "roti",
+  "sandwich_bread", "white_bread", "wheat_bread", "sourdough",
+  "baguette", "ciabatta", "focaccia", "rye_bread", "brioche",
+  "bagels", "english_muffins", "hamburger_buns", "hot_dog_buns",
+  "dinner_rolls", "kaiser_rolls", "challah",
 ]);
 
 // Dried chilies — its own tile per the user's spec. Only populated if
@@ -154,19 +165,21 @@ export function pantryTileIdForItem(item, { findIngredient, hubForIngredient }) 
   if (hub && hub.id === "pasta_hub") return "pasta_grains";
   if (hub && hub.id === "rice_hub")  return "pasta_grains";
   if (hub && hub.id === "bean_hub")  return "beans_legumes";
-  if (hub && hub.id === "bread_hub") return "bread_dry_goods";
+  if (hub && hub.id === "bread_hub") return "bread";
 
   if (ing && PASTA_GRAIN_IDS.has(ing.id))      return "pasta_grains";
   if (ing && BEAN_LEGUME_IDS.has(ing.id))      return "beans_legumes";
-  if (ing && CANNED_JARRED_IDS.has(ing.id))    return "canned_jarred";
+  // Baking before canned_jarred so breadcrumbs / panko / crackers route
+  // to their new home instead of hitting the free-text fallback below.
   if (ing && BAKING_IDS.has(ing.id))           return "baking";
+  if (ing && BREAD_IDS.has(ing.id))            return "bread";
+  if (ing && CANNED_JARRED_IDS.has(ing.id))    return "canned_jarred";
   if (ing && SPICE_DRIED_HERB_IDS.has(ing.id)) return "spices_dried_herbs";
   if (ing && CONDIMENT_SAUCE_IDS.has(ing.id))  return "condiments_sauces";
   if (ing && OIL_FAT_IDS.has(ing.id))          return "oils_fats";
   if (ing && SWEETENER_IDS.has(ing.id))        return "sweeteners";
   if (ing && NUT_SEED_IDS.has(ing.id))         return "nuts_seeds";
   if (ing && COOKING_ALCOHOL_IDS.has(ing.id))  return "cooking_alcohol";
-  if (ing && BREAD_DRY_GOOD_IDS.has(ing.id))   return "bread_dry_goods";
 
   // Free-text fallback. Registry category is "pantry" for almost
   // everything here so we can't route that way — send unknown pantry
