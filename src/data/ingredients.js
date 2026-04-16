@@ -1620,10 +1620,67 @@ export const INGREDIENTS = [
   // produce and route to the fridge's Fresh Herbs tile. Category is
   // "pantry" so the default-location heuristic doesn't try to stash
   // garlic powder in the fridge.
-  //
-  // Shared unit ladder for small-jar spices: tsp, tbsp, oz, jar.
-  // A "jar" averages ~2 oz by weight for powders; heavier for whole
-  // seeds, but close enough for pantry tracking purposes.
+
+  // ── TIER 1: the absolute basics ──
+  // Every kitchen has these — the "salt pepper garlic" tier plus
+  // the half-dozen spices that power 80% of home cooking.
+  ...[
+    // Salts
+    ["kosher_salt",     "Kosher Salt",            "🧂"],
+    ["sea_salt",        "Sea Salt",               "🧂"],
+    ["table_salt",      "Table Salt",             "🧂"],
+    ["flaky_salt",      "Flaky Salt",             "🧂"],
+    // Peppers
+    ["black_pepper",    "Black Pepper",           "🫚"],
+    ["white_pepper",    "White Pepper",           "⚪"],
+    ["peppercorns",     "Peppercorns",            "⚫"],
+    // Core ground spices
+    ["paprika",         "Paprika",                "🟠"],
+    ["smoked_paprika",  "Smoked Paprika",         "🟠"],
+    ["sweet_paprika",   "Sweet Paprika",          "🟠"],
+    ["cayenne",         "Cayenne Pepper",         "🌶️"],
+    ["chili_powder",    "Chili Powder",           "🌶️"],
+    ["red_pepper_flakes","Red Pepper Flakes",     "🌶️"],
+    ["cumin",           "Cumin",                  "🟤"],
+    ["ground_cumin",    "Ground Cumin",           "🟤"],
+    ["cumin_seed",      "Cumin Seeds",            "🟤"],
+    ["coriander",       "Ground Coriander",       "🟤"],
+    ["ground_coriander","Ground Coriander Seeds", "🟤"],
+    ["cinnamon",        "Cinnamon",               "🟤"],
+    ["ground_cinnamon", "Ground Cinnamon",        "🟤"],
+    ["turmeric",        "Turmeric",               "🟡"],
+    ["oregano",         "Oregano",                "🌿"],
+    ["dried_oregano",   "Dried Oregano",          "🌿"],
+    ["bay_leaves",      "Bay Leaves",             "🍃"],
+  ].map(([id, name, emoji]) => ({
+    id, name, emoji, category: "pantry",
+    units: id === "bay_leaves"
+      ? [{ id: "count", label: "leaves", toBase: 1 }, { id: "pack", label: "packs", toBase: 14 }]
+      : [{ id: "tsp", label: "tsp", toBase: 1 }, { id: "tbsp", label: "tbsp", toBase: 3 }, { id: "oz", label: "oz", toBase: 6 }, { id: "jar", label: "jars", toBase: 12 }],
+    defaultUnit: id === "bay_leaves" ? "pack" : "jar",
+  })),
+
+  // ── TIER 2: well-stocked home cook ──
+  ...[
+    ["cardamom",        "Cardamom",               "🟢"],
+    ["cloves",          "Cloves",                 "🟤"],
+    ["nutmeg",          "Nutmeg",                 "🟤"],
+    ["allspice",        "Allspice",               "🟤"],
+    ["star_anise",      "Star Anise",             "⭐"],
+    ["fennel_seed",     "Fennel Seeds",           "🟢"],
+    ["mustard_seed",    "Mustard Seeds",          "🟡"],
+    ["curry_powder",    "Curry Powder",           "🟡"],
+    ["garam_masala",    "Garam Masala",           "🟤"],
+  ].map(([id, name, emoji]) => ({
+    id, name, emoji, category: "pantry",
+    units: (id === "star_anise")
+      ? [{ id: "count", label: "pods", toBase: 1 }, { id: "tsp", label: "tsp", toBase: 2 }, { id: "jar", label: "jars", toBase: 20 }]
+      : [{ id: "tsp", label: "tsp", toBase: 1 }, { id: "tbsp", label: "tbsp", toBase: 3 }, { id: "oz", label: "oz", toBase: 6 }, { id: "jar", label: "jars", toBase: 12 }],
+    defaultUnit: id === "star_anise" ? "jar" : "jar",
+  })),
+
+  // ── TIER 3: powders, dried herbs, seasoning salts, seeds, blends ──
+  // (garlic_powder, onion_powder, dried_thyme, italian_seasoning, etc.)
   ...[
     ["garlic_powder",       "Garlic Powder",          "🧄"],
     ["onion_powder",        "Onion Powder",           "🧅"],
@@ -1671,13 +1728,16 @@ export const INGREDIENTS = [
     ["annatto",             "Annatto Seeds",          "🟠"],
     ["smoked_salt",         "Smoked Salt",            "🧂"],
     ["truffle_salt",        "Truffle Salt",           "🧂"],
+    ["old_bay",             "Old Bay Seasoning",      "🦀"],
+    ["zaatar",              "Za'atar",                "🌿"],
+    ["sumac",               "Sumac",                  "🟣"],
   ].map(([id, name, emoji]) => ({
     id, name, emoji, category: "pantry",
     units: [
       { id: "tsp",  label: "tsp",  toBase: 1 },
       { id: "tbsp", label: "tbsp", toBase: 3 },
-      { id: "oz",   label: "oz",   toBase: 6 },  // ~6 tsp per oz by volume
-      { id: "jar",  label: "jars", toBase: 12 },  // ~2 oz jar
+      { id: "oz",   label: "oz",   toBase: 6 },
+      { id: "jar",  label: "jars", toBase: 12 },
     ],
     defaultUnit: "jar",
   })),
