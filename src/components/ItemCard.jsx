@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useItemComponents } from "../lib/useItemComponents";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -41,6 +42,15 @@ function daysUntil(d) {
   if (Number.isNaN(date.getTime())) return null;
   const diff = Math.ceil((date.getTime() - Date.now()) / (86400000));
   return diff;
+}
+
+// Compact number formatter for component amount labels. Drops trailing
+// .00 on integers, keeps two decimals on fractions. "2", "0.25", "1.5"
+// — never "2.00 cup" which reads as a typo.
+function formatNumber(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "";
+  const v = Number(n);
+  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, "");
 }
 
 // Build the provenance banner for an item. Returns { icon, text, linkTo }
@@ -164,6 +174,68 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
     if (primarySet.size === 0) return null;
     return { primary: [...primarySet], intensity: maxIntensity };
   }, [tags, getDbInfo]);
+
+  // Components tree (migration 0034). Loaded for every ItemCard open;
+  // empty array for un-composed items so the section conditionally
+  // renders. Realtime-synced so a family member re-linking the meal
+  // updates the tree in place. The hook short-circuits when itemId is
+  // falsy, so this stays cheap for free-text rows mid-creation.
+  const [components] = useItemComponents(item?.id);
+
+  // Precedence rule (per the Meal/Component design): when an item has
+  // composed structure (kind='meal' AND component rows exist), the
+  // tree is the authoritative deep-dive. The flat IDENTIFIED-AS-tags
+  // strip stays as a quick reference at the top, but the bottom of
+  // the card shows COMPONENTS instead of the per-tag tabs. Items
+  // without components fall through to the legacy tabs view, which
+  // covers atomic ingredients (one tab) and pre-6c multi-tagged
+  // items (one tab per tag, no structured tree yet).
+  const isComposed = (item?.kind === "meal") && components.length > 0;
+
+  // Drill targets for the stacked-modal navigation. Tapping a
+  // component opens either an ItemCard (sub-meal sub-tree) or an
+  // IngredientCard (canonical deep-dive). At most one is open at a
+  // time; closing returns the user to this card's COMPONENTS view.
+  // drilledItem accepts a full pantry item shape (when the child
+  // still exists in pantry[]) or a snapshot shape (built from the
+  // component row's name_snapshot + ingredient_ids_snapshot when the
+  // child has been consumed/deleted) — ItemCard renders both
+  // identically, just with read-only mode for snapshots.
+  const [drilledItem, setDrilledItem] = useState(null);
+  const [drilledIngredientId, setDrilledIngredientId] = useState(null);
+  const [snapshotMode, setSnapshotMode] = useState(false);
+
+  // Open a component. For item-kind components, look up the live row
+  // in pantry first; if the item has been consumed (lookup miss),
+  // fall back to a snapshot shape so the card still renders with the
+  // last-known identity. Snapshot mode disables editing — it's a
+  // historical view, not a live one.
+  const openComponent = (comp) => {
+    if (comp.childKind === "ingredient" && comp.childIngredientId) {
+      setDrilledIngredientId(comp.childIngredientId);
+      return;
+    }
+    if (comp.childKind === "item" && comp.childItemId) {
+      const live = (pantry || []).find(p => p.id === comp.childItemId);
+      if (live) {
+        setSnapshotMode(false);
+        setDrilledItem(live);
+      } else {
+        setSnapshotMode(true);
+        setDrilledItem({
+          id: comp.childItemId,
+          name: comp.nameSnapshot || "(consumed)",
+          emoji: "🥡",
+          ingredientId: comp.ingredientIdsSnapshot[0] || null,
+          ingredientIds: comp.ingredientIdsSnapshot || [],
+          amount: 0,
+          unit: "",
+          kind: comp.ingredientIdsSnapshot.length >= 2 ? "meal" : "ingredient",
+          location: "fridge",
+        });
+      }
+    }
+  };
 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
@@ -698,12 +770,111 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           })()}
         </div>
 
-        {/* ─── INGREDIENT / INGREDIENTS (canonical deep-dive) ───
+        {/* ─── COMPONENTS (Meals only, precedence over the flat tags) ───
+            For composed items (kind='meal' with component rows in
+            pantry_item_components, migration 0034), this section IS
+            the deep-dive — a list of every constituent, drillable on
+            tap. Item-kind components stack a new ItemCard for the
+            sub-tree; ingredient-kind components stack an IngredientCard
+            for the canonical's full info. The legacy IDENTIFIED-AS-tabs
+            view below is suppressed when composed structure exists. */}
+        {isComposed && (
+          <>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              margin: "8px 0 4px", color: "#444",
+            }}>
+              <div style={{ flex: 1, height: 1, background: "#242424" }} />
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
+                COMPONENTS · {components.length}
+              </div>
+              <div style={{ flex: 1, height: 1, background: "#242424" }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+              {components.map(comp => {
+                // Resolve the live identity for ingredient-kind comps
+                // from the canonical registry; for item-kind comps from
+                // the pantry array (with snapshot fallback).
+                const isItem = comp.childKind === "item";
+                const liveItem = isItem
+                  ? (pantry || []).find(p => p.id === comp.childItemId)
+                  : null;
+                const consumed = isItem && !liveItem;
+                const canonical = !isItem
+                  ? findIngredient(comp.childIngredientId)
+                  : null;
+
+                const emoji = isItem
+                  ? (liveItem?.emoji || "🥡")
+                  : (canonical?.emoji || "🥣");
+                const name = isItem
+                  ? (liveItem?.name || comp.nameSnapshot || "(consumed)")
+                  : (canonical?.name || comp.nameSnapshot || comp.childIngredientId);
+
+                // Right-side metadata: amount/unit when known, OR
+                // proportion as a percentage when amount isn't recorded.
+                // Both can render together for the "I used 2 tsp (10%)"
+                // case from a future component editor.
+                const amountLabel = (comp.amount != null && comp.unit)
+                  ? `${formatNumber(comp.amount)} ${comp.unit}`
+                  : null;
+                const proportionLabel = comp.proportion != null
+                  ? `${Math.round(comp.proportion * 100)}%`
+                  : null;
+
+                return (
+                  <button
+                    key={comp.id}
+                    onClick={() => openComponent(comp)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px 12px",
+                      background: consumed ? "#0c0c0c" : (isItem ? "#0f1620" : "#161616"),
+                      border: `1px solid ${consumed ? "#1a1a1a" : (isItem ? "#1f3040" : "#2a2a2a")}`,
+                      borderRadius: 10,
+                      cursor: "pointer", textAlign: "left", width: "100%",
+                      opacity: consumed ? 0.65 : 1,
+                    }}
+                  >
+                    <span style={{ fontSize: 22, flexShrink: 0 }}>{emoji}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                        color: consumed ? "#888" : "#f0ece4",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      }}>
+                        {name}
+                      </div>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: isItem ? "#7eb8d4" : "#666",
+                        letterSpacing: "0.08em", marginTop: 2,
+                        display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+                      }}>
+                        <span>
+                          {isItem
+                            ? (consumed ? "CONSUMED · SNAPSHOT" : "MEAL · DRILL IN →")
+                            : "INGREDIENT · CANONICAL →"}
+                        </span>
+                        {amountLabel && <span style={{ color: "#aaa" }}>· {amountLabel}</span>}
+                        {proportionLabel && <span style={{ color: "#a3d977" }}>· {proportionLabel} OF SOURCE</span>}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {/* ─── INGREDIENT / INGREDIENTS (legacy flat-tag deep-dive) ───
             Singular label for single-tag items, plural + tab switcher for
-            multi-tag items (frozen pizza, Italian blend, compound scratch
-            recipes). Each tab swaps which canonical the embedded
-            IngredientCard renders. */}
-        {activeTag ? (
+            multi-tag items that pre-date the components tree (no
+            pantry_item_components rows yet). Each tab swaps which
+            canonical the embedded IngredientCard renders. Suppressed
+            entirely for composed items — the COMPONENTS section above
+            is authoritative for those. */}
+        {isComposed ? null : activeTag ? (
           <>
             <div style={{
               display: "flex", alignItems: "center", gap: 10,
@@ -773,6 +944,36 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           </div>
         )}
       </div>
+
+      {/* ─── Stacked drill modals ───────────────────────────────────────
+          Tapping a component opens a child card layered on top of this
+          one. Closing the child returns the user here without
+          dismissing the whole stack. Item-kind drills recurse through
+          ItemCard (so a 3-level Meal tree is just 3 stacked cards);
+          ingredient-kind drills land on IngredientCard's standard
+          modal mode. Mounted *outside* the inner scroll container so
+          they're z-indexed above this card's body. */}
+      {drilledItem && (
+        <ItemCard
+          item={drilledItem}
+          pantry={pantry}
+          // Snapshot mode: child item was consumed — we're rendering
+          // from the component's frozen identity, so editing would be
+          // meaningless. Live drills get the same onUpdate the parent
+          // had, so the user can edit a sub-meal in place if it still
+          // exists in pantry.
+          onUpdate={snapshotMode ? undefined : onUpdate}
+          onOpenProvenance={onOpenProvenance}
+          onClose={() => { setDrilledItem(null); setSnapshotMode(false); }}
+        />
+      )}
+      {drilledIngredientId && (
+        <IngredientCard
+          ingredientId={drilledIngredientId}
+          pantry={pantry}
+          onClose={() => setDrilledIngredientId(null)}
+        />
+      )}
     </div>
   );
 }
