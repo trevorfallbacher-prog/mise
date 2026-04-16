@@ -6,6 +6,7 @@ import {
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
   stateLabel, statesForIngredient, detectStateFromText,
+  inferCanonicalFromName,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -28,7 +29,7 @@ function tilesForTab(tab) {
 }
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import TypePicker from "./TypePicker";
-import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdsForType } from "../data/foodTypes";
+import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
@@ -1035,6 +1036,11 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // is many-to-many so we don't force-seed. Primary seeding happens
   // via name-inference (18f inferFoodTypeFromName) as the user types.
   const [customTypeId, setCustomTypeId] = useState(null);
+  // Canonical identity (0039) — the "final resting name" of the
+  // thing. Separate from ingredient_ids[] composition. Auto-derived
+  // on save if null (name-first, type-fallback); user can override
+  // here via the CHANGE chip on the canonical line.
+  const [customCanonicalId, setCustomCanonicalId] = useState(null);
   // Type picker expand/collapse state.
   const [typePickerOpen, setTypePickerOpen] = useState(false);
 
@@ -1113,6 +1119,8 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     // "I put Home Run Inn Pizza in Frozen Meals last time" carries
     // forward even if they're adding from a different tile today.
     if (tpl.tileId) setCustomTileId(tpl.tileId);
+    if (tpl.typeId) setCustomTypeId(tpl.typeId);
+    if (tpl.canonicalId) setCustomCanonicalId(tpl.canonicalId);
     // Rebuild the selected-components chips from the flat ingredient_ids.
     // findIngredient is imported at module scope.
     const rebuilt = (tpl.ingredientIds || [])
@@ -1140,17 +1148,23 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     const compIds = customComponents.map(c => c.id);
     const primaryComp = customComponents[0] || null;
 
-    // ── IDENTIFIED-AS canonical bridge (chunk 18h) ─────────────────
-    // When the user set IDENTIFIED AS to a bundled WWEIA type that
-    // carries canonical mappings (e.g. wweia_hot_dogs → 'hot_dog'),
-    // merge those canonicals into the item's ingredient_ids[] so the
-    // recipe matcher's exact-match path finds it. "Franks Best
-    // Cheese Dogs" with components [cheddar, ground_pork] IDENTIFIED
-    // AS Hot dogs ends up with ingredient_ids = [cheddar,
-    // ground_pork, hot_dog] — a recipe calling for 20 hot dogs
-    // finds it, same as a vanilla hot_dog pack would.
-    const typeCanonicals = canonicalIdsForType(customTypeId);
-    const ingredientIds = Array.from(new Set([...compIds, ...typeCanonicals]));
+    // ── Canonical identity (18j — replaces 18h's ingredient_ids
+    //    pollution). canonical_id is SEPARATE from composition —
+    //    user-free ingredient_ids[] stays what's INSIDE the thing,
+    //    canonical_id is WHAT THE THING IS. "Franks Best Cheese
+    //    Dogs" has canonical_id='hot_dog' (identity) while
+    //    ingredient_ids might be [cheddar, ground_pork] (composition).
+    //    Pick the most-specific canonical we can derive:
+    //      1. Name-based match beats type default — "Oscar Mayer
+    //         Bratwurst" would prefer 'bratwurst' over wweia_sausages'
+    //         default of 'sausage' (once bratwurst canonical exists)
+    //      2. Type default as fallback — Food Category = Hot dogs
+    //         → canonical_id = 'hot_dog' when the name has no
+    //         more-specific token
+    const canonicalId = customCanonicalId
+      || inferCanonicalFromName(customName.trim())
+      || canonicalIdForType(customTypeId)
+      || null;
 
     // Unified save shape. Single-canonical picks, multi-canonical
     // composed meals, and pure free-text all land in the same payload —
@@ -1162,11 +1176,11 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       // legacy ingredient_id scalar stays useful. Zero components = pure
       // free-text.
       ingredientId: primaryComp?.id || null,
-      // ingredientIds is the user's picked components UNION the
-      // type-bridged canonicals. compIds drives kind (meal vs
-      // ingredient) since the bridged canonicals are meta-tags, not
-      // structural components.
-      ingredientIds,
+      // ingredientIds is the user's picked composition — what's
+      // INSIDE the item. Identity (hot_dog) lands on canonical_id
+      // below, not here.
+      ingredientIds: compIds,
+      canonicalId,
       // 2+ components promotes the item to a Meal on save; single or
       // zero stays an ingredient (either free-text or canonical-tagged).
       kind: compIds.length >= 2 ? "meal" : "ingredient",
@@ -1227,10 +1241,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         // AND identification.
         tileId: customTileId || null,
         typeId: customTypeId || null,
-        // Persist the type-bridged canonicals on the template too so
-        // the next family member who picks this template inherits the
-        // right ingredient_ids without having to re-pick the type.
-        ingredientIds,
+        canonicalId,
+        // Template composition == what the user actually picked.
+        // Identity rides on canonical_id above, separate.
+        ingredientIds: compIds,
       });
       if (!tmplErr && templateId && compIds.length > 0) {
         await setComponentsForTemplate(
@@ -1526,6 +1540,43 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 placeholder="Name (e.g. Capers, Home Run Inn Pizza)"
                 style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
               />
+
+              {/* Live canonical preview (0039). Shows the derived
+                  "thing" identity right under the user's custom
+                  name so the distinction sinks in —
+                    "Frank's Best Cheese Dogs"
+                       → 🌭 Hot Dog
+                  Name-match > type-default > nothing. Updates live
+                  as the user types + picks a Food Category. Hidden
+                  when there's no canonical yet (no need to surface
+                  the absence). */}
+              {(() => {
+                const derived = customCanonicalId
+                  || inferCanonicalFromName(customName.trim())
+                  || canonicalIdForType(customTypeId)
+                  || null;
+                if (!derived) return null;
+                const canon = findIngredient(derived);
+                if (!canon) return null;
+                return (
+                  <div style={{
+                    marginTop: 6,
+                    display: "flex", alignItems: "center", gap: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#888", letterSpacing: "0.06em",
+                  }}>
+                    <span style={{ color: "#555" }}>→</span>
+                    <span style={{ fontSize: 13 }}>{canon.emoji || "🏷️"}</span>
+                    <span style={{
+                      color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                      fontSize: 13, fontStyle: "italic",
+                    }}>
+                      {canon.name}
+                    </span>
+                    <span style={{ color: "#444", fontSize: 9 }}>· IS-A</span>
+                  </div>
+                );
+              })()}
               {(() => {
                 const typed = (customName || "").trim().toLowerCase();
                 if (!typed) return null;
@@ -1712,7 +1763,7 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
                   color: "#f5c842", letterSpacing: "0.12em",
                 }}>
-                  IDENTIFIED AS {customTypeId ? "" : "(OPTIONAL)"}
+                  FOOD CATEGORY {customTypeId ? "" : "(OPTIONAL)"}
                 </div>
                 <div style={{ flex: 1 }} />
                 <button
@@ -1783,6 +1834,14 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                     }
                     if (defaultLocation && !customLocation) {
                       setCustomLocation(defaultLocation);
+                    }
+                    // Auto-derive canonical identity from the type's
+                    // default UNLESS the user already explicitly set
+                    // one (name-match may have found something more
+                    // specific). Name-match still wins at save time.
+                    if (!customCanonicalId) {
+                      const fromType = canonicalIdForType(typeId);
+                      if (fromType) setCustomCanonicalId(fromType);
                     }
                     setTypePickerOpen(false);
                   }}
@@ -2634,20 +2693,25 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             ...(s.state      ? { state: s.state           } : {}),
             ...(s.scanRaw    ? { scanRaw: s.scanRaw       } : {}),
             // Multi-canonical tag array (0033). The Scanner's LinkIngredient
-            // picker now emits a full ingredientIds array — preset taps
+            // picker emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element
-            // array. Either way we carry it through so composite items
-            // land in the pantry with the correct tag set. Bridge
-            // canonicals from the inferred type (18h) get merged in
-            // so scanned "Franks Best Cheese Dogs" picks up hot_dog
-            // the same as a manual add would.
+            // array. This is COMPOSITION — what's inside the thing,
+            // not identity. Identity rides on canonical_id below.
+            ...(Array.isArray(s.ingredientIds) && s.ingredientIds.length
+                ? { ingredientIds: s.ingredientIds }
+                : {}),
+            // Canonical identity (0039). Derived name-first, type-
+            // fallback. Scanner normalization may have set it
+            // already (s.canonicalId); otherwise derive from the
+            // scanner's inferred type + raw name.
             ...(function() {
-              const base = Array.isArray(s.ingredientIds) ? s.ingredientIds : [];
-              const bridged = canonicalIdsForType(s.typeId);
-              const merged = Array.from(new Set([...base, ...bridged]));
-              return merged.length ? { ingredientIds: merged } : {};
+              const derived = s.canonicalId
+                || inferCanonicalFromName(s.name)
+                || canonicalIdForType(s.typeId)
+                || null;
+              return derived ? { canonicalId: derived } : {};
             })(),
-            // IDENTIFIED AS + STORED IN placement (0036, 0038).
+            // Food Category + STORED IN placement (0036, 0038).
             // Scanner normalization inferred + set these; forward
             // them so the classifier short-circuits at render time
             // and users see the expected placement without tapping.

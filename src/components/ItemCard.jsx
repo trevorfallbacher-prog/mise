@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
+import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -12,7 +12,7 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
-import { findFoodType, inferFoodTypeFromName, canonicalIdsForType } from "../data/foodTypes";
+import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -205,6 +205,17 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
     return null;
   }, [item?.typeId, userTypes]);
 
+  // Canonical identity resolution (0039). The "final resting name"
+  // of the thing — a Frank's Best Cheese Dogs row has canonical_id
+  // = 'hot_dog' pointing at the bundled Hot Dog canonical, which
+  // surfaces its emoji + display name on a dedicated line above
+  // Food Category / Stored In. Separate from composition (what's
+  // INSIDE the thing — lives on ingredient_ids[]).
+  const currentCanonical = useMemo(() => {
+    if (!item?.canonicalId) return null;
+    return findIngredient(item.canonicalId);
+  }, [item?.canonicalId]);
+
   // Stacked type picker — separate from tilePicker so both can
   // exist but don't step on each other.
   const [typePickerOpen, setTypePickerOpen] = useState(false);
@@ -373,10 +384,39 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   {item.name}
                 </h2>
               )}
-              {/* IDENTIFIED AS — what KIND of thing this is (Pizza,
-                  Cheese, Sausages). Separate from STORED IN below
-                  which answers WHERE it lives. Tap to re-pick —
-                  opens a stacked TypePicker modal. */}
+              {/* CANONICAL — the final-resting-name of the thing
+                  (Hot Dog, Mayo, Green Onion). USDA-defensible
+                  identity that recipes call by. Sits directly below
+                  the user's custom name so "Frank's Best Cheese
+                  Dogs" reads instantly as "→ Hot Dog". Rendered
+                  when canonical is resolved; dashed when missing
+                  so the user can tap IDENTIFIED AS below to fill
+                  it (type-pick flows write canonical automatically).
+                  Render is READ-ONLY today — canonical is derived,
+                  not hand-picked; re-picking IDENTIFIED AS swaps
+                  the canonical through for you. */}
+              {currentCanonical && (
+                <div
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: "#b8a878",
+                    letterSpacing: "0.06em", marginTop: 4,
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
+                  <span style={{
+                    color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                    fontSize: 14, fontStyle: "italic", fontWeight: 400,
+                  }}>
+                    {currentCanonical.name}
+                  </span>
+                </div>
+              )}
+              {/* FOOD CATEGORY (IDENTIFIED AS) — what KIND of thing
+                  this is (Pizza, Cheese, Sausages). Separate from
+                  STORED IN below which answers WHERE it lives. Tap
+                  to re-pick — opens a stacked TypePicker modal. */}
               {onUpdate && (
                 <div
                   onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
@@ -388,7 +428,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#888" }}>IDENTIFIED AS:</span>
+                  <span style={{ color: "#888" }}>FOOD CATEGORY:</span>
                   {currentType ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
@@ -1228,23 +1268,18 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               if (defaultLocation && !item.location) {
                 patch.location = defaultLocation;
               }
-              // Canonical bridge (18h): update ingredient_ids[] to
-              // reflect the new type's canonical mapping. Remove any
-              // canonicals that came from the PRIOR type (so Hot dog
-              // → Sausage swaps hot_dog for sausage instead of
-              // accumulating both) and add the new type's.
-              const prior     = canonicalIdsForType(item.typeId);
-              const incoming  = canonicalIdsForType(typeId);
-              const existing  = Array.isArray(item.ingredientIds) ? item.ingredientIds : [];
-              const priorSet  = new Set(prior);
-              const nextIds   = [
-                ...existing.filter(id => !priorSet.has(id)),
-                ...incoming,
-              ];
-              const deduped   = Array.from(new Set(nextIds));
-              const changed   = deduped.length !== existing.length
-                || deduped.some((id, i) => id !== existing[i]);
-              if (changed) patch.ingredientIds = deduped;
+              // Canonical identity swap (0039). ingredient_ids[]
+              // stays untouched — that's USER composition, not ours
+              // to rewrite on a type change. Swap the canonical_id
+              // to the new type's default. If the user's NAME
+              // carries a more-specific canonical (e.g. "Bratwurst"
+              // with a bratwurst canonical), prefer that over the
+              // broader type default.
+              const prior = item.canonicalId || null;
+              const next  = inferCanonicalFromName(item.name)
+                         || canonicalIdForType(typeId)
+                         || null;
+              if (next !== prior) patch.canonicalId = next;
               onUpdate?.(patch);
               setTypePickerOpen(false);
             }}

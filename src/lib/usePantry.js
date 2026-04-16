@@ -89,6 +89,11 @@ function fromDb(row) {
   // type_id (migration 0038) — IDENTIFIED AS layer. Holds either a
   // bundled WWEIA id ('wweia_pizza') or a user_types.id uuid.
   if (row.type_id            !== undefined) item.typeId            = row.type_id || null;
+  // canonical_id (migration 0039) — the canonical-identity bridge.
+  // Singular id from src/data/ingredients.js ('hot_dog', 'mayo',
+  // 'green_onion'). Identity, NOT composition — user-composed
+  // ingredient_ids[] stays free-form.
+  if (row.canonical_id       !== undefined) item.canonicalId       = row.canonical_id || null;
   return item;
 }
 
@@ -135,6 +140,7 @@ function toDb(item) {
     ...(item.scanRaw           !== undefined ? { scan_raw: item.scanRaw || null } : {}),
     ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
+    ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
   };
 }
 

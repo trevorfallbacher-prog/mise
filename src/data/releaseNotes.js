@@ -42,9 +42,67 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.1";
+export const CURRENT_VERSION = "0.7.2";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.2",
+    date:    "2026-04-16",
+    title:   "Identity ≠ composition — four clean layers, no pollution",
+    summary:
+      "0.7.1 got one thing wrong: I stuffed the canonical identity " +
+      "(hot_dog, green_onion, mayo) into your ingredient_ids[] array. " +
+      "But your hot dog isn't AN INGREDIENT of your hot dog — it IS " +
+      "the hot dog. 0.7.2 untangles this. Every pantry row now has " +
+      "four clean layers: your brand name (\"Frank's Best Cheese " +
+      "Dogs\"), the canonical thing (\"Hot Dog\" — USDA), the food " +
+      "category (Sausages, Hot Dogs, Pizza — the grouping), and " +
+      "stored-in (Meat & Poultry — physical placement). Composition " +
+      "(what's INSIDE your version: cheddar + ground pork, or beef + " +
+      "bun, or tofu + bun — your call, always) stays on ingredient_ids[] " +
+      "free and untouched by our identity inference. Recipes still " +
+      "find your custom hot dogs via the canonical bridge — now on " +
+      "its own column (canonical_id) where it belongs.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "New canonical_id column on pantry_items + templates (migration 0039). Holds the USDA \"final resting name\" of the thing (hot_dog, mayo, green_onion). Separate from ingredient_ids[] which stays YOUR composition — the app stops telling you what's in your hot dog",
+        commits: ["__18j_canonical_id__"],
+      },
+      {
+        kind: "feature",
+        text: "Every ItemCard now shows the canonical line (🌭 Hot Dog) right under your custom name. You see your version (\"Frank's Best Cheese Dogs\") AND what kind of thing it is (\"Hot Dog\") at a glance — no drill-down",
+        commits: ["__18j_canonical_id__"],
+      },
+      {
+        kind: "feature",
+        text: "AddItemModal shows a live canonical preview as you type: \"Frank's Best Cheese Dogs\" → 🌭 Hot Dog IS-A. Auto-derives from name first (name-match wins over type defaults), type-picker fallback after",
+        commits: ["__18j_canonical_id__"],
+      },
+      {
+        kind: "feature",
+        text: "Recipe matcher (tileMatching.js) gets a new canonical-identity path. Recipe calls for 'hot_dog' → every row where canonical_id='hot_dog' matches exactly. Same tier as your ingredient_ids tag match; your custom branded items finally show up for recipe slots they ARE, without polluting your composition",
+        commits: ["__18j_canonical_id__"],
+      },
+      {
+        kind: "ux",
+        text: "\"IDENTIFIED AS\" label renamed to \"FOOD CATEGORY\" everywhere — matches how you actually talk about it (\"Sausages is a category, hot_dog is the thing\")",
+        commits: ["__18j_canonical_id__"],
+      },
+      {
+        kind: "fix",
+        text: "0.7.1's ingredient_ids[] pollution is rolled back. Upgrading family kitchens stay clean — canonical_id column is additive, no back-migration needed. Future cleanup sweep if any polluted rows linger",
+        commits: ["__18j_canonical_id__"],
+      },
+    ],
+    coming_soon: [
+      "Receipt storage regression fix (P0 bug)",
+      "Correction propagation: fix one ACQUAMAR FLA row in scan-confirm → the other duplicates inherit the link",
+      "Expiration cancel-to-null (so we can use smart defaults instead of stamping today)",
+      "Receipt viewer + family-edit flow (see the photo, fix wrong links, reopen later)",
+      "Kitchen +$X pulse when scans add new stock",
+    ],
+  },
   {
     version: "0.7.1",
     date:    "2026-04-16",

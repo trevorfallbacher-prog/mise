@@ -94,6 +94,16 @@ export function matchRowToRecipeIngredient(row, recipeIngredientId) {
     return { quality: "exact" };
   }
 
+  // Canonical identity check (0039). "Franks Best Cheese Dogs" has
+  // canonical_id='hot_dog'; a recipe calling for 'hot_dog' matches
+  // exactly via this path even though the user's composition
+  // ingredient_ids are [cheddar, ground_pork] (no hot_dog tag).
+  // Identity is the USDA-defensible "what the thing IS" — recipes
+  // rightly ask for things by identity, not composition.
+  if (row.canonicalId && row.canonicalId === recipeIngredientId) {
+    return { quality: "exact", reason: "canonical identity" };
+  }
+
   // Tile fallback — only when the row has explicit placement
   if (row.tileId) {
     const candidateTiles = tilesForIngredient(recipeIngredientId);

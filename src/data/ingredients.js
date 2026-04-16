@@ -2288,6 +2288,63 @@ export function standaloneIngredients() {
   return INGREDIENTS.filter(i => !i.parentId);
 }
 
+// Lookup table for canonical inference: lowercase name/shortName →
+// ingredient id. Built lazily so it's a one-time cost on first use.
+// Only includes tokens ≥ 3 chars to avoid spurious matches
+// ("a"/"i" would fire on almost anything).
+let _canonicalAliasMap = null;
+function getCanonicalAliasMap() {
+  if (_canonicalAliasMap) return _canonicalAliasMap;
+  const map = new Map();
+  for (const ing of INGREDIENTS) {
+    const tokens = [ing.name, ing.shortName].filter(Boolean);
+    for (const t of tokens) {
+      const key = t.toLowerCase().trim();
+      if (key.length < 3) continue;
+      // Keep the FIRST match if duplicate names exist — preserves
+      // registry order (specifics before generics when carefully
+      // ordered). "Sausage" (specific) wins over a hypothetical
+      // broader "Sausage / whatever" appearing later.
+      if (!map.has(key)) map.set(key, ing.id);
+    }
+  }
+  _canonicalAliasMap = map;
+  return map;
+}
+
+/**
+ * Infer the most-specific canonical ingredient id from a free-text
+ * name. Returns the id or null. Longest-matching alias wins; ties
+ * break on registry order.
+ *
+ * Example:
+ *   "Oscar Mayer Bratwurst"        → 'sausage' (no bratwurst canonical;
+ *                                   falls through to type default)
+ *   "Mama Bear's Green Onion"      → 'green_onion'
+ *   "Franks Best Cheese Dogs"      → 'hot_dog'
+ *   "Home Run Inn Pizza"           → null  (no pizza canonical yet)
+ *   "random text"                  → null
+ *
+ * Pair with canonicalIdForType (foodTypes.js) — name-based wins when
+ * it fires, type default fires otherwise.
+ */
+export function inferCanonicalFromName(name) {
+  const lower = (name || "").toLowerCase().trim();
+  if (lower.length < 3) return null;
+  const map = getCanonicalAliasMap();
+  let bestId = null;
+  let bestLen = 0;
+  for (const [alias, id] of map) {
+    if (alias.length < 3) continue;
+    if (!lower.includes(alias)) continue;
+    if (alias.length > bestLen) {
+      bestId = id;
+      bestLen = alias.length;
+    }
+  }
+  return bestId;
+}
+
 export function unitLabel(ingredient, unitId) {
   if (!ingredient) return unitId || "";
   return ingredient.units.find(u => u.id === unitId)?.label || unitId;
