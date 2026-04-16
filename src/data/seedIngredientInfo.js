@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 1;
+export const SEED_VERSION = 2;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -59,16 +59,47 @@ export const SEED_INGREDIENT_INFO = [
       description: "Dried, ground red peppers — the baseline paprika. Ranges from sweet and mild (Hungarian édesnemes) to moderately warm. The workhorse behind goulash, deviled eggs, and anything that needs warm red color without serious heat.",
       flavorProfile: "Sweet, warm, mildly earthy, fruity. Almost no heat — the sweetness of dried pepper is the point.",
       prepTips: "Bloom in hot oil or butter for 15-30 seconds to activate the fat-soluble pigments. Never add to screaming-hot oil — it scorches instantly and turns bitter.",
-      storage: { location: "pantry", shelfLifeDays: 730, tips: "Loses color and potency faster than most spices. Replace every 1-2 years. If it smells like nothing, it IS nothing." },
+      storage: {
+        location: "pantry",
+        shelfLifeDays: 730,
+        shelfLife: { fridge: null, freezer: 1460, pantry: 730 },
+        tips: "Loses color and potency faster than most spices. Replace every 1-2 years. If it smells like nothing, it IS nothing.",
+        spoilageSigns: "Dull brown-red instead of vibrant red, no aroma when you open the jar, clumping from absorbed moisture.",
+        freezable: true,
+        freezeNotes: "Double bag it — picks up freezer odors through cardboard. Doubles the usable life.",
+      },
       substitutions: [
         { id: "smoked_paprika", tier: "direct", note: "Adds smokiness — great for some dishes, overpowering for others." },
         { id: "cayenne", tier: "caution", note: "10-20x hotter. Use a pinch where you would use a teaspoon." },
+        { id: "chili_powder", tier: "creative", note: "More complex, more savory — works in chili, tacos, rubs." },
       ],
       pairs: ["garlic", "onion", "chicken", "potato", "eggs", "sour_cream"],
+      flavor: {
+        primary: ["sweet", "umami"],
+        intensity: "mild",
+        heatChange: {
+          raw: "dusty, powdery, faintly bitter",
+          cooked: "sweet, deep red, fruity — bloomed in fat it turns warm and almost caramel",
+          charred: "bitter and acrid within seconds — burns faster than any other spice",
+        },
+      },
+      nutrition: { per: "1 tsp", kcal: 6, protein_g: 0.3, fat_g: 0.3, carb_g: 1.2, fiber_g: 0.8 },
       origin: "Central Mexico (the peppers), brought to Spain and Hungary by the 16th century. Hungary made it the national spice — Szeged and Kalocsa are the two great paprika regions.",
-      culturalNotes: "Hungary classifies paprika into eight grades from különleges (delicate, bright red) to erős (hot). The Nobel Prize for Vitamin C was awarded for work on Hungarian paprika.",
+      culturalNotes: "Hungary classifies paprika into eight grades from különleges (delicate, bright red) to erős (hot). The Nobel Prize for Vitamin C was awarded for work on Hungarian paprika — it has more C per gram than citrus.",
+      recipes: ["Chicken Paprikash", "Hungarian Goulash", "Deviled Eggs", "Patatas Bravas"],
       allergens: ["nightshade"],
-      nutrition: { per: "1 tsp", kcal: 6, protein_g: 0.3, fat_g: 0.3, carb_g: 1.2 },
+      allergenDetail: "Nightshade family (Solanaceae) — relevant for autoimmune elimination diets but not a true food allergy for most people.",
+      diet: { vegan: true, vegetarian: true, keto: true, halal: true, kosher: "pareve", fodmap: "low", nightshade: true, allium: false, glutenFree: true },
+      seasonality: { yearRound: true },
+      sourcing: "Hungarian (Szeged or Kalocsa) for complexity and depth. Spanish pimentón dulce is fruitier. Avoid generic supermarket paprika if you cook seriously — the quality gap is bigger than you think.",
+      market: {
+        priceTier: "budget",
+        availability: "supermarket",
+        organicCommon: false,
+        qualityMatters: true,
+        qualityNote: "The $3 supermarket jar vs $10 Hungarian Szegedi is a genuine night-and-day upgrade for any dish where paprika is the lead spice (goulash, paprikash). For color-only uses (deviled eggs, sprinkle on hummus), cheap is fine.",
+      },
+      skillDev: { skills: ["seasoning", "heat"], difficulty: "easy", proFromScratch: false, fromScratchRecipeId: null },
     },
   },
   {
