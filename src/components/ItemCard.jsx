@@ -109,10 +109,34 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const canonical = useMemo(
-    () => item?.ingredientId ? findIngredient(item.ingredientId) : null,
-    [item?.ingredientId]
-  );
+  // All ingredient tags on this item (migration 0033's ingredient_ids
+  // array), normalized to a list of canonical-ingredient objects plus
+  // their ids. For single-tag items this is a 1-element array — same
+  // thing the UI had before. For multi-tag items (pizza, Italian blend,
+  // etc.) each tag gets its own tab in the INGREDIENT deep-dive.
+  const tags = useMemo(() => {
+    const ids = Array.isArray(item?.ingredientIds) && item.ingredientIds.length
+      ? item.ingredientIds
+      : (item?.ingredientId ? [item.ingredientId] : []);
+    return ids
+      .map(id => ({ id, canonical: findIngredient(id) }))
+      .filter(t => t.canonical);
+  }, [item?.ingredientIds, item?.ingredientId]);
+
+  // Which tag's deep-dive is currently open. Resets when the item or
+  // its tag list changes (opening a different item / the user adding
+  // or removing a tag).
+  const [activeTagIdx, setActiveTagIdx] = useState(0);
+  useEffect(() => { setActiveTagIdx(0); }, [item?.id, tags.length]);
+
+  // Safe bound — if the tag list shrinks below activeTagIdx (user
+  // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
+  const safeIdx = Math.min(activeTagIdx, Math.max(0, tags.length - 1));
+  const activeTag = tags[safeIdx] || null;
+  // The legacy `canonical` variable still refers to the PRIMARY tag
+  // (first element). Used for the top-section identity lines where
+  // "primary" is the right anchor — the deep-dive below uses activeTag.
+  const canonical = tags[0]?.canonical || null;
 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
@@ -274,11 +298,31 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                   {item.name}
                 </h2>
               )}
-              {canonical && item.name?.toLowerCase() !== canonical.name?.toLowerCase() && (
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3 }}>
-                  IDENTIFIED AS: <span style={{ color: "#f5c842" }}>{canonical.name.toUpperCase()}</span>
-                </div>
-              )}
+              {/* IDENTIFIED AS — lists every canonical tag on this item.
+                  Single-tag items render exactly like before; multi-tag
+                  items (Italian blend, frozen pizza, etc.) render all
+                  their tags joined with "·" so the full identity is
+                  visible at a glance before opening the deep-dive. */}
+              {tags.length > 0 && (() => {
+                // Skip the line if the ONLY tag's name matches the
+                // user-typed name — avoids "Prosciutto · PROSCIUTTO"
+                // redundancy. Multi-tag always shows.
+                if (tags.length === 1 &&
+                    item.name?.toLowerCase() === tags[0].canonical.name?.toLowerCase()) {
+                  return null;
+                }
+                return (
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3 }}>
+                    IDENTIFIED AS:{" "}
+                    {tags.map((t, i) => (
+                      <span key={t.id}>
+                        {i > 0 && <span style={{ color: "#444" }}> · </span>}
+                        <span style={{ color: "#f5c842" }}>{t.canonical.name.toUpperCase()}</span>
+                      </span>
+                    ))}
+                  </div>
+                );
+              })()}
               {/* STATE line — tappable when the canonical ingredient has a
                   state vocabulary (bread: loaf/slices/crumbs; cheese: block
                   /grated/shredded; chicken: raw/cooked/shredded_cooked).
@@ -608,13 +652,12 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           })()}
         </div>
 
-        {/* ─── INGREDIENT (canonical deep-dive) ───
-            Singular "INGREDIENT" for today's one-tag-per-item world.
-            Pluralizes to "INGREDIENTS" with a tab switcher when Chunk 5
-            ships the multi-canonical (ingredient_ids[]) model — a pizza
-            tagged with bbq_sauce + pineapple + mozzarella + dough shows
-            one tab per ingredient, each with its own deep dive. */}
-        {canonical ? (
+        {/* ─── INGREDIENT / INGREDIENTS (canonical deep-dive) ───
+            Singular label for single-tag items, plural + tab switcher for
+            multi-tag items (frozen pizza, Italian blend, compound scratch
+            recipes). Each tab swaps which canonical the embedded
+            IngredientCard renders. */}
+        {activeTag ? (
           <>
             <div style={{
               display: "flex", alignItems: "center", gap: 10,
@@ -622,14 +665,53 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
             }}>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
-                INGREDIENT
+                {tags.length > 1 ? "INGREDIENTS" : "INGREDIENT"}
               </div>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
             </div>
+            {tags.length > 1 && (
+              // Tab row — one chip per canonical tag. Tap to swap the
+              // embedded IngredientCard's viewingId. Horizontally
+              // scrollable on narrow viewports via the flex-wrap +
+              // overflow combo.
+              <div style={{
+                display: "flex", gap: 6, marginBottom: 12,
+                padding: 4, background: "#0a0a0a", border: "1px solid #1e1e1e",
+                borderRadius: 10, overflowX: "auto",
+              }}>
+                {tags.map((t, i) => {
+                  const active = i === safeIdx;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setActiveTagIdx(i)}
+                      style={{
+                        flex: "0 0 auto",
+                        padding: "7px 11px",
+                        background: active ? "#1a1608" : "transparent",
+                        border: `1px solid ${active ? "#f5c842" : "transparent"}`,
+                        color: active ? "#f5c842" : "#888",
+                        borderRadius: 7,
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        letterSpacing: "0.05em",
+                        cursor: "pointer",
+                        display: "flex", alignItems: "center", gap: 6,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span style={{ fontSize: 14 }}>{t.canonical.emoji || "🥣"}</span>
+                      <span>{t.canonical.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
             <IngredientCard
-              ingredientId={item.ingredientId}
+              key={activeTag.id /* force remount on tab change so
+                                   internal viewingId + scroll reset */}
+              ingredientId={activeTag.id}
               fallbackName={item.name}
-              fallbackEmoji={item.emoji}
+              fallbackEmoji={activeTag.canonical.emoji}
               pantry={pantry}
               onClose={onClose}
               embedded
