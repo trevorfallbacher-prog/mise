@@ -30,6 +30,11 @@ import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 import ReceiptView from "./ReceiptView";
+import {
+  setComponentsForParent,
+  componentsFromIngredientIds,
+  kindForTagCount,
+} from "../lib/pantryComponents";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -695,16 +700,22 @@ function Scanner({ onItemsScanned, onClose }) {
         <LinkIngredient
           item={scannedItems[linkingScanIdx]}
           onLink={ids => {
-            // Multi-tag aware. ids is always an array. Primary id =
-            // first element — adopts its emoji + category for display.
-            // ingredientIds (the array) goes on the scan item so it
-            // round-trips into pantry_items.ingredient_ids when the
-            // user confirms.
-            const primaryId = ids[0];
-            const canon = findIngredient(primaryId);
+            // Scan-draft commit. The row doesn't exist in pantry_items
+            // yet — addScannedItems creates it on scan-confirm — so we
+            // can't write component rows here (no parent id to point
+            // at). We DO stamp kind='meal' | 'ingredient' onto the
+            // draft so the user sees the Meal identity on the confirm
+            // screen, and the flat ingredient_ids[] gets persisted as
+            // usual on confirm. Component-row writes for
+            // scan-originating Meals land in a follow-up once the
+            // addScannedItems pipeline can surface the inserted row
+            // ids back to a components-write step.
+            const primaryId = ids[0] || null;
+            const canon = primaryId ? findIngredient(primaryId) : null;
             updateScanItem(linkingScanIdx, {
               ingredientId: primaryId,
               ingredientIds: ids,
+              kind: kindForTagCount(ids.length),
               emoji:    canon?.emoji    || scannedItems[linkingScanIdx].emoji,
               category: canon?.category || scannedItems[linkingScanIdx].category,
             });
@@ -3143,21 +3154,41 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
       {linkingItem && (
         <LinkIngredient
           item={linkingItem}
-          onLink={ids => {
-            // Multi-tag aware — ids is always an array. Primary id =
-            // first element (display anchor for emoji/category); full
-            // array lands in ingredient_ids so composite items (Italian
-            // blend, frozen pizza) satisfy any component recipe. Name
-            // stays the user's — linking never overwrites what they
-            // typed.
-            const primaryId = ids[0];
-            const canon = findIngredient(primaryId);
-            updatePantryItem(linkingItem.id, {
+          onLink={async (ids) => {
+            // Multi-tag commit. 2+ tags promotes the item to kind='meal'
+            // and writes one ingredient-kind Component row per tag so the
+            // Meal/Ingredient tier model (migration 0034) has its
+            // structured truth. 0-1 tag demotes back to kind='ingredient'
+            // and wipes any prior components. The flat ingredient_ids[]
+            // array stays authoritative for recipe matching in either
+            // case (GIN-indexed).
+            //
+            // Name stays the user's — linking never overwrites what they
+            // typed. Emoji adopts the primary canonical only when the
+            // user hadn't set a custom one already.
+            const primaryId = ids[0] || null;
+            const canon = primaryId ? findIngredient(primaryId) : null;
+            const nextKind = kindForTagCount(ids.length);
+
+            const parentId = linkingItem.id;
+            updatePantryItem(parentId, {
               ingredientId: primaryId,
               ingredientIds: ids,
+              kind: nextKind,
               emoji: canon?.emoji || linkingItem.emoji,
             });
             setLinkingItem(null);
+
+            // Components write happens off the render path — the item
+            // update above is what the UI reflects immediately; the
+            // structured components are a secondary truth the
+            // ItemCard's COMPONENTS tree reads on next open. A write
+            // failure logs + retries on the next link event; the item
+            // still functions as a Meal by way of its ingredient_ids[].
+            const components = nextKind === "meal"
+              ? componentsFromIngredientIds(ids)
+              : [];
+            await setComponentsForParent(parentId, components);
           }}
           onClose={() => setLinkingItem(null)}
         />
