@@ -14,31 +14,87 @@ function confidenceTone(score) {
 
 /**
  * LinkIngredient — bottom-sheet picker that tags a pantry row with one or
- * more canonical ingredient ids. Runs fuzzyMatchIngredient against the
- * row's name (or the user's live search), shows the top single-tag
- * candidates, AND surfaces named blend presets ("Italian Blend", frozen
- * pizza, etc.) at the top for composite items.
+ * more canonical ingredient ids.
  *
- * "KEEP AS FREE TEXT" remains the escape hatch.
+ * Multi-select accumulator flow (6a):
+ *   Tapping a match or preset APPENDS to the selection instead of
+ *   committing + closing. The SELECTED chip row at the top shows every
+ *   tag currently on deck; individual tags can be removed by tapping
+ *   their ✕. DONE commits the full array via onLink() and closes.
+ *
+ *   Rationale: one item can legitimately carry an arbitrary number of
+ *   canonical tags (a frozen burrito is 8+ ingredients; a "loaded
+ *   nachos" kit item is 10+). Forcing the user to pick a preset that
+ *   happens to match, or go one-at-a-time via re-opening the sheet,
+ *   was the root cause of the "only 2 tags, both cheese" bug — the
+ *   shortest preset that matched the user's typed name was Pizza Blend
+ *   (mozzarella + provolone), and that's what they got stuck with.
+ *
+ *   No hard cap on tag count — users can add as many as they need. The
+ *   ItemCard display is what applies the 5-tag show-more collapse so
+ *   the editor isn't artificially limited.
+ *
+ * Initial selection: pre-populates from item.ingredientIds / item.ingredientId
+ * so re-opening the sheet on an already-tagged item shows the current
+ * tags, which can then be tweaked (append, remove, rearrange) before
+ * re-committing.
  *
  * Props:
- *   item           — the pantry row being linked ({ name, emoji, … })
+ *   item           — the pantry row being linked ({ name, emoji, ingredientIds, … })
  *   onLink(ids)    — called with an ARRAY of canonical ids when the user
- *                    taps a match or preset. Always an array, even for
- *                    single-tag picks ([id]) — callers that only care
- *                    about the primary tag can read ids[0].
- *   onClose()      — dismiss without linking
+ *                    taps DONE. Always an array; pass [] to clear tagging
+ *                    entirely and return to free-text (same as the old
+ *                    "KEEP AS FREE TEXT" escape hatch).
+ *   onClose()      — dismiss without committing.
  */
 export default function LinkIngredient({ item, onLink, onClose }) {
   const [search, setSearch] = useState("");
   const needle = search.trim() || item.name;
   const matches = useMemo(() => fuzzyMatchIngredient(needle, 8), [needle]);
 
+  // Seed the selection from the item's current tags so re-opening the
+  // sheet on an already-tagged item lets the user incrementally adjust
+  // instead of starting from zero. Prefers ingredientIds (plural, 0033)
+  // and falls back to the legacy scalar.
+  const [selected, setSelected] = useState(() => {
+    const seed = Array.isArray(item?.ingredientIds) && item.ingredientIds.length
+      ? item.ingredientIds
+      : (item?.ingredientId ? [item.ingredientId] : []);
+    return seed
+      .map(id => ({ id, canonical: findIngredient(id) }))
+      .filter(s => s.canonical);
+  });
+  const selectedIds = useMemo(() => new Set(selected.map(s => s.id)), [selected]);
+
+  const addTag = (id) => {
+    const canonical = findIngredient(id);
+    if (!canonical) return;
+    setSelected(prev => prev.some(s => s.id === id) ? prev : [...prev, { id, canonical }]);
+  };
+  // Append a preset's component ids in order, skipping any already on deck.
+  // Users who tap Italian Blend then Mexican Blend end up with the union
+  // of both sets without duplicates — useful for custom "extra cheesy"
+  // blends that cross preset boundaries.
+  const addPreset = (ids) => {
+    setSelected(prev => {
+      const have = new Set(prev.map(s => s.id));
+      const next = [...prev];
+      for (const id of ids) {
+        if (have.has(id)) continue;
+        const canonical = findIngredient(id);
+        if (!canonical) continue;
+        next.push({ id, canonical });
+        have.add(id);
+      }
+      return next;
+    });
+  };
+  const removeTag = (id) => setSelected(prev => prev.filter(s => s.id !== id));
+  const clearAll  = () => setSelected([]);
+
   // Surface a preset whenever the item name / search matches a blend
-  // label or any of its component names. "Italian blend shredded"
-  // matches the Italian Blend preset; "frozen pizza pepperoni" matches
-  // the pepperoni pizza preset; plain "cheese" surfaces all cheese
-  // blends. Filters out presets whose component ids don't all resolve.
+  // label or any of its component names. Filters out presets whose
+  // component ids don't all resolve.
   const presetMatches = useMemo(() => {
     const n = (needle || "").toLowerCase();
     if (!n) return [];
@@ -55,6 +111,10 @@ export default function LinkIngredient({ item, onLink, onClose }) {
       });
     }).slice(0, 4);
   }, [needle]);
+
+  const commit = () => {
+    onLink(selected.map(s => s.id));
+  };
 
   return (
     <div style={{
@@ -77,8 +137,65 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           "{item.name}"
         </h2>
         <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
-          Free-text rows don't match recipes or get auto-expiration. Tap the best match below — the row stays, it just gets connected.
+          Tap ingredients to add them. Tap a blend to add several at once. The same item can carry as many tags as it actually contains — burritos, pizzas, shredded blends.
         </p>
+
+        {/* SELECTED — the accumulator. Shown at the top so the user always
+            sees what's on deck before committing. Empty state reads as an
+            invitation rather than an error — linking nothing is a valid
+            outcome (equivalent to the old KEEP AS FREE TEXT button). */}
+        <div style={{
+          padding: "10px 12px", marginBottom: 14,
+          background: selected.length ? "#1a1608" : "#0f0f0f",
+          border: `1px solid ${selected.length ? "#3a2f10" : "#1e1e1e"}`,
+          borderRadius: 10,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: selected.length ? 8 : 0 }}>
+            <div style={{ flex: 1, fontFamily: "'DM Mono',monospace", fontSize: 9, color: selected.length ? "#f5c842" : "#666", letterSpacing: "0.12em" }}>
+              SELECTED ({selected.length})
+            </div>
+            {selected.length > 0 && (
+              <button
+                onClick={clearAll}
+                style={{
+                  background: "transparent", border: "none",
+                  color: "#888", cursor: "pointer",
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  letterSpacing: "0.1em",
+                }}
+              >
+                CLEAR ALL
+              </button>
+            )}
+          </div>
+          {selected.length === 0 ? (
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+              No tags yet — tap matches below, or commit empty to keep as free text.
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {selected.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => removeTag(s.id)}
+                  aria-label={`Remove ${s.canonical.name}`}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 6,
+                    padding: "5px 8px 5px 8px",
+                    background: "#0a0a0a", border: "1px solid #3a2f10",
+                    borderRadius: 16, cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#f5c842", letterSpacing: "0.04em",
+                  }}
+                >
+                  <span style={{ fontSize: 13 }}>{s.canonical.emoji || "🥣"}</span>
+                  <span>{s.canonical.name}</span>
+                  <span style={{ color: "#888", marginLeft: 2, fontSize: 11 }}>✕</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         <input
           type="text"
@@ -94,70 +211,86 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           }}
         />
 
-        {/* Blend presets — composite tags applied in one tap. Shown
-            above the fuzzy-match list when the item name / search query
-            matches a preset label or any of its component names. Tapping
-            commits an array of ingredient ids via onLink([a, b, c, …]). */}
+        {/* Blend presets — composite tags applied in one tap. Appends the
+            preset's component ids to the selection (deduped against
+            anything already on deck). Shown above the fuzzy-match list
+            when the item name / search query matches a preset label or
+            any of its component names. */}
         {presetMatches.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 2 }}>
-              BLENDS & COMPOSITES
+              BLENDS & COMPOSITES — TAP TO ADD ALL
             </div>
-            {presetMatches.map(preset => (
-              <button
-                key={preset.id}
-                onClick={() => onLink(preset.ingredientIds)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 12px", background: "#0f1620",
-                  border: "1px solid #1f3040", borderRadius: 10,
-                  cursor: "pointer", textAlign: "left", width: "100%",
-                }}
-              >
-                <span style={{ fontSize: 22 }}>{preset.emoji}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {preset.label}
+            {presetMatches.map(preset => {
+              // Count how many of the preset's components are already on
+              // deck. When all are present we dim the preset so the user
+              // sees at a glance there's nothing new to add.
+              const already = preset.ingredientIds.filter(id => selectedIds.has(id)).length;
+              const allAlready = already === preset.ingredientIds.length;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => addPreset(preset.ingredientIds)}
+                  disabled={allAlready}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "10px 12px",
+                    background: allAlready ? "#0a0f14" : "#0f1620",
+                    border: `1px solid ${allAlready ? "#162330" : "#1f3040"}`,
+                    borderRadius: 10,
+                    cursor: allAlready ? "default" : "pointer",
+                    textAlign: "left", width: "100%",
+                    opacity: allAlready ? 0.45 : 1,
+                  }}
+                >
+                  <span style={{ fontSize: 22 }}>{preset.emoji}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {preset.label}
+                    </div>
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.05em", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {preset.description}
+                    </div>
                   </div>
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.05em", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {preset.description}
-                  </div>
-                </div>
-                <span style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.08em",
-                  color: "#7eb8d4", background: "#1a2430",
-                  border: "1px solid #2a3a4a",
-                  padding: "2px 7px", borderRadius: 4,
-                }}>
-                  {preset.ingredientIds.length} TAGS
-                </span>
-              </button>
-            ))}
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.08em",
+                    color: "#7eb8d4", background: "#1a2430",
+                    border: "1px solid #2a3a4a",
+                    padding: "2px 7px", borderRadius: 4,
+                  }}>
+                    {allAlready ? "ADDED" : `+${preset.ingredientIds.length - already}`}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         )}
 
         {matches.length === 0 ? (
           <div style={{ padding: "24px 8px", textAlign: "center", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#666" }}>
-            No matches. Try a different search term, or keep this as free text.
+            No matches. Try a different search term, or commit empty to keep as free text.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
             {matches.map(({ ingredient, score }) => {
               const tone = confidenceTone(score);
+              const already = selectedIds.has(ingredient.id);
               return (
                 <button
                   key={ingredient.id}
-                  onClick={() => onLink([ingredient.id])}
+                  onClick={() => (already ? removeTag(ingredient.id) : addTag(ingredient.id))}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
-                    padding: "10px 12px", background: "#161616",
-                    border: `1px solid ${tone.color}33`, borderRadius: 10,
+                    padding: "10px 12px",
+                    background: already ? "#1a1608" : "#161616",
+                    border: `1px solid ${already ? "#f5c842" : `${tone.color}33`}`,
+                    borderRadius: 10,
                     cursor: "pointer", textAlign: "left", width: "100%",
                   }}
                 >
                   <span style={{ fontSize: 22 }}>{ingredient.emoji || "🥫"}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: already ? "#f5c842" : "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {ingredient.name}
                     </div>
                     <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.08em", marginTop: 2 }}>
@@ -167,11 +300,12 @@ export default function LinkIngredient({ item, onLink, onClose }) {
                   </div>
                   <span style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.08em",
-                    color: tone.color, background: `${tone.color}18`,
-                    border: `1px solid ${tone.color}44`,
+                    color: already ? "#f5c842" : tone.color,
+                    background: already ? "#2a2110" : `${tone.color}18`,
+                    border: `1px solid ${already ? "#3a2f10" : `${tone.color}44`}`,
                     padding: "2px 7px", borderRadius: 4,
                   }}>
-                    {tone.label.toUpperCase()}
+                    {already ? "✓ ADDED" : tone.label.toUpperCase()}
                   </span>
                 </button>
               );
@@ -179,18 +313,37 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           </div>
         )}
 
-        <button
-          onClick={onClose}
-          style={{
-            width: "100%", padding: "12px",
-            background: "#1a1a1a", border: "1px solid #2a2a2a",
-            color: "#888", borderRadius: 12,
-            fontFamily: "'DM Mono',monospace", fontSize: 12,
-            letterSpacing: "0.08em", cursor: "pointer",
-          }}
-        >
-          KEEP AS FREE TEXT
-        </button>
+        {/* Primary action bar. DONE is always available — empty selection
+            is a valid commit (returns row to free-text). Cancel just
+            closes the sheet without committing. */}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1, padding: "12px",
+              background: "#1a1a1a", border: "1px solid #2a2a2a",
+              color: "#888", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12,
+              letterSpacing: "0.08em", cursor: "pointer",
+            }}
+          >
+            CANCEL
+          </button>
+          <button
+            onClick={commit}
+            style={{
+              flex: 2, padding: "12px",
+              background: "#f5c842", border: "none",
+              color: "#111", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+              letterSpacing: "0.08em", cursor: "pointer",
+            }}
+          >
+            {selected.length === 0
+              ? "KEEP AS FREE TEXT"
+              : `DONE · ${selected.length} TAG${selected.length === 1 ? "" : "S"}`}
+          </button>
+        </div>
       </div>
     </div>
   );
