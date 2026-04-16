@@ -362,6 +362,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
           upsertProfile={upsertProfile}
           onClose={() => setSettingsOpen(false)}
           onOpenProfile={openProfile}
+          // Re-open release notes from Settings — covers both casual
+          // re-reading and the silent first-paint heuristic in
+          // useWhatsNew (new users get notes silently marked-as-seen
+          // and need this entry to ever see them).
+          onOpenReleaseNotes={() => { setSettingsOpen(false); whatsNew.openFromSettings(); }}
         />
       )}
 

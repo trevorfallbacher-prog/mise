@@ -105,7 +105,7 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ profile, relationships, upsertProfile, onClose, onOpenProfile }) {
+export default function Settings({ profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes }) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
@@ -336,6 +336,24 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
                 }
               />
             ))}
+          </>
+        )}
+
+        {/* About — release notes entry. Always available so users can
+            re-read past notes; also the recovery valve for the silent
+            first-paint heuristic in useWhatsNew (new accounts get the
+            current version marked-as-seen on first open and need this
+            entry to ever see what shipped). */}
+        {onOpenReleaseNotes && (
+          <>
+            <SectionHeader label="ABOUT" />
+            <button
+              onClick={onOpenReleaseNotes}
+              style={{ width:"100%", padding:"14px", background:"#0f1620", border:"1px solid #1f3040", color:"#7eb8d4", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:"0.1em", cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14 }}
+            >
+              <span>📋 RELEASE NOTES</span>
+              <span style={{ color:"#7eb8d4" }}>→</span>
+            </button>
           </>
         )}
 
