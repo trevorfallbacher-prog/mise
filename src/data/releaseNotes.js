@@ -42,9 +42,84 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.3";
+export const CURRENT_VERSION = "0.7.4";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.4",
+    date:    "2026-04-16",
+    title:   "Review it like an ItemCard — nothing baked in, everything tappable",
+    summary:
+      "A design pass on the scan-confirm screen, driven by the same " +
+      "feedback loop: if the OCR misfires (it will), you should be " +
+      "able to fix EVERY field about a row before it lands in your " +
+      "kitchen. Linking an item to a canonical no longer overwrites " +
+      "your display name — \"Frank's Best Cheese Dogs\" stays your " +
+      "display, with \"🌭 Hot Dog IS-A\" surfacing underneath so you " +
+      "see both. Tapping FOOD CATEGORY or STORED IN opens the same " +
+      "pickers the AddItemModal uses, so overrides feel familiar. " +
+      "Tap the emoji to pick a better one from a 35-glyph grid. The " +
+      "row now reads like a preview of the ItemCard it's about to " +
+      "become — nothing surprises you after STOCK. Receipts got the " +
+      "same treatment: tap the store or date in ReceiptView to fix " +
+      "it (any family member can), tap any item to drill into its " +
+      "ItemCard without losing the receipt view underneath, and tap " +
+      "the green GROCERIES THIS MONTH banner to browse every receipt " +
+      "you've ever scanned, grouped by month.",
+    shipped: [
+      {
+        kind: "fix",
+        text: "Linking a scan row to a canonical no longer overwrites your display name. \"Frank's Best Cheese Dogs\" stays; the canonical surfaces as a smaller \"🌭 Hot Dog IS-A\" line under your name — same pattern ItemCard uses. Previous behavior stomped on your text on every link",
+        commits: ["fbde843"],
+      },
+      {
+        kind: "feature",
+        text: "Tap the green GROCERIES THIS MONTH banner on Kitchen → new Receipt History modal lists every receipt you or your family have scanned, grouped by month with per-month totals. Tap any row to open the receipt photo + items — no more drilling in through a specific item to find a scan from last week",
+        commits: ["fbde843"],
+      },
+      {
+        kind: "feature",
+        text: "Scan-row FOOD CATEGORY chip is tappable — opens TypePicker (same one AddItemModal uses). Override the OCR's guess before stocking. Suggested type from name-inference still leads the list",
+        commits: ["b4e53ed"],
+      },
+      {
+        kind: "feature",
+        text: "Scan-row STORED IN chip is tappable — opens IdentifiedAsPicker. Tile placement propagates to duplicate rows with the same raw scanner read (receipt \"3 × CHOBANI\" all land in one tile after one tap). Unset shows a dashed \"+ set location\" affordance so inference gaps are visible",
+        commits: ["b4e53ed"],
+      },
+      {
+        kind: "feature",
+        text: "Scan-row emoji is tappable — opens a 35-glyph food-first grid. Propagates to duplicates. OCR's 🥫 fallback no longer leaks into your Kitchen",
+        commits: ["a912be2"],
+      },
+      {
+        kind: "ux",
+        text: "Scan-row name switched to Fraunces italic (same typography as ItemCard) so the row reads like the card it's about to become. Edit input matches the card's yellow-highlighted edit style",
+        commits: ["ec0ad72"],
+      },
+      {
+        kind: "feature",
+        text: "Tap the store name or date on a receipt in ReceiptView to fix it inline. Any family member can correct a mis-OCR'd store — migration 0041 adds a family-update RLS policy mirroring the existing family-select. Optimistic local update with SAVING… indicator",
+        commits: ["aca8e05"],
+      },
+      {
+        kind: "ux",
+        text: "Tapping an item in ReceiptView no longer closes the receipt before opening its ItemCard. ItemCard stacks on top; dismissing the card drops you back in the receipt view so you can review the next item in the list",
+        commits: ["aca8e05"],
+      },
+      {
+        kind: "architecture",
+        text: "Receipt-family modals re-layered: ReceiptHistoryModal (315) → ReceiptView (318) → ItemCard (320) → LinkIngredient (340). Stacking now reflects drill depth, not modal-mount order",
+        commits: ["aca8e05"],
+      },
+    ],
+    coming_soon: [
+      "Expiration cancel-to-null (still need a repro for the defaults-to-today case)",
+      "Receipt total editable from ReceiptView (store + date shipped; total is next)",
+      "Per-item edits from ReceiptView without stacking the full ItemCard (lighter inline edit for quick fixes)",
+      "Scan-row amount and unit joined to the chip row so every field reads consistent",
+    ],
+  },
   {
     version: "0.7.3",
     date:    "2026-04-16",
