@@ -42,9 +42,61 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.3.0";
+export const CURRENT_VERSION = "0.4.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.4.0",
+    date:    "2026-04-16",
+    title:   "One search, smarter placement, better flour",
+    summary:
+      "Add Item just got a single unified search. Type anything — your " +
+      "family's saved items come up first, then the global ingredient " +
+      "registry, all in one dropdown with tile-context priority. " +
+      "We also taught the app to remember where you put each item so " +
+      "your frozen pizza stops landing in the dairy tile. And yes, " +
+      "actual flour options now (bread, whole wheat, 00, pastry, cake, " +
+      "rice, almond, cornmeal, masa — 11 total).",
+    shipped: [
+      {
+        kind: "feature",
+        text: "Unified search in Add Item — the name field pulls your family's saved items AND our ingredient registry into one ranked dropdown. FROM LIST tab is gone; search is everything now",
+        commits: ["0bd6106"],
+      },
+      {
+        kind: "feature",
+        text: "Tile-context priority: when you open Add from a specific tile, items that belong there float to the top of the search results with an IN TILE hint",
+        commits: ["0bd6106"],
+      },
+      {
+        kind: "feature",
+        text: "Tile memory: your placement decisions persist per-item. Added Home Run Inn Pizza to Frozen Meals last time? Next family member sees it land there automatically, even if they opened Add from a different tile",
+        commits: ["a1d9333"],
+      },
+      {
+        kind: "fix",
+        text: "Composed items (frozen cheese pizza, Italian blend shredded cheese, store-bought pesto) no longer route by their biggest component — the user's explicit placement wins over the heuristic",
+        commits: ["a1d9333"],
+      },
+      {
+        kind: "feature",
+        text: "Flour registry: 11 proper flour canonicals under a Flour hub — All-Purpose, Bread, Whole Wheat, Pastry, Cake, 00, Semolina, Rice, Almond, Coconut, Cornmeal, Masa Harina. Each with its own weight-to-volume so recipe math stops pretending almond flour weighs the same as all-purpose",
+        commits: ["135b29c"],
+      },
+      {
+        kind: "ux",
+        text: "Search dropdown distinguishes between what's yours (👤 YOURS · USED 4× · 2d) and what's from the registry (📖 INGREDIENT · DAIRY · CHEESE). Exact-name matches get the same EXACT MATCH · WILL MERGE INTO THIS hint templates already had",
+        commits: ["0bd6106"],
+      },
+    ],
+    coming_soon: [
+      "Scan-side template matching — when a receipt has \"Home Run Inn Pizza\" on it, we match your template first instead of routing to generic pizza canonical",
+      "Admin-promoted community tier — most-used templates across families get blessed into a global composites set (Margherita Pizza, BLT, etc.)",
+      "Per-component proportion slider — \"I used 30% of the salt jar\" recorded on a cook without weighing",
+      "Enrichment seed pass for the new flour canonicals — description / flavor profile / substitutes / prep tips, same treatment the spice rack got",
+      "Pantry -> Kitchen rename so 'Pantry' can mean just the pantry sub-tab",
+    ],
+  },
   {
     version: "0.3.0",
     date:    "2026-04-16",
