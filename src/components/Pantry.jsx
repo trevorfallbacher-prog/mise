@@ -890,6 +890,15 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     return tileContext.classify(fakeItem, { findIngredient, hubForIngredient }) === tileContext.tileId;
   };
 
+  // Tile placement memory (migration 0036). When the modal opens from
+  // a specific tile, we seed customTileId from the tileContext so the
+  // save stamps the user's intent onto both the pantry item and the
+  // template. Filling from a template overrides with the template's
+  // remembered tile (so re-adds go where they went before, even if
+  // the user opened from a different tile). fillFromCanonical leaves
+  // it untouched — canonicals have no memory.
+  const [customTileId, setCustomTileId] = useState(tileContext?.tileId || null);
+
   // Custom-item fields. Name is the user's typed display name; unit +
   // category + components fill the rest of the identity. Picking a
   // canonical from the unified typeahead writes into these too.
@@ -954,6 +963,11 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     if (tpl.defaultAmount != null && amount === "") {
       setAmount(String(tpl.defaultAmount));
     }
+    // Inherit remembered tile (migration 0036). User's past
+    // placement wins over whatever tile the modal opened from —
+    // "I put Home Run Inn Pizza in Frozen Meals last time" carries
+    // forward even if they're adding from a different tile today.
+    if (tpl.tileId) setCustomTileId(tpl.tileId);
     // Rebuild the selected-components chips from the flat ingredient_ids.
     // findIngredient is imported at module scope.
     const rebuilt = (tpl.ingredientIds || [])
@@ -1006,6 +1020,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       max: Math.max(amt * 2, 1),
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
+      // User's tile placement — either seeded from tileContext on
+      // modal open, inherited from a filled template, or null when
+      // neither applies. Classifier prefers this over its heuristic.
+      tileId: customTileId || null,
     };
 
     onAdd(item);
@@ -1032,6 +1050,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         unit: customUnit.trim(),
         amount: amt,
         location: defaultLocationForCategory(customCategory),
+        // Persist the tile placement on the template too. Next family
+        // member who types this name on ANY tile context will inherit
+        // the original author's placement.
+        tileId: customTileId || null,
         ingredientIds: compIds,
       });
       if (!tmplErr && templateId && compIds.length > 0) {

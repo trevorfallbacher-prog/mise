@@ -180,6 +180,9 @@ const DRIED_CHILI_IDS = new Set([
 // with one override: dried chilies are checked before spices so a
 // chipotle doesn't get routed to the generic spice tile.
 export function pantryTileIdForItem(item, { findIngredient, hubForIngredient }) {
+  // Explicit user placement wins (migration 0036) — see fridgeTiles.js
+  // for the rationale. User-set tile_id trumps the heuristic.
+  if (item?.tileId) return item.tileId;
   if (item?.pantryTile) return item.pantryTile;
 
   const ing = item?.ingredientId ? findIngredient(item.ingredientId) : null;

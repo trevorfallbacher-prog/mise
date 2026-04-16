@@ -82,6 +82,10 @@ function fromDb(row) {
   // what Claude actually read before the canonical substitution. Lets
   // the ItemCard show "raw scan: SHRD MOZZ" for debugging and trust.
   if (row.scan_raw           !== undefined) item.scanRaw           = row.scan_raw || null;
+  // tile_id memory (migration 0036). Explicit tile placement set by
+  // the user at add-time or inherited from a template. Short-circuits
+  // the heuristic classifier when present.
+  if (row.tile_id            !== undefined) item.tileId            = row.tile_id || null;
   return item;
 }
 
@@ -126,6 +130,7 @@ function toDb(item) {
     ...(item.sourceReceiptId   !== undefined ? { source_receipt_id: item.sourceReceiptId || null } : {}),
     ...(item.sourceScanId      !== undefined ? { source_scan_id: item.sourceScanId || null } : {}),
     ...(item.scanRaw           !== undefined ? { scan_raw: item.scanRaw || null } : {}),
+    ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
   };
 }
 

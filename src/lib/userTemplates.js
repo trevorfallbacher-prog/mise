@@ -86,6 +86,7 @@ export async function saveTemplateFromCustomAdd({
   unit,
   amount,
   location,
+  tileId,
   ingredientIds,
 }) {
   if (!userId) return { id: null, error: new Error("userId required") };
@@ -115,6 +116,7 @@ export async function saveTemplateFromCustomAdd({
     if (unit)     patch.default_unit     = unit;
     if (amount != null) patch.default_amount   = amount;
     if (location) patch.default_location = location;
+    if (tileId)   patch.tile_id          = tileId;
     if (Array.isArray(ingredientIds) && ingredientIds.length > 0) {
       patch.ingredient_ids = ingredientIds;
     }
@@ -141,6 +143,7 @@ export async function saveTemplateFromCustomAdd({
       default_unit:     unit           || null,
       default_amount:   amount ?? null,
       default_location: location       || null,
+      tile_id:          tileId         || null,
       ingredient_ids: Array.isArray(ingredientIds) ? ingredientIds : [],
       // use_count defaults to 1 in SQL; explicit here for clarity
       use_count: 1,
@@ -266,6 +269,7 @@ export function fromDb(row) {
     defaultUnit:     row.default_unit || null,
     defaultAmount:   row.default_amount != null ? Number(row.default_amount) : null,
     defaultLocation: row.default_location || null,
+    tileId:          row.tile_id || null,
     ingredientIds:   Array.isArray(row.ingredient_ids) ? row.ingredient_ids : [],
     useCount:        Number(row.use_count || 0),
     lastUsedAt:      row.last_used_at ? new Date(row.last_used_at) : null,
