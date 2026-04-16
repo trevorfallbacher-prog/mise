@@ -4924,3 +4924,71 @@ export function stateLabel(state) {
   if (!state) return "";
   return STATE_LABELS[state] || state;
 }
+
+// Receipt-code → canonical-state map. Grocery POS systems abbreviate
+// aggressively (SHRD MOZZ, SLCD PROV, GRT PARM). This folds the common
+// shorthand plus spelled-out forms to the controlled state vocabulary
+// used by INGREDIENT_STATES.
+//
+// Keyed lowercase. Earlier entries win over later ones if patterns
+// overlap (e.g., "shredded_cooked" should NOT match "shredded" alone —
+// but the list below is for RAW codes on produce/cheese and doesn't
+// touch the cooked-meat vocabulary, so there's no collision today).
+const STATE_SCAN_CODES = [
+  // dairy / cheese
+  { pattern: /\bshrd\b|\bshred\b|\bshredded\b/i, state: "shredded" },
+  { pattern: /\bslcd\b|\bsliced?\b/i,            state: "sliced"   },
+  { pattern: /\bgrt\b|\bgrated?\b/i,             state: "grated"   },
+  { pattern: /\bblk\b|\bblock\b/i,               state: "block"    },
+  { pattern: /\bcrmb\b|\bcrumbled?\b/i,          state: "crumbled" },
+  { pattern: /\bcubed?\b/i,                      state: "cubed"    },
+  // bread
+  { pattern: /\bloaf\b/i,                        state: "loaf"     },
+  { pattern: /\bcrumbs?\b|\bbrdcrmb\b/i,         state: "crumbs"   },
+  { pattern: /\btoasted?\b/i,                    state: "toasted"  },
+  // produce / aromatics
+  { pattern: /\bwhl\b|\bwhole\b/i,               state: "whole"    },
+  { pattern: /\bdced\b|\bdiced?\b/i,             state: "diced"    },
+  { pattern: /\bmnc\b|\bminced?\b/i,             state: "minced"   },
+  { pattern: /\bjulienned?\b/i,                  state: "julienned" },
+  { pattern: /\bmashed\b/i,                      state: "mashed"   },
+  { pattern: /\bcrushed\b/i,                     state: "crushed"  },
+  { pattern: /\bjuiced?\b/i,                     state: "juiced"   },
+  { pattern: /\bzested?\b/i,                     state: "zested"   },
+  // meat
+  { pattern: /\bgrnd\b|\bground\b/i,             state: "ground"   },
+  { pattern: /\bckd\b|\bcooked?\b/i,             state: "cooked"   },
+  { pattern: /\braw\b|\bfresh\b/i,               state: "raw"      },
+  // garlic
+  { pattern: /\bhead\b/i,                        state: "head"     },
+  { pattern: /\bcloves?\b/i,                     state: "cloves"   },
+  { pattern: /\bpaste\b/i,                       state: "paste"    },
+  { pattern: /\broasted\b/i,                     state: "roasted"  },
+  // salt
+  { pattern: /\bflaky\b|\bflaked\b/i,            state: "flaky"    },
+  { pattern: /\bcoarse\b/i,                      state: "coarse"   },
+  { pattern: /\bfine\b/i,                        state: "fine"     },
+];
+
+// Detect an ingredient state from free-text scan output. Returns the
+// canonical state id when found AND that state exists in the
+// ingredient's vocabulary. Returns null otherwise.
+//
+//   detectStateFromText("SHRD MOZZ", mozzarella_ingredient)
+//     → "shredded"
+//
+//   detectStateFromText("WHL MILK", milk_ingredient)
+//     → null   (milk has no state vocabulary — scan text is noise)
+//
+//   detectStateFromText("BREAD", bread_ingredient)
+//     → null   (no state keyword matched)
+export function detectStateFromText(text, ingredient) {
+  if (!text) return null;
+  const vocab = statesForIngredient(ingredient);
+  if (!vocab || vocab.length === 0) return null;
+  const vocabSet = new Set(vocab);
+  for (const { pattern, state } of STATE_SCAN_CODES) {
+    if (pattern.test(text) && vocabSet.has(state)) return state;
+  }
+  return null;
+}

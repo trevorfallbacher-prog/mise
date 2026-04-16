@@ -5,7 +5,7 @@ import {
   membersOfHub, standaloneIngredients,
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
-  stateLabel, statesForIngredient,
+  stateLabel, statesForIngredient, detectStateFromText,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -298,6 +298,20 @@ function Scanner({ onItemsScanned, onClose }) {
           rawConf === "high" || rawConf === "medium" || rawConf === "low"
             ? rawConf
             : (activeMode.id === "receipt" ? "high" : "medium");
+        // State detection — grocery receipts abbreviate heavily ("SHRD
+        // MOZZ", "SLCD PROV"), and the scan text is the only place we can
+        // recover that information before the canonical name substitution
+        // wipes it out. Detection happens against the ORIGINAL scanner
+        // name before we replace it with canon.name. The detected state
+        // must match the ingredient's own state vocabulary — "WHL MILK"
+        // won't set state=whole because milk has no state vocabulary,
+        // just gets dropped as noise.
+        const detectedState = canon
+          ? detectStateFromText(item.name, canon)
+          : null;
+        // Provenance tag — activeMode.id is 'receipt' for receipt scans,
+        // 'fridge' / 'pantry' / 'freezer' for pantry-shelf scans.
+        const sourceKind = activeMode.id === "receipt" ? "receipt_scan" : "pantry_scan";
         const base = {
           ...item,
           name: canon ? canon.name : item.name,
@@ -308,6 +322,8 @@ function Scanner({ onItemsScanned, onClose }) {
           priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
           id: i,
           selected: true,
+          sourceKind,
+          ...(detectedState ? { state: detectedState } : {}),
         };
         if (!canon) {
           const inferred = inferUnitsForScanned(base);
@@ -600,9 +616,42 @@ function Scanner({ onItemsScanned, onClose }) {
                       })()}
                     </div>
 
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", display:"flex", gap:10, flexWrap:"wrap" }}>
+                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
                       <span>{(item.category || "").toUpperCase()}</span>
                       {item.priceCents != null && <span style={{ color:"#7ec87e" }}>{formatPrice(item.priceCents)}</span>}
+                      {/* State picker — only surfaces when the canonical
+                          ingredient has a state vocabulary (cheese, bread,
+                          chicken, etc.). Pre-selects any code the scanner
+                          detected from the receipt label (SHRD → shredded).
+                          "—" is the explicit "no state" option. */}
+                      {(() => {
+                        const canonForState = findIngredient(item.ingredientId);
+                        const states = statesForIngredient(canonForState);
+                        if (!states || states.length === 0) return null;
+                        return (
+                          <select
+                            value={item.state || ""}
+                            onChange={e => updateScanItem(idx, { state: e.target.value || null })}
+                            title="Physical state / form"
+                            style={{
+                              background: item.state ? "#0f1620" : "transparent",
+                              border: `1px solid ${item.state ? "#1f3040" : "#2a2a2a"}`,
+                              color: item.state ? "#7eb8d4" : "#888",
+                              borderRadius: 4, padding: "1px 4px",
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              letterSpacing: "0.05em", cursor: "pointer",
+                              outline: "none",
+                            }}
+                          >
+                            <option value="" style={{ background: "#141414" }}>— STATE</option>
+                            {states.map(s => (
+                              <option key={s} value={s} style={{ background: "#141414" }}>
+                                {stateLabel(s).toUpperCase()}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })()}
                     </div>
                   </div>
                   {editingIdx === idx ? (
@@ -1849,6 +1898,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             priceCents: scanPriceCents,
             expiresAt:   newExpiresAt,
             purchasedAt,
+            // Provenance + physical state — forwarded from the Scanner
+            // normalization (which tagged every item with its sourceKind
+            // and any detectable state code). Conditional spread so
+            // fields stay undefined when the scanner didn't set them.
+            ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
+            ...(s.state      ? { state: s.state           } : {}),
           });
         }
       });
