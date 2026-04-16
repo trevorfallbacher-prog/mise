@@ -1,73 +1,115 @@
-import { useEffect, useState, useCallback } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
+import { seedIngredientInfoOnce } from "./seedIngredientInfo";
 
-// Loads the ingredient_info JSONB table once on mount and caches it in
-// memory. Returns a sync `getInfo(ingredientId)` function that checks the
-// DB map first, then falls back to the JS INGREDIENT_INFO object in
-// src/data/ingredients.js.
+// Ingredient-metadata context + provider.
 //
-// This is the "hybrid" pattern: the code-side JS object stays as a safety
-// net so nothing breaks while we gradually migrate entries to the DB.
-// Once an ingredient has a row in ingredient_info, that row WINS —
-// overrides are additive (DB fields merge on top of JS fields) so you
-// can override just the description in the DB and keep the nutrition
-// from the JS file.
+// Lifts the ingredient_info fetch out of IngredientCard so tapping a pantry
+// row is instant. Fetch happens ONCE on App mount; every card just reads
+// from the pre-populated context. Opens a card → data is already there.
 //
-// Usage in components:
-//   const { getInfo, loading } = useIngredientInfo();
-//   const info = getInfo("paprika");
-//   // info is the merged object — DB fields win over JS fields.
+// Two layers for near-zero first paint:
 //
-// The hook re-fetches if the component remounts (e.g., tab switch), but
-// the data is tiny (~500 rows × ~1KB each = well under 1MB) so the
-// refetch is cheap. No realtime subscription needed — ingredient metadata
-// changes too rarely to justify the open channel.
+//   1. localStorage cache — the full dbMap is stored under CACHE_KEY. On
+//      mount we seed React state from the cache, so the first render has
+//      data before any network roundtrip. Stale-while-revalidate: the
+//      cache paints, the network fetch runs, fresh data replaces it when
+//      it lands.
+//
+//   2. Background seed + refetch — the Provider's effect runs
+//      seedIngredientInfoOnce(supabase) (no-op if already seeded this
+//      version) then refetches. First-ever login does seed → fetch in
+//      sequence so the table is populated before we read from it. Every
+//      subsequent mount skips the seeder via its localStorage gate.
+//
+// useIngredientInfo() (the hook) is unchanged from the consumer's side —
+// it still returns { getInfo, dbMap, loading }. The only difference is
+// where that state lives (context, not component-local).
 
-export function useIngredientInfo() {
-  const [dbMap, setDbMap] = useState({});
-  const [loading, setLoading] = useState(true);
+const CACHE_KEY = "mise:ingredient_info:cache:v1";
+
+function readCache() {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = window.localStorage?.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(map) {
+  try {
+    if (typeof window === "undefined") return;
+    window.localStorage?.setItem(CACHE_KEY, JSON.stringify(map));
+  } catch {
+    // Quota exceeded / private mode — harmless, we'll refetch next time.
+  }
+}
+
+const IngredientInfoContext = createContext({
+  getInfo: () => null,
+  dbMap: {},
+  loading: true,
+});
+
+export function IngredientInfoProvider({ children }) {
+  // Seed React state from the cache so the first render has data.
+  // Loading=false if cache hit (we already have SOMETHING to paint).
+  const initial = readCache();
+  const [dbMap, setDbMap] = useState(() => initial || {});
+  const [loading, setLoading] = useState(() => !initial);
 
   useEffect(() => {
     let alive = true;
     (async () => {
+      // Seed first so the table has rows before we read. Idempotent — the
+      // gate inside seedIngredientInfoOnce short-circuits after the first
+      // successful run.
+      await seedIngredientInfoOnce(supabase);
+
       const { data, error } = await supabase
         .from("ingredient_info")
         .select("ingredient_id, info");
       if (!alive) return;
       if (error) {
-        console.error("[ingredient_info] load failed:", error);
-        // Fallback to empty — JS object still works.
-        setDbMap({});
-      } else {
-        const map = {};
-        for (const row of data || []) {
-          map[row.ingredient_id] = row.info || {};
-        }
-        setDbMap(map);
+        console.warn("[ingredient_info] fetch failed (cache/JS fallback still works):", error.message);
+        setLoading(false);
+        return;
       }
+      const map = {};
+      for (const row of data || []) {
+        map[row.ingredient_id] = row.info || {};
+      }
+      setDbMap(map);
+      writeCache(map);
       setLoading(false);
     })();
     return () => { alive = false; };
   }, []);
 
-  // Merge: DB fields win over JS fields (shallow merge at the top level
-  // of the info object). Deep-merge would be more thorough but also more
-  // surprising — if someone overrides `storage` in the DB they probably
-  // want the whole storage block, not a field-by-field merge with the JS
-  // version. Shallow merge at the top level hits the right balance:
-  // override `description` without touching `nutrition`.
   const getInfo = useCallback(
-    (ingredientId) => {
-      if (!ingredientId) return null;
-      const db = dbMap[ingredientId] || null;
-      // We don't import getIngredientInfo here to avoid a circular dep —
-      // the caller can merge with the JS fallback if they want. The hook
-      // just provides what the DB has. The integration point in
-      // ingredients.js will handle the merge.
-      return db;
-    },
+    (ingredientId) => (ingredientId ? dbMap[ingredientId] || null : null),
     [dbMap]
   );
 
-  return { getInfo, dbMap, loading };
+  const value = useMemo(
+    () => ({ getInfo, dbMap, loading }),
+    [getInfo, dbMap, loading]
+  );
+
+  return (
+    <IngredientInfoContext.Provider value={value}>
+      {children}
+    </IngredientInfoContext.Provider>
+  );
+}
+
+// Reads from the App-level Provider. Same shape as before the context
+// lift so no consumer needs to change.
+export function useIngredientInfo() {
+  return useContext(IngredientInfoContext);
 }

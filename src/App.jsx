@@ -17,7 +17,7 @@ import { useRelationships } from "./lib/useRelationships";
 import { useNotifications } from "./lib/useNotifications";
 import { ToastProvider, useToast } from "./lib/toast";
 import { supabase } from "./lib/supabase";
-import { seedIngredientInfoOnce } from "./lib/seedIngredientInfo";
+import { IngredientInfoProvider } from "./lib/useIngredientInfo";
 
 const NAV = [
   { id:"home",     emoji:"🏠",   label:"Home"     },
@@ -106,7 +106,9 @@ export default function App() {
   // the hooks that hang off of user data (usePantry's realtime callback etc.).
   return (
     <ToastProvider>
-      <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+      <IngredientInfoProvider>
+        <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+      </IngredientInfoProvider>
     </ToastProvider>
   );
 }
@@ -117,14 +119,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
 
-  // Auto-seed the ingredient_info table the first time this user logs in
-  // (per browser, per SEED_VERSION). Fire-and-forget — the seeder gates
-  // on localStorage so subsequent mounts are free, and the JS
-  // INGREDIENT_INFO fallback covers any failure mode. See
-  // src/lib/seedIngredientInfo.js for details.
-  useEffect(() => {
-    seedIngredientInfoOnce(supabase);
-  }, []);
+  // NOTE: the ingredient_info seed + fetch used to live here as a separate
+  // useEffect. It's now consolidated inside IngredientInfoProvider so the
+  // seeded data is actually in React state (not just in the DB) by the
+  // time IngredientCard mounts — zero delay on card opens after first
+  // paint. See src/lib/useIngredientInfo.js.
 
   const relationships = useRelationships(user?.id);
   const { familyKey } = relationships;
