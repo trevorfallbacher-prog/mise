@@ -42,9 +42,62 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.6.0";
+export const CURRENT_VERSION = "0.7.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.0",
+    date:    "2026-04-16",
+    title:   "IDENTIFIED AS + STORED IN — two axes, USDA-seeded, yours to override",
+    summary:
+      "Big architectural upgrade. Your kitchen now tracks what each item IS " +
+      "(IDENTIFIED AS — Pizza, Cheese, Sausages, Mayo) separately from WHERE " +
+      "it lives (STORED IN — Frozen Meals, Dairy, Condiments). They usually " +
+      "go together but not always — Italian Blend identifies as Cheese but " +
+      "might be stored in Frozen Meals. The IDENTIFIED AS catalog is seeded " +
+      "from USDA's What We Eat in America food classifications (~48 types), " +
+      "and you can create your own if USDA doesn't have your family's " +
+      "flavor. Scan-confirm now shows both inferred placements upfront.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "IDENTIFIED AS line on every item — what KIND of thing it is. Pizza, Cheese, Sausages, Mayo, Pasta. Picking a type auto-suggests where it's stored, but you can override either axis independently",
+        commits: ["7d2909c", "af4f820", "f0b3051"],
+      },
+      {
+        kind: "feature",
+        text: "USDA-seeded bundled types: ~48 food categories lifted from WWEIA (What We Eat in America) classifications. When users disagree with \"is a hot dog a sandwich?\", USDA's call is the defensible default",
+        commits: ["7d2909c"],
+      },
+      {
+        kind: "feature",
+        text: "Create your own family types: tap + CREATE NEW TYPE in the picker to add household-specific categories like \"Kids Snacks\", \"Dad's Weird Sauces\", \"Sunday Leftovers\" — family-shared, realtime",
+        commits: ["3d63e96", "2a905fc", "4745143"],
+      },
+      {
+        kind: "feature",
+        text: "Scan-confirm auto-inference: every scanned row shows inferred IDENTIFIED AS + STORED IN chips upfront. No more clicking through 24 items to place 24 items — the system guesses, you only tap when it's wrong",
+        commits: ["0dd2ec9"],
+      },
+      {
+        kind: "feature",
+        text: "Templates carry both axes now — once you set a type on your family's Home Run Inn Pizza template, every family member's future re-add inherits it automatically via 0.6.0's scan-side template matching",
+        commits: ["af4f820", "0dd2ec9"],
+      },
+      {
+        kind: "ux",
+        text: "The old \"IDENTIFIED AS\" picker is renamed to \"STORED IN\" (it was always about placement, not type) — the new IDENTIFIED AS layer covers the semantic identity it was missing",
+        commits: ["3d878d9"],
+      },
+    ],
+    coming_soon: [
+      "Drill-into-type: tap IDENTIFIED AS anywhere to filter the pantry to all items of that type (\"show me all my pizzas\")",
+      "Type-aware recipe matcher fallback: recipe wants spaghetti, you have Cavatappi Pasta — same type, count as close match",
+      "Admin-promoted types: popular user-created types across families get blessed into the bundled WWEIA-level set",
+      "Per-component proportion slider",
+      "Type edit/rename flow for user-created types",
+    ],
+  },
   {
     version: "0.6.0",
     date:    "2026-04-16",
