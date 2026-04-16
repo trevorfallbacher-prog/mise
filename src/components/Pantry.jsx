@@ -5,6 +5,7 @@ import {
   membersOfHub, standaloneIngredients,
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
+  stateLabel, statesForIngredient,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -1788,8 +1789,26 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
-              <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6 }}>
-                {displayName}
+              <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
+                <span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>{displayName}</span>
+                {item.state && (
+                  <span
+                    title={`State: ${stateLabel(item.state)}`}
+                    style={{
+                      fontFamily:"'DM Mono',monospace", fontSize:9,
+                      color:"#7eb8d4",
+                      background:"#0f1620",
+                      border:"1px solid #1f3040",
+                      borderRadius:4,
+                      padding:"1px 6px",
+                      letterSpacing:"0.08em",
+                      flexShrink:0,
+                      textTransform:"uppercase",
+                    }}
+                  >
+                    {stateLabel(item.state)}
+                  </span>
+                )}
                 {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
               </span>
               {isEditing ? (
