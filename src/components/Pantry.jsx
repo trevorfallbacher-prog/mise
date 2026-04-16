@@ -1555,6 +1555,12 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   // closed; otherwise the pantry row object (we need emoji + name to show
   // in the picker header).
   const [linkingItem, setLinkingItem] = useState(null);
+  // Row the user tapped the ✕ on — held pending confirmation. Null =
+  // no delete in progress. The actual removePantryItem only fires when
+  // the user taps REMOVE inside the confirmation sheet. Cheap
+  // protection against the fat-finger "oh no I just deleted my
+  // groceries" scenario and the "kid grabbed the phone" scenario.
+  const [deleteCandidate, setDeleteCandidate] = useState(null);
   // Row currently showing the "move to other location" inline picker.
   // Null = closed; otherwise the row's id. Only one moving picker open
   // at a time — mirrors the edit/expiry single-editor pattern.
@@ -2243,14 +2249,20 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
                 );
               })()}
               {!item.ingredientId && (
-                <button
-                  onClick={e => { e.stopPropagation(); setLinkingItem(item); }}
-                  aria-label={`Link ${item.name} to a canonical ingredient`}
-                  title="Tap to match this with a canonical ingredient — free-text rows don't match recipes"
-                  style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#a3c9e0", background:"#0f1420", border:"1px solid #1e2a3a", padding:"1px 6px", borderRadius:4, cursor:"pointer" }}
+                // Display-only "unlinked" marker. Formerly a tappable
+                // shortcut to LinkIngredient; the shortcut was removed
+                // because per-row edits should flow through the
+                // ItemCard (tap the row -> + LINK INGREDIENTS button
+                // inside the card). Keeps the visual cue ("this row is
+                // free-text, recipes won't match") without offering a
+                // second, parallel path for linking that could race
+                // with other row edits.
+                <span
+                  title="This row isn't matched to a canonical ingredient — recipes won't find it. Tap the row to link."
+                  style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7aa4c0", background:"#0f1420", border:"1px solid #1e2a3a", padding:"1px 6px", borderRadius:4 }}
                 >
-                  🔗 LINK
-                </button>
+                  🔗 UNLINKED
+                </span>
               )}
               {isLow(item) && (
                 <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: isCritical(item)?"#ef4444":"#f59e0b", background: isCritical(item)?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
@@ -2357,7 +2369,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             </div>
           </div>
           <button
-            onClick={e => { e.stopPropagation(); removePantryItem(item.id); }}
+            onClick={e => { e.stopPropagation(); setDeleteCandidate(item); }}
             aria-label={`Remove ${item.name}`}
             style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
             onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
@@ -3193,6 +3205,89 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           }}
           onClose={() => setLinkingItem(null)}
         />
+      )}
+
+      {/* Delete-confirmation sheet. One modal used for every row's ✕
+          — the ✕ just sets deleteCandidate and this reads from it.
+          REMOVE actually fires the delete; CANCEL / backdrop-tap
+          dismisses without touching pantry state. No destructive
+          keyboard shortcut (Enter on the sheet focuses CANCEL, not
+          REMOVE) — intentional; accidental Return-key deletes were
+          part of the motivation for this flow. */}
+      {deleteCandidate && (
+        <div
+          onClick={() => setDeleteCandidate(null)}
+          style={{
+            position: "fixed", inset: 0, background: "#000000dd",
+            zIndex: 350, display: "flex", alignItems: "flex-end",
+            maxWidth: 480, margin: "0 auto",
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: "100%", background: "#141414",
+              borderRadius: "20px 20px 0 0",
+              padding: "22px 22px 28px",
+            }}
+          >
+            <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 18px" }} />
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#ef4444", letterSpacing: "0.15em", marginBottom: 6 }}>
+              REMOVE FROM KITCHEN?
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 36, flexShrink: 0 }}>{deleteCandidate.emoji || "🥫"}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 style={{
+                  fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                  color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2,
+                  overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {deleteCandidate.name}
+                </h2>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3 }}>
+                  {Number(deleteCandidate.amount || 0)} {deleteCandidate.unit || ""} · {(deleteCandidate.location || "pantry").toUpperCase()}
+                </div>
+              </div>
+            </div>
+            <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888", lineHeight: 1.5, margin: "0 0 18px" }}>
+              This removes the item from your kitchen entirely. If you're
+              just using it up, let the cook flow decrement it — that way
+              history, provenance, and cook-log references stay intact.
+            </p>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                onClick={() => setDeleteCandidate(null)}
+                autoFocus
+                style={{
+                  flex: 1, padding: "13px",
+                  background: "#1a1a1a", border: "1px solid #2a2a2a",
+                  color: "#ccc", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12,
+                  letterSpacing: "0.08em", cursor: "pointer", fontWeight: 600,
+                }}
+              >
+                CANCEL
+              </button>
+              <button
+                onClick={() => {
+                  const id = deleteCandidate.id;
+                  setDeleteCandidate(null);
+                  removePantryItem(id);
+                }}
+                style={{
+                  flex: 1, padding: "13px",
+                  background: "#2a0a0a", border: "1px solid #5a1a1a",
+                  color: "#ef4444", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12,
+                  letterSpacing: "0.08em", cursor: "pointer", fontWeight: 600,
+                }}
+              >
+                REMOVE
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
