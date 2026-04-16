@@ -42,9 +42,63 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.4.0";
+export const CURRENT_VERSION = "0.5.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.5.0",
+    date:    "2026-04-16",
+    title:   "IDENTIFIED AS — place anything in any tile, or make a new one",
+    summary:
+      "The organizational layer of the kitchen got a real upgrade. Every " +
+      "item now has an IDENTIFIED AS line — the tile where it lives. " +
+      "You can pick from built-ins (Pasta & Grains, Dairy, Frozen Meals, " +
+      "etc.) OR create your own family-shared tile on the spot if the " +
+      "built-ins don't fit your kitchen. We also expanded the pasta " +
+      "registry by 14 canonicals (cavatappi, fusilli, macaroni, tortellini, " +
+      "gnocchi, and more) so typing \"cavatappi pasta\" finds a real match " +
+      "instead of collapsing to flour.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "IDENTIFIED AS picker on every Add Item — pick a tile to place the item (Pasta & Grains, Dairy, Frozen Meals, etc.) or tap + CREATE NEW IDENTIFIED AS to invent your own category",
+        commits: ["f62a17e", "ba677a3"],
+      },
+      {
+        kind: "feature",
+        text: "Family-shared custom tiles — create \"Kids Snacks\", \"Protein Powders\", \"Grandma's Spice Kit\" and the whole household sees them in their picker in realtime",
+        commits: ["3afc8ab"],
+      },
+      {
+        kind: "feature",
+        text: "Smart tile suggestions: as you type the item's name, the picker highlights the most-likely tile with a ⭐ SUGGESTED treatment. 200+ keywords across 20 tiles",
+        commits: ["47a8948"],
+      },
+      {
+        kind: "feature",
+        text: "14 new pasta canonicals + a generic \"Pasta\" fallback: cavatappi, fusilli, rotini, farfalle (bow-tie), elbow macaroni, bucatini, linguine, angel hair, ziti, orecchiette, tortellini, ravioli, gnocchi. Each with proper weight-to-volume for recipe math",
+        commits: ["46a24a9"],
+      },
+      {
+        kind: "ux",
+        text: "ItemCard now distinguishes IDENTIFIED AS (what kind of thing is this — the tile) from MADE OF (what is it composed of — the components). Tap IDENTIFIED AS to re-pick",
+        commits: ["ba677a3"],
+      },
+      {
+        kind: "architecture",
+        text: "tile_id now flows end-to-end from pick -> template -> pantry row. Recipe matcher infrastructure for tile-fallback matching (\"you have cavatappi, recipe wants spaghetti, count as close match\") landed behind a helper — UI layer coming in a future chunk",
+        commits: ["af4a8b4"],
+      },
+    ],
+    coming_soon: [
+      "Scan-side template + tile matching — when a receipt has \"Home Run Inn Pizza\", match your template first AND inherit its tile_id",
+      "Tile-aware substitution suggestions in CookMode — \"you have Cavatappi Pasta in your Pasta & Grains, recipe wants spaghetti, swap?\"",
+      "Admin-promoted community tier — popular user tiles + templates across families get blessed into a global set",
+      "Per-component proportion slider — \"I used 30% of the salt jar\" without weighing",
+      "Enrichment seed pass for the new flour + pasta canonicals",
+      "Pantry -> Kitchen rename",
+    ],
+  },
   {
     version: "0.4.0",
     date:    "2026-04-16",
