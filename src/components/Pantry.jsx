@@ -10,6 +10,7 @@ import {
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
+import { compressImage } from "../lib/compressImage";
 import { useToast } from "../lib/toast";
 import { FRIDGE_TILES, tileIdForItem as fridgeTileIdForItem } from "../lib/fridgeTiles";
 import { PANTRY_TILES, pantryTileIdForItem } from "../lib/pantryTiles";
@@ -225,8 +226,31 @@ function Scanner({ onItemsScanned, onClose }) {
     prev.map((item, i) => i === idx ? { ...item, ...patch } : item)
   );
 
-  const handleFile = file => {
+  const handleFile = async file => {
     if (!file) return;
+    // Compress before anything else: the vision API call uses it, the
+    // storage upload uses it, and the inline preview uses it. One
+    // compression pass covers all three. A 3 MB phone photo typically
+    // drops to 200-400 KB — a ~90% reduction — without visibly affecting
+    // receipt OCR quality.
+    //
+    // Best-effort: if compression fails (old browser, corrupted image),
+    // fall back to the raw file via FileReader so the scan still works,
+    // just at full size.
+    try {
+      const compressed = await compressImage(file);
+      if (compressed?.base64) {
+        setImagePreview(`data:${compressed.mediaType};base64,${compressed.base64}`);
+        setImageData({ base64: compressed.base64, mediaType: compressed.mediaType });
+        setPhase("ready");
+        const kb = Math.round((compressed.size || 0) / 1024);
+        if (kb > 0) console.debug(`[scan] compressed image to ~${kb} KB`);
+        return;
+      }
+    } catch (e) {
+      console.warn("[handleFile] compression threw, falling back to raw:", e?.message || e);
+    }
+    // Fallback — raw FileReader path (the original behavior).
     const reader = new FileReader();
     reader.onload = e => {
       setImagePreview(e.target.result);
