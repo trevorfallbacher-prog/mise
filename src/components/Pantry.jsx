@@ -1756,9 +1756,38 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
           ? s.priceCents
           : (canon ? estimatePriceCents({ amount: s.amount, unit: s.unit, ingredient: canon }) : null);
 
-        const ex = s.ingredientId
-          ? next.find(p => p.ingredientId === s.ingredientId)
-          : next.find(p => p.name.toLowerCase() === s.name.toLowerCase());
+        // Find the existing pantry row to merge the scan into, walking
+        // three levels of fuzziness so user-renamed rows don't get
+        // orphaned by a subsequent scan:
+        //
+        //   1. Exact ingredientId match — the normal case.
+        //   2. Case-insensitive exact name match — handles scans that
+        //      duplicate an un-linked free-text row.
+        //   3. Fuzzy name match — when the scan has a canonical AND
+        //      there's a free-text row whose name contains the canonical
+        //      name or shortName (e.g., user's "Tillamook Pepper Jack"
+        //      vs scan's "Pepper Jack"), merge into it. The existing
+        //      ingredientId-backfill below then upgrades that free-text
+        //      row to canonical. Preserves the user's custom name.
+        let ex = null;
+        if (s.ingredientId) {
+          ex = next.find(p => p.ingredientId === s.ingredientId);
+        }
+        if (!ex) {
+          const scanLow = (s.name || "").toLowerCase();
+          ex = next.find(p => (p.name || "").toLowerCase() === scanLow);
+        }
+        if (!ex && s.ingredientId) {
+          const scanCanon = findIngredient(s.ingredientId);
+          const needle = (scanCanon?.shortName || scanCanon?.name || "").toLowerCase().trim();
+          if (needle.length >= 3) {
+            ex = next.find(p => {
+              if (p.ingredientId) return false;
+              const n = (p.name || "").toLowerCase();
+              return n && (n.includes(needle) || needle.includes(n));
+            });
+          }
+        }
         if (ex) {
           mergedCount++;
           if (mergedNames.length < 3) mergedNames.push(s.name);
