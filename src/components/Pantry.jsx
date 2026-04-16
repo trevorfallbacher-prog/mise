@@ -3063,6 +3063,7 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
             item={fresh}
             pantry={pantry}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
+            onEditTags={() => setLinkingItem(fresh)}
             onOpenProvenance={(link) => {
               // kind: 'receipt' and 'scan' both route through ReceiptView
               // (it handles both artifact kinds based on which prop is

@@ -23,6 +23,11 @@ import { useItemComponents } from "../lib/useItemComponents";
 //   onOpenProvenance(link)— optional; called when the user taps a tappable
 //                           provenance line. `link` is { kind, id } where
 //                           kind is 'receipt' | 'cook' | etc. Parent routes.
+//   onEditTags()          — optional; called when the user taps any of the
+//                           "+ EDIT TAGS" / "+ ADD" affordances on the card.
+//                           Parent opens LinkIngredient against this item
+//                           (layered on top at a higher z-index). Absent
+//                           = button is hidden (read-only embeds).
 //   onClose()             — dismiss the card
 //
 // When the item has no ingredientId (pure free-text row), the card still
@@ -112,7 +117,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance, onClose }) {
+export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance, onEditTags, onClose }) {
   // Close on Escape for keyboard users — mirrors other modals in the app.
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
@@ -462,6 +467,28 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                           }}
                         >
                           SHOW LESS
+                        </button>
+                      </>
+                    )}
+                    {/* Edit-tags affordance inline with the IDENTIFIED AS
+                        line. Opens LinkIngredient against this item via
+                        the parent's onEditTags callback. Hidden when the
+                        parent didn't wire it (read-only embeds, e.g. a
+                        nested drill view). */}
+                    {onEditTags && (
+                      <>
+                        <span style={{ color: "#444" }}> · </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onEditTags(); }}
+                          style={{
+                            background: "transparent", border: "1px solid #3a2f10",
+                            padding: "1px 7px",
+                            color: "#f5c842", cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            letterSpacing: "0.1em", borderRadius: 4,
+                          }}
+                        >
+                          + EDIT
                         </button>
                       </>
                     )}
@@ -835,6 +862,20 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 COMPONENTS · {components.length}
               </div>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
+              {onEditTags && (
+                <button
+                  onClick={onEditTags}
+                  style={{
+                    background: "transparent", border: "1px solid #3a2f10",
+                    padding: "3px 9px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    letterSpacing: "0.12em", borderRadius: 5,
+                  }}
+                >
+                  + EDIT
+                </button>
+              )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
               {components.map(comp => {
@@ -931,6 +972,24 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 {tags.length > 1 ? "INGREDIENTS" : "INGREDIENT"}
               </div>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
+              {/* Edit-tags on the legacy (pre-6c) section too. Re-linking
+                  a multi-tagged item through LinkIngredient's new flow
+                  writes component rows and flips kind='meal', promoting
+                  the card to the COMPONENTS view on the next open. */}
+              {onEditTags && (
+                <button
+                  onClick={onEditTags}
+                  style={{
+                    background: "transparent", border: "1px solid #3a2f10",
+                    padding: "3px 9px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    letterSpacing: "0.12em", borderRadius: 5,
+                  }}
+                >
+                  + EDIT
+                </button>
+              )}
             </div>
             {tags.length > 1 && (
               // Tab row — one chip per canonical tag. Tap to swap the
@@ -987,6 +1046,22 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
             fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic",
           }}>
             Free-text row — no canonical ingredient tagged. Link it to unlock the deep-dive content.
+            {onEditTags && (
+              <div style={{ marginTop: 12 }}>
+                <button
+                  onClick={onEditTags}
+                  style={{
+                    padding: "10px 16px",
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    color: "#f5c842", borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
+                  }}
+                >
+                  + LINK INGREDIENTS
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
