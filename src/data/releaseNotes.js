@@ -42,9 +42,61 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.2.0";
+export const CURRENT_VERSION = "0.3.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.3.0",
+    date:    "2026-04-16",
+    title:   "Your kitchen remembers — family-shared templates for recurring items",
+    summary:
+      "Stop retyping the same brand names every grocery run. When you " +
+      "add a custom item (\"Home Run Inn Pizza\"), we now save it as a " +
+      "template for your whole family. Next time anyone in your " +
+      "household types it, the name, emoji, components, and defaults " +
+      "autofill. Strict dedup keeps the list clean — no more \"Home " +
+      "Run Inn Pizza\" next to \"home run in pizza cheese\" because " +
+      "someone didn't see the existing one.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "YOUR RECENTS: every custom item you add becomes a family-shared template — tap any recent to autofill name, emoji, components, and unit next time you add it",
+        commits: ["513783f", "ba08c63", "3d84e72"],
+      },
+      {
+        kind: "feature",
+        text: "Typeahead suggestions as you type — the dropdown surfaces matching templates with \"used 4×\" and \"2d ago\" context",
+        commits: ["54e245d"],
+      },
+      {
+        kind: "feature",
+        text: "Strict family dedup: when your spouse adds \"Home Run Inn Pizza\" after you did, saving merges into the existing template instead of creating a duplicate (with an EXACT MATCH hint before saving so the merge is visible, not silent)",
+        commits: ["513783f", "54e245d"],
+      },
+      {
+        kind: "ux",
+        text: "Add Item opens to CUSTOM mode by default now — brand-specific and household-specific items are the common case, canonical ingredients are the fallback",
+        commits: ["fb4d7c2"],
+      },
+      {
+        kind: "ux",
+        text: "Use-count tracking (\"3×\", \"12×\") surfaces which templates you reach for most — rankings recency-first, but fun to see which item your household has bought the most this month",
+        commits: ["ba08c63"],
+      },
+      {
+        kind: "architecture",
+        text: "Foundation work: patch-notes system (what you're reading!), philosophy rules in ARCHITECTURE.md, migration template with RLS patterns, release-notes voice guide — all designed so this app can scale without the foundation cracking",
+        commits: ["c3e5109", "08bb022", "87c6618", "5e754cf", "fcacbd5", "e21ca56", "020220d", "4d4fd4d", "1cddda1"],
+      },
+    ],
+    coming_soon: [
+      "Scan-side template matching — when you scan a receipt with \"Home Run Inn Pizza\" on it, we match your template first before the generic canonical, so brand identity survives the scan",
+      "Admin-promoted community tier — most-used templates across families can eventually get blessed into a global \"Community Composites\" set (Margherita Pizza, BLT, etc.) so new users benefit from the crowd",
+      "Per-component proportion slider — \"I used 30% of the salt jar\" recorded on a cook without weighing anything",
+      "Spice family hubs — collapse the 70+ spice ingredients into themed groups (Chili Family, Dried Herbs, etc.)",
+      "Pantry → Kitchen rename — the top-level concept becomes 'Kitchen' so 'Pantry' can mean just the pantry sub-tab",
+    ],
+  },
   {
     version: "0.2.0",
     date:    "2026-04-16",
