@@ -16,6 +16,8 @@ import { useShoppingList } from "./lib/useShoppingList";
 import { useRelationships } from "./lib/useRelationships";
 import { useNotifications } from "./lib/useNotifications";
 import { ToastProvider, useToast } from "./lib/toast";
+import { supabase } from "./lib/supabase";
+import { seedIngredientInfoOnce } from "./lib/seedIngredientInfo";
 
 const NAV = [
   { id:"home",     emoji:"🏠",   label:"Home"     },
@@ -114,6 +116,15 @@ export default function App() {
 function AuthedApp({ user, profile, upsertProfile }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
+
+  // Auto-seed the ingredient_info table the first time this user logs in
+  // (per browser, per SEED_VERSION). Fire-and-forget — the seeder gates
+  // on localStorage so subsequent mounts are free, and the JS
+  // INGREDIENT_INFO fallback covers any failure mode. See
+  // src/lib/seedIngredientInfo.js for details.
+  useEffect(() => {
+    seedIngredientInfoOnce(supabase);
+  }, []);
 
   const relationships = useRelationships(user?.id);
   const { familyKey } = relationships;
