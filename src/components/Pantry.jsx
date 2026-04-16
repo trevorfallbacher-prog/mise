@@ -878,51 +878,21 @@ function formatAgo(d) {
 }
 
 function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
-  const [mode, setMode] = useState("custom"); // "custom" | "canonical"
-  const [search, setSearch] = useState("");
-  // When the user taps a hub (Chicken, Cheese, …) we drill into it and show
-  // just its members. `drillHub` is null on the top-level tile grid.
-  const [drillHub, setDrillHub] = useState(null);
-  // When the modal was opened from a tile drill-down, the picker pre-filters
-  // to ingredients that classify into that tile. The user can override
-  // with "Show all ingredients" — useful when an ingredient is misclassified
-  // or when the user knows exactly what they want.
-  const [showAllFromTile, setShowAllFromTile] = useState(false);
-  const activeTileFilter = tileContext && !showAllFromTile ? tileContext : null;
-  // Wraps an ingredient in a fake pantry-item shape so the tile classifier
-  // (which operates on pantry rows) can route it. Only the fields the
-  // classifier actually reads are populated — ingredientId + category.
-  const fitsTile = (ing) => {
-    if (!activeTileFilter) return true;
-    const fakeItem = { ingredientId: ing.id, category: ing.category };
-    return activeTileFilter.classify(fakeItem, { findIngredient, hubForIngredient }) === activeTileFilter.tileId;
-  };
-  // A hub fits the tile if any of its members do — so the Cheese hub shows
-  // up on the Dairy tile (all cheeses fit) but not on Meat & Poultry.
-  const hubFitsTile = (hub) => {
-    if (!activeTileFilter) return true;
-    return membersOfHub(hub.id).some(fitsTile);
-  };
-  const [picked, setPicked] = useState(null); // ingredient from registry
-  const [unitId, setUnitId] = useState("");
   const [amount, setAmount] = useState("");
-  // Which subcategory tiles are expanded inside the drill view. Drill-downs
-  // with lots of members (cheese has 75+) are overwhelming as a flat list, so
-  // we show one tile per subcategory and only reveal its ingredients on tap.
-  const [expandedSubs, setExpandedSubs] = useState(() => new Set());
-  const toggleSub = (key) => setExpandedSubs(prev => {
-    const next = new Set(prev);
-    next.has(key) ? next.delete(key) : next.add(key);
-    return next;
-  });
-  // An ingredient the user tapped (not picked yet) — shows the detail sheet
-  // with description, flavor profile, wine pairings, recipes. `Add to Pantry`
-  // in the sheet is what actually promotes it to `picked`.
-  const [detailIngredient, setDetailIngredient] = useState(null);
 
-  // Custom-mode fields (only used when mode === "custom"). Custom items
-  // always get the generic 🥫 emoji — the on-screen emoji input was a bad
-  // affordance on mobile keyboards and rarely produced anything sensible.
+  // Tile-context boost: when the modal opens from a specific tile, we
+  // prefer suggestions that classify into that tile. The filter is a
+  // sort boost, not a hard filter — users can still pick anything, the
+  // tile's items just float to the top.
+  const fitsTile = (ing) => {
+    if (!tileContext) return true;
+    const fakeItem = { ingredientId: ing.id, category: ing.category };
+    return tileContext.classify(fakeItem, { findIngredient, hubForIngredient }) === tileContext.tileId;
+  };
+
+  // Custom-item fields. Name is the user's typed display name; unit +
+  // category + components fill the rest of the identity. Picking a
+  // canonical from the unified typeahead writes into these too.
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
@@ -960,6 +930,22 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // components resets to the defaults; the edge-level precision (if
   // the user wants to tweak "I used 30% of the salt jar") is a
   // per-cook concern, not a per-template one.
+  // Fill the form from a canonical ingredient pick. The unified
+  // typeahead offers both templates AND canonicals; this is the
+  // canonical side. Sets the user's customName to the canonical's
+  // display name, slots the canonical as the single component (so
+  // the save path records it as a tagged ingredient with a valid
+  // ingredient_id), and inherits the emoji + category + default unit.
+  // Amount stays whatever the user had typed — they still need to
+  // enter count even when the identity is resolved.
+  const fillFromCanonical = (ing) => {
+    if (!ing) return;
+    setCustomName(ing.name || "");
+    setCustomCategory(ing.category || "pantry");
+    if (ing.defaultUnit) setCustomUnit(ing.defaultUnit);
+    setCustomComponents([{ id: ing.id, canonical: ing }]);
+  };
+
   const fillFromTemplate = (tpl) => {
     if (!tpl) return;
     setCustomName(tpl.name || "");
@@ -977,56 +963,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   };
 
   // Top-level picker view. If the user has typed a search, flatten everything
-  // so "cheddar" still finds cheddar even though it's hidden under Cheese.
-  // Otherwise show hub tiles + standalone ingredients as their own rows.
-  // When a tile filter is active (user came from a tile drill-down), all
-  // three branches apply it so the picker only offers ingredients that
-  // classify into the current tile.
-  const pickerView = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (drillHub) {
-      const members = membersOfHub(drillHub.id);
-      const matching = q ? members.filter(m => m.name.toLowerCase().includes(q)) : members;
-      return {
-        kind: "drill",
-        hub: drillHub,
-        members: matching.filter(fitsTile),
-      };
-    }
-    if (q) {
-      // Flat search across all ingredients AND hub names.
-      const matchedHubs = HUBS.filter(h => h.name.toLowerCase().includes(q)).filter(hubFitsTile);
-      const matchedIngredients = INGREDIENTS.filter(i =>
-        (i.name.toLowerCase().includes(q) || (i.shortName && i.shortName.toLowerCase().includes(q))) &&
-        fitsTile(i)
-      );
-      return { kind: "search", hubs: matchedHubs, ingredients: matchedIngredients };
-    }
-    return {
-      kind: "top",
-      hubs: HUBS.filter(hubFitsTile),
-      ingredients: standaloneIngredients().filter(fitsTile),
-    };
-  }, [search, drillHub, activeTileFilter]);
-
-  const pickIngredient = (ing) => {
-    setPicked(ing);
-    setUnitId(ing.defaultUnit);
-  };
-
-  const canSaveCanonical = picked && amount !== "" && unitId;
-  const canSaveCustom = customName.trim() && amount !== "" && customUnit.trim();
-  const canSave = mode === "canonical" ? canSaveCanonical : canSaveCustom;
-
-  // Live price estimate based on the picked ingredient's estCentsPerBase
-  // (or the category fallback). Shown below the amount/unit inputs so the
-  // user can see what manual entries will contribute to monthly spend.
-  const estCents = useMemo(() => {
-    if (mode !== "canonical" || !picked || !amount || !unitId) return null;
-    const amt = parseFloat(amount);
-    if (!Number.isFinite(amt) || amt <= 0) return null;
-    return estimatePriceCents({ amount: amt, unit: unitId, ingredient: picked });
-  }, [mode, picked, amount, unitId]);
+  // Save predicate. With the unified single flow, a save is valid
+  // when there's a name, an amount, and a unit — the pieces of a
+  // minimally-complete pantry row.
+  const canSave = customName.trim() && amount !== "" && customUnit.trim();
 
   const save = async () => {
     if (!canSave) return;
@@ -1041,72 +981,49 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     const compIds = customComponents.map(c => c.id);
     const primaryComp = customComponents[0] || null;
 
-    const item = mode === "canonical"
-      ? {
-          id: crypto.randomUUID(),
-          ingredientId: picked.id,
-          name: picked.name,
-          emoji: picked.emoji,
-          amount: amt,
-          unit: unitId,
-          max: Math.max(amt * 2, 1),
-          category: picked.category,
-          lowThreshold: Math.max(amt * 0.25, 0.25),
-          // Manually-added items don't have a receipt price — estimate from
-          // the ingredient's typical $/base-unit so they still show up in
-          // spend totals and the monthly view.
-          priceCents: estCents,
-        }
-      : {
-          id: crypto.randomUUID(),
-          // First picked component (if any) becomes the primary tag so
-          // the legacy ingredient_id scalar stays useful. Zero components
-          // = pure free-text, same as before.
-          ingredientId: primaryComp?.id || null,
-          ingredientIds: compIds,
-          // 2+ components promotes the item to a Meal on save; single
-          // or zero stays an ingredient (either free-text or tagged).
-          kind: compIds.length >= 2 ? "meal" : "ingredient",
-          name: customName.trim(),
-          // Inherit emoji from the primary canonical when one exists —
-          // the 🥫 fallback is fine for truly un-tagged free text but
-          // "Heinz Ketchup" reading as 🥫 when ketchup is in the
-          // registry feels wrong.
-          emoji: primaryComp?.canonical?.emoji || "🥫",
-          amount: amt,
-          unit: customUnit.trim(),
-          max: Math.max(amt * 2, 1),
-          category: customCategory,
-          lowThreshold: Math.max(amt * 0.25, 0.25),
-        };
+    // Unified save shape. Single-canonical picks, multi-canonical
+    // composed meals, and pure free-text all land in the same payload —
+    // components.length drives whether ingredientId is set, kind flips
+    // to meal, or the row stays free-text.
+    const item = {
+      id: crypto.randomUUID(),
+      // First picked component (if any) becomes the primary tag so the
+      // legacy ingredient_id scalar stays useful. Zero components = pure
+      // free-text.
+      ingredientId: primaryComp?.id || null,
+      ingredientIds: compIds,
+      // 2+ components promotes the item to a Meal on save; single or
+      // zero stays an ingredient (either free-text or canonical-tagged).
+      kind: compIds.length >= 2 ? "meal" : "ingredient",
+      name: customName.trim(),
+      // Inherit emoji from the primary canonical when one exists —
+      // the 🥫 fallback is fine for truly un-tagged free text but
+      // "Heinz Ketchup" reading as 🥫 when ketchup is in the registry
+      // feels wrong.
+      emoji: primaryComp?.canonical?.emoji || "🥫",
+      amount: amt,
+      unit: customUnit.trim(),
+      max: Math.max(amt * 2, 1),
+      category: customCategory,
+      lowThreshold: Math.max(amt * 0.25, 0.25),
+    };
 
     onAdd(item);
 
     // Write the structured components tree after onAdd has kicked the
     // parent pantry_items INSERT. setComponentsForParent retries on
     // FK-violation so the race with the parent INSERT is self-healing.
-    // Only for Meals — single-tag customs just need the legacy
-    // ingredient_id field which onAdd already persists.
-    if (mode === "custom" && compIds.length >= 2) {
+    if (compIds.length >= 2) {
       await setComponentsForParent(item.id, componentsFromIngredientIds(compIds));
     }
 
-    // Auto-save a user template from this custom add. Runs only for
-    // custom-mode adds (canonical-mode picks from the bundled registry
-    // and doesn't warrant a user-owned template). Dedup is strict
-    // per-family: if the name matches an existing family template,
-    // this upserts onto it — bumping use_count + refreshing
-    // last_used_at — rather than creating a duplicate row.
-    //
-    // If the template is composed, mirror its components into
-    // user_item_template_components so next time someone in the
-    // family types "Home Run Inn Pizza" they get the same
-    // composition pre-filled, not just the name.
-    //
-    // Fire-and-forget from the user's perspective — any failure
-    // logs but doesn't block the pantry_items write, which is the
-    // user-facing intent.
-    if (mode === "custom" && userId) {
+    // Auto-save a user template. Strict per-family dedup: if a family
+    // member already saved this name, the write upserts onto the
+    // existing template (bumping use_count + refreshing last_used_at)
+    // instead of creating a duplicate. Fire-and-forget from the user's
+    // perspective — any failure logs but doesn't block the pantry_items
+    // write, which is the user-facing intent.
+    if (userId) {
       const { id: templateId, error: tmplErr } = await saveTemplateFromCustomAdd({
         userId: userId,
         name: customName.trim(),
@@ -1128,8 +1045,6 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     onClose();
   };
 
-  const unitOptions = picked?.units || [];
-
   return (
     <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:160, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}>
       <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"24px 24px 40px", maxHeight:"85vh", overflowY:"auto" }}>
@@ -1147,296 +1062,37 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
             : "Add an ingredient"}
         </h3>
 
-        {/* Tile-filter banner — shown when we're pre-filtering to a specific
-            tile. Gives the user a way to escape the filter ("show all
-            ingredients") in case what they want is misclassified or they
-            just want the full picker. */}
+        {/* Tile-context banner — shown when the modal opened from a
+            specific tile. Suggestions that classify into the tile float
+            to the top of the search results; everything else is still
+            fully searchable (no hard filter). */}
         {tileContext && (
           <div style={{
             display: "flex", alignItems: "center", gap: 10,
             padding: "10px 12px",
-            background: showAllFromTile ? "#0f0f0f" : "#1e1a0e",
-            border: `1px solid ${showAllFromTile ? "#2a2a2a" : "#f5c84233"}`,
+            background: "#1e1a0e",
+            border: "1px solid #f5c84233",
             borderRadius: 10,
             marginBottom: 14,
           }}>
             <span style={{ fontSize: 18 }}>{tileContext.tileEmoji}</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color: "#f0ece4" }}>
-                {showAllFromTile ? "Showing all ingredients" : `Showing ${tileContext.tileLabel.toLowerCase()}`}
+                Adding to {tileContext.tileLabel.toLowerCase()}
               </div>
               <div style={{ fontFamily:"'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.06em", marginTop: 2 }}>
-                {showAllFromTile ? "TAP BELOW TO FILTER BACK TO TILE" : "DON'T SEE WHAT YOU WANT?"}
+                MATCHES FROM THIS TILE FLOAT TO THE TOP · STILL SEARCHABLE
               </div>
             </div>
-            <button
-              onClick={() => { setShowAllFromTile(v => !v); setDrillHub(null); setSearch(""); }}
-              style={{
-                padding:"6px 10px",
-                background:"transparent",
-                border:`1px solid ${showAllFromTile ? "#f5c84244" : "#2a2a2a"}`,
-                borderRadius: 8,
-                fontFamily:"'DM Mono',monospace",
-                fontSize: 10,
-                color: showAllFromTile ? "#f5c842" : "#888",
-                letterSpacing:"0.06em",
-                cursor:"pointer",
-                flexShrink: 0,
-              }}
-            >
-              {showAllFromTile ? "FILTER" : "SHOW ALL"}
-            </button>
           </div>
         )}
 
-        {/* Mode toggle. Custom-first because in practice most things
-            users add are NOT in the bundled canonical registry —
-            brand-specific products (Home Run Inn pizza, Heinz ketchup,
-            store-bought composites) and household-specific names
-            ("Mom's marinara") dominate. The bundled list is mostly
-            useful for raw ingredients (mozzarella, eggs, olive oil)
-            where the canonical match unlocks recipe matching. */}
-        <div style={{ display:"flex", gap:0, padding:3, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:16 }}>
-          <button
-            onClick={() => setMode("custom")}
-            style={{ flex:1, padding:"8px", background: mode==="custom"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="custom"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
-          >
-            CUSTOM
-          </button>
-          <button
-            onClick={() => setMode("canonical")}
-            style={{ flex:1, padding:"8px", background: mode==="canonical"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="canonical"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
-          >
-            FROM LIST
-          </button>
-        </div>
-
-        {mode === "canonical" ? (
-          <>
-            {/* Search / picked ingredient */}
-            {picked ? (
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, marginBottom:12 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                  <span style={{ fontSize:24 }}>{picked.emoji}</span>
-                  <div>
-                    <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4" }}>{picked.name}</div>
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em" }}>{picked.category.toUpperCase()}</div>
-                  </div>
-                </div>
-                <button onClick={() => { setPicked(null); setUnitId(""); setSearch(""); }} style={{ background:"none", border:"none", color:"#666", fontSize:18, cursor:"pointer" }}>×</button>
-              </div>
-            ) : (
-              <>
-                {/* Breadcrumb when drilled into a hub */}
-                {drillHub && (
-                  <button
-                    onClick={() => { setDrillHub(null); setSearch(""); setExpandedSubs(new Set()); }}
-                    style={{ display:"flex", alignItems:"center", gap:6, background:"transparent", border:"none", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:11, letterSpacing:"0.08em", cursor:"pointer", marginBottom:10, padding:0 }}
-                  >
-                    ← ALL INGREDIENTS
-                  </button>
-                )}
-
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder={
-                    drillHub ? `Filter ${drillHub.name.toLowerCase()}…`
-                    : activeTileFilter ? `Search ${activeTileFilter.tileLabel.toLowerCase()}…`
-                    : "Search ingredients…"
-                  }
-                  autoFocus
-                  style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", marginBottom:10, boxSizing:"border-box" }}
-                />
-
-                {/* Top-level view: each category gets its own section with
-                    hub tiles up top and loose ingredients as rows below. */}
-                {pickerView.kind === "top" && (
-                  <div style={{ marginBottom:14 }}>
-                    {CATEGORY_ORDER.map(cat => {
-                      const hubs = pickerView.hubs.filter(h => h.category === cat);
-                      const loose = pickerView.ingredients.filter(i => i.category === cat);
-                      if (hubs.length === 0 && loose.length === 0) return null;
-                      return (
-                        <div key={cat} style={{ marginBottom:18 }}>
-                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:8 }}>
-                            {CATEGORY_LABELS[cat] || cat.toUpperCase()}
-                          </div>
-                          {hubs.length > 0 && (
-                            <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:8, marginBottom: loose.length > 0 ? 8 : 0 }}>
-                              {hubs.map(h => (
-                                <button
-                                  key={h.id}
-                                  onClick={() => setDrillHub(h)}
-                                  style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:4, padding:"14px 6px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, cursor:"pointer" }}
-                                >
-                                  <span style={{ fontSize:26 }}>{h.emoji}</span>
-                                  <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f0ece4" }}>{h.name}</span>
-                                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>{membersOfHub(h.id).length} types</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          {loose.length > 0 && (
-                            <div style={{ border:"1px solid #1e1e1e", borderRadius:10 }}>
-                              {loose.map(i => (
-                                <IngredientRow key={i.id} ing={i} onPick={pickIngredient} />
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    {/* Filtered-to-nothing empty state — kicks in when the
-                        current tile has no canonical ingredients in the
-                        registry yet. Points the user at Custom mode or
-                        the "Show all" escape hatch in the banner above. */}
-                    {activeTileFilter && pickerView.hubs.length === 0 && pickerView.ingredients.length === 0 && (
-                      <div style={{ padding:"22px 18px", textAlign:"center", background:"#0c0c0c", border:"1px dashed #222", borderRadius:12 }}>
-                        <div style={{ fontSize: 30, marginBottom: 8, opacity: 0.7 }}>{activeTileFilter.tileEmoji}</div>
-                        <div style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize: 16, color:"#888", marginBottom: 6 }}>
-                          No {activeTileFilter.tileLabel.toLowerCase()} in the library yet
-                        </div>
-                        <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize: 12, color:"#555", lineHeight: 1.5 }}>
-                          Switch to <b>Custom</b> to add your own, or tap <b>Show all</b> above to browse every ingredient.
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Drilled into a specific hub. If the hub's members carry a
-                    `subcategory` (Cheese does — Fresh / Soft Ripened / Blue /
-                    etc.), group them under those headers; otherwise show a
-                    flat list. */}
-                {pickerView.kind === "drill" && (() => {
-                  if (pickerView.members.length === 0) {
-                    return (
-                      <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
-                        No match in {pickerView.hub.name.toLowerCase()}.
-                      </div>
-                    );
-                  }
-                  const hasSubs = pickerView.members.some(m => m.subcategory);
-                  // When the user is typing a filter, flatten — they're
-                  // looking for something specific, not browsing categories.
-                  const q = search.trim().toLowerCase();
-                  if (!hasSubs || q) {
-                    return (
-                      <div style={{ maxHeight:340, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
-                        {pickerView.members.map(m => (
-                          <IngredientRow key={m.id} ing={m} onPick={setDetailIngredient} useShortName />
-                        ))}
-                      </div>
-                    );
-                  }
-                  // Group by subcategory, preserving registry order.
-                  const groups = [];
-                  const bySub = new Map();
-                  for (const m of pickerView.members) {
-                    const key = m.subcategory || "Other";
-                    if (!bySub.has(key)) {
-                      bySub.set(key, []);
-                      groups.push(key);
-                    }
-                    bySub.get(key).push(m);
-                  }
-                  return (
-                    <div style={{ maxHeight:420, overflowY:"auto", marginBottom:14, display:"flex", flexDirection:"column", gap:8 }}>
-                      {groups.map(sub => {
-                        const members = bySub.get(sub);
-                        const open = expandedSubs.has(sub);
-                        const sample = members.slice(0, 3).map(m => m.emoji).join(" ");
-                        return (
-                          <div key={sub} style={{ border:`1px solid ${open?"#2a2a2a":"#1e1e1e"}`, borderRadius:12, background:"#141414", overflow:"hidden" }}>
-                            <button
-                              onClick={() => toggleSub(sub)}
-                              style={{ width:"100%", display:"flex", alignItems:"center", gap:12, padding:"14px 14px", background: open?"#1a1a1a":"transparent", border:"none", textAlign:"left", cursor:"pointer", color:"#ddd" }}
-                            >
-                              <span style={{ fontSize:22, flexShrink:0 }}>{sample}</span>
-                              <div style={{ flex:1, minWidth:0 }}>
-                                <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f0ece4", fontWeight:400 }}>{sub}</div>
-                                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>
-                                  {members.length} {members.length === 1 ? "type" : "types"}
-                                </div>
-                              </div>
-                              <span style={{ color:"#f5c842", fontSize:16, transition:"transform 0.15s", transform: open?"rotate(90deg)":"rotate(0deg)" }}>›</span>
-                            </button>
-                            {open && (
-                              <div style={{ borderTop:"1px solid #1e1e1e" }}>
-                                {members.map(m => (
-                                  <IngredientRow key={m.id} ing={m} onPick={setDetailIngredient} useShortName />
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-
-                {/* Free-text search across everything (including hub children) */}
-                {pickerView.kind === "search" && (
-                  <div style={{ maxHeight:260, overflowY:"auto", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:14 }}>
-                    {pickerView.hubs.map(h => (
-                      <button
-                        key={h.id}
-                        onClick={() => { setDrillHub(h); setSearch(""); }}
-                        style={{ width:"100%", display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"transparent", border:"none", borderBottom:"1px solid #1a1a1a", textAlign:"left", cursor:"pointer", color:"#ddd" }}
-                      >
-                        <span style={{ fontSize:20 }}>{h.emoji}</span>
-                        <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, flex:1 }}>{h.name}</span>
-                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", letterSpacing:"0.08em" }}>{membersOfHub(h.id).length} TYPES →</span>
-                      </button>
-                    ))}
-                    {pickerView.ingredients.map(i => (
-                      <IngredientRow key={i.id} ing={i} onPick={pickIngredient} />
-                    ))}
-                    {pickerView.hubs.length === 0 && pickerView.ingredients.length === 0 && (
-                      <div style={{ padding:"14px", color:"#666", fontFamily:"'DM Sans',sans-serif", fontSize:13, textAlign:"center" }}>
-                        No match. Try Custom →
-                      </div>
-                    )}
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* Amount + Unit (only visible once an ingredient is picked) */}
-            {picked && (
-              <>
-                <div style={{ display:"flex", gap:10, marginBottom:10 }}>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="Amount"
-                    autoFocus
-                    style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
-                  />
-                  <select
-                    value={unitId}
-                    onChange={e => setUnitId(e.target.value)}
-                    style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none", appearance:"none", cursor:"pointer" }}
-                  >
-                    {unitOptions.map(u => (
-                      <option key={u.id} value={u.id} style={{ background:"#141414" }}>{u.label}</option>
-                    ))}
-                  </select>
-                </div>
-                {estCents != null && (
-                  <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.08em", marginBottom:20 }}>
-                    EST. ${(estCents/100).toFixed(2)} — typical retail
-                  </div>
-                )}
-                {estCents == null && <div style={{ marginBottom:20 }} />}
-              </>
-            )}
-          </>
-        ) : (
-          <>
+        {/* Mode toggle deleted in chunk 13a — AddItemModal became a
+            single unified flow. Typeahead on the name input surfaces
+            user templates AND canonical ingredients together, with
+            tile-context boost. Canonical-browse drill-down is gone;
+            search is the only discovery surface. */}
+        <>
             {/* Custom mode — emoji is auto-assigned (🥫) since the picker
                 rarely worked on iOS keyboards anyway. Users can change the
                 name freely; the emoji stays consistent for custom items. */}
@@ -1536,29 +1192,65 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
               {(() => {
                 const typed = (customName || "").trim().toLowerCase();
                 if (!typed) return null;
-                // Filter templates by substring on user-typed name
-                // (case-insensitive) AND by name_normalized equality
-                // (for the exact-match hint). Up to 5 suggestions —
-                // more than that and the user should scroll the full
-                // RECENTS list above.
-                const suggestions = userTemplates.filter(t =>
-                  t.name.toLowerCase().includes(typed)
-                ).slice(0, 5);
-                const exactMatch = suggestions.find(t =>
+
+                // Unified typeahead: merge user templates (family-shared
+                // recurring items) AND canonical ingredients from the
+                // bundled registry into one ranked list.
+                //
+                //   1. Template substring matches (family recurring
+                //      items — highest priority, personal/social signal
+                //      beats generic data)
+                //   2. Canonical substring matches (the bundled
+                //      registry; name OR shortName matches)
+                //
+                // Within each band, tile-context matches float first
+                // (items that classify into the tile the user is
+                // adding from). Exact normalized-name matches get an
+                // EXACT MATCH hint regardless of band — tells the user
+                // the save will merge into an existing template.
+                const templateMatches = userTemplates
+                  .filter(t => t.name.toLowerCase().includes(typed))
+                  .slice(0, 8);
+                const alreadyCovered = new Set(
+                  templateMatches.flatMap(t => t.ingredientIds || [])
+                );
+                const canonicalMatches = INGREDIENTS
+                  .filter(i =>
+                    !alreadyCovered.has(i.id) &&
+                    (i.name.toLowerCase().includes(typed) ||
+                     (i.shortName && i.shortName.toLowerCase().includes(typed)))
+                  );
+                // Tile-context boost: sort matches that fit the tile
+                // first within their band. Stable within each partition
+                // so the registry's natural ordering is preserved.
+                const canonicalSorted = [
+                  ...canonicalMatches.filter(i => fitsTile(i)),
+                  ...canonicalMatches.filter(i => !fitsTile(i)),
+                ].slice(0, 8);
+
+                const exactMatchTpl = templateMatches.find(t =>
                   t.nameNormalized === typed.replace(/\s+/g, " ")
                 );
-                if (suggestions.length === 0) return null;
+                const exactMatchCanon = !exactMatchTpl && canonicalSorted.find(i =>
+                  i.name.toLowerCase() === typed
+                );
+
+                if (templateMatches.length === 0 && canonicalSorted.length === 0) {
+                  return null;
+                }
+
                 return (
                   <div style={{
                     marginTop: 6,
                     background: "#0a0a0a", border: "1px solid #2a2a2a",
                     borderRadius: 10, padding: 4,
+                    maxHeight: 320, overflowY: "auto",
                   }}>
-                    {suggestions.map(tpl => {
-                      const isExact = exactMatch && exactMatch.id === tpl.id;
+                    {templateMatches.map(tpl => {
+                      const isExact = exactMatchTpl && exactMatchTpl.id === tpl.id;
                       return (
                         <button
-                          key={tpl.id}
+                          key={`tpl-${tpl.id}`}
                           onClick={() => fillFromTemplate(tpl)}
                           style={{
                             display: "flex", alignItems: "center", gap: 10,
@@ -1581,11 +1273,55 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                             </div>
                             <div style={{
                               fontFamily: "'DM Mono',monospace", fontSize: 8,
-                              color: "#666", letterSpacing: "0.06em", marginTop: 1,
+                              color: "#7eb8d4", letterSpacing: "0.06em", marginTop: 1,
                             }}>
-                              {isExact
-                                ? "EXACT MATCH · SAVING WILL MERGE INTO THIS"
+                              👤 YOURS · {isExact
+                                ? "EXACT MATCH · WILL MERGE INTO THIS"
                                 : `USED ${tpl.useCount}× · ${formatAgo(tpl.lastUsedAt)}`}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    {/* Band separator — subtle hairline between the
+                        personal (templates) and global (canonical)
+                        bands. Skipped when either band is empty. */}
+                    {templateMatches.length > 0 && canonicalSorted.length > 0 && (
+                      <div style={{ height: 1, background: "#1a1a1a", margin: "4px 10px" }} />
+                    )}
+                    {canonicalSorted.map(ing => {
+                      const isExact = exactMatchCanon && exactMatchCanon.id === ing.id;
+                      const tileFit = tileContext ? fitsTile(ing) : false;
+                      return (
+                        <button
+                          key={`ing-${ing.id}`}
+                          onClick={() => fillFromCanonical(ing)}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            width: "100%", padding: "7px 10px",
+                            background: "transparent",
+                            border: `1px solid ${isExact ? "#3a2f10" : "transparent"}`,
+                            borderRadius: 8, cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseOver={e => { if (!isExact) e.currentTarget.style.background = "#141414"; }}
+                          onMouseOut={e => { if (!isExact) e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span style={{ fontSize: 16, flexShrink: 0 }}>{ing.emoji || "🥫"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                              color: isExact ? "#f5c842" : "#f0ece4",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {ing.name}
+                            </div>
+                            <div style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 8,
+                              color: "#888", letterSpacing: "0.06em", marginTop: 1,
+                            }}>
+                              📖 INGREDIENT · {(ing.category || "").toUpperCase()}
+                              {ing.subcategory && ` · ${ing.subcategory.toUpperCase()}`}
+                              {tileFit && <span style={{ color: "#f5c842" }}>  · IN TILE</span>}
                             </div>
                           </div>
                         </button>
@@ -1698,8 +1434,6 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 </div>
               )}
             </div>
-          </>
-        )}
 
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={onClose} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer", letterSpacing:"0.08em" }}>CANCEL</button>
@@ -1713,16 +1447,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         </div>
       </div>
 
-      {/* Detail sheet sits on top of the picker modal. "+ Add to Pantry" here
-          promotes the ingredient to `picked` so the amount/unit step appears
-          behind it when the sheet closes. */}
-      {detailIngredient && (
-        <IngredientDetailSheet
-          ingredient={detailIngredient}
-          onClose={() => setDetailIngredient(null)}
-          onAdd={(ing) => { pickIngredient(ing); setDetailIngredient(null); }}
-        />
-      )}
+      {/* IngredientDetailSheet removed in chunk 13a — canonical browse-
+          and-detail-sheet path gone. Unified search in the name input
+          handles discovery; tapping a canonical suggestion fills the
+          form directly (no preview sheet). */}
 
       {/* Components picker, layered over the add-item modal. Seeded
           with the current customComponents so reopening shows the
