@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import {
   INGREDIENTS, HUBS,
   findIngredient, findHub, hubForIngredient,
@@ -2304,7 +2304,7 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Pantry({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView }) {
+export default function Pantry({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView, deepLink, onDeepLinkConsumed }) {
   const [scanning, setScanning] = useState(false);
   // Search replaces the old category filter pills — one input searches item
   // names, hub names, and categories.
@@ -2354,8 +2354,25 @@ export default function Pantry({ userId, pantry, setPantry, shoppingList, setSho
   const [openItem, setOpenItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
   // Receipt-view modal. Set to a receipt uuid to open; null to close.
-  // Driven by ItemCard's provenance line (onOpenProvenance callback).
+  // Driven by ItemCard's provenance line (onOpenProvenance callback)
+  // and by a bell notification tap (deepLink prop, routed from App).
   const [openReceiptId, setOpenReceiptId] = useState(null);
+
+  // Consume a deep link from a notification tap. App.jsx routes
+  // target_kind='receipt' / 'pantry_scan' here by switching to the
+  // Kitchen tab and setting deepLink = { kind, id }. We open the
+  // matching ReceiptView modal and tell App to clear the pointer so
+  // re-rendering doesn't re-open the modal if the user dismisses it.
+  useEffect(() => {
+    if (!deepLink) return;
+    if (deepLink.kind === "receipt" && deepLink.id) {
+      setOpenReceiptId({ receiptId: deepLink.id });
+      onDeepLinkConsumed?.();
+    } else if (deepLink.kind === "pantry_scan" && deepLink.id) {
+      setOpenReceiptId({ scanId: deepLink.id });
+      onDeepLinkConsumed?.();
+    }
+  }, [deepLink, onDeepLinkConsumed]);
   // Convert-state modal. Set to a pantry item to open; null to close.
   // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
   // user picks a target state + enters how much it yielded, we decrement

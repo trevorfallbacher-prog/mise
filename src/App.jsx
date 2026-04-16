@@ -224,6 +224,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
   //   * 'user_profile' — opens the target user's profile overlay (used
   //                      by badge earn/fan-out notifications so a tap
   //                      lands on the badge wall).
+  //   * 'receipt'      — lands on Kitchen tab and opens ReceiptView on
+  //                      the receipt row (photo, total, item list).
+  //                      Populated by migration 0040.
+  //   * 'pantry_scan'  — same as receipt but for a fridge/pantry/
+  //                      freezer scan artifact (pantry_scans.id).
   // Unknown kinds fall through silently so future server-side targets
   // ship without breaking old clients.
   const openNotificationTarget = useCallback((targetKind, targetId) => {
@@ -237,6 +242,13 @@ function AuthedApp({ user, profile, upsertProfile }) {
     if (targetKind === "user_profile") {
       setNotifsOpen(false);
       setProfileUserId(targetId);
+      return;
+    }
+    if (targetKind === "receipt" || targetKind === "pantry_scan") {
+      setDeepLink({ kind: targetKind, id: targetId });
+      setPantryView("stock");
+      setTab("pantry");
+      setNotifsOpen(false);
       return;
     }
   }, []);
@@ -359,6 +371,8 @@ function AuthedApp({ user, profile, upsertProfile }) {
             setShoppingList={setShoppingList}
             view={pantryView}
             setView={setPantryView}
+            deepLink={deepLink}
+            onDeepLinkConsumed={() => setDeepLink(null)}
           />
         )}
       </div>
