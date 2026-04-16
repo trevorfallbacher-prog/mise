@@ -185,6 +185,14 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     const diners = 1;
     return Math.max(1, Number(recipe?.serves || 2) - diners);
   });
+  // Optional user-override for the leftover Meal's name. Empty string =
+  // use the auto-generated "Leftover ${recipe.title}". This is what
+  // turns "Leftover Lasagna" into "Mom's Lasagna" or "Sunday Sauce" —
+  // the auto name is fine, the override is the brag-with-humility
+  // affordance the user asked for. Only used in the regular-meal
+  // leftover branch; compound-produce (sriracha, pesto) keeps the
+  // canonical name since it merges into the existing pantry row.
+  const [leftoverCustomName, setLeftoverCustomName] = useState("");
 
   // Compound recipes (sriracha, pesto, stock) produce an ingredient row the
   // user fully intended to save — skipping the yes/no feels right, but we
@@ -416,7 +424,10 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               // structure is in pantry_item_components (written below,
               // after this setPantry returns).
               ingredientIds: flatIngredientIds,
-              name: `Leftover ${recipe.title}`,
+              // User-override wins; empty string falls back to the
+              // auto-generated "Leftover X" so the existing default is
+              // preserved when the user just taps through.
+              name: leftoverCustomName.trim() || `Leftover ${recipe.title}`,
               emoji: recipe.emoji || "🍽️",
               amount: savedServings,
               unit: "serving",
@@ -1223,6 +1234,38 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                 ? `≈ ${Number((recipe?.serves || 2) * leftoverFraction).toFixed(2)} servings saved`
                 : `${leftoverServings} of ${recipe?.serves || "?"} servings saved`}
             </div>
+
+            {/* Optional leftover name override. Default placeholder shows
+                what the auto-name would be (Leftover X), so the user
+                sees the fallback even when the input is empty. Skipped
+                for compound-produce because that path merges into an
+                existing canonical row whose name we never want to
+                clobber from the cook flow. */}
+            {!isCompoundProduce && (
+              <div style={{ marginTop:14, marginBottom:4 }}>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.1em", marginBottom:6 }}>
+                  CALL IT SOMETHING ELSE? (OPTIONAL)
+                </div>
+                <input
+                  type="text"
+                  value={leftoverCustomName}
+                  onChange={e => setLeftoverCustomName(e.target.value)}
+                  placeholder={`Leftover ${recipe.title}`}
+                  maxLength={80}
+                  style={{
+                    width:"100%", boxSizing:"border-box",
+                    padding:"12px 14px",
+                    background:"#0a0a0a", border:"1px solid #2a2a2a",
+                    borderRadius:10, color:"#f0ece4",
+                    fontFamily:"'Fraunces',serif", fontStyle:"italic",
+                    fontSize:15, outline:"none",
+                  }}
+                />
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444", letterSpacing:"0.08em", marginTop:4 }}>
+                  E.G. "MOM'S LASAGNA" · "SUNDAY SAUCE" · "BIRTHDAY CAKE NIGHT"
+                </div>
+              </div>
+            )}
           </>
         )}
 
