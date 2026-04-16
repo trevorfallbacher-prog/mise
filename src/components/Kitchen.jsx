@@ -630,23 +630,30 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         autoFocus
                         onChange={e => updateScanItem(idx, { name: e.target.value })}
                         onBlur={() => {
-                          // On commit, fan the rename out to any sibling rows
-                          // with the same raw scanner read. Only applies the
-                          // name (not amount/unit).
                           propagateCorrection(idx, { name: item.name });
                           setEditingNameIdx(null);
                         }}
                         onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingNameIdx(null); }}
-                        style={{ background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"6px 10px", color:"#f5c842", fontFamily:"'DM Sans',sans-serif", fontSize:16, outline:"none", width:"100%", boxSizing:"border-box" }}
+                        style={{ background:"#0a0a0a", border:"1px solid #f5c842", borderRadius:8, padding:"4px 10px", color:"#f5c842", fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic", fontWeight:400, lineHeight:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                       />
                     ) : (
                       <button
                         onClick={() => setEditingNameIdx(idx)}
                         aria-label={`Rename ${item.name}`}
-                        style={{ background:"transparent", border:"none", padding:0, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:16, color:"#f0ece4", fontWeight:500, lineHeight:1.35, wordBreak:"break-word", cursor:"text" }}
+                        style={{ background:"transparent", border:"none", padding:0, textAlign:"left", fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic", color:"#f0ece4", fontWeight:400, lineHeight:1.25, wordBreak:"break-word", cursor:"text" }}
                       >
                         {item.name}
                       </button>
+                    )}
+                    {/* Canonical IS-A subline — when the row is linked to
+                        a canonical ingredient, show "🌭 Hot Dog" under the
+                        user's display name so they see what the system
+                        thinks this is without having to tap the chip.
+                        Same pattern ItemCard uses. */}
+                    {canon && canon.name && canon.name.toLowerCase() !== item.name.trim().toLowerCase() && (
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#6b8a6b", letterSpacing:"0.05em", marginTop:-2 }}>
+                        {canon.emoji || "🏷️"} {canon.name} <span style={{ color:"#3a4a3a" }}>IS-A</span>
+                      </div>
                     )}
 
                     {/* Chip row — status + tappable corrections. LINK/RELINK
