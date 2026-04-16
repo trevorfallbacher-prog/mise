@@ -54,6 +54,11 @@ function fromDb(row) {
   if (row.source_cook_log_id !== undefined) item.sourceCookLogId   = row.source_cook_log_id || null;
   // Physical form (migration 0027). Same defensive mapping.
   if (row.state              !== undefined) item.state             = row.state || null;
+  // Source provenance (migration 0029). Deep-links the row back to the
+  // receipt / scan / cook that created it. Same defensive mapping.
+  if (row.source_kind        !== undefined) item.sourceKind        = row.source_kind || null;
+  if (row.source_receipt_id  !== undefined) item.sourceReceiptId   = row.source_receipt_id || null;
+  if (row.source_scan_id     !== undefined) item.sourceScanId      = row.source_scan_id || null;
   return item;
 }
 
@@ -78,6 +83,9 @@ function toDb(item) {
     ...(item.sourceRecipeSlug  !== undefined ? { source_recipe_slug: item.sourceRecipeSlug } : {}),
     ...(item.sourceCookLogId   !== undefined ? { source_cook_log_id: item.sourceCookLogId } : {}),
     ...(item.state             !== undefined ? { state: item.state || null } : {}),
+    ...(item.sourceKind        !== undefined ? { source_kind: item.sourceKind || null } : {}),
+    ...(item.sourceReceiptId   !== undefined ? { source_receipt_id: item.sourceReceiptId || null } : {}),
+    ...(item.sourceScanId      !== undefined ? { source_scan_id: item.sourceScanId || null } : {}),
   };
 }
 

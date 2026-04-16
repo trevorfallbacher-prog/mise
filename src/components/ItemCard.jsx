@@ -12,12 +12,16 @@ import IngredientCard from "./IngredientCard";
 // with.
 //
 // Props:
-//   item           — the pantry row being viewed
-//   pantry         — full pantry array (for IngredientCard's "also in stock" lookups)
-//   onUpdate(patch)— called when the user edits a field; parent merges the
-//                    patch into the row (same pattern as updatePantryItem).
-//                    Optional — if absent, the card renders read-only.
-//   onClose()      — dismiss the card
+//   item                  — the pantry row being viewed
+//   pantry                — full pantry array (for IngredientCard's "also in stock" lookups)
+//   onUpdate(patch)       — called when the user edits a field; parent merges
+//                           the patch into the row (same pattern as
+//                           updatePantryItem). Optional — if absent, the
+//                           card renders read-only.
+//   onOpenProvenance(link)— optional; called when the user taps a tappable
+//                           provenance line. `link` is { kind, id } where
+//                           kind is 'receipt' | 'cook' | etc. Parent routes.
+//   onClose()             — dismiss the card
 //
 // When the item has no ingredientId (pure free-text row), the card still
 // renders — just without the canonical deep-dive below.
@@ -38,17 +42,50 @@ function daysUntil(d) {
   return diff;
 }
 
+// Build the provenance banner for an item. Returns { icon, text, linkTo }
+// where linkTo is a "deep link descriptor" the card uses to route the tap.
+// linkTo is null when there's nothing to open (e.g. manual adds).
 function provenanceLine(item) {
-  // Chunk 2b will flesh this out with source_kind + source_*_id. For now,
-  // infer the best we can from the existing purchasedAt and sourceCookLogId
-  // (from migration 0026 — cook-complete leftovers already set this).
   const added = formatDateShort(item.purchasedAt);
-  if (item.sourceCookLogId && item.sourceRecipeSlug) {
-    return { icon: "🍝", text: `COOKED FROM ${item.sourceRecipeSlug.toUpperCase()}${added ? ` · ${added}` : ""}` };
+
+  // Cook-complete output (migration 0026 columns). Takes priority over
+  // source_kind because the cook-log reference is the most specific.
+  if (item.sourceCookLogId) {
+    const slug = item.sourceRecipeSlug
+      ? item.sourceRecipeSlug.replace(/_/g, " ").toUpperCase()
+      : "A PAST COOK";
+    return {
+      icon: "🍝",
+      text: `COOKED FROM ${slug}${added ? ` · ${added}` : ""}`,
+      linkTo: { kind: "cook", id: item.sourceCookLogId },
+    };
   }
-  if (added) {
-    return { icon: "🛒", text: `ADDED · ${added}` };
+
+  // Receipt scan (migration 0029). Deep-linkable.
+  if (item.sourceKind === "receipt_scan" && item.sourceReceiptId) {
+    return {
+      icon: "🧾",
+      text: `SCANNED FROM RECEIPT${added ? ` · ${added}` : ""}`,
+      linkTo: { kind: "receipt", id: item.sourceReceiptId },
+    };
   }
+
+  // Pantry scan without a receipt record — show date, no deep link yet
+  // (a pantry_scans table is a future feature).
+  if (item.sourceKind === "pantry_scan") {
+    return { icon: "📱", text: `ADDED VIA PANTRY SCAN${added ? ` · ${added}` : ""}`, linkTo: null };
+  }
+
+  // State-conversion output (when we eventually set source_kind here).
+  if (item.sourceKind === "conversion") {
+    return { icon: "⇌", text: `CONVERTED FROM SOURCE${added ? ` · ${added}` : ""}`, linkTo: null };
+  }
+
+  // Explicitly manual, or inferred from presence of purchasedAt alone.
+  if (item.sourceKind === "manual" || added) {
+    return { icon: "✎", text: `ADDED MANUALLY${added ? ` · ${added}` : ""}`, linkTo: null };
+  }
+
   return null;
 }
 
@@ -59,7 +96,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item, pantry = [], onUpdate, onClose }) {
+export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance, onClose }) {
   // Close on Escape for keyboard users — mirrors other modals in the app.
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
@@ -500,19 +537,37 @@ export default function ItemCard({ item, pantry = [], onUpdate, onClose }) {
             </div>
           </div>
 
-          {/* Provenance line. Deep-link to receipt/scan/cook-log in chunk 2b. */}
-          {prov && (
-            <div style={{
-              padding: "10px 12px", marginBottom: 14,
-              background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
-              display: "flex", alignItems: "center", gap: 10,
-            }}>
-              <span style={{ fontSize: 16 }}>{prov.icon}</span>
-              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#888", letterSpacing: "0.08em" }}>
-                {prov.text}
-              </span>
-            </div>
-          )}
+          {/* Provenance line. Tap to open the source artifact (receipt /
+              cook log) when there's a linkTo. Rendered as a button element
+              when tappable so keyboard users get focus + Enter for free. */}
+          {prov && (() => {
+            const canOpen = !!(prov.linkTo && onOpenProvenance);
+            const As = canOpen ? "button" : "div";
+            return (
+              <As
+                onClick={canOpen ? () => onOpenProvenance(prov.linkTo) : undefined}
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  padding: "10px 12px", marginBottom: 14,
+                  background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
+                  display: "flex", alignItems: "center", gap: 10,
+                  textAlign: "left",
+                  color: "inherit",
+                  cursor: canOpen ? "pointer" : "default",
+                }}
+              >
+                <span style={{ fontSize: 16 }}>{prov.icon}</span>
+                <span style={{ flex: 1, fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#888", letterSpacing: "0.08em" }}>
+                  {prov.text}
+                </span>
+                {canOpen && (
+                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.1em" }}>
+                    TAP TO VIEW →
+                  </span>
+                )}
+              </As>
+            );
+          })()}
         </div>
 
         {/* ─── INGREDIENT (canonical deep-dive) ───
