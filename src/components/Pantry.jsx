@@ -852,7 +852,7 @@ function IngredientDetailSheet({ ingredient, onClose, onAdd }) {
 //   2. Custom: free-text fallback for ingredients not in the registry. These
 //      save with ingredientId: null and won't be matched by any recipe.
 function AddItemModal({ target, tileContext, onClose, onAdd }) {
-  const [mode, setMode] = useState("canonical"); // "canonical" | "custom"
+  const [mode, setMode] = useState("custom"); // "custom" | "canonical"
   const [search, setSearch] = useState("");
   // When the user taps a hub (Chicken, Cheese, …) we drill into it and show
   // just its members. `drillHub` is null on the top-level tile grid.
@@ -1096,19 +1096,25 @@ function AddItemModal({ target, tileContext, onClose, onAdd }) {
           </div>
         )}
 
-        {/* Mode toggle */}
+        {/* Mode toggle. Custom-first because in practice most things
+            users add are NOT in the bundled canonical registry —
+            brand-specific products (Home Run Inn pizza, Heinz ketchup,
+            store-bought composites) and household-specific names
+            ("Mom's marinara") dominate. The bundled list is mostly
+            useful for raw ingredients (mozzarella, eggs, olive oil)
+            where the canonical match unlocks recipe matching. */}
         <div style={{ display:"flex", gap:0, padding:3, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:16 }}>
-          <button
-            onClick={() => setMode("canonical")}
-            style={{ flex:1, padding:"8px", background: mode==="canonical"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="canonical"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
-          >
-            FROM LIST
-          </button>
           <button
             onClick={() => setMode("custom")}
             style={{ flex:1, padding:"8px", background: mode==="custom"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="custom"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
           >
             CUSTOM
+          </button>
+          <button
+            onClick={() => setMode("canonical")}
+            style={{ flex:1, padding:"8px", background: mode==="canonical"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="canonical"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
+          >
+            FROM LIST
           </button>
         </div>
 
