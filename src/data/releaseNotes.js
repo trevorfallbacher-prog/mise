@@ -42,9 +42,41 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.8.3";
+export const CURRENT_VERSION = "0.9.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.9.0",
+    date:    "2026-04-17",
+    title:   "⭐ Star-first pickers + scan-text memory",
+    summary:
+      "Two linked changes to the scan-confirm flow. First, the IDENTIFIED " +
+      "AS and STORED IN pickers stopped vomiting the whole WWEIA taxonomy " +
+      "(and every tile) at you every time. The ⭐ best guess is pinned at " +
+      "the top, CREATE NEW sits right below it, and the rest of the catalog " +
+      "hides behind a search bar — no more scrolling 50 rows to add your " +
+      "own type. Second, the scanner now remembers your corrections. Relink " +
+      "'AQUAMARINE SL' to Imitation Crab once; next scan of that same text " +
+      "lands pre-filled with a ⭐ LEARNED badge. Works family-wide — if your " +
+      "spouse teaches it 'BURR BALLS → Burrata', you get the benefit too.",
+    shipped: [
+      { kind: "ux",
+        text: "TypePicker: ⭐ star suggestion pinned at top, search bar for the rest. CREATE NEW TYPE is up top, not buried.",
+        commits: [] },
+      { kind: "ux",
+        text: "STORED IN picker: same star-first rewrite, plus a CLEAR · AUTO-ROUTE BY INGREDIENT button on existing items so you can remove a tile assignment entirely.",
+        commits: [] },
+      { kind: "feature",
+        text: "Scan-text memory. Every correction you make on a scan row (rename, relink, change type/canonical, swap emoji) gets remembered against the raw OCR text. Next scan of that same text auto-fills with a ⭐ LEARNED badge.",
+        commits: [] },
+      { kind: "feature",
+        text: "Family-shared corrections: anyone in your household teaches the system once, everyone benefits forever.",
+        commits: [] },
+      { kind: "architecture",
+        text: "New table user_scan_corrections (migration 0046). Keyed on normalized raw_text per user, family-scoped by RLS.",
+        commits: [] },
+    ],
+  },
   {
     version: "0.8.3",
     date:    "2026-04-17",

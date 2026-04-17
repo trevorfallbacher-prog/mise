@@ -7,35 +7,38 @@ import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { COLOR, FONT, RADIUS } from "../lib/tokens";
 
-// TypePicker — the IDENTIFIED AS chooser. Single-select (one type
-// per item, same as WWEIA's own single-classification discipline).
+// TypePicker — the IDENTIFIED AS chooser. Single-select.
 //
-// Shows:
-//   * Bundled WWEIA food types (src/data/foodTypes.js)
-//   * Family's user-created types (from useUserTypes)
-//   * "+ CREATE NEW TYPE" with inline form
+// UX shape (the "star-first" rewrite):
+//   1. If we have a ⭐ suggestion (from name inference, learned
+//      scan-text memory, or the user's previous pick), it's pinned
+//      at the top as the one-tap default — no scrolling, no hunting.
+//      Most scans end here.
+//   2. "+ CREATE NEW TYPE" sits RIGHT BELOW the star, not buried at
+//      the bottom of a 50-row dump. If the suggestion is wrong and
+//      nothing in the taxonomy fits, adding your own is equally
+//      reachable as accepting the default.
+//   3. A search input below that filters the full catalog (bundled
+//      WWEIA + family user types). Results only appear when the
+//      user types — we don't vomit the whole list at them. If the
+//      current selection or suggestion isn't a match, typing a
+//      few letters narrows it.
 //
-// Visually parallel to IdentifiedAsPicker (the STORED IN chooser) —
-// same row shape, same + CREATE NEW pattern. Consistency beats
-// cleverness.
+// Why: the old shape was "⭐ SUGGESTED mixed into a wall of 50 rows
+// with CREATE NEW at the bottom." Users had to scroll past the
+// entire WWEIA taxonomy to create their own type, and the star
+// was lost in the noise. This rewrite makes the star the focal
+// point and relegates the catalog to on-demand search.
 //
 // Props:
 //   userId          — for user-types loading + creation
-//   selectedTypeId  — current pick
-//   suggestedTypeId — from name-inference, gets ⭐ SUGGESTED
+//   selectedTypeId  — current pick (if any)
+//   suggestedTypeId — from name-inference / scan memory, gets ⭐
 //   onPick(typeId, defaultTileId, defaultLocation) — type's defaults
 //                     flow up so the caller can auto-suggest STORED IN
-//   compact         — optional denser layout (for modal contexts)
-//
-// defaultTileId / defaultLocation flow:
-//   * Bundled types: pulled from FOOD_TYPES entry
-//   * User types:   pulled from user_types row (set by user at
-//                   creation time)
-//   * onPick gets both — caller decides whether to auto-apply or
-//     just surface as a suggestion
 
-// Bundled tile id -> emoji/label lookup for rendering "defaults to"
-// hint under each type. Uses the already-imported tile arrays.
+// Bundled tile id -> emoji/label lookup for the "defaults to" hint
+// under each type. Uses the already-imported tile arrays.
 const TILE_LOOKUP = (() => {
   const m = new Map();
   for (const t of [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES]) {
@@ -44,8 +47,7 @@ const TILE_LOOKUP = (() => {
   return m;
 })();
 
-// Emoji options surfaced in the CREATE NEW form — food-first,
-// curated. The 🏷️ default is always available.
+// Emoji options surfaced in the CREATE NEW form.
 const EMOJI_OPTIONS = [
   "🏷️", "🍕", "🥪", "🧀", "🥛", "🥩", "🍗", "🐟", "🦐",
   "🥚", "🍞", "🍝", "🍚", "🥗", "🌮", "🥟", "🍲", "🥡",
@@ -60,35 +62,61 @@ export default function TypePicker({
 }) {
   const [userTypes] = useUserTypes(userId);
 
+  const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [newLabel, setNewLabel] = useState("");
   const [newEmoji, setNewEmoji] = useState("🏷️");
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState(null);
 
-  // Compose the display list: bundled WWEIA types first, then
-  // family's user types. Bundled stay in curated order; user types
-  // sort by recency (already handled by useUserTypes).
-  const { bundled, custom } = useMemo(() => ({
-    bundled: FOOD_TYPES.map(t => ({
+  // Flatten bundled + custom into one searchable catalog. User types
+  // bubble to the top of the search results (personal > generic).
+  const catalog = useMemo(() => {
+    const bundled = FOOD_TYPES.map(t => ({
       source: "bundled",
       id:     t.id,
       emoji:  t.emoji,
       label:  t.label,
       blurb:  t.blurb,
+      aliases: t.aliases || [],
       defaultTileId:   t.defaultTileId,
       defaultLocation: t.defaultLocation,
-    })),
-    custom: userTypes.map(t => ({
+    }));
+    const custom = userTypes.map(t => ({
       source: "custom",
       id:     t.id,
       emoji:  t.emoji,
       label:  t.label,
       blurb:  t.useCount > 0 ? `YOURS · USED ${t.useCount}×` : "YOURS",
+      aliases: [],
       defaultTileId:   t.defaultTileId,
       defaultLocation: t.defaultLocation,
-    })),
-  }), [userTypes]);
+    }));
+    return [...custom, ...bundled];
+  }, [userTypes]);
+
+  const byId = useMemo(() => {
+    const m = new Map();
+    for (const t of catalog) m.set(t.id, t);
+    return m;
+  }, [catalog]);
+
+  const star = suggestedTypeId ? byId.get(suggestedTypeId) : null;
+  const current = selectedTypeId ? byId.get(selectedTypeId) : null;
+
+  const needle = search.trim().toLowerCase();
+  const searchMatches = useMemo(() => {
+    if (!needle) return [];
+    return catalog
+      .filter(t => {
+        if (t.label.toLowerCase().includes(needle)) return true;
+        if (t.aliases.some(a => a.toLowerCase().includes(needle))) return true;
+        return false;
+      })
+      // Keep user types first in results (catalog is already ordered
+      // custom → bundled), and cap so the modal doesn't explode.
+      .slice(0, 20);
+  }, [catalog, needle]);
 
   const handleCreate = async () => {
     if (!newLabel.trim()) return;
@@ -98,9 +126,6 @@ export default function TypePicker({
       userId,
       label: newLabel.trim(),
       emoji: newEmoji,
-      // New user types don't pre-suggest a tile until user picks one
-      // via the type-edit flow (future polish) or from drilling into
-      // an item that uses this type and moving it.
       defaultTileId: null,
       defaultLocation: null,
     });
@@ -117,17 +142,19 @@ export default function TypePicker({
     }
   };
 
-  const renderTypeRow = (t) => {
+  // Shared row render — used by the starred row, the current-pick
+  // row (if different from star), and search results.
+  const renderTypeRow = (t, variant) => {
     const active = selectedTypeId === t.id;
-    const suggested = !active && suggestedTypeId === t.id;
+    const suggested = variant === "star";
     const tileHint = t.defaultTileId ? TILE_LOOKUP.get(t.defaultTileId) : null;
     return (
       <button
-        key={`${t.source}-${t.id}`}
+        key={`${variant}-${t.source}-${t.id}`}
         onClick={() => onPick?.(t.id, t.defaultTileId || null, t.defaultLocation || null)}
         style={{
           display: "flex", alignItems: "center", gap: 10,
-          padding: "10px 12px",
+          padding: suggested ? "14px 14px" : "10px 12px",
           width: "100%",
           background: active
             ? COLOR.goldDeep
@@ -136,31 +163,36 @@ export default function TypePicker({
               : t.source === "custom" ? "#0f1620" : COLOR.soil,
           border: `1px solid ${
             active ? COLOR.gold
-            : suggested ? COLOR.goldDim
+            : suggested ? COLOR.gold
             : t.source === "custom" ? COLOR.skyBorder : COLOR.border
           }`,
           borderRadius: RADIUS.lg,
           cursor: "pointer", textAlign: "left",
         }}
       >
-        <span style={{ fontSize: 20, flexShrink: 0 }}>{t.emoji}</span>
+        <span style={{ fontSize: suggested ? 26 : 20, flexShrink: 0 }}>
+          {suggested ? "⭐" : t.emoji}
+        </span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
-            fontFamily: FONT.sans, fontSize: 13,
+            fontFamily: FONT.sans, fontSize: suggested ? 15 : 13,
             color: active ? COLOR.gold : COLOR.ink,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            display: "flex", alignItems: "center", gap: 6,
           }}>
-            {t.label}
+            {suggested && <span style={{ fontSize: 18 }}>{t.emoji}</span>}
+            <span>{t.label}</span>
           </div>
           <div style={{
             fontFamily: FONT.mono, fontSize: 9,
-            color: t.source === "custom" ? COLOR.sky : COLOR.muted,
+            color: suggested ? COLOR.gold
+              : t.source === "custom" ? COLOR.sky : COLOR.muted,
             letterSpacing: "0.06em", marginTop: 2,
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           }}>
-            {suggested && "⭐ SUGGESTED · "}
-            {t.blurb || "TAP TO PICK"}
-            {tileHint && (
+            {suggested && "⭐ BEST GUESS · TAP TO USE"}
+            {!suggested && (t.blurb || "TAP TO PICK")}
+            {!suggested && tileHint && (
               <span style={{ color: COLOR.muted }}>
                 {" · "}→ {tileHint.emoji} {tileHint.label.toUpperCase()}
               </span>
@@ -180,30 +212,17 @@ export default function TypePicker({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      {/* Custom types first when present (family-personal signal
-          beats generic taxonomy — you care about YOUR types more
-          than USDA's categorization in routine use) */}
-      {custom.length > 0 && (
-        <>
-          <div style={{
-            fontFamily: FONT.mono, fontSize: 9, color: COLOR.sky,
-            letterSpacing: "0.12em", marginTop: 2, marginBottom: 2,
-          }}>
-            👤 YOUR FAMILY
-          </div>
-          {custom.map(renderTypeRow)}
-          <div style={{
-            fontFamily: FONT.mono, fontSize: 9, color: COLOR.muted,
-            letterSpacing: "0.12em", marginTop: 6, marginBottom: 2,
-          }}>
-            📖 STANDARD (USDA)
-          </div>
-        </>
-      )}
-      {bundled.map(renderTypeRow)}
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* ── ⭐ STAR · the one-tap default ─────────────────────────── */}
+      {star && renderTypeRow(star, "star")}
 
-      {/* + CREATE NEW inline expander */}
+      {/* Current pick (only if different from star and not already
+          shown). Keeps the user's existing choice visible so they
+          can re-confirm without re-finding it in search. */}
+      {current && (!star || current.id !== star.id) &&
+        renderTypeRow(current, "current")}
+
+      {/* ── + CREATE NEW · right below the star, not buried ────── */}
       {!creating ? (
         <button
           onClick={() => setCreating(true)}
@@ -215,7 +234,6 @@ export default function TypePicker({
             letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
             textAlign: "left",
             display: "flex", alignItems: "center", gap: 10,
-            marginTop: 6,
           }}
         >
           <span style={{ fontSize: 16 }}>➕</span>
@@ -225,7 +243,7 @@ export default function TypePicker({
         <div style={{
           padding: 12, border: `1px solid ${COLOR.goldDim}`,
           borderRadius: RADIUS.lg, background: COLOR.goldDeep,
-          display: "flex", flexDirection: "column", gap: 10, marginTop: 6,
+          display: "flex", flexDirection: "column", gap: 10,
         }}>
           <div style={{ fontFamily: FONT.mono, fontSize: 10, color: COLOR.gold, letterSpacing: "0.12em" }}>
             NEW TYPE
@@ -244,7 +262,6 @@ export default function TypePicker({
               fontFamily: FONT.sans, fontSize: 14, outline: "none",
             }}
           />
-
           <div>
             <div style={{ fontFamily: FONT.mono, fontSize: 9, color: COLOR.muted, letterSpacing: "0.1em", marginBottom: 6 }}>
               EMOJI · {newEmoji}
@@ -266,7 +283,6 @@ export default function TypePicker({
               ))}
             </div>
           </div>
-
           {createError && (
             <div style={{
               fontFamily: FONT.sans, fontSize: 11, color: COLOR.rose,
@@ -275,7 +291,6 @@ export default function TypePicker({
               {createError}
             </div>
           )}
-
           <div style={{ display: "flex", gap: 8 }}>
             <button
               onClick={() => { setCreating(false); setNewLabel(""); setCreateError(null); }}
@@ -309,6 +324,42 @@ export default function TypePicker({
           </div>
         </div>
       )}
+
+      {/* ── Search · filters the full catalog on demand ────────── */}
+      <div style={{ marginTop: 2 }}>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder={star
+            ? "Not that? Search for another type…"
+            : "Search types (pizza, cheese, sausages…)"}
+          style={{
+            width: "100%", boxSizing: "border-box",
+            padding: "10px 12px",
+            background: COLOR.deep, border: `1px solid ${COLOR.border}`,
+            color: COLOR.ink, borderRadius: RADIUS.md,
+            fontFamily: FONT.sans, fontSize: 14, outline: "none",
+          }}
+        />
+      </div>
+
+      {/* Search results — only render when typing. Empty state is
+          a gentle nudge; full results list caps at 20 so the sheet
+          stays a one-thumb scroll. */}
+      {needle && searchMatches.length === 0 && (
+        <div style={{
+          padding: "12px 14px",
+          background: COLOR.deep, border: `1px dashed ${COLOR.border}`,
+          borderRadius: RADIUS.md,
+          fontFamily: FONT.sans, fontSize: 12, color: COLOR.muted,
+          fontStyle: "italic", lineHeight: 1.5,
+        }}>
+          Nothing matched "{search.trim()}". Try a shorter term, or
+          tap CREATE NEW TYPE above to add your own.
+        </div>
+      )}
+      {searchMatches.map(t => renderTypeRow(t, "search"))}
     </div>
   );
 }

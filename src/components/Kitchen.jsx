@@ -52,6 +52,11 @@ import {
   bumpTemplateUse,
 } from "../lib/userTemplates";
 import { useUserTemplates } from "../lib/useUserTemplates";
+import {
+  findScanCorrections,
+  rememberScanCorrection,
+  normalizeScanText,
+} from "../lib/userScanCorrections";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -234,6 +239,24 @@ function Scanner({ userId, onItemsScanned, onClose }) {
     const safePatch = {};
     for (const k of IDENTITY_KEYS) {
       if (k in patch) safePatch[k] = patch[k];
+    }
+    // Persist the correction to user_scan_corrections so the next
+    // scan of the same text auto-links. Best-effort, fire-and-forget —
+    // the UI doesn't wait, and a memory-write failure can't block
+    // the scan confirm. Only runs when we have a raw_name to key on
+    // AND the patch touched an identity field (not just amount/unit).
+    const rawText = source.scanRaw?.raw_name || source.name;
+    if (userId && rawText && Object.keys(safePatch).length > 0) {
+      const merged = { ...source, ...safePatch };
+      rememberScanCorrection({
+        userId,
+        rawText,
+        correctedName: merged.name,
+        emoji: merged.emoji,
+        typeId: merged.typeId,
+        canonicalId: merged.canonicalId || merged.ingredientId,
+        ingredientIds: merged.ingredientIds,
+      }).catch(() => {});
     }
     return prev.map((item, i) => {
       if (i === sourceIdx) return { ...item, ...patch };
@@ -446,7 +469,36 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         }
         return base;
       });
-      setScannedItems(normalized);
+
+      // Scan-text memory overlay. "AQUAMARINE SL" → imitation crab
+      // if the household has corrected that text before. Lookup is
+      // one round-trip keyed on normalized raw_name; rows without a
+      // hit fall through to the name-inference path above. The
+      // learned identity stamps a `correction` tag on the row so
+      // the UI can surface a ⭐ LEARNED badge.
+      const rawTexts = normalized
+        .map(r => r.scanRaw?.raw_name || r.name)
+        .filter(Boolean);
+      const corrections = await findScanCorrections(rawTexts);
+      const applyCorrection = (row) => {
+        const key = normalizeScanText(row.scanRaw?.raw_name || row.name);
+        const c = key ? corrections.get(key) : null;
+        if (!c) return row;
+        const patched = { ...row, learnedCorrectionId: c.id };
+        if (c.correctedName) patched.name = c.correctedName;
+        if (c.emoji) patched.emoji = c.emoji;
+        if (c.typeId) patched.typeId = c.typeId;
+        if (c.canonicalId) {
+          patched.canonicalId = c.canonicalId;
+          patched.ingredientId = c.canonicalId;
+        }
+        if (Array.isArray(c.ingredientIds) && c.ingredientIds.length > 0) {
+          patched.ingredientIds = c.ingredientIds;
+          patched.ingredientId = c.ingredientIds[0];
+        }
+        return patched;
+      };
+      setScannedItems(normalized.map(applyCorrection));
       setPhase("confirm");
     } catch (err) {
       setError(err?.message || "Couldn't read the receipt. Try again.");
@@ -715,6 +767,19 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       >
                         {conf.label}
                       </span>
+                      {/* ⭐ LEARNED — this row's identity came from a
+                          prior correction keyed on the same raw OCR
+                          text. Silent win: "AQUAMARINE SL → Imitation
+                          Crab" once, and every future scan of that
+                          text pre-fills. */}
+                      {item.learnedCorrectionId && (
+                        <span
+                          title="Pre-filled from a prior correction you (or family) made. Tap any chip to override."
+                          style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", background:"#1e1a0e", border:"1px solid #f5c842", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em" }}
+                        >
+                          ⭐ LEARNED
+                        </span>
+                      )}
 
                       {/* Expiration — inline date picker when open, tappable
                           chip / "+ set expires" button otherwise. Saving
@@ -937,6 +1002,28 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             </span>
           </div>
           <button onClick={() => {
+            // Implicit-confirmation bump. Any row that still carries a
+            // learnedCorrectionId is a row the user accepted without
+            // editing — bump correction_count so recurring corrections
+            // build confidence. If they DID edit, propagateCorrection
+            // already upserted a fresh memory and this bump is a no-op
+            // on the new (now current) entry.
+            if (userId) {
+              for (const row of scannedItems) {
+                if (!row.learnedCorrectionId) continue;
+                const rawText = row.scanRaw?.raw_name || row.name;
+                if (!rawText) continue;
+                rememberScanCorrection({
+                  userId,
+                  rawText,
+                  correctedName: row.name,
+                  emoji: row.emoji,
+                  typeId: row.typeId,
+                  canonicalId: row.canonicalId || row.ingredientId,
+                  ingredientIds: row.ingredientIds,
+                }).catch(() => {});
+              }
+            }
             // Pass imageData along so addScannedItems can upload the
             // original scan to Storage and link it to the receipt row.
             // Without this, the receipt row lands with image_path=null

@@ -1236,13 +1236,19 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             // an explicit intent, don't want the system second-
             // guessing them.
             suggestedTileId={!item.tileId ? inferTileFromName(item.name) : null}
+            // Existing items can fall BACK to the heuristic auto-
+            // router — "I don't want to pick one, infer from the
+            // canonical / components." Scan-confirm rows deliberately
+            // don't expose this; the auto-router there would just
+            // re-stamp the original guess.
+            allowClear
             onPick={(tileId, location) => {
+              // Clearing (tileId=null) is a valid outcome — sets
+              // tile_id back to null so the renderer falls through
+              // to the heuristic classifier. Location stays put
+              // unless the picker handed back an explicit change.
               onUpdate?.({
-                tileId,
-                // Honor the picker's location when it differs from
-                // the item's current location (e.g. user re-placing
-                // a fridge item to Pantry tile). Keeps the pantry
-                // row consistent with its new tile assignment.
+                tileId: tileId || null,
                 ...(location && location !== item.location
                     ? { location }
                     : {}),
