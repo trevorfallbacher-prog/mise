@@ -10,6 +10,7 @@ import { FRIDGE_TILES } from "../lib/fridgeTiles";
 import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
+import EnrichmentButton from "./EnrichmentButton";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
@@ -242,7 +243,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
   // "UMAMI · FAT · SWEET · SALT" — the whole flavor footprint of
   // the composite product. Single-tag items skip this line since
   // the deep-dive already shows the same info.
-  const { getInfo: getDbInfo } = useIngredientInfo();
+  const { getInfo: getDbInfo, getPendingInfo } = useIngredientInfo();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
     const intensityRank = { mild: 1, moderate: 2, intense: 3 };
@@ -1044,6 +1045,47 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               )}
             </div>
           </div>
+
+          {/* Item-level enrichment CTA. Mirrors the one on the embedded
+              IngredientCard below, but attached to the ITEM section so
+              users can enrich right from the top without scrolling.
+              Surfaces only when there's no metadata YET for whatever
+              identity the item maps to (canonical slug or the user's
+              raw name). Once a pending or approved row exists, the
+              button hides — the bottom IngredientCard renders the
+              metadata and owns any future re-enrichment. */}
+          {onUpdate && (() => {
+            const slug = item.canonicalId || slugifyIngredientName(item.name || "");
+            if (!slug) return null;
+            const hasInfo =
+              (item.canonicalId && getDbInfo(item.canonicalId)) ||
+              getPendingInfo(slug);
+            if (hasInfo) return null;
+            return (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", marginBottom: 12,
+                background: "#0f0f0f", border: "1px dashed #2a2a2a", borderRadius: 10,
+              }}>
+                <div style={{
+                  flex: 1,
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#888", letterSpacing: "0.08em",
+                }}>
+                  NO ITEM METADATA YET
+                </div>
+                {item.canonicalId ? (
+                  <EnrichmentButton canonicalId={item.canonicalId} compact />
+                ) : (
+                  <EnrichmentButton
+                    sourceName={item.name}
+                    pantryItemId={item.id}
+                    compact
+                  />
+                )}
+              </div>
+            );
+          })()}
 
 
           {/* Raw scanner read — when the row came from a scan, show what
