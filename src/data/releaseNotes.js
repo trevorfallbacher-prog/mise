@@ -75,9 +75,13 @@ export const RELEASE_NOTES = [
         text: "Badge grid on UserProfile tightened — gap 10→6, cell padding 6→3, icon fills 94% (was 80%). Icons now read meaningfully at a glance instead of feeling like stickers on a foam board",
         commits: ["__badge_spacing__"],
       },
+      {
+        kind: "fix",
+        text: "idiot-sandwich.svg landed in public/badges/ and was renamed from Idiot-Sandwich.svg to match the lowercase path migration 0024 stamped into the badges table. Ramsay's easter-egg badge now renders instead of falling back to 🏅",
+        commits: ["__idiot_sandwich_svg__"],
+      },
     ],
     coming_soon: [
-      "idiot-sandwich.svg still missing from public/badges/ — drop the file in when ready and the ramsay badge will render properly instead of falling back to 🏅",
       "Family-delete for receipts (currently owner-only) once we decide the right guardrail for accidental mass delete",
       "Expiration cancel-to-null (still blocked on a repro)",
     ],
