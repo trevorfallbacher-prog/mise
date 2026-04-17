@@ -1812,85 +1812,87 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 );
               })()}
 
-              {/* FOOD CATEGORY tap line. Mirrors ItemCard's exact style
-                  (dashed underline, yellow when set, grey when empty).
-                  Tapping toggles the inline TypePicker below. */}
+              {/* FOOD CATEGORY tap line — orange badge (reserved color
+                  across the app for the food-category axis). Empty
+                  state stays colored "+ SET CATEGORY" so you can
+                  visually identify the field before tapping. */}
               <div
                 onClick={() => setTypePickerOpen(v => !v)}
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: customTypeId ? "#f5c842" : "#666",
+                  color: "#e07a3a",
                   letterSpacing: "0.08em", marginTop: 6,
                   cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#888" }}>FOOD CATEGORY:</span>
+                <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
                 {customTypeId ? (
                   <>
                     <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
-                    <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                    <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
                       {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
                     </span>
                   </>
                 ) : (
-                  <span style={{ color: "#888", borderBottom: "1px dashed #66666644" }}>
-                    TAP TO IDENTIFY
+                  <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
+                    + SET CATEGORY
                   </span>
                 )}
               </div>
 
-              {/* STORED IN tap line — opens the tile picker inline. */}
+              {/* STORED IN tap line — blue badge (reserved color across
+                  the app for storage location / tile placement). */}
               <div
                 onClick={() => setTilePickerOpen(v => !v)}
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: customTileId ? "#f5c842" : "#666",
+                  color: "#7eb8d4",
                   letterSpacing: "0.08em", marginTop: 3,
                   cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#888" }}>STORED IN:</span>
+                <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
                 {customTileId ? (() => {
                   const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
                   const found = allBuiltIns.find(t => t.id === customTileId);
                   return (
                     <>
                       <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
-                      <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                      <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
                         {(found?.label || "CUSTOM TILE").toUpperCase()}
                       </span>
                     </>
                   );
                 })() : (
-                  <span style={{ color: "#888", borderBottom: "1px dashed #66666644" }}>
-                    TAP TO PLACE
+                  <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
+                    + SET LOCATION
                   </span>
                 )}
               </div>
 
-              {/* STATE tap line — opens a simple state picker inline.
-                  States are ingredient-specific, so we only have real
-                  options once the name resolves to a canonical. */}
+              {/* STATE tap line — neutral yellow (not part of the big-3
+                  color hierarchy since state isn't a classification
+                  axis on par with category/location/canonical). */}
               <div
                 onClick={() => setStatePickerOpen(v => !v)}
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: customState ? "#f5c842" : "#666",
+                  color: "#f5c842",
                   letterSpacing: "0.08em", marginTop: 3,
                   cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#888" }}>STATE:</span>
+                <span style={{ color: "#f5c842" }}>STATE:</span>
                 {customState ? (
                   <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
                     {customState.toUpperCase()}
                   </span>
                 ) : (
-                  <span style={{ color: "#888", borderBottom: "1px dashed #66666644" }}>
-                    WHAT STATE IS THIS IN?
+                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                    + SET STATE
                   </span>
                 )}
               </div>

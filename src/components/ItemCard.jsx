@@ -392,25 +392,23 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   {item.name}
                 </h2>
               )}
-              {/* CANONICAL — the final-resting-name of the thing
-                  (Hot Dog, Mayo, Green Onion). USDA-defensible
-                  identity that recipes call by. Sits directly below
-                  the user's custom name. Tap to change (opens the
-                  canonical picker below); tap the ✕ to unlink. When
-                  no canonical is set, renders a grey "CANONICAL: TAP
-                  TO PICK" affordance so the user can attach one
-                  explicitly — previously this field was derive-only. */}
+              {/* CANONICAL — tan badge. Color reserved across the app
+                  so users visually identify this field at a glance —
+                  orange = FOOD CATEGORY, blue = STORED IN, tan =
+                  CANONICAL. Empty state stays colored ("+ SET CANONICAL"
+                  in tan) rather than greying out, so you can see what
+                  you're setting from the preview before tapping. */}
               {onUpdate && (
                 <div
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 11,
-                    color: currentCanonical ? "#b8a878" : "#666",
+                    color: "#b8a878",
                     letterSpacing: "0.06em", marginTop: 4,
                     display: "flex", alignItems: "center", gap: 6,
                     flexWrap: "wrap",
                   }}
                 >
-                  <span style={{ color: "#888" }}>CANONICAL:</span>
+                  <span style={{ color: "#b8a878" }}>CANONICAL:</span>
                   {currentCanonical ? (
                     <>
                       <span
@@ -454,12 +452,12 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                     <span
                       onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
                       style={{
-                        color: "#888",
-                        borderBottom: "1px dashed #66666644",
+                        color: "#b8a878",
+                        borderBottom: "1px dashed #b8a87844",
                         cursor: "pointer",
                       }}
                     >
-                      TAP TO PICK
+                      + SET CANONICAL
                     </span>
                   )}
                 </div>
@@ -575,75 +573,75 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   </div>
                 );
               })()}
-              {/* FOOD CATEGORY (IDENTIFIED AS) — what KIND of thing
-                  this is (Pizza, Cheese, Sausages). Separate from
-                  STORED IN below which answers WHERE it lives. Tap
-                  to re-pick — opens a stacked TypePicker modal. */}
+              {/* FOOD CATEGORY — orange badge. Reserved color across
+                  the app for the WWEIA "what kind of thing is this"
+                  axis. Empty state stays in orange ("+ SET CATEGORY")
+                  instead of greying, so you can visually identify the
+                  field before tapping. */}
               {onUpdate && (
                 <div
                   onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: currentType ? "#f5c842" : "#666",
+                    color: "#e07a3a",
                     letterSpacing: "0.08em", marginTop: 3,
                     cursor: "pointer",
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#888" }}>FOOD CATEGORY:</span>
+                  <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
                   {currentType ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
                       <span style={{
-                        color: "#f5c842",
-                        borderBottom: "1px dashed #f5c84244",
+                        color: "#e07a3a",
+                        borderBottom: "1px dashed #e07a3a44",
                       }}>
                         {currentType.label?.toUpperCase() || "CUSTOM TYPE"}
                       </span>
                     </>
                   ) : (
                     <span style={{
-                      color: "#888",
-                      borderBottom: "1px dashed #66666644",
+                      color: "#e07a3a",
+                      borderBottom: "1px dashed #e07a3a44",
                     }}>
-                      TAP TO IDENTIFY
+                      + SET CATEGORY
                     </span>
                   )}
                 </div>
               )}
-              {/* STORED IN — the item's tile placement (where it lives).
-                  Distinct from MADE OF below which lists component
-                  ingredients. Tap to re-pick — opens a stacked
-                  IdentifiedAsPicker modal. Hidden entirely when
-                  there's no onUpdate (read-only embeds). */}
+              {/* STORED IN — blue badge. Reserved color across the app
+                  for tile placement / storage location. Empty state
+                  stays blue ("+ SET LOCATION") for consistent visual
+                  identification. */}
               {onUpdate && (
                 <div
                   onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: currentTile ? "#f5c842" : "#666",
+                    color: "#7eb8d4",
                     letterSpacing: "0.08em", marginTop: 3,
                     cursor: "pointer",
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#888" }}>STORED IN:</span>
+                  <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
                   {currentTile ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
                       <span style={{
-                        color: "#f5c842",
-                        borderBottom: "1px dashed #f5c84244",
+                        color: "#7eb8d4",
+                        borderBottom: "1px dashed #7eb8d444",
                       }}>
                         {currentTile.label?.toUpperCase() || "CUSTOM TILE"}
                       </span>
                     </>
                   ) : (
                     <span style={{
-                      color: "#888",
-                      borderBottom: "1px dashed #66666644",
+                      color: "#7eb8d4",
+                      borderBottom: "1px dashed #7eb8d444",
                     }}>
-                      TAP TO PLACE
+                      + SET LOCATION
                     </span>
                   )}
                 </div>
