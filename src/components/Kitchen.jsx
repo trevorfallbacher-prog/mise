@@ -3223,6 +3223,47 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     {stateLabel(item.state)}
                   </span>
                 )}
+                {/* Fill-level chip — only renders when the row has a
+                    tracked fill (null is the default, counted items get
+                    no chip). Fraction label from the nearest stop so
+                    "⅓" shows instead of "33%". Color keyed to the same
+                    bar thresholds ItemCard uses so visual language is
+                    consistent. Full (1.0) is also hidden — a "FULL"
+                    chip on every tracked item turns into noise, the
+                    actionable signal is sub-FULL rows. */}
+                {(() => {
+                  if (item.fillLevel == null || item.fillLevel >= 0.99) return null;
+                  const stops = [
+                    { v: 0,    label: "EMPTY" },
+                    { v: 1/8,  label: "⅛" },
+                    { v: 1/4,  label: "¼" },
+                    { v: 1/3,  label: "⅓" },
+                    { v: 1/2,  label: "½" },
+                    { v: 2/3,  label: "⅔" },
+                    { v: 3/4,  label: "¾" },
+                  ];
+                  const closest = stops.reduce((a, b) => Math.abs(b.v - item.fillLevel) < Math.abs(a.v - item.fillLevel) ? b : a);
+                  const color = item.fillLevel <= 0.25 ? "#ef4444"
+                    : item.fillLevel <= 0.5  ? "#f59e0b"
+                    : "#7ec87e";
+                  const bg = item.fillLevel <= 0.25 ? "#1a0a0a"
+                    : item.fillLevel <= 0.5  ? "#1a1408"
+                    : "#0f1a0f";
+                  return (
+                    <span
+                      title={`Fill level: ${closest.label}`}
+                      style={{
+                        fontFamily:"'DM Mono',monospace", fontSize:9,
+                        color, background:bg,
+                        border:`1px solid ${color}44`,
+                        borderRadius:4, padding:"1px 6px",
+                        letterSpacing:"0.08em", flexShrink:0,
+                      }}
+                    >
+                      {closest.label}
+                    </span>
+                  );
+                })()}
                 {/* ⓘ button removed — row tap is the sole entry point into
                     the ItemCard now, making this icon redundant UI noise.
                     The whole row reads as tappable via cursor + hover; no

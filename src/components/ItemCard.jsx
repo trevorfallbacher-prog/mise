@@ -856,6 +856,149 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             </div>
           </div>
 
+          {/* FILL LEVEL — proportional inventory (migration 0043). For
+              items where counting doesn't work (bottles, jars, blocks
+              of cheese, cartons) you track how FULL the container is
+              rather than how many you have. Null = not tracked (the
+              default — stays out of the way for counted items). When
+              tracked: horizontal fill bar + fraction-chip picker. The
+              ✕ button clears the tracking so a mistakenly-tracked
+              item can return to count-only. */}
+          {(() => {
+            const FRACTIONS = [
+              { v: 0,     label: "EMPTY" },
+              { v: 1/8,   label: "⅛" },
+              { v: 1/4,   label: "¼" },
+              { v: 1/3,   label: "⅓" },
+              { v: 1/2,   label: "½" },
+              { v: 2/3,   label: "⅔" },
+              { v: 3/4,   label: "¾" },
+              { v: 1,     label: "FULL" },
+            ];
+            const current = item.fillLevel;
+            const tracked = current != null;
+            // Color the bar red below ¼, amber ¼–½, green above.
+            const barColor = !tracked ? "#2a2a2a"
+              : current <= 0.25 ? "#ef4444"
+              : current <= 0.5  ? "#f59e0b"
+              : "#7ec87e";
+            // Approximate fraction match for the label so 0.33 reads as
+            // "⅓" not "33%". Lets user-saved values survive the round-
+            // trip display even if the stored numeric is slightly off.
+            const closest = tracked
+              ? FRACTIONS.reduce((a, b) => Math.abs(b.v - current) < Math.abs(a.v - current) ? b : a)
+              : null;
+            return (
+              <div
+                onClick={() => { if (!tracked) startEdit("fill"); }}
+                style={{
+                  padding: "10px 12px",
+                  background: editingField === "fill" ? "#1a1608" : "#0f0f0f",
+                  border: `1px solid ${editingField === "fill" ? "#f5c842" : "#1e1e1e"}`,
+                  borderRadius: 10,
+                  marginBottom: 14,
+                  cursor: readOnly ? "default" : (tracked ? "default" : "pointer"),
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>
+                    FILL LEVEL
+                  </div>
+                  {tracked && !readOnly && editingField !== "fill" && (
+                    <button
+                      onClick={e => { e.stopPropagation(); startEdit("fill"); }}
+                      style={{
+                        background: "transparent", border: "none", padding: 0,
+                        fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4",
+                        letterSpacing: "0.08em", cursor: "pointer",
+                      }}
+                    >
+                      EDIT
+                    </button>
+                  )}
+                </div>
+                {tracked ? (
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ flex: 1, height: 6, background: "#1a1a1a", borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{
+                          width: `${Math.round(current * 100)}%`, height: "100%",
+                          background: barColor, transition: "width 0.2s ease-out",
+                        }} />
+                      </div>
+                      <div style={{ fontFamily: "'Fraunces',serif", fontSize: 16, fontStyle: "italic", color: barColor, lineHeight: 1 }}>
+                        {closest?.label}
+                      </div>
+                    </div>
+                    {editingField === "fill" && (
+                      <div
+                        onClick={e => e.stopPropagation()}
+                        style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}
+                      >
+                        {FRACTIONS.map(f => (
+                          <button
+                            key={f.label}
+                            onClick={() => commit({ fillLevel: f.v })}
+                            style={{
+                              padding: "4px 8px",
+                              background: Math.abs(f.v - current) < 0.02 ? "#1a1608" : "#0a0a0a",
+                              border: `1px solid ${Math.abs(f.v - current) < 0.02 ? "#f5c842" : "#2a2a2a"}`,
+                              borderRadius: 4,
+                              color: Math.abs(f.v - current) < 0.02 ? "#f5c842" : "#aaa",
+                              fontFamily: "'DM Mono',monospace", fontSize: 11,
+                              cursor: "pointer", letterSpacing: "0.05em",
+                            }}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => commit({ fillLevel: null })}
+                          title="Stop tracking fill level for this item"
+                          style={{
+                            padding: "4px 8px",
+                            background: "transparent",
+                            border: "1px dashed #2a2a2a",
+                            borderRadius: 4, color: "#666",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10,
+                            cursor: "pointer", letterSpacing: "0.05em",
+                          }}
+                        >
+                          ✕ UNTRACK
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : editingField === "fill" ? (
+                  <div
+                    onClick={e => e.stopPropagation()}
+                    style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}
+                  >
+                    {FRACTIONS.map(f => (
+                      <button
+                        key={f.label}
+                        onClick={() => commit({ fillLevel: f.v })}
+                        style={{
+                          padding: "4px 8px",
+                          background: "#0a0a0a", border: "1px solid #2a2a2a",
+                          borderRadius: 4, color: "#aaa",
+                          fontFamily: "'DM Mono',monospace", fontSize: 11,
+                          cursor: "pointer", letterSpacing: "0.05em",
+                        }}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#666", marginTop: 3, letterSpacing: "0.05em" }}>
+                    — TAP TO TRACK (bottles, jars, cartons)
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Raw scanner read — when the row came from a scan, show what
               Claude actually saw on the label before canonical substitution.
               Folded into a compact line so it doesn't dominate the card; if

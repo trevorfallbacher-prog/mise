@@ -42,9 +42,54 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.5";
+export const CURRENT_VERSION = "0.7.6";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.6",
+    date:    "2026-04-17",
+    title:   "Proportional inventory — how full is the jar, not just how many",
+    summary:
+      "For items you can't really count — bottles of olive oil, jars " +
+      "of pickles, blocks of cheese, cartons of milk — a count was " +
+      "never the right answer. \"1 bottle\" said nothing about whether " +
+      "it was brand new or scraped-the-label empty. This ships Part B " +
+      "of the proportional-inventory work that's been on the roadmap " +
+      "since 0.2.0: a fill_level column on pantry_items, a tap-to-set " +
+      "fraction picker on every ItemCard (⅛ ¼ ⅓ ½ ⅔ ¾ FULL), and a " +
+      "small color-keyed chip on Kitchen rows when the level drops " +
+      "below full. Null by default so counted items stay clean. " +
+      "Opt in by tapping FILL LEVEL on an item you actually want to " +
+      "track this way; ✕ UNTRACK puts it back.",
+    shipped: [
+      {
+        kind: "architecture",
+        text: "Migration 0043 adds pantry_items.fill_level (numeric 0..1, nullable, CHECK-constrained). Null = not tracked (the default for counted items); 0..1 = tracked proportion, same semantics as the CookComplete leftover picker",
+        commits: ["__fill_level_0043__"],
+      },
+      {
+        kind: "feature",
+        text: "ItemCard shows a new FILL LEVEL card below QUANTITY/LOCATION/EXPIRES. Untracked rows show \"— TAP TO TRACK (bottles, jars, cartons)\". Tapping opens a fraction-chip row (EMPTY / ⅛ / ¼ / ⅓ / ½ / ⅔ / ¾ / FULL). Horizontal fill bar + fraction label render once a level is set, colored red below ¼, amber ¼–½, green above",
+        commits: ["__fill_level_itemcard__"],
+      },
+      {
+        kind: "feature",
+        text: "Kitchen rows get a compact fraction chip (⅓, ½, ¾…) next to the name when a row is tracked AND below FULL. Same color thresholds as the ItemCard bar. FULL rows and untracked rows show no chip so the signal only surfaces when there's something to act on",
+        commits: ["__fill_level_kitchen__"],
+      },
+      {
+        kind: "ux",
+        text: "\"✕ UNTRACK\" affordance in the ItemCard editor puts a row back to null fill so a mistaken track can be reversed without a DB trip. Counted items (eggs, cans) stay clean — the whole feature is opt-in per row",
+        commits: ["__fill_level_itemcard__"],
+      },
+    ],
+    coming_soon: [
+      "Part A: per-component proportion slider on Cook — \"I used ⅓ of the olive oil bottle in this meal\" auto-decrements the source row's fill_level",
+      "Low-fill reminder on Kitchen: when a tracked row crosses ¼, nudge into the shopping list",
+      "Fill-level on hub aggregate displays (average across bottled items of the same hub)",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.7.5",
     date:    "2026-04-16",
