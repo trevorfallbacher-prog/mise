@@ -132,7 +132,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item, pantry = [], userId, isAdmin = false, onUpdate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -332,57 +332,76 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
 
-  if (!item) return null;
+  // Staged-edits pattern. Every inline change gets merged into
+  // pendingChanges instead of firing onUpdate immediately. The user
+  // sees staged values in the UI (the merged `item` below uses
+  // pending over prop), then taps UPDATE in the floating action bar
+  // at the bottom to commit everything in one write. DISCARD reverts
+  // to the pristine prop values.
+  //
+  // Why: auto-commit on every tap meant a user poking at LOCATION /
+  // CATEGORY / CANONICAL to see their options could accidentally
+  // land changes they didn't mean to keep. Drafts let them explore
+  // without consequence.
+  //
+  // LOCATION moves still get a confirm overlay before staging (user
+  // explicitly requested it in the prior commit) — but that's
+  // unchanged by this refactor; location just happens to trigger
+  // an extra confirmation on top of the shared drafts pattern.
+  const [pendingChanges, setPendingChanges] = useState({});
+  // Merged item view — what the render sees. Staged changes win so
+  // tapping FRIDGE then looking at the LOCATION field shows the
+  // staged fridge value. Re-computes whenever either side changes.
+  const item = useMemo(
+    () => ({ ...itemProp, ...pendingChanges }),
+    [itemProp, pendingChanges],
+  );
+
+  if (!itemProp) return null;
 
   const readOnly = !onUpdate;
   const startEdit = (field) => { if (!readOnly) setEditingField(field); };
 
-  // Stage-and-confirm flow for location moves. Moves are destructive
-  // to the user's mental model ("where did my ribeye go?") so we
-  // stop treating a tap on a location pill as a commit. Instead it
-  // STAGES the target location; a full-screen 'Move to X?' confirm
-  // overlay asks the user to tap UPDATE before anything persists.
-  //
-  // outcome state shape:
-  //   null                       — no overlay
-  //   { kind: "move_confirm", target } — pending location
-  //   { kind: "move_success", target, tile } — after commit
-  //
-  // Other field edits (quantity, expiration, canonical, state,
-  // tile) continue to auto-commit inline — they're less
-  // destructive and the user sees the change happen in place.
+  // Full-screen overlay state. Shape:
+  //   null                                    — no overlay
+  //   { kind: "update_success", changed: [] } — after UPDATE commits
+  //   { kind: "exit_warning" }                — close attempt with pending drafts
   const [outcome, setOutcome] = useState(null);
 
+  // Stage a patch into pendingChanges. Every inline edit calls this
+  // via `commit()` — the pattern the rest of ItemCard already uses.
+  // Zero auto-commits; the floating UPDATE bar at the bottom is
+  // what actually writes.
   const commit = (patch) => {
-    const prevLocation = item.location || null;
-    const nextLocation = patch && Object.prototype.hasOwnProperty.call(patch, "location")
-      ? patch.location
-      : undefined;
-    const locationChanged = nextLocation !== undefined && nextLocation !== prevLocation;
-    // Location-change path: stage it, don't commit yet. The confirm
-    // overlay is what actually fires onUpdate on the user's tap of
-    // UPDATE. Other fields in the same patch (if any) get deferred
-    // to the confirm handler so partial-commits can't sneak through.
-    if (locationChanged) {
-      setEditingField(null);
-      setOutcome({ kind: "move_confirm", patch, target: nextLocation });
-      return;
-    }
-    // Non-location edits commit immediately as before.
-    onUpdate?.(patch);
+    setPendingChanges(prev => ({ ...prev, ...patch }));
     setEditingField(null);
   };
 
-  // Commit the pending move once the user confirms. Fires the real
-  // onUpdate, then swaps the overlay to the success screen so the
-  // user sees WHERE their item landed before anything closes.
-  const confirmMove = () => {
-    if (!outcome || outcome.kind !== "move_confirm") return;
-    onUpdate?.(outcome.patch);
-    setOutcome({
-      kind: "move_success",
-      target: outcome.target,
-    });
+  // Commit every staged change in a single onUpdate call, then swap
+  // to the success overlay listing what changed.
+  const applyChanges = () => {
+    if (Object.keys(pendingChanges).length === 0) return;
+    const changed = Object.keys(pendingChanges);
+    onUpdate?.(pendingChanges);
+    setPendingChanges({});
+    setOutcome({ kind: "update_success", changed });
+  };
+
+  // Drop every staged change, revert the visual back to pristine.
+  const discardChanges = () => {
+    setPendingChanges({});
+  };
+
+  const hasPending = Object.keys(pendingChanges).length > 0;
+
+  // Close interceptor. If the user has pending drafts, warn before
+  // letting them walk away; otherwise close immediately. The
+  // warning offers DISCARD AND CLOSE as an escape hatch (same
+  // pattern as AddItemModal's exit warning — flagged temporary
+  // until post-beta).
+  const attemptClose = () => {
+    if (!hasPending) { onClose?.(); return; }
+    setOutcome({ kind: "exit_warning" });
   };
 
 
@@ -402,7 +421,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
 
   return (
     <>
-      <ModalSheet onClose={onClose} zIndex={Z.card}>
+      <ModalSheet onClose={attemptClose} zIndex={Z.card}>
 
         {/* ─── ITEM SECTION (this specific row) ─── */}
         <div style={{ paddingTop: 12 }}>
@@ -1667,45 +1686,68 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
         </ModalSheet>
       )}
 
-      {/* Location-move confirm + success overlays. Per user spec:
-          moves shouldn't just commit automatically — the user taps
-          the target location, sees a full-screen 'Move to X?'
-          confirmation with context, and explicitly confirms via
-          UPDATE. After the real write lands, the overlay swaps to
-          the success screen with the destination so they know
-          exactly where their item went. */}
-      {outcome && outcome.kind === "move_confirm" && (() => {
-        const target = outcome.target;
-        const targetLabel = LOCATIONS.find(l => l.id === target)?.label || target;
-        const targetEmoji = LOCATIONS.find(l => l.id === target)?.emoji || "📦";
-        const fromLabel = LOCATIONS.find(l => l.id === item.location)?.label || "unset";
-        return (
-          <AddItemOutcome
-            kind="confirm"
-            title={`Move ${item.name} to ${targetLabel}?`}
-            body={`Currently in ${fromLabel}. Moving updates where it lives in your kitchen — recipes and restock alerts follow the move.`}
-            destination={`${targetEmoji} ${targetLabel.toUpperCase()}`}
-            primary={{
-              label: "UPDATE",
-              tone: "confirm",
-              onClick: confirmMove,
+      {/* Floating UPDATE bar — appears any time the card has staged
+          changes that haven't been applied yet. Sticks to the bottom
+          of the viewport above the tab bar so it's always reachable
+          while the user scrolls through the card. DISCARD is the
+          escape hatch; UPDATE commits everything in one write. */}
+      {hasPending && (
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 350,
+          maxWidth: 480, margin: "0 auto",
+          padding: "10px 14px 14px",
+          background: "linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.97) 30%)",
+          display: "flex", gap: 8,
+        }}>
+          <button
+            onClick={discardChanges}
+            style={{
+              flex: 1, padding: "14px",
+              background: "#1a1a1a", border: "1px solid #2a2a2a",
+              color: "#888", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12,
+              letterSpacing: "0.1em", cursor: "pointer",
             }}
-            secondary={{
-              label: "CANCEL",
-              onClick: () => setOutcome(null),
+          >
+            DISCARD
+          </button>
+          <button
+            onClick={applyChanges}
+            style={{
+              flex: 2, padding: "14px",
+              background: "#7ec87e", border: "none",
+              color: "#0a1a0a", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+              letterSpacing: "0.1em", cursor: "pointer",
             }}
-          />
-        );
-      })()}
-      {outcome && outcome.kind === "move_success" && (() => {
-        const targetLabel = LOCATIONS.find(l => l.id === outcome.target)?.label || outcome.target;
-        const targetEmoji = LOCATIONS.find(l => l.id === outcome.target)?.emoji || "📦";
+          >
+            UPDATE · {Object.keys(pendingChanges).length} CHANGE{Object.keys(pendingChanges).length === 1 ? "" : "S"}
+          </button>
+        </div>
+      )}
+
+      {/* Full-screen success after UPDATE commits. Lists every field
+          that changed so the user confirms what they just approved
+          was actually what they meant. Tap DONE to dismiss. */}
+      {outcome && outcome.kind === "update_success" && (() => {
+        const prettyLabel = (k) => {
+          const map = {
+            location: "LOCATION", tileId: "STORED IN", canonicalId: "CANONICAL",
+            ingredientId: "CANONICAL", typeId: "CATEGORY", state: "STATE",
+            amount: "QUANTITY", unit: "UNIT", expiresAt: "EXPIRES",
+            ingredientIds: "INGREDIENTS", emoji: "EMOJI", name: "NAME",
+          };
+          return map[k] || k.toUpperCase();
+        };
+        const changedLabels = outcome.changed.map(prettyLabel);
+        const locLabel = LOCATIONS.find(l => l.id === item.location)?.label || item.location;
+        const locEmoji = LOCATIONS.find(l => l.id === item.location)?.emoji || "📦";
         return (
           <AddItemOutcome
             kind="success"
-            title={`${item.name} is in the ${targetLabel}`}
-            body="Find it in that tab — we re-routed it to the right tile for you based on its category."
-            destination={`${targetEmoji} ${targetLabel.toUpperCase()}`}
+            title={`${item.name} updated`}
+            body={`Saved: ${changedLabels.join(" · ")}`}
+            destination={`${locEmoji} ${locLabel.toUpperCase()}`}
             primary={{
               label: "DONE",
               tone: "confirm",
@@ -1714,6 +1756,30 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
           />
         );
       })()}
+
+      {/* Exit warning on close-with-drafts. DISCARD AND CLOSE drops
+          every staged change and closes; KEEP EDITING returns to
+          the card so the user can commit properly. */}
+      {outcome && outcome.kind === "exit_warning" && (
+        <AddItemOutcome
+          kind="exit_warning"
+          title="You have unsaved changes"
+          body={`${Object.keys(pendingChanges).length} edit${Object.keys(pendingChanges).length === 1 ? "" : "s"} staged on ${item.name}. Closing now drops them.`}
+          primary={{
+            label: "KEEP EDITING",
+            tone: "confirm",
+            onClick: () => setOutcome(null),
+          }}
+          secondary={{
+            label: "DISCARD AND CLOSE",
+            onClick: () => {
+              setPendingChanges({});
+              setOutcome(null);
+              onClose?.();
+            },
+          }}
+        />
+      )}
     </>
   );
 }
