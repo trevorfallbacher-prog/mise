@@ -42,9 +42,45 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.8.2";
+export const CURRENT_VERSION = "0.8.3";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.8.3",
+    date:    "2026-04-17",
+    title:   "Pantry-scan images come back — missing UPDATE policy fixed",
+    summary:
+      "Every shelf scan since 0032 has been silently losing its image " +
+      "pointer. The JPG uploaded fine to the 'scans' Storage bucket, " +
+      "but the follow-up `UPDATE pantry_scans SET image_path = ...` " +
+      "hit an RLS wall: we added select/insert/delete policies in 0032 " +
+      "and forgot UPDATE entirely. Postgres/Supabase treat a policy-less " +
+      "UPDATE as \"zero rows matched\" — no error thrown, just a silent " +
+      "no-op. So ReceiptView always saw image_path=null and rendered " +
+      "\"No image on file\" for every fridge/pantry/freezer scan even " +
+      "though the photo was sitting in Storage the whole time. Receipts " +
+      "never had this bug because 0006 stamped self-update from day one. " +
+      "Migration 0045 adds the missing policy. Recovery SQL below re-" +
+      "links orphaned scans to their Storage objects so old scans come " +
+      "back too — including Bella's Gummy Bear if the file survived.",
+    shipped: [
+      {
+        kind: "fix",
+        text: "Migration 0045 adds pantry_scans: family-update — the RLS policy that was missing from 0032. Every future shelf scan now persists its image_path after the Storage upload and renders correctly in ReceiptView. Symmetric with receipts (family-editable since 0041)",
+        commits: ["__pantry_scans_update__"],
+      },
+      {
+        kind: "safety",
+        text: "Recovery query in 0045's docstring — re-links any existing pantry_scans row where image_path is null but a matching file exists in the 'scans' bucket. Non-destructive: only sets image_path where there's a real object, leaves scans that genuinely had no upload untouched",
+        commits: ["__pantry_scans_update__"],
+      },
+    ],
+    coming_soon: [
+      "Toast / warning when a scan upload fails so we never silently swallow another image-loss bug",
+      "Tap-to-protect UI for keepsake pantry rows",
+      "Family-delete for receipts",
+    ],
+  },
   {
     version: "0.8.2",
     date:    "2026-04-17",
