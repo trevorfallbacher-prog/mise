@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { INGREDIENTS } from "../data/ingredients";
+import { slugifyIngredientName } from "../lib/useIngredientInfo";
 
 // AdminPanel — elevated-permissions inspector, scoped to profiles
 // where role = 'admin' (see migration 0042). Mounted from Settings
@@ -25,7 +27,7 @@ import { supabase } from "../lib/supabase";
 //   userId    — viewer id (informational, not used for filtering)
 //   onClose() — dismiss
 export default function AdminPanel({ userId, onClose }) {
-  const [tab, setTab] = useState("users"); // "users" | "receipts" | "enrichments"
+  const [tab, setTab] = useState("users"); // "users" | "receipts" | "enrichments" | "canonicals"
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
@@ -74,6 +76,7 @@ export default function AdminPanel({ userId, onClose }) {
             { id: "users",       label: "USERS" },
             { id: "receipts",    label: "RECEIPTS" },
             { id: "enrichments", label: "ENRICHMENTS" },
+            { id: "canonicals",  label: "CANONICALS" },
           ].map(t => (
             <button
               key={t.id}
@@ -95,6 +98,7 @@ export default function AdminPanel({ userId, onClose }) {
         {tab === "users"       && <UsersList viewerId={userId} />}
         {tab === "receipts"    && <ReceiptsList viewerId={userId} />}
         {tab === "enrichments" && <PendingEnrichmentsList viewerId={userId} />}
+        {tab === "canonicals"  && <CanonicalsList viewerId={userId} />}
       </div>
     </div>
   );
@@ -425,6 +429,203 @@ function PendingEnrichmentsList({ viewerId: _viewerId }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// CANONICALS — the full registry, bundled + user-created, with live
+// usage counts so Trevor can see which ones are in circulation. Users
+// can rename their own custom canonicals inline (rewrites every
+// pantry_items.canonical_id that points at the old slug). Bundled
+// canonicals (src/data/ingredients.js) are read-only here — renaming
+// those lives in code.
+function CanonicalsList({ viewerId: _viewerId }) {
+  const [usage, setUsage] = useState(null); // Map<canonical_id, count>
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+  const [busy, setBusy] = useState(null);    // canonical_id mid-rename
+  const [version, setVersion] = useState(0); // cheap refresh trigger
+
+  async function reload() {
+    const { data, error: err } = await supabase
+      .from("pantry_items")
+      .select("canonical_id")
+      .not("canonical_id", "is", null);
+    if (err) { setError(err.message); setUsage(new Map()); return; }
+    const m = new Map();
+    for (const r of (data || [])) {
+      const id = r.canonical_id;
+      if (!id) continue;
+      m.set(id, (m.get(id) || 0) + 1);
+    }
+    setUsage(m);
+  }
+
+  useEffect(() => { reload(); }, [version]);
+
+  // Merge the bundled registry with any canonical_ids that show up in
+  // use but aren't in the registry (user-created slugs). Every row
+  // carries a { source } marker so the UI can style and gate renames.
+  const rows = useMemo(() => {
+    if (!usage) return null;
+    const seen = new Set();
+    const bundled = INGREDIENTS.map(i => {
+      seen.add(i.id);
+      return {
+        id: i.id,
+        name: i.name,
+        emoji: i.emoji || "🥫",
+        category: i.category || null,
+        source: "bundled",
+        count: usage.get(i.id) || 0,
+      };
+    });
+    const custom = [];
+    for (const [id, count] of usage.entries()) {
+      if (seen.has(id)) continue;
+      custom.push({
+        id,
+        name: id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+        emoji: "✨",
+        category: null,
+        source: "custom",
+        count,
+      });
+    }
+    return [...custom, ...bundled];
+  }, [usage]);
+
+  async function renameCustom(row) {
+    // eslint-disable-next-line no-alert
+    const next = window.prompt(
+      `Rename "${row.name}".\n\n` +
+        `Every pantry_items.canonical_id set to "${row.id}" will be rewritten. ` +
+        `Type the new display name — we'll slugify it automatically.`,
+      row.name,
+    );
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed) return;
+    const newSlug = slugifyIngredientName(trimmed);
+    if (!newSlug || newSlug === row.id) return;
+
+    setBusy(row.id);
+    try {
+      const { error: upErr } = await supabase
+        .from("pantry_items")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      if (upErr) throw upErr;
+      setVersion(v => v + 1);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Rename failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (rows === null) return <Loading />;
+
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? rows.filter(r =>
+        r.id.toLowerCase().includes(q) ||
+        r.name.toLowerCase().includes(q) ||
+        (r.category || "").toLowerCase().includes(q)
+      )
+    : rows;
+  const customCount = rows.filter(r => r.source === "custom").length;
+  const inUse       = rows.filter(r => r.count > 0).length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", padding: "0 4px 4px" }}>
+        {rows.length} CANONICALS · {customCount} CUSTOM · {inUse} IN USE
+        {error && <span style={{ color: "#ef4444", marginLeft: 8 }}>· {error}</span>}
+      </div>
+      <input
+        type="text"
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder="Search by id, name, category…"
+        style={{
+          width: "100%", boxSizing: "border-box",
+          padding: "10px 12px", marginBottom: 4,
+          background: "#0f0f0f", border: "1px solid #2a2a2a",
+          color: "#f0ece4", borderRadius: 10,
+          fontFamily: "'DM Sans',sans-serif", fontSize: 13, outline: "none",
+        }}
+      />
+      {filtered.length === 0 ? (
+        <Empty msg={`No canonicals match "${search}".`} />
+      ) : (
+        filtered.map(r => {
+          const isBusy = busy === r.id;
+          return (
+            <div key={r.id} style={{
+              padding: "10px 12px",
+              background: r.source === "custom" ? "#1a1508" : "#141414",
+              border: `1px solid ${r.source === "custom" ? "#3a2f10" : "#242424"}`,
+              borderRadius: 10,
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <span style={{ fontSize: 22, flexShrink: 0 }}>{r.emoji}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'Fraunces',serif", fontSize: 14,
+                  fontStyle: "italic", color: "#f0ece4",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {r.name}
+                </div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", marginTop: 2, letterSpacing: "0.04em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.id}
+                  {r.category && ` · ${r.category.toUpperCase()}`}
+                </div>
+              </div>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                color: r.count > 0 ? "#7ec87e" : "#555",
+                background: r.count > 0 ? "#0f1a0f" : "transparent",
+                border: `1px solid ${r.count > 0 ? "#1e3a1e" : "#242424"}`,
+                padding: "2px 7px", borderRadius: 10, letterSpacing: "0.08em",
+                flexShrink: 0,
+              }}>
+                {r.count > 0 ? `×${r.count}` : "UNUSED"}
+              </span>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 8,
+                color: r.source === "custom" ? "#b8a878" : "#555",
+                letterSpacing: "0.1em", flexShrink: 0,
+              }}>
+                {r.source === "custom" ? "CUSTOM" : "BUNDLED"}
+              </span>
+              {r.source === "custom" && (
+                <button
+                  onClick={() => renameCustom(r)}
+                  disabled={isBusy}
+                  style={adminBtnStyle("#2a2110", "#b8a878")}
+                >
+                  {isBusy ? "…" : "RENAME"}
+                </button>
+              )}
+            </div>
+          );
+        })
+      )}
+      <div style={{
+        marginTop: 10, padding: "10px 12px",
+        background: "#0a0a0a", border: "1px dashed #2a2a2a",
+        borderRadius: 8,
+        fontFamily: "'DM Mono',monospace", fontSize: 9,
+        color: "#666", lineHeight: 1.6, letterSpacing: "0.04em",
+      }}>
+        BUNDLED canonicals live in src/data/ingredients.js and are
+        read-only from the admin portal. CUSTOM canonicals are slugs
+        created on-the-fly from ItemCard's canonical picker — tap
+        RENAME to rewrite every pantry_items row that points at them.
+      </div>
     </div>
   );
 }
