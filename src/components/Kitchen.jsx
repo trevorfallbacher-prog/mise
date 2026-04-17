@@ -670,16 +670,16 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       "M&Ms" from vaporizing a row the user actually
                       bought. */}
                   {confirmingRemoveId === item.id ? (
-                    <div style={{ position:"absolute", top:6, right:6, display:"flex", alignItems:"center", gap:4, zIndex:3 }}>
+                    <div onClick={e => e.stopPropagation()} style={{ position:"absolute", top:6, right:6, display:"flex", alignItems:"center", gap:4, zIndex:3 }}>
                       <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#ef4444", letterSpacing:"0.08em", marginRight:2 }}>REMOVE?</span>
                       <button
-                        onClick={() => { removeScanItem(item.id); setConfirmingRemoveId(null); }}
+                        onClick={e => { e.stopPropagation(); removeScanItem(item.id); setConfirmingRemoveId(null); }}
                         aria-label={`Confirm remove ${item.name}`}
                         title="Yes, remove"
                         style={{ width:26, height:26, borderRadius:"50%", border:"none", background:"#ef4444", color:"#fff", fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:700, lineHeight:1, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}
                       >✓</button>
                       <button
-                        onClick={() => setConfirmingRemoveId(null)}
+                        onClick={e => { e.stopPropagation(); setConfirmingRemoveId(null); }}
                         aria-label="Cancel remove"
                         title="Cancel"
                         style={{ width:26, height:26, borderRadius:"50%", border:"1px solid #333", background:"#0f0f0f", color:"#888", fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, lineHeight:1, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}
@@ -687,15 +687,20 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                     </div>
                   ) : (
                     <button
-                      onClick={() => setConfirmingRemoveId(item.id)}
+                      onClick={e => { e.stopPropagation(); setConfirmingRemoveId(item.id); }}
                       aria-label={`Remove ${item.name}`}
                       title="Remove from list"
                       style={{ position:"absolute", top:6, right:6, width:24, height:24, borderRadius:"50%", border:"none", background:"transparent", color:"#777", fontFamily:"'DM Mono',monospace", fontSize:14, fontWeight:600, lineHeight:1, cursor:"pointer", zIndex:2, display:"flex", alignItems:"center", justifyContent:"center" }}
                     >✕</button>
                   )}
-                  <div style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 40px 14px 14px", minWidth:0 }}>
+                  <div
+                    onClick={() => setExpandedScanIdx(idx)}
+                    role="button"
+                    tabIndex={0}
+                    style={{ flex:1, display:"flex", alignItems:"flex-start", gap:12, padding:"14px 40px 14px 14px", minWidth:0, cursor:"pointer" }}
+                  >
                   <button
-                    onClick={() => setEmojiingScanIdx(idx)}
+                    onClick={e => { e.stopPropagation(); setEmojiingScanIdx(idx); }}
                     aria-label={`Change emoji for ${item.name}`}
                     title="Tap to change emoji"
                     style={{ fontSize:28, flexShrink:0, lineHeight:1, background:"transparent", border:"none", padding:0, cursor:"pointer" }}
@@ -712,6 +717,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         type="text"
                         value={item.name}
                         autoFocus
+                        onClick={e => e.stopPropagation()}
                         onChange={e => updateScanItem(idx, { name: e.target.value })}
                         onBlur={() => {
                           propagateCorrection(idx, { name: item.name });
@@ -722,35 +728,50 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       />
                     ) : (
                       <button
-                        onClick={() => setEditingNameIdx(idx)}
+                        onClick={e => { e.stopPropagation(); setEditingNameIdx(idx); }}
                         aria-label={`Rename ${item.name}`}
                         style={{ background:"transparent", border:"none", padding:0, textAlign:"left", fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic", color:"#f0ece4", fontWeight:400, lineHeight:1.25, wordBreak:"break-word", cursor:"text" }}
                       >
                         {item.name}
                       </button>
                     )}
-                    {/* Chip row — status + tappable corrections. LINK/RELINK
-                        opens the fuzzy-match picker so misidentified rows
-                        get fixed BEFORE landing in the pantry. Expiration
-                        chip lets you type the date off the carton inline. */}
+                    {/* Chip row — reserved-color identity chips +
+                        supporting fields. Tan = CANONICAL, orange =
+                        FOOD CATEGORY, blue = STORED IN. Unset chips
+                        render dashed grey. All sub-taps stopPropagation
+                        so tapping a chip edits that field instead of
+                        opening the full card. */}
                     <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                      {canon ? (
-                        <button
-                          onClick={() => setLinkingScanIdx(idx)}
-                          title="Tap to change which canonical ingredient this links to"
-                          style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#4ade80", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em", cursor:"pointer" }}
-                        >
-                          ✓ {canon.name.toUpperCase()}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setLinkingScanIdx(idx)}
-                          title="Tap to match this with a canonical ingredient"
-                          style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#a3c9e0", background:"#0f1420", border:"1px solid #1e2a3a", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em", cursor:"pointer" }}
-                        >
-                          🔗 LINK
-                        </button>
-                      )}
+                      {/* CANONICAL (tan) — reserved color for the
+                          final-resting identity axis. Replaces the old
+                          green/blue LINK chip. Grey dashed when unset. */}
+                      {(() => {
+                        const canonEmoji = canon?.emoji || "🏷️";
+                        return (
+                          <button
+                            onClick={e => { e.stopPropagation(); setLinkingScanIdx(idx); }}
+                            aria-label={canon ? `Change canonical (currently ${canon.name})` : "Set canonical"}
+                            title={canon ? `Canonical: ${canon.name} — tap to change` : "Tap to set canonical"}
+                            style={canon ? {
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              color:"#b8a878", background:"#1a1508",
+                              border:"1px solid #3a2f10",
+                              borderRadius:4, padding:"2px 6px",
+                              letterSpacing:"0.08em", cursor:"pointer",
+                            } : {
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              color:"#666", background:"transparent",
+                              border:"1px dashed #2a2a2a",
+                              borderRadius:4, padding:"1px 6px",
+                              letterSpacing:"0.08em", cursor:"pointer",
+                            }}
+                          >
+                            {canon
+                              ? <>{canonEmoji} {canon.name.toUpperCase()}</>
+                              : "+ set canonical"}
+                          </button>
+                        );
+                      })()}
                       {/* ⭐ LEARNED — this row's identity came from a
                           prior correction keyed on the same raw OCR
                           text. Silent win: "AQUAMARINE SL → Imitation
@@ -806,7 +827,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                           const color = expirationColor(days);
                           return (
                             <button
-                              onClick={() => setEditingExpiryScanIdx(idx)}
+                              onClick={e => { e.stopPropagation(); setEditingExpiryScanIdx(idx); }}
                               aria-label={`Edit expiration date for ${item.name}`}
                               style={{ background:`${color}22`, border:"none", color, fontFamily:"'DM Mono',monospace", fontSize:9, padding:"2px 6px", borderRadius:4, cursor:"pointer", letterSpacing:"0.08em" }}
                             >
@@ -816,7 +837,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         }
                         return (
                           <button
-                            onClick={() => setEditingExpiryScanIdx(idx)}
+                            onClick={e => { e.stopPropagation(); setEditingExpiryScanIdx(idx); }}
                             aria-label={`Set expiration date for ${item.name}`}
                             style={{ background:"transparent", border:"1px dashed #2a2a2a", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:9, padding:"1px 6px", borderRadius:4, cursor:"pointer", letterSpacing:"0.08em" }}
                           >
@@ -838,18 +859,18 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         const typeEntry = item.typeId ? findFoodType(item.typeId) : null;
                         return (
                           <button
-                            onClick={() => setTypingScanIdx(idx)}
+                            onClick={e => { e.stopPropagation(); setTypingScanIdx(idx); }}
                             aria-label={typeEntry ? `Change food category (currently ${typeEntry.label})` : "Set food category"}
                             title={typeEntry ? `Food category: ${typeEntry.label} — tap to change` : "Tap to set food category"}
                             style={typeEntry ? {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#f5c842", background: "#1a1608",
-                              border: "1px solid #3a2f10",
+                              color: "#e07a3a", background: "#1a0f08",
+                              border: "1px solid #3a1f0e",
                               borderRadius: 4, padding: "2px 6px",
                               letterSpacing: "0.08em", cursor: "pointer",
                             } : {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#888", background: "transparent",
+                              color: "#666", background: "transparent",
                               border: "1px dashed #2a2a2a",
                               borderRadius: 4, padding: "1px 6px",
                               letterSpacing: "0.08em", cursor: "pointer",
@@ -877,51 +898,63 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       {(() => {
                         const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
                         const tileEntry = item.tileId ? allBuiltIns.find(t => t.id === item.tileId) : null;
-                        // Location glyph — always rendered so the user
-                        // sees "this is going to the freezer" at a
-                        // glance without having to open the picker.
-                        const locEmoji =
-                          item.location === "fridge"  ? "🧊" :
-                          item.location === "freezer" ? "❄️" :
-                          item.location === "pantry"  ? "🥫" : null;
-                        const locLabel = (item.location || "").toUpperCase();
                         return (
                           <button
-                            onClick={() => setTilingScanIdx(idx)}
-                            aria-label={tileEntry ? `Change location (currently ${tileEntry.label})` : item.tileId ? "Change location" : "Set location"}
-                            title={tileEntry
-                              ? `Stored in ${tileEntry.label} (${item.location || "?"}) — tap to change`
-                              : item.location
-                                ? `Going to ${item.location} — tap to pick a shelf`
-                                : "Tap to set location"}
-                            style={item.tileId ? {
+                            onClick={e => { e.stopPropagation(); setTilingScanIdx(idx); }}
+                            aria-label={tileEntry ? `Change stored-in shelf (currently ${tileEntry.label})` : "Set stored-in shelf"}
+                            title={tileEntry ? `Stored in ${tileEntry.label} — tap to change` : "Tap to set a shelf"}
+                            style={tileEntry ? {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
                               color: "#7eb8d4", background: "#0f1620",
                               border: "1px solid #1f3040",
                               borderRadius: 4, padding: "2px 6px",
                               letterSpacing: "0.08em", cursor: "pointer",
-                            } : item.location ? {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#7eb8d4", background: "#0f1620",
-                              border: "1px dashed #1f3040",
-                              borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
                             } : {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#888", background: "transparent",
+                              color: "#666", background: "transparent",
                               border: "1px dashed #2a2a2a",
                               borderRadius: 4, padding: "1px 6px",
                               letterSpacing: "0.08em", cursor: "pointer",
                             }}
                           >
-                            {item.tileId
-                              ? <>{locEmoji && <>{locEmoji} </>}→ {tileEntry ? `${tileEntry.emoji} ${tileEntry.label.toUpperCase()}` : "MY LOCATION"}</>
-                              : locEmoji
-                                ? <>{locEmoji} {locLabel}</>
-                                : "+ set location"}
+                            {tileEntry
+                              ? <>{tileEntry.emoji} {tileEntry.label.toUpperCase()}</>
+                              : "+ set stored in"}
                           </button>
                         );
                       })()}
+                    </div>
+
+                    {/* Fridge | Pantry | Freezer quick-pick — one tap
+                        sends the row to that location without opening a
+                        picker. Active location reads blue-highlighted;
+                        others stay grey-muted until tapped. */}
+                    <div style={{ display:"flex", gap:6 }} onClick={e => e.stopPropagation()}>
+                      {[
+                        { id: "fridge",  emoji: "🧊", label: "Fridge" },
+                        { id: "pantry",  emoji: "🥫", label: "Pantry" },
+                        { id: "freezer", emoji: "❄️", label: "Freezer" },
+                      ].map(loc => {
+                        const active = item.location === loc.id;
+                        return (
+                          <button
+                            key={loc.id}
+                            onClick={e => { e.stopPropagation(); propagateCorrection(idx, { location: loc.id }); }}
+                            aria-label={`Place in ${loc.label}`}
+                            title={loc.label}
+                            style={{
+                              flex: 1, padding: "6px 0",
+                              fontSize: 16, lineHeight: 1,
+                              background: active ? "#0f1620" : "#0a0a0a",
+                              border: `1px ${active ? "solid" : "dashed"} ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                              borderRadius: 6, cursor: "pointer",
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}
+                          >
+                            {loc.emoji}
+                          </button>
+                        );
+                      })}
                     </div>
 
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
@@ -939,19 +972,20 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         return (
                           <select
                             value={item.state || ""}
-                            onChange={e => updateScanItem(idx, { state: e.target.value || null })}
+                            onClick={e => e.stopPropagation()}
+                            onChange={e => { e.stopPropagation(); updateScanItem(idx, { state: e.target.value || null }); }}
                             title="Physical state / form"
                             style={{
                               background: item.state ? "#0f1620" : "transparent",
-                              border: `1px solid ${item.state ? "#1f3040" : "#2a2a2a"}`,
-                              color: item.state ? "#7eb8d4" : "#888",
+                              border: `1px ${item.state ? "solid" : "dashed"} ${item.state ? "#1f3040" : "#2a2a2a"}`,
+                              color: item.state ? "#7eb8d4" : "#666",
                               borderRadius: 4, padding: "1px 4px",
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
                               letterSpacing: "0.05em", cursor: "pointer",
                               outline: "none",
                             }}
                           >
-                            <option value="" style={{ background: "#141414" }}>— STATE</option>
+                            <option value="" style={{ background: "#141414" }}>+ SET STATE</option>
                             {states.map(s => (
                               <option key={s} value={s} style={{ background: "#141414" }}>
                                 {stateLabel(s).toUpperCase()}
@@ -960,34 +994,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                           </select>
                         );
                       })()}
-                      {/* OPEN — expands the row into the full ItemCard
-                          so every field (canonical / category / stored in
-                          / quantity / expiration / state / tags) can be
-                          edited in one canvas. Pushed to the far right
-                          so it reads as "view more". */}
-                      <button
-                        onClick={() => setExpandedScanIdx(idx)}
-                        aria-label={`Open full editor for ${item.name}`}
-                        title="Open full editor"
-                        style={{
-                          marginLeft:"auto",
-                          background:"#0f1620", border:"1px solid #1f3040",
-                          color:"#7eb8d4", borderRadius:4,
-                          padding:"2px 8px", cursor:"pointer",
-                          fontFamily:"'DM Mono',monospace", fontSize:9,
-                          letterSpacing:"0.08em",
-                        }}
-                      >
-                        OPEN ›
-                      </button>
                     </div>
                   </div>
                   {editingIdx === idx ? (
                     <div
+                      onClick={e => e.stopPropagation()}
                       style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0, marginTop:2 }}
                       onBlur={e => {
-                        // Only close when focus leaves the entire editor — otherwise
-                        // tapping the unit select kills the editor before it registers.
                         if (!e.currentTarget.contains(e.relatedTarget)) {
                           setEditingIdx(null);
                         }
@@ -996,9 +1009,6 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       <input type="number" value={item.amount} onChange={e=>updateAmount(idx,e.target.value)} autoFocus
                         style={{ width:58, background:"#222", border:"1px solid #f5c842", borderRadius:6, padding:"6px 8px", color:"#f5c842", fontFamily:"'DM Mono',monospace", fontSize:13, textAlign:"right", outline:"none" }} />
                       {(() => {
-                        // Canonical items use their registry units; everything
-                        // else gets category/emoji-inferred units so the user
-                        // actually has something to pick from.
                         const units = canon ? canon.units : inferUnitsForScanned(item).units;
                         return (
                           <select value={item.unit} onChange={e=>updateUnit(idx,e.target.value)}
@@ -1011,7 +1021,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       })()}
                     </div>
                   ) : (
-                    <button onClick={()=>setEditingIdx(idx)} style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", cursor:"pointer", flexShrink:0, marginTop:2 }}>
+                    <button
+                      onClick={e => { e.stopPropagation(); setEditingIdx(idx); }}
+                      style={{ background:"#1e1e1e", border:"1px solid #2a2a2a", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", cursor:"pointer", flexShrink:0, marginTop:2 }}
+                    >
                       {item.amount} {unitDisplay}
                     </button>
                   )}
