@@ -1527,18 +1527,13 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               if (defaultLocation && !item.location) {
                 patch.location = defaultLocation;
               }
-              // Canonical identity swap (0039). ingredient_ids[]
-              // stays untouched — that's USER composition, not ours
-              // to rewrite on a type change. Swap the canonical_id
-              // to the new type's default. If the user's NAME
-              // carries a more-specific canonical (e.g. "Bratwurst"
-              // with a bratwurst canonical), prefer that over the
-              // broader type default.
-              const prior = item.canonicalId || null;
-              const next  = inferCanonicalFromName(item.name)
-                         || canonicalIdForType(typeId)
-                         || null;
-              if (next !== prior) patch.canonicalId = next;
+              // Canonical stays untouched on a Food Category pick.
+              // Category is the broad classification (Pasta), canonical
+              // is the specific identity (Cavatappi) — they're
+              // orthogonal. Picking "Pasta" as the category should NOT
+              // rewrite a more-specific canonical already set by name
+              // match or the user's explicit pick; changing canonical
+              // is done via the CANONICAL tap line + inline picker.
               onUpdate?.(patch);
               setTypePickerOpen(false);
             }}

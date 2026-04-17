@@ -1532,9 +1532,15 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     //      2. Type default as fallback — Food Category = Hot dogs
     //         → canonical_id = 'hot_dog' when the name has no
     //         more-specific token
+    // Canonical derivation at save time: explicit user pick first,
+    // then name-match. We deliberately do NOT fall back to
+    // canonicalIdForType(customTypeId) — the food category is a broad
+    // classification (Pasta), not the item's specific identity
+    // (Cavatappi). Picking "Pasta" as the type doesn't mean this row
+    // IS the canonical pasta row; canonical stays null until the user
+    // explicitly picks one or the name matches a registry alias.
     const canonicalId = customCanonicalId
       || inferCanonicalFromName(customName.trim())
-      || canonicalIdForType(customTypeId)
       || null;
 
     // Unified save shape. Single-canonical picks, multi-canonical
@@ -2191,10 +2197,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                     setCustomTypeId(typeId);
                     if (defaultTileId && !customTileId) setCustomTileId(defaultTileId);
                     if (defaultLocation && !customLocation) setCustomLocation(defaultLocation);
-                    if (!customCanonicalId) {
-                      const fromType = canonicalIdForType(typeId);
-                      if (fromType) setCustomCanonicalId(fromType);
-                    }
+                    // Canonical stays untouched on a Food Category pick.
+                    // Category is the broad classification (Pasta),
+                    // canonical is the specific identity (Cavatappi) —
+                    // orthogonal. User picks canonical explicitly via
+                    // the CANONICAL tap line / picker, or name match
+                    // derives it at save time.
                     setTypePickerOpen(false);
                   }}
                 />
