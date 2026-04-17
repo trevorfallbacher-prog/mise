@@ -42,9 +42,34 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.9.1";
+export const CURRENT_VERSION = "0.9.2";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.9.2",
+    date:    "2026-04-17",
+    title:   "LinkIngredient: ⭐ star + top-3 likely + search",
+    summary:
+      "The canonical-link picker (tap 🔗 LINK on a scan row) got the " +
+      "same star-first rewrite as IDENTIFIED AS and STORED IN. The " +
+      "single best canonical match is pinned at the top as the ⭐ " +
+      "one-tap default, the next 3 most-likely matches sit directly " +
+      "below it (strictly high-to-low by score — no more random " +
+      "ordering), and the rest of the registry stays behind a search " +
+      "bar. SELECTED accumulator and BLEND PRESETS keep working the " +
+      "same way.",
+    shipped: [
+      { kind: "ux",
+        text: "LinkIngredient: ⭐ star pinned at top shows the highest-scoring match as the one-tap default.",
+        commits: [] },
+      { kind: "ux",
+        text: "Top 3 LIKELY matches below the star, sorted strictly descending by match score. No more EXACT below WEAK.",
+        commits: [] },
+      { kind: "ux",
+        text: "Search bar replaces the full-registry dump. Results only render on demand, dedup'd against star/likely so no duplicate rows.",
+        commits: [] },
+    ],
+  },
   {
     version: "0.9.1",
     date:    "2026-04-17",
