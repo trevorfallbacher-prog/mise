@@ -354,6 +354,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
+            onOpenCook={openCook}
           />
         )}
         {tab === "cookbook" && (

@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CookMode from "./CookMode";
 import SchedulePicker from "./SchedulePicker";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
+import { supabase } from "../lib/supabase";
 
 const DAY_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const DAY_SHORTS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
@@ -416,12 +417,16 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNo
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping }) {
-  // Show a rolling 14-day window so next week is visible without scrolling mechanics.
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook }) {
+  // 21-day rolling window: past 7 days for week-in-review + today + next 14.
+  // Chronological order (oldest past on top, future on bottom) so users
+  // scroll down through time the same way the eye reads a diary.
+  const PAST_DAYS   = 7;
+  const FUTURE_DAYS = 14;
   const today = useMemo(() => startOfDay(new Date()), []);
   const days = useMemo(() => {
     const arr = [];
-    for (let i = 0; i < 14; i++) {
+    for (let i = -PAST_DAYS; i < FUTURE_DAYS; i++) {
       const d = new Date(today);
       d.setDate(d.getDate() + i);
       arr.push(d);
@@ -429,9 +434,14 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     return arr;
   }, [today]);
 
+  const windowStart = useMemo(() => {
+    const d = new Date(today);
+    d.setDate(d.getDate() - PAST_DAYS);
+    return d;
+  }, [today]);
   const windowEnd = useMemo(() => {
     const d = new Date(today);
-    d.setDate(d.getDate() + 15); // end of 15th day to cover the last day fully
+    d.setDate(d.getDate() + FUTURE_DAYS + 1); // +1 to cover the last day fully
     return d;
   }, [today]);
 
@@ -439,11 +449,38 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // trigger (see migration 0010) and surfaced via App-level useNotifications,
   // so they fire from any tab. Plan's subscription just keeps its local
   // state in sync.
+  //
+  // Window now extends backwards PAST_DAYS so pastlabeled scheduled meals
+  // (e.g. one that was planned last Tuesday and never cooked) still surface
+  // on the timeline — they read as "missed" next to a cook_log that DID
+  // happen on that day.
   const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
-    fromISO: today.toISOString(),
+    fromISO: windowStart.toISOString(),
     toISO:   windowEnd.toISOString(),
     familyKey,
   });
+
+  // Past cooks — cook_logs with cooked_at in the past-portion of the window.
+  // RLS already restricts to self + family + diners-of-me (see 0013), so we
+  // just filter by the cooked_at range. Viewer-scoped list — every member
+  // of the family sees their family's cooks in this window.
+  const [pastCooks, setPastCooks] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    if (!userId) { setPastCooks([]); return; }
+    (async () => {
+      const { data, error } = await supabase
+        .from("cook_logs")
+        .select("id, user_id, recipe_slug, recipe_title, recipe_emoji, recipe_cuisine, recipe_category, rating, notes, diners, cooked_at, xp_earned")
+        .gte("cooked_at", windowStart.toISOString())
+        .lt("cooked_at",  today.toISOString())  // strictly before today — today's cooks land under TODAY via the scheduled_meals + live state, not as "past"
+        .order("cooked_at", { ascending: false });
+      if (!alive) return;
+      if (error) { console.warn("[past cooks] load failed:", error.message); setPastCooks([]); return; }
+      setPastCooks(data || []);
+    })();
+    return () => { alive = false; };
+  }, [userId, familyKey, windowStart, today]);
 
   // UI state
   const [addingForDay, setAddingForDay] = useState(null);       // Date picked via "+"
@@ -451,6 +488,19 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   const [isRequesting, setIsRequesting] = useState(false);       // "Request" mode vs. "I'll cook"
   const [openMeal, setOpenMeal] = useState(null);                // Meal tapped to view
   const [cookingRecipe, setCookingRecipe] = useState(null);      // Recipe now in CookMode
+
+  // Auto-scroll the TODAY card into view on first mount — with 7 past
+  // days above today, the default scroll-top lands on a week ago, which
+  // is the wrong anchor for a tab whose primary job is \"what's on the
+  // board now?\". Scroll once, not on every rerender.
+  const todayRef = useRef(null);
+  const didScrollToTodayRef = useRef(false);
+  useEffect(() => {
+    if (didScrollToTodayRef.current) return;
+    if (!todayRef.current) return;
+    todayRef.current.scrollIntoView({ block: "start", behavior: "auto" });
+    didScrollToTodayRef.current = true;
+  });
 
   // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
   // Pantry + shoppingList wiring is identical to the Cook tab's path so
@@ -474,6 +524,20 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   }
 
   const byDay = bucketByDay(meals);
+
+  // Bucket past cooks onto their cooked_at local day so each day card can
+  // render a \"✓ cooked\" section below its planned meals. Separate map so
+  // the ordering inside a day (planned above cooked) stays deterministic.
+  const cooksByDay = useMemo(() => {
+    const map = new Map();
+    for (const c of pastCooks) {
+      const d = new Date(c.cooked_at);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(c);
+    }
+    return map;
+  }, [pastCooks]);
 
   const onPickRecipe = (recipe) => {
     setRecipeToSchedule(recipe);
@@ -505,7 +569,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           Plan
         </h1>
         <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#666", marginTop: 4 }}>
-          Schedule meals ahead so the notifications know when to fire.
+          Scroll back through last week, schedule the next one.
         </div>
       </div>
 
@@ -513,56 +577,114 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         {days.map((d, i) => {
           const key = dayKey(d);
           const dayMeals = byDay.get(key) || [];
+          const dayCooks = cooksByDay.get(key) || [];
           const isToday  = d.getTime() === today.getTime();
+          const isPast   = d.getTime() < today.getTime();
+          const daysAgo  = Math.round((today.getTime() - d.getTime()) / 86400000);
+          // Past day cards read as a diary entry — dimmer, different top
+          // accent, no + ADD or REQUEST buttons. Scheduled meals that
+          // landed in the past are rendered as "missed" (no action, grey
+          // label). Completed cook_logs are the primary content.
+          const hasContent = dayMeals.length > 0 || dayCooks.length > 0;
           const dateLabel = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
           return (
-            <div key={key} style={{
-              background: isToday ? "#1a1408" : "#141414",
-              border: `1px solid ${isToday ? "#f5c84233" : "#1e1e1e"}`,
-              borderRadius: 16, padding: "14px 16px",
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: dayMeals.length ? 10 : 0 }}>
+            <div key={key}
+              ref={isToday ? todayRef : undefined}
+              style={{
+                background: isToday ? "#1a1408" : isPast ? "#0f0f0f" : "#141414",
+                border: `1px solid ${isToday ? "#f5c84233" : isPast ? "#1a1a1a" : "#1e1e1e"}`,
+                borderRadius: 16, padding: "14px 16px",
+                opacity: isPast ? 0.82 : 1,
+                scrollMarginTop: 24,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: hasContent ? 10 : 0 }}>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: isToday ? "#f5c842" : "#666", letterSpacing: "0.12em" }}>
-                    {isToday ? "TODAY" : i === 1 ? "TOMORROW" : DAY_SHORTS[d.getDay()]}
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: isToday ? "#f5c842" : isPast ? "#555" : "#666", letterSpacing: "0.12em" }}>
+                    {isToday
+                      ? "TODAY"
+                      : isPast
+                        ? (daysAgo === 1 ? "YESTERDAY" : DAY_SHORTS[d.getDay()])
+                        : (i - PAST_DAYS === 1 ? "TOMORROW" : DAY_SHORTS[d.getDay()])}
                   </div>
-                  <div style={{ fontFamily: "'Fraunces',serif", fontSize: 18, fontStyle: "italic", fontWeight: 300, color: isToday ? "#f0ece4" : "#aaa" }}>
+                  <div style={{ fontFamily: "'Fraunces',serif", fontSize: 18, fontStyle: "italic", fontWeight: 300, color: isToday ? "#f0ece4" : isPast ? "#888" : "#aaa" }}>
                     {dateLabel}
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {hasFamily && (
+                {!isPast && (
+                  <div style={{ display: "flex", gap: 6 }}>
+                    {hasFamily && (
+                      <button
+                        onClick={() => { setIsRequesting(true); setAddingForDay(d); }}
+                        title="Ask family to cook something"
+                        style={{
+                          background: "#1a1a1a", border: "1px solid #2a2a2a",
+                          borderRadius: 20, padding: "4px 10px",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          color: "#d9b877", letterSpacing: "0.08em", cursor: "pointer",
+                        }}
+                      >
+                        🙋 REQUEST
+                      </button>
+                    )}
                     <button
-                      onClick={() => { setIsRequesting(true); setAddingForDay(d); }}
-                      title="Ask family to cook something"
+                      onClick={() => { setIsRequesting(false); setAddingForDay(d); }}
                       style={{
                         background: "#1a1a1a", border: "1px solid #2a2a2a",
-                        borderRadius: 20, padding: "4px 10px",
+                        borderRadius: 20, padding: "4px 12px",
                         fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#d9b877", letterSpacing: "0.08em", cursor: "pointer",
+                        color: "#888", letterSpacing: "0.08em", cursor: "pointer",
                       }}
                     >
-                      🙋 REQUEST
+                      + ADD
                     </button>
-                  )}
-                  <button
-                    onClick={() => { setIsRequesting(false); setAddingForDay(d); }}
-                    style={{
-                      background: "#1a1a1a", border: "1px solid #2a2a2a",
-                      borderRadius: 20, padding: "4px 12px",
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#888", letterSpacing: "0.08em", cursor: "pointer",
-                    }}
-                  >
-                    + ADD
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
 
-              {dayMeals.length === 0 && !isToday && (
+              {!hasContent && !isToday && (
                 <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#444", fontStyle: "italic" }}>
-                  Nothing planned.
+                  {isPast ? "Nothing cooked." : "Nothing planned."}
+                </div>
+              )}
+
+              {/* Past cooks — render above any scheduled meals on the same
+                  past day, since \"what got done\" is the review's headline.
+                  Each card is tappable → opens the cook detail via
+                  onOpenCook (Cookbook deep-link path, same as UserProfile
+                  uses). */}
+              {dayCooks.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: dayMeals.length ? 10 : 0 }}>
+                  {dayCooks.map(cook => {
+                    const chef = nameFor ? nameFor(cook.user_id) : "";
+                    const isMine = cook.user_id === userId;
+                    const time = new Date(cook.cooked_at);
+                    return (
+                      <button
+                        key={cook.id}
+                        onClick={() => onOpenCook?.(cook.id)}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 12,
+                          padding: "10px 12px",
+                          background: "#0f140f", border: "1px solid #1e3a1e",
+                          borderRadius: 12, cursor: "pointer", textAlign: "left",
+                        }}
+                      >
+                        <span style={{ fontSize: 22, flexShrink: 0 }}>{cook.recipe_emoji || "🍽️"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Fraunces',serif", fontSize: 14, color: "#f0ece4", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {cook.recipe_title}
+                          </div>
+                          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#6b8a6b", marginTop: 2, letterSpacing: "0.05em" }}>
+                            ✓ COOKED · {fmtTime(time).toUpperCase()}{isMine ? " · YOU" : chef ? ` · ${chef.toUpperCase()}` : ""}
+                            {Array.isArray(cook.diners) && cook.diners.length > 0 ? ` · ${cook.diners.length} DINER${cook.diners.length === 1 ? "" : "S"}` : ""}
+                          </div>
+                        </div>
+                        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#4ade80", letterSpacing: "0.08em" }}>→</span>
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 

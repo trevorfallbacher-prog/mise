@@ -42,9 +42,63 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.9";
+export const CURRENT_VERSION = "0.8.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.8.0",
+    date:    "2026-04-17",
+    title:   "Plan tab extends backwards — a week in review, not just a week ahead",
+    summary:
+      "The Plan tab used to be future-only — today plus 14 days of " +
+      "scheduled meals. Nothing reminded you what your family actually " +
+      "cooked last week. Now the same timeline extends 7 days into the " +
+      "past: scroll up to see every cook your family logged since last " +
+      "Thursday, in chronological order, with chef attribution and " +
+      "cook-time. Tap a past cook → its full detail in Cookbook. The " +
+      "view auto-lands on TODAY when you open the tab so scheduling " +
+      "forward stays the default, and past-day cards dim + drop their " +
+      "+ ADD / REQUEST buttons since planning backwards is a " +
+      "category error.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "Plan tab now renders 21 days: 7 past + today + 14 future. Past days show completed cook_logs (family-scoped per the 0013 RLS policy — your cooks + family's + any meal you were a diner on) rather than scheduled meals. Past-day cards use a dimmer background + lose the + ADD / REQUEST buttons so planning backwards isn't a tempting misclick",
+        commits: ["__plan_past_week__"],
+      },
+      {
+        kind: "feature",
+        text: "Past cook cards render emoji + title + \"✓ COOKED\" badge + timestamp + chef name (or YOU) + diner count. Green-tinted background distinguishes them from grey \"missed planning\" cards for past days where a scheduled meal never became a cook",
+        commits: ["__plan_past_week__"],
+      },
+      {
+        kind: "feature",
+        text: "Tap a past cook → opens that cook's detail in Cookbook via the existing deep-link path (same one UserProfile uses). Cross-tab navigation reuses the openCook callback so the cook detail stays the single source of truth",
+        commits: ["__plan_past_week__"],
+      },
+      {
+        kind: "ux",
+        text: "Tab auto-scrolls to TODAY on first paint — with 7 past days above, the default scroll-top would have landed on a week ago, which is the wrong anchor for a tab whose primary job is \"what's on the board now?\". scrollIntoView runs once via a ref latch",
+        commits: ["__plan_past_week__"],
+      },
+      {
+        kind: "ux",
+        text: "YESTERDAY label replaces the generic weekday short for -1 day, mirroring the TOMORROW label that already existed for +1. Makes the \"last night's dinner\" row pop visually",
+        commits: ["__plan_past_week__"],
+      },
+      {
+        kind: "architecture",
+        text: "Past cooks loaded inline in Plan.jsx via a useEffect-gated supabase query on cook_logs filtered by cooked_at window. No new hook — the surface is narrow (one component, one date range) and duplicating useCookLog's realtime subscription across the Plan tab would have been wasted overhead",
+        commits: ["__plan_past_week__"],
+      },
+    ],
+    coming_soon: [
+      "Realtime for past-cook arrivals (a family cook landing while you're on Plan tab)",
+      "Month view — zoom out from the week-strip for a grid overview",
+      "Cook-log backdating: complete a cook today but mark it as last night's dinner when the app was offline",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.7.9",
     date:    "2026-04-17",
