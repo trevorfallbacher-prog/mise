@@ -194,9 +194,16 @@ export default function IngredientCard({
     // containing viewingId counts even if ingredientId (the primary
     // display tag) is something else. Lets a frozen pizza appear under
     // mozzarella, sausage, AND dough in their respective cards.
+    //
+    // Canonical-identity aware (0039): an item whose canonical_id
+    // equals viewingId counts even when ingredient_ids is something
+    // else (Hot Dog = canonical hot_dog, made-of [ground_pork,
+    // sandwich_bread]). Without this branch the card says "Not in
+    // kitchen" on a row literally open in front of the user.
     () => viewingId
       ? pantry.filter(p =>
           p.ingredientId === viewingId ||
+          p.canonicalId === viewingId ||
           (Array.isArray(p.ingredientIds) && p.ingredientIds.includes(viewingId))
         )
       : [],
