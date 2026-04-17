@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { findIngredient, fuzzyMatchIngredient } from "../data/ingredients";
 import { BLEND_PRESETS } from "../data/blendPresets";
+import { slugifyIngredientName } from "../lib/useIngredientInfo";
 
 // Confidence bucketing for the match list — the raw 0–120 score reads as
 // noise; these labels give the user something to decide on. Thresholds
@@ -100,6 +101,27 @@ export default function LinkIngredient({ item, onLink, onClose }) {
   };
   const removeTag = (id) => setSelected(prev => prev.filter(s => s.id !== id));
   const clearAll  = () => setSelected([]);
+
+  // Create a brand-new canonical from the user's typed query. The slug
+  // becomes the canonicalId; later enrichment (pending_ingredient_info)
+  // fills in metadata. findIngredient() will miss on this id until then,
+  // so we attach a synthetic canonical object to the selection so the UI
+  // chip renders with the user's name right away.
+  const createNewFromQuery = (raw) => {
+    const name = (raw || "").trim();
+    if (name.length < 2) return;
+    const id = slugifyIngredientName(name);
+    if (!id) return;
+    setSelected(prev => {
+      if (prev.some(s => s.id === id)) return prev;
+      const existing = findIngredient(id);
+      return [...prev, {
+        id,
+        canonical: existing || { id, name, emoji: "✨", category: "user" },
+      }];
+    });
+    setSearch("");
+  };
 
   // Surface a preset whenever the item name / search matches a blend
   // label or any of its component names.
@@ -377,39 +399,93 @@ export default function LinkIngredient({ item, onLink, onClose }) {
         {/* Search results — only when the user typed something AND
             what they typed reached past the top 4 already shown. The
             guard (slicing from index 4) skips star + 3 likely so
-            we don't duplicate rows in the list. */}
+            we don't duplicate rows in the list. Also surfaces a
+            "+ CREATE "<query>"" row whenever the registry has no
+            exact name match so users can tag with their own
+            canonical without waiting for enrichment. */}
         {searchNeedle && (() => {
           const shownIds = new Set([
             ...(star ? [star.ingredient.id] : []),
             ...likely.map(m => m.ingredient.id),
           ]);
           const extras = searchMatches.filter(m => !shownIds.has(m.ingredient.id));
-          if (extras.length === 0 && searchMatches.length > 0) {
-            // Everything matching is already shown as star/likely —
-            // gently tell the user rather than render an empty block.
-            return (
-              <div style={{
-                padding: "12px 8px", textAlign: "center",
-                fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                color: "#666", fontStyle: "italic", marginBottom: 10,
+          const nLower = searchNeedle.toLowerCase();
+          const exactInRegistry = searchMatches.some(m =>
+            m.ingredient.name.toLowerCase() === nLower ||
+            m.ingredient.id === slugifyIngredientName(searchNeedle)
+          );
+          const showCreate = !exactInRegistry && searchNeedle.length >= 2;
+          const createButton = showCreate && (
+            <button
+              onClick={() => createNewFromQuery(searchNeedle)}
+              style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "10px 12px",
+                background: "#1a1508",
+                border: "1px dashed #b8a878",
+                borderRadius: 10,
+                cursor: "pointer", textAlign: "left", width: "100%",
+              }}
+            >
+              <span style={{ fontSize: 22 }}>✨</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                  color: "#d4c9ac",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  + CREATE “{searchNeedle}”
+                </div>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#b8a878", letterSpacing: "0.08em", marginTop: 2,
+                }}>
+                  NEW CANONICAL · ENRICH LATER
+                </div>
+              </div>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.08em",
+                color: "#b8a878", background: "#2a2110",
+                border: "1px solid #3a2f10",
+                padding: "2px 7px", borderRadius: 4,
               }}>
-                All close matches are already shown above.
+                + ADD
+              </span>
+            </button>
+          );
+          if (extras.length === 0 && searchMatches.length > 0) {
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+                {createButton}
+                <div style={{
+                  padding: "8px 8px", textAlign: "center",
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#666", fontStyle: "italic",
+                }}>
+                  All close matches are already shown above.
+                </div>
               </div>
             );
           }
           if (extras.length === 0) {
             return (
-              <div style={{
-                padding: "16px 8px", textAlign: "center",
-                fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-                color: "#666", marginBottom: 10,
-              }}>
-                No matches for "{searchNeedle}". Commit empty to keep as free text.
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+                {createButton}
+                {!showCreate && (
+                  <div style={{
+                    padding: "16px 8px", textAlign: "center",
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                    color: "#666",
+                  }}>
+                    No matches for "{searchNeedle}". Commit empty to keep as free text.
+                  </div>
+                )}
               </div>
             );
           }
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+              {createButton}
               {extras.map(m => renderMatchRow(m, "search"))}
             </div>
           );

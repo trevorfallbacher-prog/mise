@@ -201,6 +201,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   // the fallback when it has no idea) that the user should be able
   // to override without waiting until the row lands in pantry.
   const [emojiingScanIdx, setEmojiingScanIdx] = useState(null);
+  // Full-card expand. Tap the chevron on a scan row to open the same
+  // ItemCard surface you'd see in pantry — big canvas, the three
+  // stacked left-column buttons (canonical / category / stored in) and
+  // the fridge|pantry|freezer emoji row. All edits route through the
+  // scan patcher so the confirm-list stays the source of truth until
+  // the user taps STOCK.
+  const [expandedScanIdx, setExpandedScanIdx] = useState(null);
   // One-at-a-time "are you sure?" confirm on the ✕ reject button. Without
   // this gate a stray tap on "M&Ms" would quietly vaporize the row you
   // actually bought. Holds the id (not idx — idx drifts as siblings get
@@ -722,17 +729,6 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         {item.name}
                       </button>
                     )}
-                    {/* Canonical IS-A subline — when the row is linked to
-                        a canonical ingredient, show "🌭 Hot Dog" under the
-                        user's display name so they see what the system
-                        thinks this is without having to tap the chip.
-                        Same pattern ItemCard uses. */}
-                    {canon && canon.name && canon.name.toLowerCase() !== item.name.trim().toLowerCase() && (
-                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#6b8a6b", letterSpacing:"0.05em", marginTop:-2 }}>
-                        {canon.emoji || "🏷️"} {canon.name} <span style={{ color:"#3a4a3a" }}>IS-A</span>
-                      </div>
-                    )}
-
                     {/* Chip row — status + tappable corrections. LINK/RELINK
                         opens the fuzzy-match picker so misidentified rows
                         get fixed BEFORE landing in the pantry. Expiration
@@ -755,18 +751,6 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                           🔗 LINK
                         </button>
                       )}
-                      <span
-                        title={
-                          item.confidence === "low"
-                            ? "Low confidence — please double-check"
-                            : item.confidence === "medium"
-                              ? "Medium confidence — verify if needed"
-                              : "High confidence"
-                        }
-                        style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:conf.color, background:conf.bg, border:`1px solid ${conf.border}`, borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em" }}
-                      >
-                        {conf.label}
-                      </span>
                       {/* ⭐ LEARNED — this row's identity came from a
                           prior correction keyed on the same raw OCR
                           text. Silent win: "AQUAMARINE SL → Imitation
@@ -976,6 +960,26 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                           </select>
                         );
                       })()}
+                      {/* OPEN — expands the row into the full ItemCard
+                          so every field (canonical / category / stored in
+                          / quantity / expiration / state / tags) can be
+                          edited in one canvas. Pushed to the far right
+                          so it reads as "view more". */}
+                      <button
+                        onClick={() => setExpandedScanIdx(idx)}
+                        aria-label={`Open full editor for ${item.name}`}
+                        title="Open full editor"
+                        style={{
+                          marginLeft:"auto",
+                          background:"#0f1620", border:"1px solid #1f3040",
+                          color:"#7eb8d4", borderRadius:4,
+                          padding:"2px 8px", cursor:"pointer",
+                          fontFamily:"'DM Mono',monospace", fontSize:9,
+                          letterSpacing:"0.08em",
+                        }}
+                      >
+                        OPEN ›
+                      </button>
                     </div>
                   </div>
                   {editingIdx === idx ? (
@@ -1219,6 +1223,25 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             })}
           </div>
         </ModalSheet>
+      )}
+
+      {/* Full-card editor for a scan row. Reuses ItemCard so the
+          scan-confirm list gets the same three-stacked-buttons +
+          fridge|pantry|freezer emoji row surface the pantry uses.
+          Every field routes through updateScanItem so the scan
+          draft stays the source of truth until STOCK. onEditTags
+          opens LinkIngredient via the existing scan-linker. */}
+      {expandedScanIdx != null && scannedItems[expandedScanIdx] && (
+        <ItemCard
+          item={scannedItems[expandedScanIdx]}
+          pantry={[]}
+          userId={userId}
+          onUpdate={(patch) => {
+            propagateCorrection(expandedScanIdx, patch);
+          }}
+          onEditTags={() => setLinkingScanIdx(expandedScanIdx)}
+          onClose={() => setExpandedScanIdx(null)}
+        />
       )}
     </div>
   );
