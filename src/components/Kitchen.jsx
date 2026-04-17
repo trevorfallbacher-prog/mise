@@ -1946,26 +1946,27 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 )}
               </div>
 
-              {/* STATE tap line — neutral yellow (not part of the big-3
-                  color hierarchy since state isn't a classification
-                  axis on par with category/location/canonical). */}
+              {/* STATE tap line — muted purple so it reads as a
+                  distinct axis from INGREDIENT (yellow). State isn't
+                  part of the big-3 classification (category/storage/
+                  canonical) so it sits on its own color. */}
               <div
                 onClick={() => setStatePickerOpen(v => !v)}
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842",
+                  color: "#c7a8d4",
                   letterSpacing: "0.08em", marginTop: 3,
                   cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#f5c842" }}>STATE:</span>
+                <span style={{ color: "#c7a8d4" }}>STATE:</span>
                 {customState ? (
-                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
                     {customState.toUpperCase()}
                   </span>
                 ) : (
-                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
                     + SET STATE
                   </span>
                 )}
@@ -2138,9 +2139,9 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                           onClick={() => { setCustomState(s); setStatePickerOpen(false); }}
                           style={{
                             padding: "6px 10px",
-                            background: customState === s ? "#1a1608" : "transparent",
-                            border: `1px solid ${customState === s ? "#f5c842" : "#2a2a2a"}`,
-                            color: customState === s ? "#f5c842" : "#aaa",
+                            background: customState === s ? "#1a1322" : "transparent",
+                            border: `1px solid ${customState === s ? "#c7a8d4" : "#2a2a2a"}`,
+                            color: customState === s ? "#c7a8d4" : "#aaa",
                             borderRadius: 16, cursor: "pointer",
                             fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
                           }}

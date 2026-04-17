@@ -451,6 +451,7 @@ function PendingEnrichmentsList({ viewerId: _viewerId }) {
 function CanonicalsList({ viewerId }) {
   const [usage, setUsage] = useState(null); // Map<canonical_id, count>
   const [approvedIds, setApprovedIds] = useState(null); // Set<slug>
+  const [overrides, setOverrides] = useState(null); // Map<slug, display_name>
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(null);    // canonical_id mid-op
@@ -464,7 +465,7 @@ function CanonicalsList({ viewerId }) {
         .not("canonical_id", "is", null),
       supabase
         .from("ingredient_info")
-        .select("ingredient_id"),
+        .select("ingredient_id, info"),
     ]);
     if (pantryErr) { setError(pantryErr.message); setUsage(new Map()); }
     else {
@@ -479,8 +480,15 @@ function CanonicalsList({ viewerId }) {
     if (infoErr) {
       // Non-fatal — without approvedIds every custom row just reads as PENDING.
       setApprovedIds(new Set());
+      setOverrides(new Map());
     } else {
       setApprovedIds(new Set((infoRows || []).map(r => r.ingredient_id).filter(Boolean)));
+      const om = new Map();
+      for (const r of (infoRows || [])) {
+        const dn = r.info?.display_name;
+        if (r.ingredient_id && dn && typeof dn === "string") om.set(r.ingredient_id, dn);
+      }
+      setOverrides(om);
     }
   }
 
@@ -490,13 +498,16 @@ function CanonicalsList({ viewerId }) {
   // use but aren't in the registry (user-created slugs). Every row
   // carries source + status flags so the UI can gate actions.
   const rows = useMemo(() => {
-    if (!usage || !approvedIds) return null;
+    if (!usage || !approvedIds || !overrides) return null;
     const seen = new Set();
     const bundled = INGREDIENTS.map(i => {
       seen.add(i.id);
+      const override = overrides.get(i.id);
       return {
         id: i.id,
-        name: i.name,
+        name: override || i.name,
+        bundledName: i.name,
+        hasOverride: !!override,
         emoji: i.emoji || "🥫",
         category: i.category || null,
         source: "bundled",
@@ -534,7 +545,47 @@ function CanonicalsList({ viewerId }) {
       });
     }
     return [...custom, ...bundled];
-  }, [usage, approvedIds]);
+  }, [usage, approvedIds, overrides]);
+
+  async function renameBundled(row) {
+    // eslint-disable-next-line no-alert
+    const next = window.prompt(
+      `Rename "${row.bundledName || row.name}".\n\n` +
+        `This is a BUNDLED canonical — we can't change the slug ` +
+        `("${row.id}") since it's referenced in code. Instead, we'll ` +
+        `write a display-name override into ingredient_info.\n\n` +
+        `Leave blank to clear any existing override.`,
+      row.name,
+    );
+    if (next === null) return;
+    const trimmed = next.trim();
+
+    setBusy(row.id);
+    try {
+      const { data: existing } = await supabase
+        .from("ingredient_info")
+        .select("info")
+        .eq("ingredient_id", row.id)
+        .maybeSingle();
+      const prevInfo = (existing && existing.info && typeof existing.info === "object") ? existing.info : {};
+      const nextInfo = { ...prevInfo };
+      if (trimmed) {
+        nextInfo.display_name = trimmed;
+      } else {
+        delete nextInfo.display_name;
+      }
+      const { error: upErr } = await supabase
+        .from("ingredient_info")
+        .upsert({ ingredient_id: row.id, info: nextInfo }, { onConflict: "ingredient_id" });
+      if (upErr) throw upErr;
+      setVersion(v => v + 1);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Rename failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function renameCustom(row) {
     // eslint-disable-next-line no-alert
@@ -735,32 +786,30 @@ function CanonicalsList({ viewerId }) {
               }}>
                 {statusLabel}
               </span>
+              <button
+                onClick={() => isCustom ? renameCustom(r) : renameBundled(r)}
+                disabled={isBusy}
+                style={adminBtnStyle("#2a2110", "#b8a878")}
+              >
+                {isBusy ? "…" : "RENAME"}
+              </button>
+              {isCustom && !r.approved && (
+                <button
+                  onClick={() => approveCustom(r)}
+                  disabled={isBusy}
+                  style={adminBtnStyle("#0a2a12", "#7ec87e")}
+                >
+                  {isBusy ? "…" : "APPROVE"}
+                </button>
+              )}
               {isCustom && (
-                <>
-                  <button
-                    onClick={() => renameCustom(r)}
-                    disabled={isBusy}
-                    style={adminBtnStyle("#2a2110", "#b8a878")}
-                  >
-                    {isBusy ? "…" : "RENAME"}
-                  </button>
-                  {!r.approved && (
-                    <button
-                      onClick={() => approveCustom(r)}
-                      disabled={isBusy}
-                      style={adminBtnStyle("#0a2a12", "#7ec87e")}
-                    >
-                      {isBusy ? "…" : "APPROVE"}
-                    </button>
-                  )}
-                  <button
-                    onClick={() => rejectCustom(r)}
-                    disabled={isBusy}
-                    style={adminBtnStyle("#2a0a0a", "#d98a8a")}
-                  >
-                    {isBusy ? "…" : "REJECT"}
-                  </button>
-                </>
+                <button
+                  onClick={() => rejectCustom(r)}
+                  disabled={isBusy}
+                  style={adminBtnStyle("#2a0a0a", "#d98a8a")}
+                >
+                  {isBusy ? "…" : "REJECT"}
+                </button>
               )}
             </div>
           );
@@ -773,12 +822,15 @@ function CanonicalsList({ viewerId }) {
         fontFamily: "'DM Mono',monospace", fontSize: 9,
         color: "#666", lineHeight: 1.6, letterSpacing: "0.04em",
       }}>
-        BUNDLED canonicals live in src/data/ingredients.js and are
-        read-only here. CUSTOM canonicals arrive from ItemCard's
-        "+ CREATE" flow. APPROVE writes an ingredient_info stub so the
-        slug stops reading as PENDING. REJECT clears the slug from
-        every pantry_items row and drops the stub. RENAME rewrites
-        the slug across the board and carries any approval forward.
+        BUNDLED canonicals live in src/data/ingredients.js. RENAME on
+        a bundled row writes a display-name override into
+        ingredient_info.info.display_name (the slug itself stays put
+        since it's referenced in code). CUSTOM canonicals arrive from
+        ItemCard's "+ CREATE" flow — APPROVE writes an ingredient_info
+        stub so the slug stops reading as PENDING, REJECT clears the
+        slug from every pantry_items row and drops the stub, RENAME
+        rewrites the slug across the board and carries any approval
+        forward.
       </div>
     </div>
   );
