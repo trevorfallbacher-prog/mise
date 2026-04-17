@@ -892,6 +892,18 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   <div
                     style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
                     onClick={e => e.stopPropagation()}
+                    // When focus leaves the entire edit area (not just
+                    // one sub-input), commit-close the editor. Using
+                    // relatedTarget + contains keeps the editor open
+                    // while you're still moving between the number
+                    // input, the unit select, and the slider — which
+                    // used to slam shut on every inter-element blur
+                    // because the number input's onBlur closed the
+                    // editor directly.
+                    onBlur={e => {
+                      if (e.currentTarget.contains(e.relatedTarget)) return;
+                      setEditingField(null);
+                    }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <input
@@ -899,11 +911,16 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                         autoFocus
                         defaultValue={item.amount}
                         onBlur={e => {
+                          // Write the amount but DO NOT close the editor here.
+                          // The outer onBlur above handles close-on-leave.
                           const v = parseFloat(e.target.value);
-                          commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
+                          onUpdate?.({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
                         }}
                         onKeyDown={e => {
-                          if (e.key === "Enter") e.target.blur();
+                          if (e.key === "Enter") {
+                            const v = parseFloat(e.target.value);
+                            commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
+                          }
                           if (e.key === "Escape") setEditingField(null);
                         }}
                         style={{
