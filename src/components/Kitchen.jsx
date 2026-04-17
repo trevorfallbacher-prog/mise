@@ -3245,12 +3245,37 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       const safeDate = typeof meta.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(meta.date)
         ? meta.date
         : null;
+      // Snapshot of the scanned items at scan-confirm time. This is
+      // the HISTORICAL record of what came off the receipt, distinct
+      // from the live pantry rows (which get merged, decremented, and
+      // deleted as the user cooks). Without this snapshot, ReceiptView
+      // would only show items whose pantry rows still point back at
+      // the receipt — a receipt with 23 lines reads as "4 items" once
+      // you've cooked through most of them. See migration 0050.
+      const scanItemsSnapshot = items.map(it => ({
+        name:          it.name || null,
+        rawText:       it.rawText || it.scanRaw?.raw_name || null,
+        emoji:         it.emoji || null,
+        amount:        typeof it.amount === "number" ? it.amount : null,
+        unit:          it.unit || null,
+        priceCents:    typeof it.priceCents === "number" ? it.priceCents : null,
+        category:      it.category || null,
+        canonicalId:   it.canonicalId || it.ingredientId || null,
+        ingredientId:  it.ingredientId || null,
+        ingredientIds: Array.isArray(it.ingredientIds) ? it.ingredientIds : [],
+        confidence:    it.confidence || null,
+        state:         it.state || null,
+        typeId:        it.typeId || null,
+        tileId:        it.tileId || null,
+        location:      it.location || null,
+      }));
       const payload = {
         user_id: userId,
         store_name: meta.store || null,
         receipt_date: safeDate,
         total_cents: typeof meta.totalCents === "number" ? meta.totalCents : null,
         item_count: items.length,
+        scan_items: scanItemsSnapshot,
       };
       const { data, error } = await supabase.from("receipts").insert(payload).select("id").single();
       if (error) {
@@ -3275,10 +3300,30 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       // Infer the kind from the first item's location — Scanner already
       // pushed activeMode.location onto each item during normalization.
       const scanKind = items[0]?.location || "pantry";
+      // Same scan_items snapshot shape as receipts — historical
+      // record independent of live pantry state.
+      const scanItemsSnapshot = items.map(it => ({
+        name:          it.name || null,
+        rawText:       it.rawText || it.scanRaw?.raw_name || null,
+        emoji:         it.emoji || null,
+        amount:        typeof it.amount === "number" ? it.amount : null,
+        unit:          it.unit || null,
+        priceCents:    typeof it.priceCents === "number" ? it.priceCents : null,
+        category:      it.category || null,
+        canonicalId:   it.canonicalId || it.ingredientId || null,
+        ingredientId:  it.ingredientId || null,
+        ingredientIds: Array.isArray(it.ingredientIds) ? it.ingredientIds : [],
+        confidence:    it.confidence || null,
+        state:         it.state || null,
+        typeId:        it.typeId || null,
+        tileId:        it.tileId || null,
+        location:      it.location || null,
+      }));
       const { data, error } = await supabase.from("pantry_scans").insert({
         user_id: userId,
         kind: scanKind,
         item_count: items.length,
+        scan_items: scanItemsSnapshot,
       }).select("id").single();
       if (error) {
         console.warn("[pantry_scans] insert failed:", error.message, error);

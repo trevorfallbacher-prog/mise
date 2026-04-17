@@ -111,9 +111,15 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
     (async () => {
       setLoading(true);
       const table = kind === "pantry_scan" ? "pantry_scans" : "receipts";
+      // scan_items (migration 0050) is the historical snapshot of
+      // the line items captured at scan-confirm time — independent of
+      // live pantry state so deletes / merges / cooks don't erase the
+      // receipt's contents. Falls back to null on pre-0050 rows; the
+      // UI layers it over the pantry-derived view so legacy receipts
+      // don't read empty.
       const selectCols = kind === "pantry_scan"
-        ? "id, kind, scanned_at, item_count, image_path"
-        : "id, store_name, receipt_date, scanned_at, total_cents, item_count, image_path";
+        ? "id, kind, scanned_at, item_count, image_path, scan_items"
+        : "id, store_name, receipt_date, scanned_at, total_cents, item_count, image_path, scan_items";
       const { data, error } = await supabase
         .from(table)
         .select(selectCols)
@@ -140,14 +146,56 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
     return () => { alive = false; };
   }, [artifactId, kind]);
 
-  // Items in the pantry that point back at this artifact. Filter changes
-  // with kind so the same component surfaces the right items for either
-  // scan artifact.
+  // Historical scan-items list. Prefers receipt.scan_items (the
+  // snapshot captured at scan-confirm time — complete & immutable)
+  // over the live pantry filter. Falls back to pantry-derived for
+  // receipts scanned before migration 0050 landed. We ALSO decorate
+  // each row with a reference to the live pantry row (by matching
+  // canonical / name) so tapping a row can still deep-link into its
+  // current ItemCard — the snapshot gives us history, the decoration
+  // gives us "still have it" signal.
   const relatedItems = useMemo(() => {
-    if (!pantry) return [];
-    if (kind === "pantry_scan") return pantry.filter(p => p.sourceScanId === artifactId);
-    return pantry.filter(p => p.sourceReceiptId === artifactId);
-  }, [pantry, artifactId, kind]);
+    // Live pantry rows that point back at this artifact — used as a
+    // lookup for decorating snapshot rows, AND as the fallback list
+    // if the receipt has no scan_items snapshot.
+    const liveMatches = !pantry ? [] :
+      (kind === "pantry_scan"
+        ? pantry.filter(p => p.sourceScanId === artifactId)
+        : pantry.filter(p => p.sourceReceiptId === artifactId));
+
+    // Pre-0050 receipt: no snapshot, best we can do is the live list.
+    const snapshot = Array.isArray(receipt?.scan_items) ? receipt.scan_items : null;
+    if (!snapshot || snapshot.length === 0) return liveMatches;
+
+    // Build a cheap canonical/name index into live pantry so each
+    // snapshot row can find its current counterpart (if any) —
+    // powers the "still in kitchen" marker + tap-to-ItemCard.
+    const byCanonical = new Map();
+    const byNameLower = new Map();
+    for (const p of (pantry || [])) {
+      if (p.canonicalId && !byCanonical.has(p.canonicalId)) byCanonical.set(p.canonicalId, p);
+      if (p.ingredientId && !byCanonical.has(p.ingredientId)) byCanonical.set(p.ingredientId, p);
+      const n = (p.name || "").toLowerCase().trim();
+      if (n && !byNameLower.has(n)) byNameLower.set(n, p);
+    }
+    return snapshot.map((s, i) => {
+      const canonHit = (s.canonicalId && byCanonical.get(s.canonicalId))
+        || (s.ingredientId && byCanonical.get(s.ingredientId))
+        || null;
+      const nameHit = !canonHit ? byNameLower.get((s.name || "").toLowerCase().trim()) : null;
+      const live = canonHit || nameHit || null;
+      // Merge the snapshot with the live row so onOpenItem can pass a
+      // real pantry row to ItemCard. id key is stable across renders
+      // — prefer the live id when present (so keys don't collide
+      // with other receipt views), fall back to index.
+      return {
+        ...s,
+        id: live?.id || `snapshot-${artifactId}-${i}`,
+        _live: live,
+        _fromSnapshot: true,
+      };
+    });
+  }, [pantry, artifactId, kind, receipt]);
 
   // Compact display for the metadata strip.
   const displayDate = receipt?.receipt_date || receipt?.scanned_at;
@@ -342,22 +390,42 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
             background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
             fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic",
           }}>
-            No pantry rows link back to this receipt. Items may have been removed, or the link was lost in a pre-0029 scan.
+            No line items on this {kind === "pantry_scan" ? "scan" : "receipt"}. If this is a pre-0050 record, items may have been removed from your pantry since — the snapshot wasn't captured at the time.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {relatedItems.map(item => {
-              const canon = findIngredient(item.ingredientId);
+              const canon = findIngredient(item.ingredientId || item.canonicalId);
               const uLabel = canon ? unitLabel(canon, item.unit) : item.unit;
+              // Snapshot rows carry _live when the pantry still has
+              // a matching row; tapping opens that current row in
+              // ItemCard. When _live is null the item's been
+              // consumed / removed — still shown (historical record
+              // of the receipt) but with a subtle "consumed" marker
+              // and the tap becomes a no-op.
+              const fromSnapshot = item._fromSnapshot;
+              const live = item._live || null;
+              const tappable = !fromSnapshot || !!live;
               return (
                 <button
                   key={item.id}
-                  onClick={() => onOpenItem?.(item)}
+                  onClick={() => {
+                    if (fromSnapshot) {
+                      if (live) onOpenItem?.(live);
+                    } else {
+                      onOpenItem?.(item);
+                    }
+                  }}
+                  disabled={!tappable}
                   style={{
                     display: "flex", alignItems: "center", gap: 10,
                     padding: "10px 12px",
-                    background: "#141414", border: "1px solid #242424",
-                    borderRadius: 10, cursor: "pointer", textAlign: "left",
+                    background: tappable ? "#141414" : "#0f0f0f",
+                    border: `1px solid ${tappable ? "#242424" : "#1a1a1a"}`,
+                    borderRadius: 10,
+                    cursor: tappable ? "pointer" : "default",
+                    textAlign: "left",
+                    opacity: tappable ? 1 : 0.55,
                   }}
                 >
                   <span style={{ fontSize: 20, flexShrink: 0 }}>{item.emoji || "🥫"}</span>
@@ -368,9 +436,21 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
                     <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", marginTop: 2, letterSpacing: "0.05em" }}>
                       {item.amount} {uLabel}
                       {item.priceCents != null ? ` · $${(item.priceCents / 100).toFixed(2)}` : ""}
+                      {fromSnapshot && !live && (
+                        <span style={{ color: "#8a7f6e", marginLeft: 6, fontStyle: "italic" }}>· consumed</span>
+                      )}
+                      {fromSnapshot && live && (
+                        <span style={{ color: "#7ec87e", marginLeft: 6 }}>· still in kitchen</span>
+                      )}
                     </div>
                   </div>
-                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.08em" }}>→</span>
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: tappable ? "#7eb8d4" : "#3a3a3a",
+                    letterSpacing: "0.08em",
+                  }}>
+                    {tappable ? "→" : "·"}
+                  </span>
                 </button>
               );
             })}
