@@ -529,7 +529,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
+                  <span style={{ color: "#e07a3a" }}>CATEGORY:</span>
                   {currentType ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
@@ -1598,7 +1598,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
         <ModalSheet
           onClose={() => setTypePickerOpen(false)}
           zIndex={Z.picker}
-          label="IDENTIFIED AS"
+          label="CATEGORY"
           maxHeight="85vh"
         >
           <h2 style={{
@@ -1606,14 +1606,15 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
             fontStyle: "italic", color: "#f0ece4",
             fontWeight: 400, margin: "2px 0 10px",
           }}>
-            What kind of thing is this?
+            What category does {item.name} belong to?
           </h2>
           <p style={{
             fontFamily: "'DM Sans',sans-serif", fontSize: 12,
             color: "#888", lineHeight: 1.5, margin: "0 0 14px",
           }}>
-            Pick a type for {item.name}. Default categories come from
-            USDA's food classifications; you can also create your own.
+            We've loaded the largest USDA categories for you to choose from.
+            Category drives the state picker (sliced / ground / whole / …)
+            and the default tile — pick the one that best matches.
           </p>
           <TypePicker
             userId={userId}

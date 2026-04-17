@@ -7,28 +7,23 @@ import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { COLOR, FONT, RADIUS } from "../lib/tokens";
 
-// TypePicker — the IDENTIFIED AS chooser. Single-select.
+// TypePicker — the CATEGORY chooser. Single-select.
 //
 // UX shape (the "star-first" rewrite):
 //   1. If we have a ⭐ suggestion (from name inference, learned
 //      scan-text memory, or the user's previous pick), it's pinned
 //      at the top as the one-tap default — no scrolling, no hunting.
 //      Most scans end here.
-//   2. "+ CREATE NEW TYPE" sits RIGHT BELOW the star, not buried at
-//      the bottom of a 50-row dump. If the suggestion is wrong and
-//      nothing in the taxonomy fits, adding your own is equally
-//      reachable as accepting the default.
-//   3. A search input below that filters the full catalog (bundled
-//      WWEIA + family user types). Results only appear when the
-//      user types — we don't vomit the whole list at them. If the
-//      current selection or suggestion isn't a match, typing a
-//      few letters narrows it.
-//
-// Why: the old shape was "⭐ SUGGESTED mixed into a wall of 50 rows
-// with CREATE NEW at the bottom." Users had to scroll past the
-// entire WWEIA taxonomy to create their own type, and the star
-// was lost in the noise. This rewrite makes the star the focal
-// point and relegates the catalog to on-demand search.
+//   2. A search input filters the full catalog (bundled USDA/WWEIA
+//      types + any historical user-created types). Results only
+//      appear when the user types.
+//   3. Categories drive state vocab + tile routing, so they're
+//      LOCKED to the bundled USDA list by default (allowCreate=false).
+//      Admin surfaces that want user-type creation pass
+//      allowCreate={true} explicitly. This keeps meat / cheese /
+//      bread state detection reliable — user-invented categories
+//      don't have state vocabularies and would silently break the
+//      STATE picker downstream.
 //
 // Props:
 //   userId          — for user-types loading + creation
@@ -36,6 +31,11 @@ import { COLOR, FONT, RADIUS } from "../lib/tokens";
 //   suggestedTypeId — from name-inference / scan memory, gets ⭐
 //   onPick(typeId, defaultTileId, defaultLocation) — type's defaults
 //                     flow up so the caller can auto-suggest STORED IN
+//   allowCreate     — opt-in gate for the CREATE NEW TYPE form.
+//                     Default false. Kept here for admin use; every
+//                     user-facing surface should LEAVE IT DEFAULT so
+//                     users can't mint categories that don't match a
+//                     state vocabulary.
 
 // Bundled tile id -> emoji/label lookup for the "defaults to" hint
 // under each type. Uses the already-imported tile arrays.
@@ -59,6 +59,7 @@ export default function TypePicker({
   selectedTypeId,
   suggestedTypeId,
   onPick,
+  allowCreate = false,
 }) {
   const [userTypes] = useUserTypes(userId);
 
@@ -222,8 +223,13 @@ export default function TypePicker({
       {current && (!star || current.id !== star.id) &&
         renderTypeRow(current, "current")}
 
-      {/* ── + CREATE NEW · right below the star, not buried ────── */}
-      {!creating ? (
+      {/* ── + CREATE NEW · admin/opt-in only. USDA categories drive
+          state vocab + tile routing, so letting users mint their own
+          category silently breaks the STATE picker for that item.
+          Gate lives on the `allowCreate` prop; the default is false,
+          so every user-facing surface just sees the bundled USDA
+          list without a "add your own" escape hatch. ────── */}
+      {allowCreate && !creating ? (
         <button
           onClick={() => setCreating(true)}
           style={{
@@ -239,7 +245,7 @@ export default function TypePicker({
           <span style={{ fontSize: 16 }}>➕</span>
           <span>CREATE NEW TYPE</span>
         </button>
-      ) : (
+      ) : allowCreate && creating ? (
         <div style={{
           padding: 12, border: `1px solid ${COLOR.goldDim}`,
           borderRadius: RADIUS.lg, background: COLOR.goldDeep,
@@ -323,7 +329,7 @@ export default function TypePicker({
             </button>
           </div>
         </div>
-      )}
+      ) : null}
 
       {/* ── Search · filters the full catalog on demand ────────── */}
       <div style={{ marginTop: 2 }}>
@@ -355,8 +361,9 @@ export default function TypePicker({
           fontFamily: FONT.sans, fontSize: 12, color: COLOR.muted,
           fontStyle: "italic", lineHeight: 1.5,
         }}>
-          Nothing matched "{search.trim()}". Try a shorter term, or
-          tap CREATE NEW TYPE above to add your own.
+          Nothing matched "{search.trim()}". Try a shorter term —
+          categories are fixed to the USDA list so we can give every
+          item the right state vocabulary (sliced, ground, whole, …).
         </div>
       )}
       {searchMatches.map(t => renderTypeRow(t, "search"))}

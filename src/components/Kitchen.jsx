@@ -1402,12 +1402,15 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           (canonical) auto-fills too unless the user already linked. */}
       {typingScanIdx != null && scannedItems[typingScanIdx] && (
         <ModalSheet onClose={() => setTypingScanIdx(null)} maxHeight="86vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:10 }}>
-            FOOD CATEGORY
+          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:10 }}>
+            CATEGORY
           </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
-            What kind of thing is {scannedItems[typingScanIdx].name}?
+          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 6px", lineHeight:1.2 }}>
+            What category does {scannedItems[typingScanIdx].name} belong to?
           </h2>
+          <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", lineHeight:1.5, margin:"0 0 14px" }}>
+            We've loaded the largest USDA categories for you to choose from. Category drives the state picker (sliced / ground / whole / ...) and the default tile — pick the one that best matches.
+          </p>
           <TypePicker
             userId={userId}
             selectedTypeId={scannedItems[typingScanIdx].typeId}
@@ -1697,6 +1700,155 @@ function FieldExplainer({ emoji, label, body }) {
   );
 }
 
+// Full-screen overlay used for save-validation warning, save-success
+// confirmation, and exit-without-complete warning. One shell, three
+// tones via `kind`. Tap-to-dismiss on success; required button taps
+// on warnings (so the user has to see which escape they're choosing).
+//
+// Props:
+//   kind           — "warning" | "success" | "exit_warning"
+//   title          — big Fraunces headline
+//   body           — DM Sans paragraph below title
+//   fields         — optional: array of {emoji, label, body} for
+//                    per-field explainers rendered as a column
+//   destination    — optional: "Fridge → Dairy & Eggs" text for success
+//   primary        — { label, onClick, tone: "confirm"|"danger"|"neutral" }
+//   secondary      — optional { label, onClick }
+//   onBackdropTap  — optional dismiss behavior; warnings skip this
+//                    so tapping the backdrop doesn't bypass the gate
+function AddItemOutcome({
+  kind,
+  title,
+  body,
+  fields = null,
+  destination = null,
+  primary,
+  secondary = null,
+  onBackdropTap = null,
+}) {
+  const palette = kind === "success"
+    ? { accent: "#7ec87e", accentBg: "#0f1a0f", accentBorder: "#1e3a1e", icon: "✓" }
+    : kind === "exit_warning"
+      ? { accent: "#f5c842", accentBg: "#1a1608", accentBorder: "#3a2f10", icon: "⚠" }
+      : { accent: "#d98a8a", accentBg: "#1a0a0a", accentBorder: "#3a1a1a", icon: "!" };
+  return (
+    <div
+      onClick={onBackdropTap || undefined}
+      style={{
+        position: "fixed", inset: 0, zIndex: 400,
+        background: "rgba(0,0,0,0.92)",
+        maxWidth: 480, margin: "0 auto",
+        display: "flex", flexDirection: "column", justifyContent: "center",
+        padding: "32px 22px 28px",
+        overflowY: "auto",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          display: "flex", flexDirection: "column", gap: 14,
+        }}
+      >
+        <div style={{
+          width: 72, height: 72, borderRadius: 36,
+          background: palette.accentBg, border: `2px solid ${palette.accent}`,
+          color: palette.accent,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 40, lineHeight: 1, margin: "0 auto 6px",
+          fontFamily: "'DM Mono',monospace", fontWeight: 600,
+        }}>
+          {palette.icon}
+        </div>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10,
+          color: palette.accent, letterSpacing: "0.16em",
+          textAlign: "center",
+        }}>
+          {kind === "success" ? "ADDED" : kind === "exit_warning" ? "HOLD ON" : "ALMOST THERE"}
+        </div>
+        <h2 style={{
+          fontFamily: "'Fraunces',serif", fontSize: 26,
+          fontStyle: "italic", fontWeight: 400, color: "#f0ece4",
+          textAlign: "center", lineHeight: 1.2,
+          margin: "0 0 4px",
+        }}>
+          {title}
+        </h2>
+        {body && (
+          <p style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+            color: "#aaa", lineHeight: 1.55,
+            textAlign: "center", margin: "0 auto",
+            maxWidth: 360,
+          }}>
+            {body}
+          </p>
+        )}
+        {destination && (
+          <div style={{
+            margin: "6px auto 0", padding: "10px 16px",
+            background: palette.accentBg, border: `1px solid ${palette.accentBorder}`,
+            borderRadius: 12, display: "flex", alignItems: "center", gap: 8,
+          }}>
+            <span style={{ fontSize: 18 }}>📍</span>
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 11,
+              color: palette.accent, letterSpacing: "0.1em",
+            }}>
+              {destination}
+            </span>
+          </div>
+        )}
+        {fields && fields.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+            {fields.map((f, i) => (
+              <FieldExplainer key={i} emoji={f.emoji} label={f.label} body={f.body} />
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 14 }}>
+          <button
+            onClick={primary.onClick}
+            style={{
+              padding: "14px 16px",
+              background: primary.tone === "danger"
+                ? "#5a1818"
+                : primary.tone === "neutral"
+                  ? "#1a1a1a"
+                  : palette.accent,
+              border: primary.tone === "neutral" ? "1px solid #2a2a2a" : "none",
+              color: primary.tone === "danger" || primary.tone === "confirm"
+                ? "#fff"
+                : (primary.tone === "neutral" ? "#aaa" : "#111"),
+              borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+              letterSpacing: "0.1em", cursor: "pointer",
+            }}
+          >
+            {primary.label}
+          </button>
+          {secondary && (
+            <button
+              onClick={secondary.onClick}
+              style={{
+                padding: "12px 16px",
+                background: "transparent",
+                border: "1px solid #2a2a2a",
+                color: "#888",
+                borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 11,
+                letterSpacing: "0.1em", cursor: "pointer",
+              }}
+            >
+              {secondary.label}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
   // Pulled for admin-approve writes so the session's dbMap updates
   // immediately after an admin mints a new canonical here.
@@ -1754,6 +1906,11 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // user can actually see which field is red while they fix it;
   // flipped back to false on a successful save.
   const [saveAttempted, setSaveAttempted] = useState(false);
+  // Full-screen outcome overlay. null = none; otherwise one of:
+  //   { kind: "warning", missing: string[] }       — save attempt with missing fields
+  //   { kind: "success", item, location, tile }    — save landed
+  //   { kind: "exit_warning" }                     — user tried to close with data dirty
+  const [outcome, setOutcome] = useState(null);
   // Inline expiration + state — new in the ItemCard-styled add form.
   // Both optional. customExpiresAt is a Date (or null); customState is
   // one of the ingredient-specific state ids (e.g. "whole" | "diced"),
@@ -1856,20 +2013,55 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   const hasUnit     = !!customUnit.trim();
   const hasCategory = !!customTypeId;
   const hasLocation = !!customLocation;
+  const hasTile     = !!customTileId;
+  // Canonical counts as satisfied when the user explicitly picked
+  // one OR when we can derive one from the typed name / category
+  // default. The · AUTO chip on the CANONICAL tap line already
+  // surfaces the derived value so the user can see what they're
+  // committing to before they save.
+  const derivedCanonicalId =
+    customCanonicalId
+    || inferCanonicalFromName(trimmedName)
+    || canonicalIdForType(customTypeId)
+    || null;
+  const hasCanonical = !!derivedCanonicalId;
   const missing = [];
-  if (!hasName)     missing.push("name");
-  if (!hasAmount)   missing.push("amount");
-  if (!hasUnit)     missing.push("unit");
-  if (!hasCategory) missing.push("category");
-  if (!hasLocation) missing.push("location");
+  if (!hasName)      missing.push("name");
+  if (!hasAmount)    missing.push("amount");
+  if (!hasUnit)      missing.push("unit");
+  if (!hasCanonical) missing.push("canonical");
+  if (!hasCategory)  missing.push("category");
+  if (!hasTile)      missing.push("tile");
+  if (!hasLocation)  missing.push("location");
   const canSave = missing.length === 0;
+
+  // Close-attempt interceptor. If the user has started filling out
+  // the form (typed a name) but hasn't completed every required
+  // field, we show a full-screen exit warning explaining why each
+  // missing field matters. They can still bail via SAVE ANYWAY (the
+  // temporary escape hatch — will tighten post-beta per user spec)
+  // or KEEP EDITING. If the form is pristine (no name typed) or
+  // complete, close fires immediately.
+  const isDirty  = hasName || hasAmount || hasUnit || hasCategory || hasLocation;
+  const isComplete = canSave;
+  const attemptClose = () => {
+    if (!isDirty || isComplete) {
+      onClose?.();
+      return;
+    }
+    setOutcome({ kind: "exit_warning" });
+  };
 
   const save = async () => {
     if (!canSave) {
-      // Don't silently no-op — flip the validation-display flag so
-      // the missing-field panel lights up and the user sees exactly
-      // what's blocking the save.
+      // Full-screen warning lists the missing fields with plain-
+      // language explainers so the user learns WHY each is required.
+      // Users shouldn't be able to save a half-configured row —
+      // category + location + canonical drive state vocab, tile
+      // routing, and future search. Missing them now creates
+      // orphaned pantry items that are hard to recover later.
       setSaveAttempted(true);
+      setOutcome({ kind: "warning", missing });
       return;
     }
     setSaveAttempted(false);
@@ -1961,6 +2153,26 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
 
     onAdd(item);
     setSaveAttempted(false);
+    // Full-screen success. User taps DONE to dismiss → onClose fires.
+    // Gives them a beat to absorb "yes, it saved, here's where it
+    // went" instead of the modal snapping shut. Destination string
+    // is resolved from the same tile/location data we just persisted
+    // so it matches exactly where the user will find the row.
+    const tileLabel = (() => {
+      const all = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+      return all.find(t => t.id === item.tileId)?.label || null;
+    })();
+    const locLabel = ({
+      fridge:  "Fridge",
+      pantry:  "Pantry",
+      freezer: "Freezer",
+    })[item.location] || item.location || "your kitchen";
+    setOutcome({
+      kind: "success",
+      item,
+      locationLabel: locLabel,
+      tileLabel,
+    });
 
     // Write the structured components tree after onAdd has kicked the
     // parent pantry_items INSERT. setComponentsForParent retries on
@@ -2025,7 +2237,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
         sheet; swipe-down-to-dismiss only activates at scrollTop=0
         (ModalSheet handles that guard internally). */}
     <ModalSheet
-      onClose={onClose}
+      onClose={attemptClose}
       zIndex={Z.modal}
       showClose={false}
       maxHeight="85vh"
@@ -2211,7 +2423,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
+                <span style={{ color: "#e07a3a" }}>CATEGORY:</span>
                 {customTypeId ? (
                   <>
                     <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
@@ -2647,52 +2859,8 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               </div>
             )}
 
-        {/* Validation reminder — appears after a failed save attempt
-            listing each missing field with a plain-language
-            reminder of what it's for. Mirrors the voice used on the
-            rest of the form (serif title, sans body) rather than
-            feeling like a system-level error. */}
-        {saveAttempted && missing.length > 0 && (
-          <div style={{
-            marginTop: 4, marginBottom: 14,
-            padding: "14px 14px 12px",
-            background: "#1a0a0a", border: "1px solid #3a1a1a",
-            borderRadius: 12,
-          }}>
-            <div style={{
-              fontFamily: "'Fraunces',serif", fontSize: 15,
-              fontStyle: "italic", color: "#f0d4d4",
-              lineHeight: 1.4, marginBottom: 10,
-            }}>
-              Almost there — {missing.length === 1 ? "one field" : `${missing.length} fields`} still need{missing.length === 1 ? "s" : ""} your attention.
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {!hasName && (
-                <FieldExplainer emoji="📝" label="ITEM NAME"
-                  body="Type what you call it — the big italic line at the top. 'Sizzle EVO' is fine; we'll remember it." />
-              )}
-              {!hasAmount && (
-                <FieldExplainer emoji="🔢" label="QUANTITY"
-                  body="How much of it? The number and unit (2 lb, 1 gallon, 18 count)." />
-              )}
-              {!hasUnit && (
-                <FieldExplainer emoji="📏" label="UNIT"
-                  body="Gallon, stick, lb, count — the way the item is sold. Needed so amounts add up correctly when you restock." />
-              )}
-              {!hasCategory && (
-                <FieldExplainer emoji="🧩" label="FOOD CATEGORY"
-                  body="The broad bucket — Pork, Cheese, Bread. Drives the state picker (sliced, whole, ground, …) and the default tile placement." />
-              )}
-              {!hasLocation && (
-                <FieldExplainer emoji="📍" label="STORED IN"
-                  body="Fridge, pantry, or freezer. Decides which tab the item lives under — without it we don't know where to show it." />
-              )}
-            </div>
-          </div>
-        )}
-
         <div style={{ display:"flex", gap:10 }}>
-          <button onClick={onClose} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer", letterSpacing:"0.08em" }}>CANCEL</button>
+          <button onClick={attemptClose} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer", letterSpacing:"0.08em" }}>CANCEL</button>
           <button
             onClick={save}
             // Button stays tappable even when required fields are
@@ -2717,6 +2885,91 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
         </div>
         </>
     </ModalSheet>
+
+    {/* Full-screen outcome overlay — validation warning, save
+        success, or exit warning. Sibling of ModalSheet so its fixed
+        positioning isn't trapped by the sheet's transform, and so
+        the backdrop covers the whole viewport including the nav. */}
+    {outcome && outcome.kind === "warning" && (() => {
+      const fields = [];
+      if (!hasName)      fields.push({ emoji: "📝", label: "ITEM NAME",
+        body: "Type what you call it — the big italic line at the top. 'Sizzle EVO' is fine; we'll remember it." });
+      if (!hasAmount)    fields.push({ emoji: "🔢", label: "QUANTITY",
+        body: "How much of it? The number part of 2 lb / 1 gallon / 18 count." });
+      if (!hasUnit)      fields.push({ emoji: "📏", label: "UNIT",
+        body: "Gallon, stick, lb, count — the way the item is sold. Needed so amounts add up correctly when you restock." });
+      if (!hasCanonical) fields.push({ emoji: "✨", label: "CANONICAL",
+        body: "The internal \"what is this thing\" name. Pork Loin, Ribeye, 2% Milk. We use it to match recipes and track substitutions. Pick one or type a new one — we'll remember it." });
+      if (!hasCategory)  fields.push({ emoji: "🧩", label: "CATEGORY",
+        body: "The USDA bucket — Pork, Cheese, Bread. Category drives your STATE options (sliced / ground / whole / …) and the default tile placement. Required." });
+      if (!hasTile)      fields.push({ emoji: "🗂️", label: "STORED IN",
+        body: "Which tile inside your fridge / pantry / freezer — Dairy, Meat & Poultry, Oils & Fats, etc. You can make your own if none fit." });
+      if (!hasLocation)  fields.push({ emoji: "📍", label: "LOCATION",
+        body: "Fridge, pantry, or freezer. Which tab the item lives under. Required so we don't lose it." });
+      return (
+        <AddItemOutcome
+          kind="warning"
+          title="A few fields still need your attention"
+          body="Every item in your kitchen needs these so we can route it to the right tile, give it the right state options, and find it again later. Quick fixes below."
+          fields={fields}
+          primary={{
+            label: "GOT IT · FIX THESE",
+            tone: "confirm",
+            onClick: () => setOutcome(null),
+          }}
+        />
+      );
+    })()}
+    {outcome && outcome.kind === "success" && (() => {
+      const dest = outcome.tileLabel
+        ? `${outcome.locationLabel} → ${outcome.tileLabel}`
+        : outcome.locationLabel;
+      return (
+        <AddItemOutcome
+          kind="success"
+          title={`${outcome.item.name} is in your kitchen`}
+          body="We'll track its expiration, its state, and its location from here. Swipe into the tab below to find it."
+          destination={dest}
+          primary={{
+            label: "DONE",
+            tone: "confirm",
+            onClick: () => { setOutcome(null); onClose?.(); },
+          }}
+        />
+      );
+    })()}
+    {outcome && outcome.kind === "exit_warning" && (() => {
+      const fields = [];
+      if (!hasName)      fields.push({ emoji: "📝", label: "ITEM NAME",
+        body: "We need something to call it on the card." });
+      if (!hasCanonical) fields.push({ emoji: "✨", label: "CANONICAL",
+        body: "Without a canonical the item won't match recipes or substitutions. You'll have to re-link it every time a recipe calls for it." });
+      if (!hasCategory)  fields.push({ emoji: "🧩", label: "CATEGORY",
+        body: "Without a category we can't show the right STATE options (sliced / ground / whole / …). The item can't tell us if it's a pork loin or a block of cheese." });
+      if (!hasTile)      fields.push({ emoji: "🗂️", label: "STORED IN",
+        body: "Without a tile assignment the item lands in Miscellaneous and can be hard to find." });
+      if (!hasLocation)  fields.push({ emoji: "📍", label: "LOCATION",
+        body: "Without a location the item has no tab to live in. You won't see it in Fridge, Pantry, or Freezer." });
+      if (!hasAmount || !hasUnit) fields.push({ emoji: "🔢", label: "QUANTITY + UNIT",
+        body: "Without these we can't track restocking or tell you when you're running low." });
+      return (
+        <AddItemOutcome
+          kind="exit_warning"
+          title="Hold on — this item isn't ready yet"
+          body="Leaving now drops everything you've typed. Each field shapes how this item behaves in the app — here's what you'd be skipping."
+          fields={fields}
+          primary={{
+            label: "KEEP EDITING",
+            tone: "confirm",
+            onClick: () => setOutcome(null),
+          }}
+          secondary={{
+            label: "DISCARD AND CLOSE",
+            onClick: () => { setOutcome(null); onClose?.(); },
+          }}
+        />
+      );
+    })()}
 
     {/* Components picker, rendered as a SIBLING of ModalSheet so its
         fixed positioning isn't contained by ModalSheet's swipe
