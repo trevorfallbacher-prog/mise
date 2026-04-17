@@ -434,40 +434,63 @@ function PendingEnrichmentsList({ viewerId: _viewerId }) {
 }
 
 // CANONICALS — the full registry, bundled + user-created, with live
-// usage counts so Trevor can see which ones are in circulation. Users
-// can rename their own custom canonicals inline (rewrites every
-// pantry_items.canonical_id that points at the old slug). Bundled
-// canonicals (src/data/ingredients.js) are read-only here — renaming
-// those lives in code.
-function CanonicalsList({ viewerId: _viewerId }) {
+// usage counts so Trevor can see which ones are in circulation.
+// Custom canonicals (slugs created on-the-fly from ItemCard) get the
+// same accept/reject flow the ENRICHMENTS tab uses:
+//   APPROVE — upserts an ingredient_info stub so the slug becomes an
+//             "official" canonical (the CANONICAL chip stops showing
+//             the · PENDING marker).
+//   REJECT  — nullifies canonical_id on every pantry_items row that
+//             points at the slug and removes any ingredient_info stub
+//             (so the slug falls out of circulation entirely).
+//   RENAME  — rewrites the slug in-place across every pantry_items
+//             row, carrying existing ingredient_info + review rows to
+//             the new id.
+// Bundled canonicals (src/data/ingredients.js) are read-only here —
+// renaming those lives in code.
+function CanonicalsList({ viewerId }) {
   const [usage, setUsage] = useState(null); // Map<canonical_id, count>
+  const [approvedIds, setApprovedIds] = useState(null); // Set<slug>
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
-  const [busy, setBusy] = useState(null);    // canonical_id mid-rename
+  const [busy, setBusy] = useState(null);    // canonical_id mid-op
   const [version, setVersion] = useState(0); // cheap refresh trigger
 
   async function reload() {
-    const { data, error: err } = await supabase
-      .from("pantry_items")
-      .select("canonical_id")
-      .not("canonical_id", "is", null);
-    if (err) { setError(err.message); setUsage(new Map()); return; }
-    const m = new Map();
-    for (const r of (data || [])) {
-      const id = r.canonical_id;
-      if (!id) continue;
-      m.set(id, (m.get(id) || 0) + 1);
+    const [{ data: pantryRows, error: pantryErr }, { data: infoRows, error: infoErr }] = await Promise.all([
+      supabase
+        .from("pantry_items")
+        .select("canonical_id")
+        .not("canonical_id", "is", null),
+      supabase
+        .from("ingredient_info")
+        .select("ingredient_id"),
+    ]);
+    if (pantryErr) { setError(pantryErr.message); setUsage(new Map()); }
+    else {
+      const m = new Map();
+      for (const r of (pantryRows || [])) {
+        const id = r.canonical_id;
+        if (!id) continue;
+        m.set(id, (m.get(id) || 0) + 1);
+      }
+      setUsage(m);
     }
-    setUsage(m);
+    if (infoErr) {
+      // Non-fatal — without approvedIds every custom row just reads as PENDING.
+      setApprovedIds(new Set());
+    } else {
+      setApprovedIds(new Set((infoRows || []).map(r => r.ingredient_id).filter(Boolean)));
+    }
   }
 
   useEffect(() => { reload(); }, [version]);
 
   // Merge the bundled registry with any canonical_ids that show up in
   // use but aren't in the registry (user-created slugs). Every row
-  // carries a { source } marker so the UI can style and gate renames.
+  // carries source + status flags so the UI can gate actions.
   const rows = useMemo(() => {
-    if (!usage) return null;
+    if (!usage || !approvedIds) return null;
     const seen = new Set();
     const bundled = INGREDIENTS.map(i => {
       seen.add(i.id);
@@ -478,6 +501,7 @@ function CanonicalsList({ viewerId: _viewerId }) {
         category: i.category || null,
         source: "bundled",
         count: usage.get(i.id) || 0,
+        approved: true,
       };
     });
     const custom = [];
@@ -490,10 +514,27 @@ function CanonicalsList({ viewerId: _viewerId }) {
         category: null,
         source: "custom",
         count,
+        approved: approvedIds.has(id),
+      });
+    }
+    // Orphan approvals — ingredient_info rows for a slug that's not in
+    // the bundled registry and isn't currently in use. Still worth
+    // showing so they can be rejected.
+    for (const id of approvedIds) {
+      if (seen.has(id)) continue;
+      if (usage.has(id)) continue;
+      custom.push({
+        id,
+        name: id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+        emoji: "✨",
+        category: null,
+        source: "custom",
+        count: 0,
+        approved: true,
       });
     }
     return [...custom, ...bundled];
-  }, [usage]);
+  }, [usage, approvedIds]);
 
   async function renameCustom(row) {
     // eslint-disable-next-line no-alert
@@ -511,6 +552,25 @@ function CanonicalsList({ viewerId: _viewerId }) {
 
     setBusy(row.id);
     try {
+      // Carry any approval stub to the new slug. Delete the old row
+      // after inserting the new one so the transition is no-approval-
+      // gap from the user's perspective.
+      if (row.approved) {
+        const { data: existing } = await supabase
+          .from("ingredient_info")
+          .select("info")
+          .eq("ingredient_id", row.id)
+          .maybeSingle();
+        if (existing) {
+          await supabase
+            .from("ingredient_info")
+            .upsert({ ingredient_id: newSlug, info: existing.info }, { onConflict: "ingredient_id" });
+          await supabase
+            .from("ingredient_info")
+            .delete()
+            .eq("ingredient_id", row.id);
+        }
+      }
       const { error: upErr } = await supabase
         .from("pantry_items")
         .update({ canonical_id: newSlug })
@@ -520,6 +580,68 @@ function CanonicalsList({ viewerId: _viewerId }) {
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Rename failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function approveCustom(row) {
+    setBusy(row.id);
+    try {
+      // Stub metadata — empty info + _meta.reviewed so the record
+      // exists. The enrichment pipeline can fill the body later; for
+      // the admin portal this is purely an approval flag.
+      const stub = {
+        _meta: {
+          reviewed: true,
+          reviewed_by: viewerId || null,
+          reviewed_at: new Date().toISOString(),
+          source: "admin_canonical_approve",
+        },
+      };
+      const { error: upErr } = await supabase
+        .from("ingredient_info")
+        .upsert({ ingredient_id: row.id, info: stub }, { onConflict: "ingredient_id" });
+      if (upErr) throw upErr;
+      setVersion(v => v + 1);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Approve failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function rejectCustom(row) {
+    // eslint-disable-next-line no-alert
+    const confirm = window.confirm(
+      `Reject "${row.name}"?\n\n` +
+        `Every pantry_items row with canonical_id = "${row.id}" ` +
+        `(${row.count} row${row.count === 1 ? "" : "s"}) will be unlinked, ` +
+        `and any ingredient_info stub for this slug will be removed. ` +
+        `Can't be undone.`
+    );
+    if (!confirm) return;
+
+    setBusy(row.id);
+    try {
+      // Clear the canonical_id on every row first so nothing is left
+      // pointing at a rejected slug. Then drop the info stub.
+      const { error: clrErr } = await supabase
+        .from("pantry_items")
+        .update({ canonical_id: null })
+        .eq("canonical_id", row.id);
+      if (clrErr) throw clrErr;
+      const { error: delErr } = await supabase
+        .from("ingredient_info")
+        .delete()
+        .eq("ingredient_id", row.id);
+      // 404 on delete is fine — no stub existed.
+      if (delErr && delErr.code !== "PGRST116") throw delErr;
+      setVersion(v => v + 1);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Reject failed: ${e.message || e}`);
     } finally {
       setBusy(null);
     }
@@ -535,13 +657,14 @@ function CanonicalsList({ viewerId: _viewerId }) {
         (r.category || "").toLowerCase().includes(q)
       )
     : rows;
-  const customCount = rows.filter(r => r.source === "custom").length;
-  const inUse       = rows.filter(r => r.count > 0).length;
+  const customCount   = rows.filter(r => r.source === "custom").length;
+  const pendingCount  = rows.filter(r => r.source === "custom" && !r.approved).length;
+  const inUse         = rows.filter(r => r.count > 0).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", padding: "0 4px 4px" }}>
-        {rows.length} CANONICALS · {customCount} CUSTOM · {inUse} IN USE
+        {rows.length} CANONICALS · {customCount} CUSTOM · {pendingCount} PENDING · {inUse} IN USE
         {error && <span style={{ color: "#ef4444", marginLeft: 8 }}>· {error}</span>}
       </div>
       <input
@@ -562,13 +685,24 @@ function CanonicalsList({ viewerId: _viewerId }) {
       ) : (
         filtered.map(r => {
           const isBusy = busy === r.id;
+          const isCustom = r.source === "custom";
+          const statusLabel = !isCustom
+            ? "BUNDLED"
+            : r.approved ? "APPROVED" : "PENDING";
+          const statusColor = !isCustom
+            ? "#555"
+            : r.approved ? "#7ec87e" : "#f5c842";
           return (
             <div key={r.id} style={{
               padding: "10px 12px",
-              background: r.source === "custom" ? "#1a1508" : "#141414",
-              border: `1px solid ${r.source === "custom" ? "#3a2f10" : "#242424"}`,
+              background: isCustom && !r.approved ? "#2a2205"
+                : isCustom ? "#0f1a0f"
+                : "#141414",
+              border: `1px solid ${isCustom && !r.approved ? "#5a4a0a"
+                : isCustom ? "#1e3a1e"
+                : "#242424"}`,
               borderRadius: 10,
-              display: "flex", alignItems: "center", gap: 10,
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
             }}>
               <span style={{ fontSize: 22, flexShrink: 0 }}>{r.emoji}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -596,19 +730,37 @@ function CanonicalsList({ viewerId: _viewerId }) {
               </span>
               <span style={{
                 fontFamily: "'DM Mono',monospace", fontSize: 8,
-                color: r.source === "custom" ? "#b8a878" : "#555",
-                letterSpacing: "0.1em", flexShrink: 0,
+                color: statusColor, letterSpacing: "0.1em",
+                flexShrink: 0,
               }}>
-                {r.source === "custom" ? "CUSTOM" : "BUNDLED"}
+                {statusLabel}
               </span>
-              {r.source === "custom" && (
-                <button
-                  onClick={() => renameCustom(r)}
-                  disabled={isBusy}
-                  style={adminBtnStyle("#2a2110", "#b8a878")}
-                >
-                  {isBusy ? "…" : "RENAME"}
-                </button>
+              {isCustom && (
+                <>
+                  <button
+                    onClick={() => renameCustom(r)}
+                    disabled={isBusy}
+                    style={adminBtnStyle("#2a2110", "#b8a878")}
+                  >
+                    {isBusy ? "…" : "RENAME"}
+                  </button>
+                  {!r.approved && (
+                    <button
+                      onClick={() => approveCustom(r)}
+                      disabled={isBusy}
+                      style={adminBtnStyle("#0a2a12", "#7ec87e")}
+                    >
+                      {isBusy ? "…" : "APPROVE"}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => rejectCustom(r)}
+                    disabled={isBusy}
+                    style={adminBtnStyle("#2a0a0a", "#d98a8a")}
+                  >
+                    {isBusy ? "…" : "REJECT"}
+                  </button>
+                </>
               )}
             </div>
           );
@@ -622,9 +774,11 @@ function CanonicalsList({ viewerId: _viewerId }) {
         color: "#666", lineHeight: 1.6, letterSpacing: "0.04em",
       }}>
         BUNDLED canonicals live in src/data/ingredients.js and are
-        read-only from the admin portal. CUSTOM canonicals are slugs
-        created on-the-fly from ItemCard's canonical picker — tap
-        RENAME to rewrite every pantry_items row that points at them.
+        read-only here. CUSTOM canonicals arrive from ItemCard's
+        "+ CREATE" flow. APPROVE writes an ingredient_info stub so the
+        slug stops reading as PENDING. REJECT clears the slug from
+        every pantry_items row and drops the stub. RENAME rewrites
+        the slug across the board and carries any approval forward.
       </div>
     </div>
   );
