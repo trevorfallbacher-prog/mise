@@ -366,14 +366,46 @@ function Scanner({ userId, onItemsScanned, onClose }) {
       // We lean on inferUnitsForScanned to pick sane units from emoji +
       // category and replace a nonsense "count" with oz/lb/fl_oz as appropriate.
       const normalized = items.map((item, i) => {
+        // CONFIDENCE-GATED CANONICALIZATION
+        //
+        // New contract with the scan-receipt prompt: Claude returns
+        // BOTH `rawText` (literal receipt text, OCR'd) AND `name`
+        // (clean display — equal to rawText unless Claude is ≥90%
+        // sure of the expansion). canonicalId is only set on "high"
+        // confidence. We honor this end-to-end:
+        //   - scanRaw.raw_name = rawText (always the literal receipt
+        //     text so the revert-to-raw button always restores it)
+        //   - item.name = Claude's display guess, but ONLY promoted
+        //     to canon.name when confidence === "high"
+        //   - item.canonicalId / ingredientId only respected when
+        //     confidence === "high"
+        // Medium / low items land with raw text preserved so the user
+        // never sees a confabulated name they can't verify against
+        // the physical receipt.
+        const rawConf = item.confidence;
+        const confidence =
+          rawConf === "high" || rawConf === "medium" || rawConf === "low"
+            ? rawConf
+            : (activeMode.id === "receipt" ? "high" : "medium");
+        const rawText = (typeof item.rawText === "string" && item.rawText.trim())
+          ? item.rawText.trim()
+          : item.name;
+        // Only trust the canonical match when Claude is highly
+        // confident. Medium/low matches get dropped so we don't tag
+        // the user's pantry with a shaky interpretation.
+        const trustCanonical = confidence === "high";
+        const candidateCanonicalId = item.canonicalId ?? item.ingredientId ?? null;
+        const canonicalIdToUse = trustCanonical ? candidateCanonicalId : null;
+
         // Template match first (chunk 17b). If the family has a
         // template whose normalized name matches this scan row, the
         // template's identity wins over the canonical registry match:
         // brand name preserved, tile_id inherited, ingredient_ids
         // carried forward. Canonical fuzzy falls through when no
-        // template matches.
-        const templateMatch = findTemplateMatch(item.name, userTemplatesForScan);
-        const canon = findIngredient(item.ingredientId);
+        // template matches. Match on raw text since that's what
+        // recurs scan-to-scan.
+        const templateMatch = findTemplateMatch(rawText, userTemplatesForScan);
+        const canon = findIngredient(canonicalIdToUse);
         const cat = canon ? canon.category : (item.category || "pantry");
         // Fridge/pantry scans force every item to that physical location.
         // Receipt scans don't know — prefer the ingredient registry's
@@ -381,34 +413,21 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         // flour→pantry), then fall back to a category default.
         const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
         const location = activeMode.location || regLocation || defaultLocationForCategory(cat);
-        // Confidence comes off the wire for scan-shelf; receipts don't carry
-        // it (OCR is deterministic enough), so we treat them as "high" so the
-        // confirm UI doesn't ask the user to second-guess every receipt row.
-        const rawConf = item.confidence;
-        const confidence =
-          rawConf === "high" || rawConf === "medium" || rawConf === "low"
-            ? rawConf
-            : (activeMode.id === "receipt" ? "high" : "medium");
         // State detection — grocery receipts abbreviate heavily ("SHRD
-        // MOZZ", "SLCD PROV"), and the scan text is the only place we can
-        // recover that information before the canonical name substitution
-        // wipes it out. Detection happens against the ORIGINAL scanner
-        // name before we replace it with canon.name. The detected state
-        // must match the ingredient's own state vocabulary — "WHL MILK"
-        // won't set state=whole because milk has no state vocabulary,
-        // just gets dropped as noise.
+        // MOZZ", "SLCD PROV"), and the scan text is the only place we
+        // can recover that information. Detect against rawText (the
+        // actual receipt abbreviations), only apply when we have a
+        // trusted canonical.
         const detectedState = canon
-          ? detectStateFromText(item.name, canon)
+          ? detectStateFromText(rawText, canon)
           : null;
         // Provenance tag — activeMode.id is 'receipt' for receipt scans,
         // 'fridge' / 'pantry' / 'freezer' for pantry-shelf scans.
         const sourceKind = activeMode.id === "receipt" ? "receipt_scan" : "pantry_scan";
-        // Raw scanner read — the text and metadata EXACTLY as the vision
-        // API returned it, BEFORE canonical substitution / unit
-        // inference / anything else. Stored verbatim so the ItemCard
-        // can render "raw scan: SHRD MOZZ 8OZ" for sanity-checking.
+        // Raw scanner read — preserves the literal receipt text.
+        // Revert-to-raw on the scan row reads from here.
         const scanRaw = {
-          raw_name: item.name,
+          raw_name: rawText,
           confidence: rawConf || confidence,
           mode: activeMode.id,
           detected_state: detectedState || null,
@@ -416,13 +435,23 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           amount_raw: item.amount != null ? String(item.amount) + (item.unit ? ` ${item.unit}` : "") : null,
           scanned_at: new Date().toISOString(),
         };
+        // Display name resolution: trusted canonical wins → Claude's
+        // interpreted name → rawText. The chain collapses to rawText
+        // automatically for low-confidence items (Claude was told to
+        // set name = rawText when confidence is low).
+        const displayName = canon
+          ? canon.name
+          : (item.name && item.name.trim() ? item.name : rawText);
         const base = {
           ...item,
-          name: canon ? canon.name : item.name,
+          rawText,
+          name: displayName,
           emoji: canon ? canon.emoji : (item.emoji || "🥫"),
           category: cat,
           location,
           confidence,
+          canonicalId: canonicalIdToUse,
+          ingredientId: canonicalIdToUse,
           priceCents: typeof item.priceCents === "number" ? item.priceCents : null,
           id: i,
           selected: true,
@@ -762,15 +791,47 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingNameIdx(null); }}
                         style={{ background:"#0a0a0a", border:"1px solid #f5c842", borderRadius:8, padding:"4px 10px", color:"#f5c842", fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic", fontWeight:400, lineHeight:1.2, outline:"none", width:"100%", boxSizing:"border-box" }}
                       />
-                    ) : (
-                      <button
-                        onClick={e => { e.stopPropagation(); setEditingNameIdx(idx); }}
-                        aria-label={`Rename ${item.name}`}
-                        style={{ background:"transparent", border:"none", padding:0, textAlign:"left", fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic", color:"#f0ece4", fontWeight:400, lineHeight:1.25, wordBreak:"break-word", cursor:"text" }}
-                      >
-                        {item.name}
-                      </button>
-                    )}
+                    ) : (() => {
+                      // Revert-to-raw ↺ button. Shows when the
+                      // display name differs from the raw receipt
+                      // text — meaning Claude or the user reinterpreted
+                      // something. Tap to restore rawText. Matches
+                      // the philosophy "raw text is source of truth":
+                      // user can always see what's on the receipt.
+                      const rawName = item.scanRaw?.raw_name || item.rawText || null;
+                      const differs = rawName && rawName !== item.name;
+                      return (
+                        <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                          <button
+                            onClick={e => { e.stopPropagation(); setEditingNameIdx(idx); }}
+                            aria-label={`Rename ${item.name}`}
+                            style={{ background:"transparent", border:"none", padding:0, textAlign:"left", fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic", color:"#f0ece4", fontWeight:400, lineHeight:1.25, wordBreak:"break-word", cursor:"text" }}
+                          >
+                            {item.name}
+                          </button>
+                          {differs && (
+                            <button
+                              onClick={e => {
+                                e.stopPropagation();
+                                propagateCorrection(idx, { name: rawName });
+                              }}
+                              aria-label={`Revert name to receipt text: ${rawName}`}
+                              title={`Restore receipt text: "${rawName}"`}
+                              style={{
+                                background:"transparent", border:"1px dashed #3a2f10",
+                                borderRadius:4, padding:"1px 6px",
+                                color:"#8a7f6e", cursor:"pointer",
+                                fontFamily:"'DM Mono',monospace", fontSize:9,
+                                letterSpacing:"0.08em", lineHeight:1,
+                                display:"inline-flex", alignItems:"center", gap:3,
+                              }}
+                            >
+                              ↺ RAW
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {/* Chip row — reserved-color identity chips +
                         supporting fields. Tan = CANONICAL, orange =
                         FOOD CATEGORY, blue = STORED IN. Unset chips

@@ -67,49 +67,83 @@ function buildPrompt(ingredients: CanonicalIngredient[]): string {
     )
     .join("\n");
 
-  return `You are reading a grocery receipt. Extract every food/grocery item on it.
+  return `You are reading a grocery receipt. Extract every food/grocery item.
 
-For each item, try to match it to one of the canonical ingredients listed
-below. When there's a clear match:
-  - set ingredientId to the canonical id (exact string)
-  - use a unit from that ingredient's valid units list (prefer the one that
-    matches how the item was sold — gallon for milk, dozen for eggs, lb for
-    bulk meat, etc.)
-  - use the canonical name and its typical emoji
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULE — RAW TEXT IS SOURCE OF TRUTH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If there's no clear canonical match (e.g. "Alouette", "capers", "pickles"):
-  - set ingredientId to null
-  - invent a reasonable name, emoji, amount, unit, and category
-  - CHOOSE THE UNIT BASED ON WHAT THE ITEM IS, NEVER DEFAULT TO "count":
-      * Cheese (emoji 🧀, any style) → "oz" or "lb", NEVER "count"
-      * Liquid dairy / juice / milk-style drink (🥛 🧃) → "gallon", "half_gallon",
-        "quart", "pint", "fl_oz" — use the container size shown on the receipt
-      * Yogurt / sour cream / cottage cheese (🥛 tub-style) → "oz" or "tub"
-      * Meat / fish / poultry (🥩 🍗 🥓 🐟 🍤) → "lb" or "oz", NEVER "count"
-        (the one exception is if the receipt literally says "4 CT" / "2 PACK")
-      * Deli meats → "oz" or "slice"
-      * Bread / baguette / bagel (🍞 🥖 🥯) → "loaf" or "slice"
-      * Rice / grains / flour / sugar (🍚 🌾) → "lb" or "bag"
-      * Canned goods (🥫) → "can"
-      * Condiments / sauces in jars/bottles (🍶 🍯) → "jar" or "bottle"
-      * Fresh produce usually sold individually (🍎 🍌 🥑 🥒 🫑) → "count" IS fine
-      * Fresh produce sold by weight (bulk 🥔 🥕 🥦) → "lb"
+The user wants to trust what YOU tell them is on their receipt. Every
+hallucinated expansion destroys that trust. Treat the receipt text as
+sacred: preserve it unless you are highly confident the expansion is
+correct.
 
-  "count" is a LAST RESORT for obscure items with no better fit. If you're
-  unsure about a cheese or a meat, err toward "oz".
+For each item, return TWO name fields:
 
-CRITICAL: the big number next to an item on a receipt is almost always the
-PRICE in USD ($6.53, $3.99, etc.), NOT the quantity. Do NOT put the price in
-the amount field. If the receipt doesn't clearly show a quantity, use 1.
+  * rawText: the EXACT characters printed on the receipt, in the order
+    printed. Fix obvious OCR errors ("MLLK" → "MILK", "BRCCOU" →
+    "BROCCOLI"). Do NOT expand abbreviations. Do NOT add brand names
+    that aren't visible. Do NOT rewrite cryptic codes into full words.
+    If the receipt literally says "ACQUAMAR FLA 3.99", rawText is
+    "ACQUAMAR FLA".
 
-Reading examples:
-  - "MILK 2% GAL 4.29"      → amount: 1,    unit: "gallon"  (4.29 is price)
-  - "EGGS LG 18CT 6.53"     → amount: 18,   unit: "count"   (or 1.5 dozen)
-  - "BANANAS 2.14 LB @ .59" → amount: 2.14, unit: "lb"
-  - "NY STRIP 1.10 LB 15.67"→ amount: 1.10, unit: "lb"      (15.67 is price)
-  - "BUTTER QTRS 4.99"      → amount: 1,    unit: "lb"      (no quantity shown → 1)
+  * name: the user-facing display name.
+      - If you are ≥90% confident what the item is AND the expansion
+        is close to rawText ("MILK 2% GAL" → "2% Milk"), set name to
+        the cleaned-up version.
+      - Otherwise SET name EQUAL TO rawText. No guessing. No "probably
+        imitation crab" expansions. The user will fix it if the
+        display text is gibberish; they can't fix an item that was
+        silently renamed into something it isn't.
 
-Categories (use for non-canonical items): dairy, produce, dry, meat, pantry, frozen
+  * canonicalId: only set when confidence is "high" AND there is an
+    unambiguous match in the canonical registry below. When in doubt,
+    canonicalId = null.
+
+  * confidence: "high" | "medium" | "low" — your self-rating of the
+    match.  Be honest — medium/low values are features, not failures.
+      - high:   unambiguous (e.g. "MILK 2% GAL" → milk)
+      - medium: reasonable but not certain (e.g. "SHREDDED MOZZ" →
+        mozzarella; cheese could be pre-grated or fresh)
+      - low:    cryptic abbreviation, unclear category, or OCR noise.
+        canonicalId MUST be null on low confidence.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Unit selection (same rules as before — never "count" for mass-priced
+items):
+  - Cheese → "oz" or "lb", NEVER "count"
+  - Liquid dairy / juice (🥛 🧃) → "gallon", "half_gallon", "quart",
+    "pint", "fl_oz" — use container size if shown
+  - Yogurt / sour cream / cottage cheese → "oz" or "tub"
+  - Meat / fish / poultry → "lb" or "oz", NEVER "count"
+    (exception: receipt literally says "4 CT" / "2 PACK")
+  - Deli meats → "oz" or "slice"
+  - Bread / baguette / bagel → "loaf" or "slice"
+  - Rice / grains / flour / sugar → "lb" or "bag"
+  - Canned goods → "can"
+  - Condiments / sauces in jars/bottles → "jar" or "bottle"
+  - Fresh produce individually sold → "count" IS fine
+  - Fresh produce sold by weight → "lb"
+
+  "count" is a LAST RESORT for obscure items with no better fit.
+
+CRITICAL: the big number next to an item is almost always the PRICE
+in USD ($6.53, $3.99), NOT the quantity. Do NOT put the price in the
+amount field. If the receipt doesn't clearly show a quantity, use 1.
+
+Reading examples (showing the new two-name shape):
+  - "MILK 2% GAL 4.29"      → rawText:"MILK 2% GAL",      name:"2% Milk",        canonicalId:"milk",   confidence:"high"
+  - "EGGS LG 18CT 6.53"     → rawText:"EGGS LG 18CT",     name:"Large Eggs",     canonicalId:"eggs",   confidence:"high"
+  - "BANANAS 2.14 LB @ .59" → rawText:"BANANAS",          name:"Bananas",        canonicalId:"bananas",confidence:"high"
+  - "NY STRIP 1.10 LB 15.67"→ rawText:"NY STRIP",         name:"NY Strip Steak", canonicalId:"beef",   confidence:"high"
+  - "BUTTER QTRS 4.99"      → rawText:"BUTTER QTRS",      name:"Butter Quarters",canonicalId:"butter", confidence:"high"
+  - "SHRD MOZZ 8OZ 3.49"    → rawText:"SHRD MOZZ 8OZ",    name:"Shredded Mozzarella",canonicalId:"mozzarella",confidence:"medium"
+  - "ACQUAMAR FLA 3.99"     → rawText:"ACQUAMAR FLA",     name:"ACQUAMAR FLA",   canonicalId:null,     confidence:"low"
+  - "FRANK CHS DOG 2.49"    → rawText:"FRANK CHS DOG",    name:"FRANK CHS DOG",  canonicalId:null,     confidence:"low"
+  - "GNDBF 80/20 5.79"      → rawText:"GNDBF 80/20",      name:"Ground Beef 80/20",canonicalId:"ground_beef",confidence:"medium"
+
+Categories (for canonicalId=null items): dairy, produce, dry, meat, pantry, frozen
 
 Canonical ingredient registry:
 ${registry}
@@ -118,24 +152,20 @@ For every item also include:
   - priceCents: the USD price shown next to it, in integer cents. "4.29" →
     429. If a price isn't legible, use null.
 
-Additionally, look at the receipt header / footer and return receipt metadata:
-  - store:    the store name if visible (e.g. "Trader Joe's", "Safeway", "Wegmans"); null if not.
-  - date:     the transaction date in YYYY-MM-DD if visible; null if not.
-  - totalCents: the receipt TOTAL in integer cents if visible; null if not.
-    (Use the "TOTAL" line, not subtotal or tax line.)
+Additionally, look at the receipt header / footer and return metadata:
+  - store:    the store name if visible; null if not.
+  - date:     transaction date in YYYY-MM-DD if visible; null if not.
+  - totalCents: receipt TOTAL in integer cents; null if not.
 
-Return ONLY a JSON object — no markdown fences, no prose, no trailing commentary —
-with this shape:
+Return ONLY a JSON object — no markdown fences, no prose — with this shape:
 
 {
   "store": "Trader Joe's" | null,
   "date": "2026-04-14" | null,
   "totalCents": 4523 | null,
   "items": [
-    {"ingredientId":"butter","name":"Unsalted Butter","emoji":"🧈","amount":1,"unit":"stick","category":"dairy","priceCents":499},
-    {"ingredientId":"milk","name":"Milk","emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429},
-    {"ingredientId":"eggs","name":"Eggs","emoji":"🥚","amount":18,"unit":"count","category":"dairy","priceCents":653},
-    {"ingredientId":null,"name":"Greek Yogurt","emoji":"🥛","amount":32,"unit":"oz","category":"dairy","priceCents":599}
+    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429,"confidence":"high"},
+    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"emoji":"🥫","amount":1,"unit":"count","category":"pantry","priceCents":399,"confidence":"low"}
   ]
 }
 
