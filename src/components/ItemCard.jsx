@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
-import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
 import { FRIDGE_TILES } from "../lib/fridgeTiles";
 import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
+import EnrichmentButton from "./EnrichmentButton";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
@@ -219,6 +220,13 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
   // Stacked type picker — separate from tilePicker so both can
   // exist but don't step on each other.
   const [typePickerOpen, setTypePickerOpen] = useState(false);
+  // Canonical picker — new in chunk 19a. Previously canonical_id was
+  // derived-only (set via type pick or name match); users now tap the
+  // golden canonical line to search the registry and swap it, or tap
+  // the ✕ next to it to unlink. Orthogonal to the type picker — the
+  // canonical IS the final-resting-name, the type is the WWEIA kind.
+  const [canonicalPickerOpen, setCanonicalPickerOpen] = useState(false);
+  const [canonicalSearch, setCanonicalSearch] = useState("");
 
   // Safe bound — if the tag list shrinks below activeTagIdx (user
   // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
@@ -235,7 +243,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
   // "UMAMI · FAT · SWEET · SALT" — the whole flavor footprint of
   // the composite product. Single-tag items skip this line since
   // the deep-dive already shows the same info.
-  const { getInfo: getDbInfo } = useIngredientInfo();
+  const { getInfo: getDbInfo, getPendingInfo } = useIngredientInfo();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
     const intensityRank = { mild: 1, moderate: 2, intense: 3 };
@@ -384,104 +392,256 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   {item.name}
                 </h2>
               )}
-              {/* CANONICAL — the final-resting-name of the thing
-                  (Hot Dog, Mayo, Green Onion). USDA-defensible
-                  identity that recipes call by. Sits directly below
-                  the user's custom name so "Frank's Best Cheese
-                  Dogs" reads instantly as "→ Hot Dog". Rendered
-                  when canonical is resolved; dashed when missing
-                  so the user can tap IDENTIFIED AS below to fill
-                  it (type-pick flows write canonical automatically).
-                  Render is READ-ONLY today — canonical is derived,
-                  not hand-picked; re-picking IDENTIFIED AS swaps
-                  the canonical through for you. */}
-              {currentCanonical && (
+              {/* CANONICAL — tan badge. Color reserved across the app
+                  so users visually identify this field at a glance —
+                  orange = FOOD CATEGORY, blue = STORED IN, tan =
+                  CANONICAL. Empty state stays colored ("+ SET CANONICAL"
+                  in tan) rather than greying out, so you can see what
+                  you're setting from the preview before tapping. */}
+              {onUpdate && (
                 <div
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 11,
                     color: "#b8a878",
                     letterSpacing: "0.06em", marginTop: 4,
                     display: "flex", alignItems: "center", gap: 6,
+                    flexWrap: "wrap",
                   }}
                 >
-                  <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
-                  <span style={{
-                    color: "#d4c9ac", fontFamily: "'Fraunces',serif",
-                    fontSize: 14, fontStyle: "italic", fontWeight: 400,
-                  }}>
-                    {currentCanonical.name}
-                  </span>
+                  <span style={{ color: "#b8a878" }}>CANONICAL:</span>
+                  {currentCanonical ? (
+                    <>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          cursor: "pointer",
+                          borderBottom: "1px dashed #b8a87844",
+                          paddingBottom: 1,
+                        }}
+                      >
+                        <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
+                        <span style={{
+                          color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                          fontSize: 14, fontStyle: "italic", fontWeight: 400,
+                        }}>
+                          {currentCanonical.name}
+                        </span>
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ canonicalId: null });
+                        }}
+                        aria-label="Unlink canonical"
+                        style={{
+                          background: "transparent",
+                          border: "1px solid #3a2a2a",
+                          color: "#d98a8a", cursor: "pointer",
+                          borderRadius: 6,
+                          padding: "1px 7px",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          letterSpacing: "0.06em",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        ✕ UNLINK
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                      style={{
+                        color: "#b8a878",
+                        borderBottom: "1px dashed #b8a87844",
+                        cursor: "pointer",
+                      }}
+                    >
+                      + SET CANONICAL
+                    </span>
+                  )}
                 </div>
               )}
-              {/* FOOD CATEGORY (IDENTIFIED AS) — what KIND of thing
-                  this is (Pizza, Cheese, Sausages). Separate from
-                  STORED IN below which answers WHERE it lives. Tap
-                  to re-pick — opens a stacked TypePicker modal. */}
+
+              {/* Inline canonical picker — text search across the full
+                  registry. Opens when the user taps the canonical line
+                  above (set OR unset). Collapses after a pick. */}
+              {canonicalPickerOpen && onUpdate && (() => {
+                const q = canonicalSearch.trim().toLowerCase();
+                const matches = q
+                  ? INGREDIENTS.filter(i =>
+                      i.name.toLowerCase().includes(q) ||
+                      (i.shortName && i.shortName.toLowerCase().includes(q)) ||
+                      i.id.includes(q.replace(/\s+/g, "_"))
+                    ).slice(0, 30)
+                  : INGREDIENTS.slice(0, 12);
+                return (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      marginTop: 8,
+                      padding: 10,
+                      background: "#0a0a0a",
+                      border: "1px solid #3a2f10",
+                      borderRadius: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                      <input
+                        autoFocus
+                        value={canonicalSearch}
+                        onChange={(e) => setCanonicalSearch(e.target.value)}
+                        placeholder="Search canonicals (avocado, garlic, nori…)"
+                        style={{
+                          flex: 1,
+                          padding: "7px 10px",
+                          background: "#0a0a0a", border: "1px solid #242424",
+                          borderRadius: 8,
+                          fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                          color: "#f0ece4", outline: "none",
+                        }}
+                      />
+                      <button
+                        onClick={() => { setCanonicalPickerOpen(false); setCanonicalSearch(""); }}
+                        style={{
+                          background: "transparent", border: "1px solid #2a2a2a",
+                          color: "#888", cursor: "pointer",
+                          borderRadius: 8, padding: "4px 10px",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          letterSpacing: "0.08em",
+                        }}
+                      >
+                        CLOSE
+                      </button>
+                    </div>
+                    {matches.length === 0 ? (
+                      <div style={{
+                        padding: "12px 6px", textAlign: "center",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#555", letterSpacing: "0.08em",
+                      }}>
+                        NO MATCHES
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" }}>
+                        {matches.map(ing => {
+                          const isCurrent = currentCanonical?.id === ing.id;
+                          return (
+                            <button
+                              key={ing.id}
+                              onClick={() => {
+                                onUpdate({ canonicalId: ing.id });
+                                setCanonicalPickerOpen(false);
+                                setCanonicalSearch("");
+                              }}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 8,
+                                padding: "6px 10px", textAlign: "left",
+                                background: isCurrent ? "#1a1608" : "transparent",
+                                border: `1px solid ${isCurrent ? "#f5c842" : "#1e1e1e"}`,
+                                borderRadius: 8, cursor: "pointer",
+                              }}
+                            >
+                              <span style={{ fontSize: 16 }}>{ing.emoji || "🏷️"}</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  fontFamily: "'Fraunces',serif", fontSize: 13,
+                                  fontStyle: "italic",
+                                  color: isCurrent ? "#f5c842" : "#d4c9ac",
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}>
+                                  {ing.name}
+                                </div>
+                                <div style={{
+                                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                  color: "#555", letterSpacing: "0.06em", marginTop: 1,
+                                }}>
+                                  {ing.id}
+                                  {ing.category && ` · ${ing.category.toUpperCase()}`}
+                                </div>
+                              </div>
+                              {isCurrent && (
+                                <span style={{ fontSize: 10, color: "#f5c842", fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>
+                                  ✓
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {/* FOOD CATEGORY — orange badge. Reserved color across
+                  the app for the WWEIA "what kind of thing is this"
+                  axis. Empty state stays in orange ("+ SET CATEGORY")
+                  instead of greying, so you can visually identify the
+                  field before tapping. */}
               {onUpdate && (
                 <div
                   onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: currentType ? "#f5c842" : "#666",
+                    color: "#e07a3a",
                     letterSpacing: "0.08em", marginTop: 3,
                     cursor: "pointer",
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#888" }}>FOOD CATEGORY:</span>
+                  <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
                   {currentType ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
                       <span style={{
-                        color: "#f5c842",
-                        borderBottom: "1px dashed #f5c84244",
+                        color: "#e07a3a",
+                        borderBottom: "1px dashed #e07a3a44",
                       }}>
                         {currentType.label?.toUpperCase() || "CUSTOM TYPE"}
                       </span>
                     </>
                   ) : (
                     <span style={{
-                      color: "#888",
-                      borderBottom: "1px dashed #66666644",
+                      color: "#e07a3a",
+                      borderBottom: "1px dashed #e07a3a44",
                     }}>
-                      TAP TO IDENTIFY
+                      + SET CATEGORY
                     </span>
                   )}
                 </div>
               )}
-              {/* STORED IN — the item's tile placement (where it lives).
-                  Distinct from MADE OF below which lists component
-                  ingredients. Tap to re-pick — opens a stacked
-                  IdentifiedAsPicker modal. Hidden entirely when
-                  there's no onUpdate (read-only embeds). */}
+              {/* STORED IN — blue badge. Reserved color across the app
+                  for tile placement / storage location. Empty state
+                  stays blue ("+ SET LOCATION") for consistent visual
+                  identification. */}
               {onUpdate && (
                 <div
                   onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: currentTile ? "#f5c842" : "#666",
+                    color: "#7eb8d4",
                     letterSpacing: "0.08em", marginTop: 3,
                     cursor: "pointer",
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#888" }}>STORED IN:</span>
+                  <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
                   {currentTile ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
                       <span style={{
-                        color: "#f5c842",
-                        borderBottom: "1px dashed #f5c84244",
+                        color: "#7eb8d4",
+                        borderBottom: "1px dashed #7eb8d444",
                       }}>
                         {currentTile.label?.toUpperCase() || "CUSTOM TILE"}
                       </span>
                     </>
                   ) : (
                     <span style={{
-                      color: "#888",
-                      borderBottom: "1px dashed #66666644",
+                      color: "#7eb8d4",
+                      borderBottom: "1px dashed #7eb8d444",
                     }}>
-                      TAP TO PLACE
+                      + SET LOCATION
                     </span>
                   )}
                 </div>
@@ -730,6 +890,18 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   <div
                     style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
                     onClick={e => e.stopPropagation()}
+                    // When focus leaves the entire edit area (not just
+                    // one sub-input), commit-close the editor. Using
+                    // relatedTarget + contains keeps the editor open
+                    // while you're still moving between the number
+                    // input, the unit select, and the slider — which
+                    // used to slam shut on every inter-element blur
+                    // because the number input's onBlur closed the
+                    // editor directly.
+                    onBlur={e => {
+                      if (e.currentTarget.contains(e.relatedTarget)) return;
+                      setEditingField(null);
+                    }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <input
@@ -737,11 +909,16 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                         autoFocus
                         defaultValue={item.amount}
                         onBlur={e => {
+                          // Write the amount but DO NOT close the editor here.
+                          // The outer onBlur above handles close-on-leave.
                           const v = parseFloat(e.target.value);
-                          commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
+                          onUpdate?.({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
                         }}
                         onKeyDown={e => {
-                          if (e.key === "Enter") e.target.blur();
+                          if (e.key === "Enter") {
+                            const v = parseFloat(e.target.value);
+                            commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
+                          }
                           if (e.key === "Escape") setEditingField(null);
                         }}
                         style={{
@@ -883,6 +1060,77 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               )}
             </div>
           </div>
+
+          {/* Item-level enrichment CTA — always visible so the user has
+              an explicit, unambiguous "enrich THIS item" affordance
+              distinct from the per-ingredient button inside the embedded
+              IngredientCard below.
+
+              Why always visible: composed items (Hot Dog with tags
+              [ground_pork, bread]) have the embedded IngredientCard
+              default to tags[0] — its bottom "Add AI Enrichment" button
+              targets that tag (ground_pork), not the item. If a user
+              wanted Hot Dog metadata and clicked the bottom button they
+              got ground_pork instead. This top button always enriches
+              the ITEM's identity (canonical_id or slugified source
+              name), and stays visible even after enrichment lands so
+              re-enrichment is obvious.
+
+              Label includes the item's identity so there's no ambiguity
+              about which entity is being enriched. */}
+          {onUpdate && (() => {
+            const slug = item.canonicalId || slugifyIngredientName(item.name || "");
+            if (!slug) return null;
+            const itemIdentityName = currentCanonical?.name || item.name || "this item";
+            const hasApprovedInfo = item.canonicalId && getDbInfo(item.canonicalId);
+            const hasPending = !!getPendingInfo(slug);
+            const state = hasApprovedInfo
+              ? "approved"
+              : hasPending ? "pending" : "none";
+            return (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px", marginBottom: 12,
+                background: "#0f0f0f",
+                border: state === "none"
+                  ? "1px dashed #2a2a2a"
+                  : "1px solid #1e1e1e",
+                borderRadius: 10,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: state === "approved" ? "#7ec87e"
+                         : state === "pending"  ? "#f5c842"
+                         : "#888",
+                    letterSpacing: "0.08em",
+                  }}>
+                    {state === "approved" ? "ITEM METADATA ✓ APPROVED"
+                     : state === "pending" ? "ITEM METADATA ✨ PENDING"
+                     : "NO ITEM METADATA YET"}
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                    color: "#666", fontStyle: "italic", marginTop: 2,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {state === "none"
+                      ? `Enrich ${itemIdentityName}`
+                      : `Re-enrich ${itemIdentityName}`}
+                  </div>
+                </div>
+                {item.canonicalId ? (
+                  <EnrichmentButton canonicalId={item.canonicalId} compact />
+                ) : (
+                  <EnrichmentButton
+                    sourceName={item.name}
+                    pantryItemId={item.id}
+                    compact
+                  />
+                )}
+              </div>
+            );
+          })()}
 
 
           {/* Raw scanner read — when the row came from a scan, show what
@@ -1069,109 +1317,71 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             canonical the embedded IngredientCard renders. Suppressed
             entirely for composed items — the COMPONENTS section above
             is authoritative for those. */}
-        {isComposed ? null : activeTag ? (
-          <>
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10,
-              margin: "8px 0 4px", color: "#444",
-            }}>
-              <div style={{ flex: 1, height: 1, background: "#242424" }} />
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
-                {tags.length > 1 ? "INGREDIENTS" : "INGREDIENT"}
-              </div>
-              <div style={{ flex: 1, height: 1, background: "#242424" }} />
-              {/* Edit-tags on the legacy (pre-6c) section too. Re-linking
-                  a multi-tagged item through LinkIngredient's new flow
-                  writes component rows and flips kind='meal', promoting
-                  the card to the COMPONENTS view on the next open. */}
-              {onEditTags && (
-                <button
-                  onClick={onEditTags}
-                  style={{
-                    background: "transparent", border: "1px solid #3a2f10",
-                    padding: "3px 9px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    letterSpacing: "0.12em", borderRadius: 5,
-                  }}
-                >
-                  + EDIT
-                </button>
-              )}
-            </div>
-            {tags.length > 1 && (
-              // Tab row — one chip per canonical tag. Tap to swap the
-              // embedded IngredientCard's viewingId. Horizontally
-              // scrollable on narrow viewports via the flex-wrap +
-              // overflow combo.
+        {/* Embedded IngredientCard — now scoped STRICTLY to the item's
+            CANONICAL identity (item.canonicalId) so the preview below
+            is about the ITEM, not whichever tag happens to be first.
+            Composed items still render the COMPONENTS section above
+            instead. If there's no canonical yet, fall back to the old
+            active-tag behavior so non-canonical items still get SOMETHING
+            to look at. Rendered in `preview` mode — compact description
+            + "SEE FULL DETAILS" toggle, heavy sections hidden until the
+            user explicitly expands. Keeps the outer ItemCard focused
+            on the item. */}
+        {(() => {
+          if (isComposed) return null;
+          const isCanonicalEmbed = Boolean(item.canonicalId);
+          const embedId = item.canonicalId
+            || activeTag?.id
+            || (item.name ? slugifyIngredientName(item.name) : null);
+          if (!embedId) return null;
+          const embedFallbackEmoji =
+            currentCanonical?.emoji
+            || activeTag?.canonical?.emoji
+            || item.emoji
+            || "🥫";
+          return (
+            <>
               <div style={{
-                display: "flex", gap: 6, marginBottom: 12,
-                padding: 4, background: "#0a0a0a", border: "1px solid #1e1e1e",
-                borderRadius: 10, overflowX: "auto",
+                display: "flex", alignItems: "center", gap: 10,
+                margin: "8px 0 4px", color: "#444",
               }}>
-                {tags.map((t, i) => {
-                  const active = i === safeIdx;
-                  return (
-                    <button
-                      key={t.id}
-                      onClick={() => setActiveTagIdx(i)}
-                      style={{
-                        flex: "0 0 auto",
-                        padding: "7px 11px",
-                        background: active ? "#1a1608" : "transparent",
-                        border: `1px solid ${active ? "#f5c842" : "transparent"}`,
-                        color: active ? "#f5c842" : "#888",
-                        borderRadius: 7,
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        letterSpacing: "0.05em",
-                        cursor: "pointer",
-                        display: "flex", alignItems: "center", gap: 6,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <span style={{ fontSize: 14 }}>{t.canonical.emoji || "🥣"}</span>
-                      <span>{t.canonical.name}</span>
-                    </button>
-                  );
-                })}
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
+                  INGREDIENT
+                </div>
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
+                {onEditTags && (
+                  <button
+                    onClick={onEditTags}
+                    style={{
+                      background: "transparent", border: "1px solid #3a2f10",
+                      padding: "3px 9px",
+                      color: "#f5c842", cursor: "pointer",
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      letterSpacing: "0.12em", borderRadius: 5,
+                    }}
+                  >
+                    + EDIT
+                  </button>
+                )}
               </div>
-            )}
-            <IngredientCard
-              key={activeTag.id /* force remount on tab change so
-                                   internal viewingId + scroll reset */}
-              ingredientId={activeTag.id}
-              fallbackName={item.name}
-              fallbackEmoji={activeTag.canonical.emoji}
-              pantry={pantry}
-              onClose={onClose}
-              embedded
-            />
-          </>
-        ) : (
-          <div style={{
-            padding: "18px", textAlign: "center",
-            background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
-            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic",
-          }}>
-            Free-text row — no canonical ingredient tagged. Link it to unlock the deep-dive content.
-            {onEditTags && (
-              <div style={{ marginTop: 12 }}>
-                <button
-                  onClick={onEditTags}
-                  style={{
-                    padding: "10px 16px",
-                    background: "#1a1608", border: "1px solid #3a2f10",
-                    color: "#f5c842", borderRadius: 8,
-                    fontFamily: "'DM Mono',monospace", fontSize: 11,
-                    letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
-                  }}
-                >
-                  + LINK INGREDIENTS
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              <IngredientCard
+                key={embedId}
+                ingredientId={embedId}
+                fallbackName={item.name}
+                fallbackEmoji={embedFallbackEmoji}
+                pantry={pantry}
+                onClose={onClose}
+                embedded
+                preview
+                {...(!isCanonicalEmbed
+                  ? { sourceName: item.name, pantryItemId: item.id }
+                  : {})}
+              />
+            </>
+          );
+        })()}
+
       </ModalSheet>
 
       {/* ─── Stacked drill modals ───────────────────────────────────────
@@ -1236,13 +1446,19 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             // an explicit intent, don't want the system second-
             // guessing them.
             suggestedTileId={!item.tileId ? inferTileFromName(item.name) : null}
+            // Existing items can fall BACK to the heuristic auto-
+            // router — "I don't want to pick one, infer from the
+            // canonical / components." Scan-confirm rows deliberately
+            // don't expose this; the auto-router there would just
+            // re-stamp the original guess.
+            allowClear
             onPick={(tileId, location) => {
+              // Clearing (tileId=null) is a valid outcome — sets
+              // tile_id back to null so the renderer falls through
+              // to the heuristic classifier. Location stays put
+              // unless the picker handed back an explicit change.
               onUpdate?.({
-                tileId,
-                // Honor the picker's location when it differs from
-                // the item's current location (e.g. user re-placing
-                // a fridge item to Pantry tile). Keeps the pantry
-                // row consistent with its new tile assignment.
+                tileId: tileId || null,
                 ...(location && location !== item.location
                     ? { location }
                     : {}),
@@ -1297,18 +1513,13 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               if (defaultLocation && !item.location) {
                 patch.location = defaultLocation;
               }
-              // Canonical identity swap (0039). ingredient_ids[]
-              // stays untouched — that's USER composition, not ours
-              // to rewrite on a type change. Swap the canonical_id
-              // to the new type's default. If the user's NAME
-              // carries a more-specific canonical (e.g. "Bratwurst"
-              // with a bratwurst canonical), prefer that over the
-              // broader type default.
-              const prior = item.canonicalId || null;
-              const next  = inferCanonicalFromName(item.name)
-                         || canonicalIdForType(typeId)
-                         || null;
-              if (next !== prior) patch.canonicalId = next;
+              // Canonical stays untouched on a Food Category pick.
+              // Category is the broad classification (Pasta), canonical
+              // is the specific identity (Cavatappi) — they're
+              // orthogonal. Picking "Pasta" as the category should NOT
+              // rewrite a more-specific canonical already set by name
+              // match or the user's explicit pick; changing canonical
+              // is done via the CANONICAL tap line + inline picker.
               onUpdate?.(patch);
               setTypePickerOpen(false);
             }}

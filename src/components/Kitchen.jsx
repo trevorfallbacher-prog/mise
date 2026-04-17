@@ -52,6 +52,11 @@ import {
   bumpTemplateUse,
 } from "../lib/userTemplates";
 import { useUserTemplates } from "../lib/useUserTemplates";
+import {
+  findScanCorrections,
+  rememberScanCorrection,
+  normalizeScanText,
+} from "../lib/userScanCorrections";
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -234,6 +239,24 @@ function Scanner({ userId, onItemsScanned, onClose }) {
     const safePatch = {};
     for (const k of IDENTITY_KEYS) {
       if (k in patch) safePatch[k] = patch[k];
+    }
+    // Persist the correction to user_scan_corrections so the next
+    // scan of the same text auto-links. Best-effort, fire-and-forget —
+    // the UI doesn't wait, and a memory-write failure can't block
+    // the scan confirm. Only runs when we have a raw_name to key on
+    // AND the patch touched an identity field (not just amount/unit).
+    const rawText = source.scanRaw?.raw_name || source.name;
+    if (userId && rawText && Object.keys(safePatch).length > 0) {
+      const merged = { ...source, ...safePatch };
+      rememberScanCorrection({
+        userId,
+        rawText,
+        correctedName: merged.name,
+        emoji: merged.emoji,
+        typeId: merged.typeId,
+        canonicalId: merged.canonicalId || merged.ingredientId,
+        ingredientIds: merged.ingredientIds,
+      }).catch(() => {});
     }
     return prev.map((item, i) => {
       if (i === sourceIdx) return { ...item, ...patch };
@@ -446,7 +469,36 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         }
         return base;
       });
-      setScannedItems(normalized);
+
+      // Scan-text memory overlay. "AQUAMARINE SL" → imitation crab
+      // if the household has corrected that text before. Lookup is
+      // one round-trip keyed on normalized raw_name; rows without a
+      // hit fall through to the name-inference path above. The
+      // learned identity stamps a `correction` tag on the row so
+      // the UI can surface a ⭐ LEARNED badge.
+      const rawTexts = normalized
+        .map(r => r.scanRaw?.raw_name || r.name)
+        .filter(Boolean);
+      const corrections = await findScanCorrections(rawTexts);
+      const applyCorrection = (row) => {
+        const key = normalizeScanText(row.scanRaw?.raw_name || row.name);
+        const c = key ? corrections.get(key) : null;
+        if (!c) return row;
+        const patched = { ...row, learnedCorrectionId: c.id };
+        if (c.correctedName) patched.name = c.correctedName;
+        if (c.emoji) patched.emoji = c.emoji;
+        if (c.typeId) patched.typeId = c.typeId;
+        if (c.canonicalId) {
+          patched.canonicalId = c.canonicalId;
+          patched.ingredientId = c.canonicalId;
+        }
+        if (Array.isArray(c.ingredientIds) && c.ingredientIds.length > 0) {
+          patched.ingredientIds = c.ingredientIds;
+          patched.ingredientId = c.ingredientIds[0];
+        }
+        return patched;
+      };
+      setScannedItems(normalized.map(applyCorrection));
       setPhase("confirm");
     } catch (err) {
       setError(err?.message || "Couldn't read the receipt. Try again.");
@@ -715,6 +767,19 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       >
                         {conf.label}
                       </span>
+                      {/* ⭐ LEARNED — this row's identity came from a
+                          prior correction keyed on the same raw OCR
+                          text. Silent win: "AQUAMARINE SL → Imitation
+                          Crab" once, and every future scan of that
+                          text pre-fills. */}
+                      {item.learnedCorrectionId && (
+                        <span
+                          title="Pre-filled from a prior correction you (or family) made. Tap any chip to override."
+                          style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f5c842", background:"#1e1a0e", border:"1px solid #f5c842", borderRadius:4, padding:"2px 6px", letterSpacing:"0.08em" }}
+                        >
+                          ⭐ LEARNED
+                        </span>
+                      )}
 
                       {/* Expiration — inline date picker when open, tappable
                           chip / "+ set expires" button otherwise. Saving
@@ -828,15 +893,33 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       {(() => {
                         const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
                         const tileEntry = item.tileId ? allBuiltIns.find(t => t.id === item.tileId) : null;
+                        // Location glyph — always rendered so the user
+                        // sees "this is going to the freezer" at a
+                        // glance without having to open the picker.
+                        const locEmoji =
+                          item.location === "fridge"  ? "🧊" :
+                          item.location === "freezer" ? "❄️" :
+                          item.location === "pantry"  ? "🥫" : null;
+                        const locLabel = (item.location || "").toUpperCase();
                         return (
                           <button
                             onClick={() => setTilingScanIdx(idx)}
                             aria-label={tileEntry ? `Change location (currently ${tileEntry.label})` : item.tileId ? "Change location" : "Set location"}
-                            title={tileEntry ? `Stored in ${tileEntry.label} — tap to change` : item.tileId ? "Tap to change location" : "Tap to set location"}
+                            title={tileEntry
+                              ? `Stored in ${tileEntry.label} (${item.location || "?"}) — tap to change`
+                              : item.location
+                                ? `Going to ${item.location} — tap to pick a shelf`
+                                : "Tap to set location"}
                             style={item.tileId ? {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
                               color: "#7eb8d4", background: "#0f1620",
                               border: "1px solid #1f3040",
+                              borderRadius: 4, padding: "2px 6px",
+                              letterSpacing: "0.08em", cursor: "pointer",
+                            } : item.location ? {
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#7eb8d4", background: "#0f1620",
+                              border: "1px dashed #1f3040",
                               borderRadius: 4, padding: "2px 6px",
                               letterSpacing: "0.08em", cursor: "pointer",
                             } : {
@@ -848,8 +931,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                             }}
                           >
                             {item.tileId
-                              ? <>→ {tileEntry ? `${tileEntry.emoji} ${tileEntry.label.toUpperCase()}` : "MY LOCATION"}</>
-                              : "+ set location"}
+                              ? <>{locEmoji && <>{locEmoji} </>}→ {tileEntry ? `${tileEntry.emoji} ${tileEntry.label.toUpperCase()}` : "MY LOCATION"}</>
+                              : locEmoji
+                                ? <>{locEmoji} {locLabel}</>
+                                : "+ set location"}
                           </button>
                         );
                       })()}
@@ -937,6 +1022,28 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             </span>
           </div>
           <button onClick={() => {
+            // Implicit-confirmation bump. Any row that still carries a
+            // learnedCorrectionId is a row the user accepted without
+            // editing — bump correction_count so recurring corrections
+            // build confidence. If they DID edit, propagateCorrection
+            // already upserted a fresh memory and this bump is a no-op
+            // on the new (now current) entry.
+            if (userId) {
+              for (const row of scannedItems) {
+                if (!row.learnedCorrectionId) continue;
+                const rawText = row.scanRaw?.raw_name || row.name;
+                if (!rawText) continue;
+                rememberScanCorrection({
+                  userId,
+                  rawText,
+                  correctedName: row.name,
+                  emoji: row.emoji,
+                  typeId: row.typeId,
+                  canonicalId: row.canonicalId || row.ingredientId,
+                  ingredientIds: row.ingredientIds,
+                }).catch(() => {});
+              }
+            }
             // Pass imageData along so addScannedItems can upload the
             // original scan to Storage and link it to the receipt row.
             // Without this, the receipt row lands with image_path=null
@@ -1310,6 +1417,13 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Inline expiration + state — new in the ItemCard-styled add form.
+  // Both optional. customExpiresAt is a Date (or null); customState is
+  // one of the ingredient-specific state ids (e.g. "whole" | "diced"),
+  // only meaningful once the item has a canonical match.
+  const [customExpiresAt, setCustomExpiresAt] = useState(null);
+  const [customState, setCustomState] = useState(null);
+  const [statePickerOpen, setStatePickerOpen] = useState(false);
   // Optional components for the custom item. Lets the user build a
   // "curry ketchup" inline by picking [ketchup, curry_powder] instead
   // of having to save the free-text row first and then link it later.
@@ -1331,15 +1445,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // (or any family member) saves their first custom item; grows as
   // real-life usage populates the recents ladder.
   const [userTemplates] = useUserTemplates(userId);
-  // YOUR RECENTS search box (18i). Filters the family's templates by
-  // substring match across name + components when present; otherwise
-  // the list shows starred (useCount >= 2) pinned to top + a cap of
-  // 5 total so users don't scroll through 30 rows to find last week's
-  // "Mama Bear's Garden Fresh Green Onion". Typing bypasses the cap.
-  const [recentsQuery, setRecentsQuery] = useState("");
 
-  // Fill the custom form from a template. Called when the user taps
-  // a row in "YOUR RECENTS". Name/emoji/category/unit/ingredientIds
+  // Fill the custom form from a template. Called from the name-input
+  // typeahead when the user taps a matching template row — the big
+  // bulky "YOUR RECENTS" idle-state block was removed because the
+  // typeahead already covers template surfacing once the user starts
+  // typing, and a full recents dump at the top dominated the modal.
   // land immediately; amount stays whatever the user had typed (if
   // anything) OR falls back to the template's default_amount — the
   // user almost always needs to type their actual count ("how many
@@ -1421,9 +1532,15 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
     //      2. Type default as fallback — Food Category = Hot dogs
     //         → canonical_id = 'hot_dog' when the name has no
     //         more-specific token
+    // Canonical derivation at save time: explicit user pick first,
+    // then name-match. We deliberately do NOT fall back to
+    // canonicalIdForType(customTypeId) — the food category is a broad
+    // classification (Pasta), not the item's specific identity
+    // (Cavatappi). Picking "Pasta" as the type doesn't mean this row
+    // IS the canonical pasta row; canonical stays null until the user
+    // explicitly picks one or the name matches a registry alias.
     const canonicalId = customCanonicalId
       || inferCanonicalFromName(customName.trim())
-      || canonicalIdForType(customTypeId)
       || null;
 
     // Unified save shape. Single-canonical picks, multi-canonical
@@ -1469,6 +1586,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       // category. Setting it here gives picker-based placement
       // authority over the heuristic.
       ...(customLocation ? { location: customLocation } : {}),
+      // Optional inline expiration + state — new in the ItemCard-styled
+      // add form. Expiration is omitted when null so Pantry's onAdd
+      // doesn't accidentally write a null into a column that expects
+      // undefined-as-unset.
+      ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
+      ...(customState ? { state: customState } : {}),
     };
 
     onAdd(item);
@@ -1541,6 +1664,22 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       showClose={false}
       maxHeight="85vh"
     >
+        {/* Close — absolutely positioned upper-right (ModalSheet's own
+            close is suppressed via showClose={false}; we render our own
+            so the visual matches ItemCard). */}
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: "absolute", top: 12, right: 14,
+            width: 36, height: 36,
+            background: "#0a0a0a", border: "1px solid #2a2a2a",
+            color: "#aaa", borderRadius: 18,
+            fontFamily: "'DM Mono',monospace", fontSize: 16,
+            cursor: "pointer", zIndex: 2,
+          }}
+        >✕</button>
+
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6 }}>
           {target === "shopping"
             ? "+ TO SHOPPING LIST"
@@ -1548,11 +1687,6 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
               ? `+ TO ${tileContext.tabId.toUpperCase()} · ${tileContext.tileLabel.toUpperCase()}`
               : "+ TO KITCHEN"}
         </div>
-        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:14 }}>
-          {tileContext
-            ? `Add ${/^[aeiou]/i.test(tileContext.tileLabel) ? "an" : "a"} ${tileContext.tileLabel.toLowerCase()}`
-            : "Add an ingredient"}
-        </h3>
 
         {/* Tile-context banner — shown when the modal opened from a
             specific tile. Suggestions that classify into the tile float
@@ -1587,204 +1721,16 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         <>
             {/* Custom mode — emoji is auto-assigned (🥫) since the picker
                 rarely worked on iOS keyboards anyway. Users can change the
-                name freely; the emoji stays consistent for custom items. */}
+                name freely; the emoji stays consistent for custom items.
 
-            {/* YOUR RECENTS — family-shared user templates. Layout (18i):
-                  * Starred (useCount ≥ 2 — items the family actually
-                    reaches for) pin to the top with a ⭐ badge
-                  * Recents (everything else) fill under, newest first
-                  * Capped at 5 visible rows when idle so the picker
-                    doesn't become a wall of noise; typing in the
-                    search box lifts the cap and filters across ALL
-                    templates by name + component ids
-                Hidden when the family has no templates yet (first-ever
-                custom add on an account — a fresh home-kitchen). */}
-            {userTemplates.length > 0 && (() => {
-              const q = recentsQuery.trim().toLowerCase();
-              const isSearching = q.length > 0;
-
-              // Filter first if searching. Match against the display
-              // name AND the component id slugs so "hot dog" finds
-              // "Franks Best Cheese Dogs" via hot_dog in components.
-              const matches = isSearching
-                ? userTemplates.filter(tpl => {
-                    const name = (tpl.name || "").toLowerCase();
-                    if (name.includes(q)) return true;
-                    const compHit = (tpl.ingredientIds || []).some(id =>
-                      id.replace(/_/g, " ").toLowerCase().includes(q)
-                    );
-                    return compHit;
-                  })
-                : userTemplates;
-
-              // Starred = used 2+ times. Lightweight heuristic for
-              // "family staple" without a schema change — if the
-              // family pulled it out of the recents ladder more than
-              // once, it earned the pin. Sort starred by useCount desc,
-              // tiebreak on recency (already sorted by last_used_at).
-              const starred = matches
-                .filter(t => (t.useCount || 0) >= 2)
-                .sort((a, b) => (b.useCount || 0) - (a.useCount || 0));
-              const starredIds = new Set(starred.map(t => t.id));
-              const rest = matches.filter(t => !starredIds.has(t.id));
-              // Idle cap — 5 total across starred + rest. Searching
-              // removes the cap (user is actively hunting).
-              const ordered = [...starred, ...rest];
-              const visible = isSearching ? ordered : ordered.slice(0, 5);
-              const hiddenCount = ordered.length - visible.length;
-
-              const renderRow = (tpl) => {
-                const isStarred = (tpl.useCount || 0) >= 2;
-                return (
-                  <button
-                    key={tpl.id}
-                    onClick={() => fillFromTemplate(tpl)}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 10,
-                      padding: "8px 10px",
-                      background: isStarred ? "#1a150a" : "transparent",
-                      border: `1px solid ${isStarred ? "#f5c84233" : "transparent"}`,
-                      borderRadius: 8, cursor: "pointer", textAlign: "left",
-                    }}
-                    onMouseOver={e => { e.currentTarget.style.background = "#141414"; e.currentTarget.style.borderColor = "#2a2a2a"; }}
-                    onMouseOut={e => {
-                      e.currentTarget.style.background = isStarred ? "#1a150a" : "transparent";
-                      e.currentTarget.style.borderColor = isStarred ? "#f5c84233" : "transparent";
-                    }}
-                  >
-                    <span style={{ fontSize: 18, flexShrink: 0 }}>{tpl.emoji || "🥫"}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{
-                        fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-                        color: "#f0ece4",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        display: "flex", alignItems: "center", gap: 6,
-                      }}>
-                        {isStarred && <span style={{ fontSize: 11, flexShrink: 0 }}>⭐</span>}
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {tpl.name}
-                        </span>
-                      </div>
-                      <div style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 9,
-                        color: "#666", letterSpacing: "0.06em", marginTop: 2,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {tpl.ingredientIds.length > 0
-                          ? tpl.ingredientIds.slice(0, 4).map(id => id.replace(/_/g, " ").toUpperCase()).join(" · ")
-                          : "NO COMPONENTS"}
-                        {tpl.ingredientIds.length > 4 && ` · +${tpl.ingredientIds.length - 4}`}
-                      </div>
-                    </div>
-                    <div style={{ flexShrink: 0, textAlign: "right" }}>
-                      <div style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 9,
-                        color: "#f5c842", letterSpacing: "0.08em",
-                      }}>
-                        {tpl.useCount}×
-                      </div>
-                      <div style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 8,
-                        color: "#555", letterSpacing: "0.06em", marginTop: 1,
-                      }}>
-                        {formatAgo(tpl.lastUsedAt)}
-                      </div>
-                    </div>
-                  </button>
-                );
-              };
-
-              return (
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    marginBottom: 8,
-                  }}>
-                    <div style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#7eb8d4", letterSpacing: "0.12em",
-                    }}>
-                      YOUR RECENTS · {userTemplates.length}
-                    </div>
-                    {starred.length > 0 && (
-                      <div style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 9,
-                        color: "#f5c842", letterSpacing: "0.08em",
-                      }}>
-                        ⭐ {starred.length} STARRED
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Search — filters across name + component ids.
-                      Only shown when the family has enough templates
-                      that scrolling starts to hurt. */}
-                  {userTemplates.length > 3 && (
-                    <div style={{ position: "relative", marginBottom: 6 }}>
-                      <input
-                        value={recentsQuery}
-                        onChange={e => setRecentsQuery(e.target.value)}
-                        placeholder="Search your recents…"
-                        style={{
-                          width: "100%", padding: "8px 12px",
-                          background: "#0a0a0a",
-                          border: "1px solid #1e1e1e",
-                          borderRadius: 8,
-                          fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                          color: "#f0ece4", outline: "none",
-                          boxSizing: "border-box",
-                        }}
-                      />
-                      {isSearching && (
-                        <button
-                          onClick={() => setRecentsQuery("")}
-                          style={{
-                            position: "absolute", right: 8, top: "50%",
-                            transform: "translateY(-50%)",
-                            background: "transparent", border: "none",
-                            color: "#666", fontSize: 14, cursor: "pointer",
-                            padding: "2px 6px",
-                          }}
-                          aria-label="Clear search"
-                        >✕</button>
-                      )}
-                    </div>
-                  )}
-
-                  <div style={{
-                    display: "flex", flexDirection: "column", gap: 6,
-                    maxHeight: isSearching ? 320 : 260,
-                    overflowY: "auto",
-                    padding: 4, background: "#0a0a0a",
-                    border: "1px solid #1e1e1e", borderRadius: 10,
-                  }}>
-                    {visible.length === 0 ? (
-                      <div style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#555", letterSpacing: "0.08em",
-                        padding: "14px 10px", textAlign: "center",
-                      }}>
-                        NO MATCHES FOR "{recentsQuery}"
-                      </div>
-                    ) : (
-                      visible.map(renderRow)
-                    )}
-                  </div>
-
-                  <div style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: "#444", letterSpacing: "0.06em",
-                    marginTop: 6, textAlign: "center",
-                  }}>
-                    {isSearching
-                      ? `${visible.length} of ${userTemplates.length} templates`
-                      : hiddenCount > 0
-                        ? `SHOWING 5 · SEARCH TO FIND ${hiddenCount} MORE`
-                        : "TAP A RECENT TO AUTO-FILL · OR KEEP TYPING FOR SOMETHING NEW"}
-                  </div>
-                </div>
-              );
-            })()}
+                The "YOUR RECENTS" idle-state dump used to live here — a
+                bulky list of 5 rows + search box that dominated the top
+                of the modal before the user had done anything. Deleted
+                because the typeahead on the name input (below) already
+                surfaces templates as the user types, making the idle
+                dump redundant noise. fillFromTemplate is still wired
+                through the typeahead row's onClick. */}
+            {/* (removed — see comment above) */}
 
             {/* Name input + typeahead. As the user types, filter the
                 family's templates by substring match and surface a
@@ -1793,12 +1739,40 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 "WILL MERGE INTO EXISTING" hint so the user knows
                 saving bumps the existing template instead of making
                 a dup — transparency around the strict-dedup rule. */}
-            <div style={{ marginBottom:12, position:"relative" }}>
+            {/* Header row — mirrors ItemCard's visual layout so the
+                "Add" flow looks like the filled-out item it'll become.
+                Emoji on the left, kicker + title-style name input + 3
+                tap lines for FOOD CATEGORY / STORED IN / STATE on the
+                right. The typeahead stays inside the name input's
+                relative wrapper so the suggestion dropdown still
+                positions correctly below. */}
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 14 }}>
+              <div style={{ fontSize: 44, lineHeight: 1, paddingTop: 18, flexShrink: 0 }}>
+                {(() => {
+                  const derived = customCanonicalId
+                    || inferCanonicalFromName(customName.trim())
+                    || canonicalIdForType(customTypeId);
+                  return findIngredient(derived)?.emoji || "🥫";
+                })()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
+                  ITEM
+                </div>
               <input
                 value={customName}
                 onChange={e => setCustomName(e.target.value)}
-                placeholder="Name (e.g. Capers, Home Run Inn Pizza)"
-                style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+                placeholder="Add an item"
+                style={{
+                  width: "100%",
+                  background: "transparent",
+                  border: "none", outline: "none",
+                  fontFamily: "'Fraunces',serif", fontSize: 26,
+                  fontStyle: "italic", fontWeight: 300,
+                  color: "#f0ece4",
+                  padding: "2px 0 0",
+                  boxSizing: "border-box",
+                }}
               />
 
               {/* Live canonical preview (0039). Shows the derived
@@ -1837,6 +1811,92 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   </div>
                 );
               })()}
+
+              {/* FOOD CATEGORY tap line — orange badge (reserved color
+                  across the app for the food-category axis). Empty
+                  state stays colored "+ SET CATEGORY" so you can
+                  visually identify the field before tapping. */}
+              <div
+                onClick={() => setTypePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#e07a3a",
+                  letterSpacing: "0.08em", marginTop: 6,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
+                {customTypeId ? (
+                  <>
+                    <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
+                    <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
+                      {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
+                    + SET CATEGORY
+                  </span>
+                )}
+              </div>
+
+              {/* STORED IN tap line — blue badge (reserved color across
+                  the app for storage location / tile placement). */}
+              <div
+                onClick={() => setTilePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#7eb8d4",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
+                {customTileId ? (() => {
+                  const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                  const found = allBuiltIns.find(t => t.id === customTileId);
+                  return (
+                    <>
+                      <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
+                      <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
+                        {(found?.label || "CUSTOM TILE").toUpperCase()}
+                      </span>
+                    </>
+                  );
+                })() : (
+                  <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
+                    + SET LOCATION
+                  </span>
+                )}
+              </div>
+
+              {/* STATE tap line — neutral yellow (not part of the big-3
+                  color hierarchy since state isn't a classification
+                  axis on par with category/location/canonical). */}
+              <div
+                onClick={() => setStatePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#f5c842" }}>STATE:</span>
+                {customState ? (
+                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                    {customState.toUpperCase()}
+                  </span>
+                ) : (
+                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                    + SET STATE
+                  </span>
+                )}
+              </div>
+
               {(() => {
                 const typed = (customName || "").trim().toLowerCase();
                 if (!typed) return null;
@@ -1978,229 +2038,185 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   </div>
                 );
               })()}
+              </div>
             </div>
 
-            <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-              <input
-                type="number"
-                inputMode="decimal"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                placeholder="Amount"
-                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
-              />
-              <input
-                value={customUnit}
-                onChange={e => setCustomUnit(e.target.value)}
-                placeholder="Unit (oz, cup…)"
-                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
-              />
-            </div>
-
-            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:20 }}>
-              {ADD_CATEGORIES.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => setCustomCategory(c.id)}
-                  style={{ background: customCategory===c.id?"#f5c842":"#1a1a1a", border:`1px solid ${customCategory===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 12px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: customCategory===c.id?"#111":"#888", cursor:"pointer" }}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-
-            {/* IDENTIFIED AS section — what KIND of thing this is.
-                Separate from STORED IN below which answers WHERE it
-                lives. Most items have a clean type-to-tile mapping
-                (Pizza → Frozen Meals, Cheese → Dairy) so picking a
-                type here auto-suggests the tile below, BUT user can
-                override either independently — the axes are
-                orthogonal (Italian Blend is Cheese but might be
-                stored in Frozen). */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842", letterSpacing: "0.12em",
-                }}>
-                  FOOD CATEGORY {customTypeId ? "" : "(OPTIONAL)"}
+            {/* State picker — inline when STATE tap line is tapped.
+                States are ingredient-specific; show options when the
+                name resolves to a canonical, otherwise explain. */}
+            {statePickerOpen && (() => {
+              const derived = customCanonicalId
+                || inferCanonicalFromName(customName.trim())
+                || canonicalIdForType(customTypeId);
+              const canon = findIngredient(derived);
+              const states = canon ? (statesForIngredient(canon) || []) : [];
+              return (
+                <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10, marginBottom: 14 }}>
+                  {states.length === 0 ? (
+                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", fontStyle: "italic", lineHeight: 1.5 }}>
+                      Pick a Food Category or type a name that matches a canonical ingredient first — states depend on what the item IS.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {states.map(s => (
+                        <button
+                          key={s}
+                          onClick={() => { setCustomState(s); setStatePickerOpen(false); }}
+                          style={{
+                            padding: "6px 10px",
+                            background: customState === s ? "#1a1608" : "transparent",
+                            border: `1px solid ${customState === s ? "#f5c842" : "#2a2a2a"}`,
+                            color: customState === s ? "#f5c842" : "#aaa",
+                            borderRadius: 16, cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+                          }}
+                        >
+                          {stateLabel(s).toUpperCase()}
+                        </button>
+                      ))}
+                      {customState && (
+                        <button
+                          onClick={() => { setCustomState(null); setStatePickerOpen(false); }}
+                          style={{
+                            padding: "6px 10px",
+                            background: "transparent",
+                            border: "1px solid #3a2f10",
+                            color: "#d98a8a",
+                            borderRadius: 16, cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+                          }}
+                        >
+                          ✕ CLEAR
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => setTypePickerOpen(v => !v)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid #3a2f10",
-                    padding: "4px 10px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    letterSpacing: "0.1em", borderRadius: 6,
-                  }}
-                >
-                  {typePickerOpen ? "HIDE" : (customTypeId ? "CHANGE" : "PICK")}
-                </button>
+              );
+            })()}
+
+            {/* Quantity + Location + Expires — 3-column grid mirroring
+                ItemCard's inline edit row. Location (fridge/pantry/freezer)
+                replaces the old 6-chip food-category row; that field was
+                the ingredient classification, which now lives in the
+                FOOD CATEGORY tap line above. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 18 }}>
+              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="0"
+                    style={{
+                      width: "100%",
+                      background: "transparent", border: "none", outline: "none",
+                      fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4",
+                      padding: 0, minWidth: 0,
+                    }}
+                  />
+                  <input
+                    value={customUnit}
+                    onChange={e => setCustomUnit(e.target.value)}
+                    placeholder="unit"
+                    style={{
+                      width: 48,
+                      background: "transparent", border: "none", outline: "none",
+                      fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#aaa",
+                      padding: 0, minWidth: 0,
+                    }}
+                  />
+                </div>
               </div>
 
-              {/* Current pick preview — bundled lookup is O(1); user
-                  types show a generic label until the full picker
-                  opens (rare; users usually see their own types). */}
-              {!typePickerOpen && customTypeId && (() => {
-                const bundled = findFoodType(customTypeId);
-                const label = bundled?.label || "Custom type";
-                const emoji = bundled?.emoji || "🏷️";
-                return (
-                  <div style={{
-                    padding: "8px 12px",
-                    background: "#1a1608", border: "1px solid #3a2f10",
-                    borderRadius: 10,
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <span style={{ fontSize: 18 }}>{emoji}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f5c842" }}>
-                        {label}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {!typePickerOpen && !customTypeId && (
-                <div style={{
-                  padding: "10px 12px",
-                  background: "#0a0a0a", border: "1px dashed #242424",
-                  borderRadius: 10,
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
-                  fontStyle: "italic", lineHeight: 1.5,
-                }}>
-                  What kind of thing is this? Pizza, Cheese, Sausages…
-                  Helps recipes and drill-into-type later.
+              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>LOCATION</div>
+                <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                  {[
+                    { id: "fridge",  emoji: "🧊" },
+                    { id: "pantry",  emoji: "🥫" },
+                    { id: "freezer", emoji: "❄️" },
+                  ].map(l => (
+                    <button
+                      key={l.id}
+                      onClick={() => {
+                        setCustomLocation(l.id);
+                        // Mirror into customCategory so the existing save
+                        // path (which writes `category`) doesn't regress:
+                        //   fridge → dairy (most common fridge item),
+                        //   pantry → pantry, freezer → frozen
+                        setCustomCategory(l.id === "fridge" ? "dairy" : l.id === "freezer" ? "frozen" : "pantry");
+                      }}
+                      aria-label={l.id}
+                      style={{
+                        flex: 1, padding: "4px 0",
+                        background: customLocation === l.id ? "#1a1608" : "transparent",
+                        border: `1px solid ${customLocation === l.id ? "#f5c842" : "#2a2a2a"}`,
+                        color: customLocation === l.id ? "#f5c842" : "#888",
+                        borderRadius: 6, cursor: "pointer",
+                        fontSize: 16, lineHeight: 1,
+                      }}
+                    >
+                      {l.emoji}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
-              {typePickerOpen && (
+              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>EXPIRES</div>
+                <input
+                  type="date"
+                  value={customExpiresAt ? new Date(customExpiresAt).toISOString().slice(0, 10) : ""}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setCustomExpiresAt(v ? new Date(`${v}T12:00:00Z`) : null);
+                  }}
+                  style={{
+                    width: "100%",
+                    background: "transparent", border: "none", outline: "none",
+                    fontFamily: "'DM Mono',monospace", fontSize: customExpiresAt ? 12 : 11,
+                    color: customExpiresAt ? "#f0ece4" : "#666",
+                    padding: "4px 0 0", marginTop: 0,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Inline pickers — shown when the FOOD CATEGORY or STORED IN
+                tap lines are tapped. The full label/preview UI moved to
+                the tap lines at the top of the modal, so these are the
+                picker-only renders. */}
+            {typePickerOpen && (
+              <div style={{ marginBottom: 16 }}>
                 <TypePicker
                   userId={userId}
                   selectedTypeId={customTypeId}
                   suggestedTypeId={inferFoodTypeFromName(customName)}
                   onPick={(typeId, defaultTileId, defaultLocation) => {
                     setCustomTypeId(typeId);
-                    // Auto-suggest STORED IN from the type's default
-                    // UNLESS the user has already explicitly set a
-                    // tile (don't overwrite their intent). Same for
-                    // location.
-                    if (defaultTileId && !customTileId) {
-                      setCustomTileId(defaultTileId);
-                    }
-                    if (defaultLocation && !customLocation) {
-                      setCustomLocation(defaultLocation);
-                    }
-                    // Auto-derive canonical identity from the type's
-                    // default UNLESS the user already explicitly set
-                    // one (name-match may have found something more
-                    // specific). Name-match still wins at save time.
-                    if (!customCanonicalId) {
-                      const fromType = canonicalIdForType(typeId);
-                      if (fromType) setCustomCanonicalId(fromType);
-                    }
+                    if (defaultTileId && !customTileId) setCustomTileId(defaultTileId);
+                    if (defaultLocation && !customLocation) setCustomLocation(defaultLocation);
+                    // Canonical stays untouched on a Food Category pick.
+                    // Category is the broad classification (Pasta),
+                    // canonical is the specific identity (Cavatappi) —
+                    // orthogonal. User picks canonical explicitly via
+                    // the CANONICAL tap line / picker, or name match
+                    // derives it at save time.
                     setTypePickerOpen(false);
                   }}
                 />
-              )}
-            </div>
-
-            {/* STORED IN section. Shows current tile placement
-                (via built-in classifier for canonical picks, or
-                user's explicit choice). Tap to expand the full
-                picker inline. Users can also create new tiles from
-                the picker's + CREATE NEW affordance. Purely optional —
-                leaving untouched falls through to the heuristic
-                classifier at render time, same as before tile memory
-                existed. */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842", letterSpacing: "0.12em",
-                }}>
-                  STORED IN {customTileId ? "" : "(OPTIONAL)"}
-                </div>
-                <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => setTilePickerOpen(v => !v)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid #3a2f10",
-                    padding: "4px 10px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    letterSpacing: "0.1em", borderRadius: 6,
-                  }}
-                >
-                  {tilePickerOpen ? "HIDE" : (customTileId ? "CHANGE" : "PICK")}
-                </button>
               </div>
+            )}
 
-              {/* Current pick preview — when a tile is chosen and the
-                  picker is collapsed. Gives the user a read at a glance
-                  without forcing expand. */}
-              {!tilePickerOpen && customTileId && (() => {
-                // Look up the label/emoji for a tile id. Built-ins are
-                // in the three *_TILES arrays imported at module scope;
-                // user tiles would require the hook which we don't want
-                // inside a preview closure. Fall through to a generic
-                // "✓ TILE SET" when we can't resolve (user tile, live
-                // picker has the real data).
-                const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
-                const found = allBuiltIns.find(t => t.id === customTileId);
-                return (
-                  <div style={{
-                    padding: "8px 12px",
-                    background: "#1a1608", border: "1px solid #3a2f10",
-                    borderRadius: 10,
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <span style={{ fontSize: 18 }}>{found?.emoji || "🗂️"}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f5c842" }}>
-                        {found?.label || "Custom tile"}
-                      </div>
-                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.06em", marginTop: 2 }}>
-                        {customLocation ? customLocation.toUpperCase() : "LOCATION TBD"}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Collapsed + no pick = quiet invitation. The heuristic
-                  classifier will route at render time — this is just
-                  an affordance to override when the user knows better. */}
-              {!tilePickerOpen && !customTileId && (
-                <div style={{
-                  padding: "10px 12px",
-                  background: "#0a0a0a", border: "1px dashed #242424",
-                  borderRadius: 10,
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
-                  fontStyle: "italic", lineHeight: 1.5,
-                }}>
-                  We'll route this to a tile based on components. Tap PICK to place it somewhere specific.
-                </div>
-              )}
-
-              {/* Expanded picker — inline, scrollable list of tiles +
-                  CREATE NEW. Picking auto-collapses so the form stays
-                  focused on what's next. */}
-              {tilePickerOpen && (
+            {tilePickerOpen && (
+              <div style={{ marginBottom: 16 }}>
                 <IdentifiedAsPicker
                   userId={userId}
                   locationHint={customLocation}
                   selectedTileId={customTileId}
-                  // Keyword-inferred suggestion. Recomputed inline from
-                  // the current customName so the highlighted chip
-                  // updates as the user types. Nothing auto-selects —
-                  // the user still taps, we just rank the most likely
-                  // tile first with a ⭐ SUGGESTED treatment.
                   suggestedTileId={inferTileFromName(customName)}
                   onPick={(tileId, location) => {
                     setCustomTileId(tileId);
@@ -2208,48 +2224,44 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                     setTilePickerOpen(false);
                   }}
                 />
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* Components builder. Lets the user construct a composed
-                custom item ("Curry Ketchup" = [ketchup, curry_powder,
-                coriander]) inline during add, instead of saving a
-                free-text row first and linking it after. Optional —
-                zero components keeps the row free-text. */}
+            {/* Components builder — now rendered as an INGREDIENT
+                separator with a big [+] button, matching ItemCard's
+                INGREDIENT bar. The user taps [+] to open the composer
+                inline. Zero components keeps the row free-text. */}
             <div style={{ marginBottom: 16 }}>
+              {/* INGREDIENT separator — mirrors ItemCard's separator bar.
+                  Big [+] button on the right opens the components picker
+                  inline. When components exist they render as chips
+                  below, same as before. */}
               <div style={{
-                display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
+                display: "flex", alignItems: "center", gap: 12, marginBottom: 10,
               }}>
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
                 <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em" }}>
-                  COMPONENTS · {customComponents.length}
+                  INGREDIENT{customComponents.length > 0 && ` · ${customComponents.length}`}
                 </div>
-                <div style={{ flex: 1 }} />
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
                 <button
                   onClick={() => setCustomComponentsOpen(true)}
+                  aria-label={customComponents.length > 0 ? "Edit components" : "Add components"}
                   style={{
-                    background: "transparent", border: "1px solid #3a2f10",
-                    padding: "4px 10px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    letterSpacing: "0.1em", borderRadius: 6,
+                    width: 36, height: 36,
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    color: "#f5c842", borderRadius: 10,
+                    fontSize: 22, fontWeight: 300, lineHeight: 1,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
                   }}
                 >
-                  {customComponents.length > 0 ? "+ EDIT" : "+ ADD"}
+                  +
                 </button>
               </div>
 
-              {customComponents.length === 0 ? (
-                <div style={{
-                  padding: "12px 14px",
-                  background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
-                  fontStyle: "italic", lineHeight: 1.5,
-                }}>
-                  Optional. Pick canonical ingredients this item is made from —
-                  e.g. a "Curry Ketchup" = [ketchup, curry_powder]. One pick =
-                  tagged ingredient; two or more = a composed Meal with a tree.
-                </div>
-              ) : (
+              {customComponents.length === 0 ? null : (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {customComponents.map(c => (
                     <button
@@ -3062,6 +3074,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // and users see the expected placement without tapping.
             ...(s.tileId ? { tileId: s.tileId } : {}),
             ...(s.typeId ? { typeId: s.typeId } : {}),
+            // Location — explicit scan-confirm choice wins. User
+            // flipped strawberries to Freezer via the picker's
+            // JUST-USE shortcut? `s.location` is 'freezer' and we
+            // forward it; usePantry serializes to pantry_items.location
+            // and effectiveLocation() honors it at render time. Only
+            // the falsy case falls through to the category heuristic.
+            ...(s.location ? { location: s.location } : {}),
             // Back-link to the scan artifact that created this row —
             // either a receipts row (receipt scans) or a pantry_scans
             // row (fridge/pantry/freezer scans). At most one is set.

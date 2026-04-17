@@ -4901,6 +4901,29 @@ export function getIngredientInfo(ingredient, dbOverride) {
     skillDev:       db?.skillDev       || ing?.skillDev       || sub?.skillDev       || null,
     // ── blend composition (new for JSONB-era spice metadata) ──────────
     blendOf:        db?.blendOf        || ing?.blendOf        || null,
+    // ── AI meal-planning primitives (v3; emitted by the enrich-ingredient
+    // edge function). All nullable — missing on older rows, the meal
+    // planner should treat absence as "no signal" rather than error. ──
+    flavor_profile: db?.flavor_profile || ing?.flavor_profile || null,
+    aromatic_category:
+      db?.aromatic_category || ing?.aromatic_category || null,
+    cooking_behaviors:
+      db?.cooking_behaviors || ing?.cooking_behaviors || [],
+    role_tendencies:
+      db?.role_tendencies || ing?.role_tendencies || null,
+    heat_stability:
+      db?.heat_stability || ing?.heat_stability || null,
+    // Functional vs flavor substitution split (v3). Falls back to the
+    // legacy flat `substitutions` array above when absent, so the 32
+    // seeded rows keep rendering correctly.
+    substitutions_functional:
+      db?.substitutions_functional || ing?.substitutions_functional || null,
+    substitutions_flavor:
+      db?.substitutions_flavor || ing?.substitutions_flavor || null,
+    // Provenance block stamped by the enrichment edge function. UI can
+    // show "AI-generated, pending review" badges when _meta.reviewed is
+    // false; null for canonical rows authored pre-v3.
+    _meta: db?._meta || ing?._meta || null,
   };
 }
 

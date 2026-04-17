@@ -42,9 +42,94 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.8.3";
+export const CURRENT_VERSION = "0.9.2";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.9.2",
+    date:    "2026-04-17",
+    title:   "LinkIngredient: ⭐ star + top-3 likely + search",
+    summary:
+      "The canonical-link picker (tap 🔗 LINK on a scan row) got the " +
+      "same star-first rewrite as IDENTIFIED AS and STORED IN. The " +
+      "single best canonical match is pinned at the top as the ⭐ " +
+      "one-tap default, the next 3 most-likely matches sit directly " +
+      "below it (strictly high-to-low by score — no more random " +
+      "ordering), and the rest of the registry stays behind a search " +
+      "bar. SELECTED accumulator and BLEND PRESETS keep working the " +
+      "same way.",
+    shipped: [
+      { kind: "ux",
+        text: "LinkIngredient: ⭐ star pinned at top shows the highest-scoring match as the one-tap default.",
+        commits: [] },
+      { kind: "ux",
+        text: "Top 3 LIKELY matches below the star, sorted strictly descending by match score. No more EXACT below WEAK.",
+        commits: [] },
+      { kind: "ux",
+        text: "Search bar replaces the full-registry dump. Results only render on demand, dedup'd against star/likely so no duplicate rows.",
+        commits: [] },
+    ],
+  },
+  {
+    version: "0.9.1",
+    date:    "2026-04-17",
+    title:   "Pick fridge / pantry / freezer at scan time",
+    summary:
+      "Strawberries you're buying to freeze right away? You no longer " +
+      "have to let them land in the pantry and shuffle them over later. " +
+      "The STORED IN picker now opens with fridge / pantry / freezer " +
+      "pills at the top. Tap the one you want and a JUST USE ❄️ FREEZER " +
+      "shortcut appears — one more tap and the row commits with the new " +
+      "location, no need to pick a specific shelf. The scan-row chip " +
+      "also now shows the destination emoji (🧊/🥫/❄️) at a glance, so " +
+      "you can see every row's fate without opening anything.",
+    shipped: [
+      { kind: "ux",
+        text: "Location pills at the top of STORED IN picker. Tap FRIDGE / PANTRY / FREEZER to switch — the star, catalog, and search refilter instantly to that location's shelves.",
+        commits: [] },
+      { kind: "ux",
+        text: "JUST USE ❄️ FREEZER one-tap shortcut. Commits the location change without forcing a specific shelf pick — the heuristic router places it at render time.",
+        commits: [] },
+      { kind: "ux",
+        text: "Scan-confirm row chips now show the destination location emoji (🧊 FRIDGE / 🥫 PANTRY / ❄️ FREEZER) so you can see where every row is heading before you hit STOCK MY PANTRY.",
+        commits: [] },
+      { kind: "fix",
+        text: "addScannedItems now forwards the scan row's explicit location to the pantry_items row. Previously a manual location override got dropped on insert and the row fell through to the category-default location.",
+        commits: [] },
+    ],
+  },
+  {
+    version: "0.9.0",
+    date:    "2026-04-17",
+    title:   "⭐ Star-first pickers + scan-text memory",
+    summary:
+      "Two linked changes to the scan-confirm flow. First, the IDENTIFIED " +
+      "AS and STORED IN pickers stopped vomiting the whole WWEIA taxonomy " +
+      "(and every tile) at you every time. The ⭐ best guess is pinned at " +
+      "the top, CREATE NEW sits right below it, and the rest of the catalog " +
+      "hides behind a search bar — no more scrolling 50 rows to add your " +
+      "own type. Second, the scanner now remembers your corrections. Relink " +
+      "'AQUAMARINE SL' to Imitation Crab once; next scan of that same text " +
+      "lands pre-filled with a ⭐ LEARNED badge. Works family-wide — if your " +
+      "spouse teaches it 'BURR BALLS → Burrata', you get the benefit too.",
+    shipped: [
+      { kind: "ux",
+        text: "TypePicker: ⭐ star suggestion pinned at top, search bar for the rest. CREATE NEW TYPE is up top, not buried.",
+        commits: [] },
+      { kind: "ux",
+        text: "STORED IN picker: same star-first rewrite, plus a CLEAR · AUTO-ROUTE BY INGREDIENT button on existing items so you can remove a tile assignment entirely.",
+        commits: [] },
+      { kind: "feature",
+        text: "Scan-text memory. Every correction you make on a scan row (rename, relink, change type/canonical, swap emoji) gets remembered against the raw OCR text. Next scan of that same text auto-fills with a ⭐ LEARNED badge.",
+        commits: [] },
+      { kind: "feature",
+        text: "Family-shared corrections: anyone in your household teaches the system once, everyone benefits forever.",
+        commits: [] },
+      { kind: "architecture",
+        text: "New table user_scan_corrections (migration 0046). Keyed on normalized raw_text per user, family-scoped by RLS.",
+        commits: [] },
+    ],
+  },
   {
     version: "0.8.3",
     date:    "2026-04-17",
