@@ -52,6 +52,7 @@ import {
   bumpTemplateUse,
 } from "../lib/userTemplates";
 import { useUserTemplates } from "../lib/useUserTemplates";
+import { useProfile } from "../lib/useProfile";
 import {
   findScanCorrections,
   rememberScanCorrection,
@@ -168,6 +169,13 @@ const SCAN_EMOJI_OPTIONS = [
 function Scanner({ userId, onItemsScanned, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
+  // Admin bypass for the PENDING status. Admins approve canonicals
+  // themselves, so when they create one we auto-upsert the
+  // ingredient_info stub (same shape AdminPanel.approveCustom writes)
+  // and skip the visual "PENDING" badge — nothing to review, it's
+  // already approved.
+  const [profile] = useProfile(userId);
+  const isAdmin = profile?.role === "admin";
 
   // Family's user templates for scan-side matching (chunk 17b). When
   // the scanner returns a raw name that matches a template, we use
@@ -825,7 +833,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                             }}
                           >
                             <span>{displayEmoji} {displayName.toUpperCase()}</span>
-                            {isPending && (
+                            {isPending && !isAdmin && (
                               <span style={{
                                 marginLeft: 2,
                                 color:"#d4c9ac", fontSize: 8,
@@ -1216,6 +1224,31 @@ function Scanner({ userId, onItemsScanned, onClose }) {
               patch.kind = kindForTagCount(ids.length);
             }
             propagateCorrection(linkingScanIdx, patch);
+            // Admin auto-approve. When an admin mints a new slug via
+            // "+ CREATE" the system immediately upserts an
+            // ingredient_info stub so the canonical stops reading as
+            // PENDING for the rest of the family — admins approve
+            // their own creations implicitly. Non-admins: the slug
+            // lands in pending territory and an admin reviews it in
+            // the CANONICALS tab. `primaryId && !canon` is the
+            // user-created-slug signal (bundled slugs resolve via
+            // findIngredient).
+            if (isAdmin && primaryId && !canon) {
+              const stub = {
+                _meta: {
+                  reviewed: true,
+                  reviewed_by: userId || null,
+                  reviewed_at: new Date().toISOString(),
+                  source: "admin_scan_create",
+                },
+              };
+              supabase
+                .from("ingredient_info")
+                .upsert({ ingredient_id: primaryId, info: stub }, { onConflict: "ingredient_id" })
+                .then(({ error }) => {
+                  if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+                });
+            }
             setLinkingScanIdx(null);
           }}
           onClose={() => setLinkingScanIdx(null)}
@@ -1338,6 +1371,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           item={scannedItems[expandedScanIdx]}
           pantry={[]}
           userId={userId}
+          isAdmin={isAdmin}
           onUpdate={(patch) => {
             propagateCorrection(expandedScanIdx, patch);
           }}
@@ -1493,7 +1527,7 @@ function formatAgo(d) {
   return `${months}mo`;
 }
 
-function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
+function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
   const [amount, setAmount] = useState("");
 
   // Tile-context boost: when the modal opens from a specific tile, we
@@ -2576,8 +2610,26 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
         mode="single"
         onLink={(ids) => {
           // Empty array = CLEAR CANONICAL. Otherwise single id.
-          setCustomCanonicalId(ids[0] || null);
+          const nextId = ids[0] || null;
+          setCustomCanonicalId(nextId);
           setCustomCanonicalOpen(false);
+          // Admin auto-approve on user-created slug — skip PENDING.
+          if (isAdmin && nextId && !findIngredient(nextId)) {
+            const stub = {
+              _meta: {
+                reviewed: true,
+                reviewed_by: userId || null,
+                reviewed_at: new Date().toISOString(),
+                source: "admin_additem_create",
+              },
+            };
+            supabase
+              .from("ingredient_info")
+              .upsert({ ingredient_id: nextId, info: stub }, { onConflict: "ingredient_id" })
+              .then(({ error }) => {
+                if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+              });
+          }
         }}
         onClose={() => setCustomCanonicalOpen(false)}
       />
@@ -2746,6 +2798,10 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
 export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView, deepLink, onDeepLinkConsumed }) {
   const [scanning, setScanning] = useState(false);
+  // Admin bypass — viewer's role drives auto-approval on canonical
+  // creation and hides the PENDING badge. Same signal Scanner reads.
+  const [profile] = useProfile(userId);
+  const isAdmin = profile?.role === "admin";
   // Search replaces the old category filter pills — one input searches item
   // names, hub names, and categories.
   const [search, setSearch] = useState("");
@@ -4436,6 +4492,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           target={addingTo}
           tileContext={addingTo === "pantry" ? addingToTile : null}
           userId={userId}
+          isAdmin={isAdmin}
           onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
             if (addingTo === "shopping") {
@@ -4516,6 +4573,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             item={fresh}
             pantry={pantry}
             userId={userId}
+            isAdmin={isAdmin}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
             onEditTags={() => setLinkingItem(fresh)}
             onOpenProvenance={(link) => {

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "../lib/supabase";
 import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
@@ -129,7 +130,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item, pantry = [], userId, isAdmin = false, onUpdate, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -435,7 +436,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                           }}>
                             {currentCanonical?.name || customDisplayName}
                           </span>
-                          {!currentCanonical && (
+                          {!currentCanonical && !isAdmin && (
                             <span style={{
                               fontFamily: "'DM Mono',monospace", fontSize: 8,
                               color: "#8a7f6e", letterSpacing: "0.1em",
@@ -1389,6 +1390,26 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               const slug = slugifyIngredientName(canonicalSearch);
               if (!slug) return;
               onUpdate({ canonicalId: slug });
+              // Admin auto-approve — skip the PENDING state entirely
+              // by upserting the ingredient_info stub the same way
+              // AdminPanel.approveCustom writes it. Non-admins fall
+              // through to the normal pending-review path.
+              if (isAdmin && !findIngredient(slug)) {
+                const stub = {
+                  _meta: {
+                    reviewed: true,
+                    reviewed_by: userId || null,
+                    reviewed_at: new Date().toISOString(),
+                    source: "admin_itemcard_create",
+                  },
+                };
+                supabase
+                  .from("ingredient_info")
+                  .upsert({ ingredient_id: slug, info: stub }, { onConflict: "ingredient_id" })
+                  .then(({ error }) => {
+                    if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+                  });
+              }
               setCanonicalPickerOpen(false);
               setCanonicalSearch("");
             };
