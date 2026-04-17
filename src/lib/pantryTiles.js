@@ -22,6 +22,10 @@ export const PANTRY_TILES = [
   { id: "cooking_alcohol",   emoji: "🍷", label: "Cooking Alcohol",     blurb: "White wine, red wine, sake, vermouth" },
   { id: "bread",             emoji: "🍞", label: "Bread",               blurb: "Tortillas, pita, naan, sandwich bread, bagels" },
   { id: "dried_chilies",     emoji: "🌶️", label: "Dried Chilies",      blurb: "Ancho, guajillo, pasilla, chipotle, árbol" },
+  // Catch-all — anything the classifier couldn't place. Always
+  // reachable so items don't vanish when moved here from another
+  // location with a different tile taxonomy.
+  { id: "misc",              emoji: "📦", label: "Miscellaneous",       blurb: "Anything that doesn't fit the other tiles" },
 ];
 
 // Most of the granular tiles don't have registry ingredients yet — the
@@ -226,8 +230,9 @@ export function pantryTileIdForItem(item, { findIngredient, hubForIngredient }) 
   ];
   if (spiceKeywords.some(kw => lower.includes(kw))) return "spices_dried_herbs";
 
-  // Canned & Jarred is the residual catch-all. Items that land here are
-  // usually scanned free-text entries that truly are preserved goods, or
-  // novel items the registry hasn't modeled yet.
-  return "canned_jarred";
+  // Miscellaneous is the residual catch-all — always reachable via
+  // drill-down so nothing silently drops out of the UI. Canned &
+  // Jarred is reserved for items that actually match the canned
+  // keywords / ids above, not a de-facto dumping ground.
+  return "misc";
 }

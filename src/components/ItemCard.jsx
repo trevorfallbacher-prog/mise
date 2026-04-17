@@ -16,6 +16,7 @@ import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
+import { useToast } from "../lib/toast";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -334,7 +335,37 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
 
   const readOnly = !onUpdate;
   const startEdit = (field) => { if (!readOnly) setEditingField(field); };
-  const commit = (patch) => { onUpdate?.(patch); setEditingField(null); };
+  // Toast hook for surfacing moves. "Moved to Fridge → Dairy & Eggs"
+  // style confirmation so the user knows where their item ended up
+  // after a location change instead of wondering if it disappeared.
+  const toast = useToast();
+  const commit = (patch) => {
+    // Detect a location move BEFORE firing onUpdate (which mutates
+    // the row). Only fire the toast when the location actually
+    // changed — tapping the same location is a no-op visually, so
+    // don't spam the user with "moved to same place".
+    const prevLocation = item.location || null;
+    const nextLocation = patch && Object.prototype.hasOwnProperty.call(patch, "location")
+      ? patch.location
+      : undefined;
+    const locationChanged = nextLocation !== undefined && nextLocation !== prevLocation;
+    onUpdate?.(patch);
+    setEditingField(null);
+    if (locationChanged) {
+      const locLabel = LOCATIONS.find(l => l.id === nextLocation)?.label || nextLocation || "somewhere";
+      const locEmoji = LOCATIONS.find(l => l.id === nextLocation)?.emoji || "📦";
+      toast.push(
+        `Moved to ${locLabel} — find it under ${itemName(item)}'s tile`,
+        { emoji: locEmoji, kind: "success", ttl: 4500 },
+      );
+    }
+  };
+
+  // Small helper for the toast copy — prefer the canonical name, fall
+  // back to the user's typed name, fall back to a neutral word.
+  const itemName = (it) => {
+    return (it?.name || "").trim() || "this item";
+  };
 
   const prov = provenanceLine(item);
   const exp = daysUntil(item.expiresAt);

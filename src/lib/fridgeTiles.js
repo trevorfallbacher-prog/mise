@@ -20,6 +20,11 @@ export const FRIDGE_TILES = [
   { id: "drinks",       emoji: "🥤", label: "Drinks",         blurb: "OJ, plant milks, sparkling water" },
   { id: "bread_baked",  emoji: "🥖", label: "Bread & Baked",  blurb: "Sandwich bread, tortillas, pita" },
   { id: "leftovers",    emoji: "🍱", label: "Leftovers",      blurb: "Anything cooked and stored" },
+  // Catch-all — anything the classifier couldn't place. Keeps items
+  // visible when the user moves them between locations and the new
+  // location's tile set doesn't know about their canonical. Never
+  // "hide" an item; the drawer for this tile is always the safety net.
+  { id: "misc",         emoji: "📦", label: "Miscellaneous",  blurb: "Anything that doesn't fit the other tiles" },
 ];
 
 // Ingredient-id sets used to route canonical rows to the right tile when the
@@ -121,10 +126,11 @@ export function tileIdForItem(item, { findIngredient, hubForIngredient }) {
   if (item?.category === "dairy") return "dairy";
   if (item?.category === "produce") return "produce";
 
-  // Catch-all. Leftovers tile is reserved for rows the user explicitly
-  // marks as leftovers (future feature); unclassifiable rows land in
-  // condiments so they're always reachable via drill-down.
-  return "condiments";
+  // Catch-all. Unclassifiable rows land in Miscellaneous so they're
+  // always reachable via drill-down — never silently dropped from
+  // the UI. Condiments is reserved for items that genuinely match
+  // CONDIMENT_IDS above, not a de-facto dumping ground.
+  return "misc";
 }
 
 // Suggested fridge-tile emoji given an item's registry category — used as

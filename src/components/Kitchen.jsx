@@ -1665,6 +1665,38 @@ function formatAgo(d) {
   return `${months}mo`;
 }
 
+// Per-field validation reminder. Rendered inside the AddItemModal's
+// red-tinted "fix what's missing" panel when the user tries to save
+// an incomplete row. Emoji + label + one-line explanation of what
+// the field is for, voiced to be educational rather than scolding.
+function FieldExplainer({ emoji, label, body }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "flex-start", gap: 10,
+      padding: "8px 10px",
+      background: "#0f0606", border: "1px solid #2a1010",
+      borderRadius: 8,
+    }}>
+      <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{emoji}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9,
+          color: "#d98a8a", letterSpacing: "0.12em",
+          marginBottom: 3,
+        }}>
+          {label}
+        </div>
+        <div style={{
+          fontFamily: "'DM Sans',sans-serif", fontSize: 11.5,
+          color: "#c4a8a8", lineHeight: 1.4,
+        }}>
+          {body}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
   // Pulled for admin-approve writes so the session's dbMap updates
   // immediately after an admin mints a new canonical here.
@@ -1717,6 +1749,11 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Flipped to true on a save attempt that hit missing fields — lights
+  // up the per-field validation reminder panel. Stays latched so the
+  // user can actually see which field is red while they fix it;
+  // flipped back to false on a successful save.
+  const [saveAttempted, setSaveAttempted] = useState(false);
   // Inline expiration + state — new in the ItemCard-styled add form.
   // Both optional. customExpiresAt is a Date (or null); customState is
   // one of the ingredient-specific state ids (e.g. "whole" | "diced"),
@@ -1805,13 +1842,37 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   };
 
   // Top-level picker view. If the user has typed a search, flatten everything
-  // Save predicate. With the unified single flow, a save is valid
-  // when there's a name, an amount, and a unit — the pieces of a
-  // minimally-complete pantry row.
-  const canSave = customName.trim() && amount !== "" && customUnit.trim();
+  // Save predicate. A complete pantry row needs name + amount + unit
+  // PLUS a food category AND a storage location — the two fields that
+  // make a row findable later. Without category the row doesn't route
+  // into a tile; without location it doesn't know which storage tab
+  // to live under. The button stays bright-yellow on the happy path;
+  // missing fields flip the button to a red-tinted "explain what's
+  // wrong" state that lists each missing field with a friendly
+  // reminder of what it's for.
+  const trimmedName = customName.trim();
+  const hasName     = !!trimmedName;
+  const hasAmount   = amount !== "" && !isNaN(parseFloat(amount));
+  const hasUnit     = !!customUnit.trim();
+  const hasCategory = !!customTypeId;
+  const hasLocation = !!customLocation;
+  const missing = [];
+  if (!hasName)     missing.push("name");
+  if (!hasAmount)   missing.push("amount");
+  if (!hasUnit)     missing.push("unit");
+  if (!hasCategory) missing.push("category");
+  if (!hasLocation) missing.push("location");
+  const canSave = missing.length === 0;
 
   const save = async () => {
-    if (!canSave) return;
+    if (!canSave) {
+      // Don't silently no-op — flip the validation-display flag so
+      // the missing-field panel lights up and the user sees exactly
+      // what's blocking the save.
+      setSaveAttempted(true);
+      return;
+    }
+    setSaveAttempted(false);
     const amt = parseFloat(amount) || 0;
 
     // Custom-mode component scaffolding. When the user picked one or
@@ -1899,6 +1960,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     };
 
     onAdd(item);
+    setSaveAttempted(false);
 
     // Write the structured components tree after onAdd has kicked the
     // parent pantry_items INSERT. setComponentsForParent retries on
@@ -2585,14 +2647,72 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               </div>
             )}
 
+        {/* Validation reminder — appears after a failed save attempt
+            listing each missing field with a plain-language
+            reminder of what it's for. Mirrors the voice used on the
+            rest of the form (serif title, sans body) rather than
+            feeling like a system-level error. */}
+        {saveAttempted && missing.length > 0 && (
+          <div style={{
+            marginTop: 4, marginBottom: 14,
+            padding: "14px 14px 12px",
+            background: "#1a0a0a", border: "1px solid #3a1a1a",
+            borderRadius: 12,
+          }}>
+            <div style={{
+              fontFamily: "'Fraunces',serif", fontSize: 15,
+              fontStyle: "italic", color: "#f0d4d4",
+              lineHeight: 1.4, marginBottom: 10,
+            }}>
+              Almost there — {missing.length === 1 ? "one field" : `${missing.length} fields`} still need{missing.length === 1 ? "s" : ""} your attention.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {!hasName && (
+                <FieldExplainer emoji="📝" label="ITEM NAME"
+                  body="Type what you call it — the big italic line at the top. 'Sizzle EVO' is fine; we'll remember it." />
+              )}
+              {!hasAmount && (
+                <FieldExplainer emoji="🔢" label="QUANTITY"
+                  body="How much of it? The number and unit (2 lb, 1 gallon, 18 count)." />
+              )}
+              {!hasUnit && (
+                <FieldExplainer emoji="📏" label="UNIT"
+                  body="Gallon, stick, lb, count — the way the item is sold. Needed so amounts add up correctly when you restock." />
+              )}
+              {!hasCategory && (
+                <FieldExplainer emoji="🧩" label="FOOD CATEGORY"
+                  body="The broad bucket — Pork, Cheese, Bread. Drives the state picker (sliced, whole, ground, …) and the default tile placement." />
+              )}
+              {!hasLocation && (
+                <FieldExplainer emoji="📍" label="STORED IN"
+                  body="Fridge, pantry, or freezer. Decides which tab the item lives under — without it we don't know where to show it." />
+              )}
+            </div>
+          </div>
+        )}
+
         <div style={{ display:"flex", gap:10 }}>
           <button onClick={onClose} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer", letterSpacing:"0.08em" }}>CANCEL</button>
           <button
             onClick={save}
-            disabled={!canSave}
-            style={{ flex:2, padding:"14px", background: canSave?"#f5c842":"#1a1a1a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: canSave?"#111":"#444", cursor: canSave?"pointer":"not-allowed", letterSpacing:"0.08em" }}
+            // Button stays tappable even when required fields are
+            // missing — tapping surfaces the reminder panel instead
+            // of being a dead pixel. The color still communicates
+            // the state (yellow = ready; red-tinted = something's
+            // missing; grey = no name typed yet so nothing to save).
+            style={{
+              flex:2, padding:"14px",
+              background: canSave
+                ? "#f5c842"
+                : (hasName ? "#3a1a1a" : "#1a1a1a"),
+              border:"none", borderRadius:12,
+              fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600,
+              color: canSave ? "#111" : (hasName ? "#f0d4d4" : "#444"),
+              cursor: hasName ? "pointer" : "not-allowed",
+              letterSpacing:"0.08em",
+            }}
           >
-            ADD →
+            {canSave ? "ADD →" : (hasName ? `FIX ${missing.length} FIELD${missing.length === 1 ? "" : "S"}` : "ADD →")}
           </button>
         </div>
         </>

@@ -23,6 +23,9 @@ export const FREEZER_TILES = [
   { id: "frozen_desserts",     emoji: "🧁", label: "Desserts",           blurb: "Ice cream, frozen yogurt, sorbet, pastry" },
   { id: "frozen_butter_dairy", emoji: "🧈", label: "Butter & Dairy",     blurb: "Butter, cream — the \"remembered to freeze it\" tile" },
   { id: "frozen_herbs",        emoji: "🌿", label: "Fresh Herbs Frozen", blurb: "Herb cubes, vacuum-sealed fresh herbs" },
+  // Catch-all — anything the classifier couldn't place. Always
+  // reachable so items don't vanish when moved to the freezer.
+  { id: "misc",                emoji: "📦", label: "Miscellaneous",       blurb: "Anything that doesn't fit the other tiles" },
 ];
 
 // Seafood ids (category:"meat" in the registry, but get their own tile).
@@ -148,7 +151,9 @@ export function freezerTileIdForItem(item, { findIngredient, hubForIngredient })
   if (item?.category === "dairy")   return "frozen_butter_dairy";
   if (item?.category === "frozen")  return "frozen_meal_prep";
 
-  // Catch-all: Meal Prep. A row without registry metadata that landed
-  // in the freezer is almost always a cooked-and-saved portion.
-  return "frozen_meal_prep";
+  // Catch-all: Miscellaneous. Previously dumped unknowns into Meal
+  // Prep, but that made the Meal Prep tile a de-facto junk drawer.
+  // Miscellaneous is the explicit "doesn't fit anywhere else" bucket
+  // so items are always reachable via drill-down.
+  return "misc";
 }
