@@ -545,14 +545,24 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         }
         return patched;
       };
-      // Auto-link on exact match. After the correction overlay has had
+      // Auto-link on strong match. After the correction overlay has had
       // its say, any row still missing a canonicalId gets a fuzzy lookup
-      // against the bundled registry — if the top match scores ≥ 90
-      // (the "Exact" bucket inside LinkIngredient), we stamp the
-      // canonical automatically so the user doesn't have to tap in
-      // just to accept the obvious. Rows with lower-confidence matches
-      // stay unset so the user reviews them deliberately.
-      const AUTO_LINK_SCORE = 90;
+      // against the bundled registry — if the top match scores ≥ 80
+      // we stamp the canonical automatically so the user doesn't have
+      // to tap in just to accept the obvious.
+      //
+      // Threshold rationale: scoreIngredientMatch gives 100 for an
+      // exact name match, 80 when either side is a substring of the
+      // other (plus up to 20 Levenshtein bonus). "SHREDDED MOZZARELLA"
+      // → mozzarella, "2% MILK" → milk, "GROUND BEEF 80/20" →
+      // ground_beef all land in the 80-95 band. 90 was too strict —
+      // it only auto-linked the rare 100-score exact hit while the
+      // STAR row in LinkIngredient was sitting at 85 unlinked.
+      // 80 matches the module-author's own "suggested: 70+"
+      // guidance above the fuzzyMatchIngredient export and catches
+      // the substring-contains band without dipping into the
+      // token-overlap "Weak" zone.
+      const AUTO_LINK_SCORE = 80;
       const autoStar = (row) => {
         if (row.canonicalId || row.ingredientId) return row;
         const needle = (row.name || "").trim();
