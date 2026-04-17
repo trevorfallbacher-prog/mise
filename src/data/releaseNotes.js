@@ -42,9 +42,46 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.8.0";
+export const CURRENT_VERSION = "0.8.1";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.8.1",
+    date:    "2026-04-17",
+    title:   "Hotfix — expiration crash, delete receipts, tighter badges",
+    summary:
+      "Three-line hotfix on top of 0.8.0. Tapping a wrap-up (cheese, " +
+      "bread, etc.) crashed with \"DAYS_MS is not defined\" because " +
+      "the constant was pulled into pantryFormat.js during refactor but " +
+      "Kitchen.jsx still referenced it locally — now imported properly. " +
+      "Receipts grew a tap-to-delete action at the bottom of the " +
+      "ReceiptView sheet (owner-only per policy; related pantry rows " +
+      "stay, only the scan artifact + photo are removed). Badge grid " +
+      "gap tightened 10→6 and per-cell padding 6→3 so the icons read " +
+      "bigger without changing column count.",
+    shipped: [
+      {
+        kind: "fix",
+        text: "Kitchen renderHubCard no longer crashes when opening a wrap-up hub (cheese, bread, any aggregated ingredient family). expirationPct called a local DAYS_MS that had been promoted to pantryFormat.js — imported explicitly now, so the meter renders correctly",
+        commits: ["__hotfix_days_ms__"],
+      },
+      {
+        kind: "feature",
+        text: "ReceiptView gained a DELETE RECEIPT / DELETE SHELF SCAN action at the bottom of the sheet. Confirm prompt notes that linked pantry rows stay — only the scan record + photo are removed. RLS still enforces owner-only delete (0041 kept family-update but not family-delete), so non-owners get a surfaced error rather than silent failure",
+        commits: ["__receipt_delete__"],
+      },
+      {
+        kind: "ux",
+        text: "Badge grid on UserProfile tightened — gap 10→6, cell padding 6→3, icon fills 94% (was 80%). Icons now read meaningfully at a glance instead of feeling like stickers on a foam board",
+        commits: ["__badge_spacing__"],
+      },
+    ],
+    coming_soon: [
+      "idiot-sandwich.svg still missing from public/badges/ — drop the file in when ready and the ramsay badge will render properly instead of falling back to 🏅",
+      "Family-delete for receipts (currently owner-only) once we decide the right guardrail for accidental mass delete",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.8.0",
     date:    "2026-04-17",

@@ -325,7 +325,7 @@ function BadgeWall({ earned, locked, isSelf, firstName }) {
   ];
   return (
     <>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:6 }}>
         {all.map(b => {
           // Little corner marker when the earned badge is scarce. 1/1
           // gets a filled 🥇; small-cap gets the cap number itself.
@@ -342,7 +342,7 @@ function BadgeWall({ earned, locked, isSelf, firstName }) {
                 aspectRatio: "1 / 1",
                 background: b.isEarned ? "#1a1608" : "#0f0f0f",
                 border: `1px solid ${b.isEarned ? b.color + "55" : "#1e1e1e"}`,
-                borderRadius: 12, padding: 6,
+                borderRadius: 12, padding: 3,
                 display: "flex", alignItems: "center", justifyContent: "center",
                 cursor: "pointer",
                 // Lock styling: desaturate + dim so the silhouette reads
@@ -360,7 +360,7 @@ function BadgeWall({ earned, locked, isSelf, firstName }) {
               <img
                 src={b.iconPath}
                 alt={b.name}
-                style={{ width: "80%", height: "80%", objectFit: "contain", pointerEvents: "none" }}
+                style={{ width: "94%", height: "94%", objectFit: "contain", pointerEvents: "none" }}
                 onError={(e) => {
                   e.currentTarget.outerHTML =
                     '<div style="font-size:28px;color:' + (b.isEarned ? b.color : "#444") + '">🏅</div>';

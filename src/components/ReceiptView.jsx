@@ -31,6 +31,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
   // null = no field being edited.
   const [editingField, setEditingField] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // Which artifact kind is being rendered — drives row filtering + copy.
   const kind = scanId ? "pantry_scan" : "receipt";
   const artifactId = receiptId || scanId;
@@ -60,6 +61,30 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
       .eq("id", artifactId);
     if (error) console.warn("[receipts] update failed:", error.message, patch);
     setSaving(false);
+  };
+
+  // Delete the scan artifact (receipt or pantry_scan). Related pantry
+  // rows stay — they're real food the family might already be eating;
+  // losing the source link is harmless (the component already renders
+  // gracefully for pre-0029 rows with no source). DELETE on receipts is
+  // owner-only by policy (0006 / 0041 comment), so non-owners will get
+  // an RLS error surfaced via alert.
+  const deleteArtifact = async () => {
+    if (!artifactId || deleting) return;
+    const n = relatedItems.length;
+    const msg = n > 0
+      ? `Delete this ${kind === "pantry_scan" ? "shelf scan" : "receipt"}? The ${n} pantry item${n === 1 ? "" : "s"} that came from it will stay — only the scan record and its photo are removed.`
+      : `Delete this ${kind === "pantry_scan" ? "shelf scan" : "receipt"}?`;
+    if (!window.confirm(msg)) return;
+    setDeleting(true);
+    const table = kind === "pantry_scan" ? "pantry_scans" : "receipts";
+    const { error } = await supabase.from(table).delete().eq("id", artifactId);
+    setDeleting(false);
+    if (error) {
+      alert(`Couldn't delete: ${error.message}`);
+      return;
+    }
+    onClose?.();
   };
 
   // Load the artifact row (receipts or pantry_scans) + signed image URL.
@@ -331,6 +356,28 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* Destructive action — a muted row at the bottom so it takes a
+            second tap to confirm and doesn't sit next to the close ✕
+            where mis-taps would hurt. Only renders once the artifact has
+            loaded (nothing to delete otherwise). */}
+        {receipt && (
+          <div style={{ marginTop: 22, paddingTop: 14, borderTop: "1px solid #1f1f1f" }}>
+            <button
+              onClick={deleteArtifact}
+              disabled={deleting}
+              style={{
+                width: "100%", padding: "10px 12px",
+                background: "transparent", border: "1px solid #3a1a1a",
+                color: deleting ? "#555" : "#b04545",
+                fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.12em",
+                borderRadius: 8, cursor: deleting ? "default" : "pointer",
+              }}
+            >
+              {deleting ? "DELETING…" : `🗑  DELETE ${kind === "pantry_scan" ? "SHELF SCAN" : "RECEIPT"}`}
+            </button>
           </div>
         )}
       </div>
