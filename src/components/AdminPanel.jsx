@@ -175,6 +175,8 @@ function UsersList({ viewerId }) {
 function ReceiptsList({ viewerId }) {
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -189,7 +191,47 @@ function ReceiptsList({ viewerId }) {
       setRows(data || []);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [version]);
+
+  // Full-wipe delete: kills the pantry_items that landed from this
+  // receipt, the storage image, and the receipt row itself — in that
+  // order so nothing orphans. Requires migration 0049's admin-delete
+  // policies across receipts / pantry_items / storage.objects.
+  async function deleteReceipt(r) {
+    // eslint-disable-next-line no-alert
+    const ok = window.confirm(
+      `Delete receipt "${r.store_name || "no store"}"?\n\n` +
+        `This removes the receipt row, every pantry_items row linked ` +
+        `via source_receipt_id (${r.item_count ?? "?"} items), and the ` +
+        `uploaded photo. Can't be undone.`
+    );
+    if (!ok) return;
+    setBusy(r.id);
+    try {
+      const { error: itemsErr } = await supabase
+        .from("pantry_items")
+        .delete()
+        .eq("source_receipt_id", r.id);
+      if (itemsErr) throw itemsErr;
+      if (r.image_path) {
+        const { error: storageErr } = await supabase.storage
+          .from("scans")
+          .remove([r.image_path]);
+        if (storageErr) console.warn("[receipt delete] image remove failed:", storageErr.message);
+      }
+      const { error: rowErr } = await supabase
+        .from("receipts")
+        .delete()
+        .eq("id", r.id);
+      if (rowErr) throw rowErr;
+      setVersion(v => v + 1);
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Delete failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   if (rows === null) return <Loading />;
   if (rows.length === 0) return <Empty msg={error ? `Load failed: ${error}` : "No receipts yet."} />;
@@ -203,6 +245,7 @@ function ReceiptsList({ viewerId }) {
         const dateLabel = r.receipt_date
           ? new Date(`${r.receipt_date}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" })
           : new Date(r.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" });
+        const isBusy = busy === r.id;
         return (
           <div
             key={r.id}
@@ -230,6 +273,13 @@ function ReceiptsList({ viewerId }) {
                 ${(r.total_cents / 100).toFixed(2)}
               </span>
             )}
+            <button
+              onClick={() => deleteReceipt(r)}
+              disabled={isBusy}
+              style={adminBtnStyle("#2a0a0a", "#d98a8a")}
+            >
+              {isBusy ? "…" : "DELETE"}
+            </button>
           </div>
         );
       })}
