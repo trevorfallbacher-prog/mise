@@ -4864,9 +4864,16 @@ const INGREDIENT_INFO = {
 // Returns null-safe defaults for every schema field so the UI can safely
 // read `info.storage?.location` without per-key existence checks.
 export function getIngredientInfo(ingredient, dbOverride) {
-  if (!ingredient) return null;
-  const sub = ingredient.subcategory ? SUBCATEGORY_INFO[ingredient.subcategory] : null;
-  const ing = INGREDIENT_INFO[ingredient.id] || null;
+  // User-created canonicals (admin-approved, not bundled) show up
+  // here with ingredient=null because findIngredient only knows the
+  // bundled registry. We used to early-return null, which silently
+  // wiped out the admin-approved enrichment JSON on the canonical
+  // card. Fall through to the merge — dbOverride still contains the
+  // real enriched info; the JS fallback + subcategory just aren't
+  // available, which is fine for user-created slugs.
+  if (!ingredient && !dbOverride) return null;
+  const sub = ingredient?.subcategory ? SUBCATEGORY_INFO[ingredient.subcategory] : null;
+  const ing = ingredient ? (INGREDIENT_INFO[ingredient.id] || null) : null;
   const db  = dbOverride || null;
   return {
     // ── cooking-centric ────────────────────────────────────────────────

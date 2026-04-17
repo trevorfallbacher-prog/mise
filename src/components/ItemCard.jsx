@@ -962,19 +962,29 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                     color: "#666", fontStyle: "italic", marginTop: 2,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
-                    {state === "none"
-                      ? `Enrich ${itemIdentityName}`
-                      : `Re-enrich ${itemIdentityName}`}
+                    {state === "approved"
+                      ? `Enriched — locked in`
+                      : state === "pending"
+                        ? `Awaiting admin review`
+                        : `Enrich ${itemIdentityName}`}
                   </div>
                 </div>
-                {item.canonicalId ? (
-                  <EnrichmentButton canonicalId={item.canonicalId} compact />
-                ) : (
-                  <EnrichmentButton
-                    sourceName={item.name}
-                    pantryItemId={item.id}
-                    compact
-                  />
+                {/* Enrichment is a one-shot per canonical. Once the
+                    admin approves, the JSON is the source of truth
+                    forever — re-firing the AI burns credits and can
+                    regenerate worse output. Button hides on approved
+                    and on pending (pending already has a draft
+                    awaiting review; re-generating would clobber it). */}
+                {state === "none" && (
+                  item.canonicalId ? (
+                    <EnrichmentButton canonicalId={item.canonicalId} compact />
+                  ) : (
+                    <EnrichmentButton
+                      sourceName={item.name}
+                      pantryItemId={item.id}
+                      compact
+                    />
+                  )
                 )}
               </div>
             );
