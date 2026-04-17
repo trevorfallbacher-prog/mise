@@ -1148,33 +1148,63 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                 <div
                   key={`${entry.pantryRowId}-${i}`}
                   style={{
-                    display:"flex", alignItems:"center", gap:10,
+                    display:"flex", flexDirection:"column", gap:8,
                     padding:"12px 14px",
                     background: entry.source === "added" ? "#0f140a" : "#141414",
                     border: `1px solid ${entry.convertible ? (entry.source === "added" ? "#1e3a1e" : "#2a2a2a") : "#3a1a1a"}`,
                     borderRadius:12,
                   }}
                 >
-                  <span style={{ fontSize:22 }}>{entry.displayEmoji}</span>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic" }}>
-                      {entry.displayName}
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <span style={{ fontSize:22 }}>{entry.displayEmoji}</span>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic" }}>
+                        {entry.displayName}
+                      </div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: entry.convertible ? "#888" : "#ef4444", marginTop:2, letterSpacing:"0.05em" }}>
+                        {entry.source === "added" ? "+ ADDED · " : ""}
+                        {(entry.pantryRow.location || "pantry").toUpperCase()} · {leaves}
+                      </div>
                     </div>
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: entry.convertible ? "#888" : "#ef4444", marginTop:2, letterSpacing:"0.05em" }}>
-                      {entry.source === "added" ? "+ ADDED · " : ""}
-                      {(entry.pantryRow.location || "pantry").toUpperCase()} · {leaves}
+                    <div style={{ textAlign:"right", flexShrink:0 }}>
+                      <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f5c842", fontStyle:"italic" }}>
+                        {isFraction
+                          ? `−${nearest(entry.used.fraction).label}`
+                          : `−${formatQty(entry.used, entry.ingredient)}`}
+                      </div>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.05em" }}>
+                        {uLabel}
+                      </div>
                     </div>
                   </div>
-                  <div style={{ textAlign:"right", flexShrink:0 }}>
-                    <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f5c842", fontStyle:"italic" }}>
-                      {isFraction
-                        ? `−${nearest(entry.used.fraction).label}`
-                        : `−${formatQty(entry.used, entry.ingredient)}`}
+                  {/* Fine-tune slider — only on fraction-mode entries.
+                      Lets the cook slide to 40% or 55% instead of
+                      committing to a chip stop. Writes back through
+                      setRow on the matching usedItems row so the next
+                      render recomputes the plan entry. Row lookup uses
+                      selectedRowId — same pantry row id as entry. */}
+                  {isFraction && (
+                    <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", letterSpacing:"0.08em", minWidth:"62px" }}>
+                        FINE-TUNE
+                      </div>
+                      <input
+                        type="range"
+                        min="0" max="1" step="0.01"
+                        value={Number(entry.used.fraction)}
+                        onChange={e => {
+                          const v = Number(e.target.value);
+                          const match = usedItems.find(r => r.selectedRowId === entry.pantryRowId);
+                          if (match) setRow(match.idx, { usedFraction: v });
+                        }}
+                        aria-label={`Fine-tune proportion of ${entry.displayName} used`}
+                        style={{ flex:1, accentColor: "#f5c842" }}
+                      />
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", minWidth:"34px", textAlign:"right" }}>
+                        {Math.round(Number(entry.used.fraction) * 100)}%
+                      </div>
                     </div>
-                    <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.05em" }}>
-                      {uLabel}
-                    </div>
-                  </div>
+                  )}
                 </div>
               );
             })}

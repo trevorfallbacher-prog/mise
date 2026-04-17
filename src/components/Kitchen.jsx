@@ -2526,6 +2526,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Null = closed; otherwise the row's id. Only one moving picker open
   // at a time — mirrors the edit/expiry single-editor pattern.
   const [movingItemId, setMovingItemId] = useState(null);
+  // Kitchen-row fill slider — holds the row id whose fill-chip was
+  // tapped. Expanding under the row a slim range input + chip row
+  // so the user can drag to set fill without opening the full
+  // ItemCard editor. Tapping the chip again or any chip commit
+  // closes. Null = none open.
+  const [fillEditingId, setFillEditingId] = useState(null);
   // Tapping a pantry row opens a card. Two kinds:
   //   - openItem: the full ItemCard — this specific pantry row at top + the
   //     canonical deep-dive embedded below. Primary entry point for row taps.
@@ -3250,18 +3256,23 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     : item.fillLevel <= 0.5  ? "#1a1408"
                     : "#0f1a0f";
                   return (
-                    <span
-                      title={`Fill level: ${closest.label}`}
+                    <button
+                      onClick={e => {
+                        e.stopPropagation();
+                        setFillEditingId(prev => prev === item.id ? null : item.id);
+                      }}
+                      title={`Fill level: ${closest.label} — tap to adjust`}
                       style={{
                         fontFamily:"'DM Mono',monospace", fontSize:9,
                         color, background:bg,
                         border:`1px solid ${color}44`,
                         borderRadius:4, padding:"1px 6px",
                         letterSpacing:"0.08em", flexShrink:0,
+                        cursor:"pointer",
                       }}
                     >
                       {closest.label}
-                    </span>
+                    </button>
                   );
                 })()}
                 {/* ⓘ button removed — row tap is the sole entry point into
@@ -3494,6 +3505,62 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 style={{ padding:"6px 10px", background:"transparent", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", cursor:"pointer", letterSpacing:"0.06em", marginLeft:"auto" }}
               >
                 CANCEL
+              </button>
+            </div>
+          );
+        })()}
+        {/* Inline fill-level slider — expands when the user taps the
+            fill chip on this row. Live onChange commits to pantry so
+            the chip color + bar color update immediately. Escape / tap
+            outside / tap another chip closes. Kept to a single row so
+            the list doesn't reflow much. */}
+        {fillEditingId === item.id && item.fillLevel != null && (() => {
+          const sliderColor = item.fillLevel <= 0.25 ? "#ef4444"
+            : item.fillLevel <= 0.5 ? "#f59e0b"
+            : "#7ec87e";
+          const STOPS = [
+            { v: 0,    label: "EMPTY" },
+            { v: 1/4,  label: "¼" },
+            { v: 1/2,  label: "½" },
+            { v: 3/4,  label: "¾" },
+            { v: 1,    label: "FULL" },
+          ];
+          return (
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", marginTop:8, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10 }}
+            >
+              <input
+                type="range"
+                min="0" max="1" step="0.01"
+                value={item.fillLevel}
+                onChange={e => updatePantryItem(item.id, { fillLevel: Number(e.target.value) })}
+                aria-label={`Fill level for ${item.name}`}
+                style={{ flex:1, accentColor: sliderColor }}
+              />
+              {STOPS.map(s => (
+                <button
+                  key={s.label}
+                  onClick={() => updatePantryItem(item.id, { fillLevel: s.v })}
+                  style={{
+                    padding:"3px 6px",
+                    background: Math.abs(s.v - item.fillLevel) < 0.03 ? "#1a1608" : "transparent",
+                    border: `1px solid ${Math.abs(s.v - item.fillLevel) < 0.03 ? "#f5c842" : "#2a2a2a"}`,
+                    color: Math.abs(s.v - item.fillLevel) < 0.03 ? "#f5c842" : "#888",
+                    borderRadius:4, cursor:"pointer",
+                    fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.04em",
+                    flexShrink:0,
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+              <button
+                onClick={() => setFillEditingId(null)}
+                aria-label="Close slider"
+                style={{ width:22, height:22, background:"transparent", border:"1px solid #2a2a2a", color:"#666", borderRadius:11, fontFamily:"'DM Mono',monospace", fontSize:10, cursor:"pointer", flexShrink:0 }}
+              >
+                ✕
               </button>
             </div>
           );

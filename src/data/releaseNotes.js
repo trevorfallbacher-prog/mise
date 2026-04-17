@@ -42,9 +42,47 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.7";
+export const CURRENT_VERSION = "0.7.8";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.8",
+    date:    "2026-04-17",
+    title:   "Drag-to-set fill level — slider in Kitchen, ItemCard, and post-cook",
+    summary:
+      "The chip picker (⅛ ¼ ⅓ ½ ⅔ ¾ FULL) is fine for common stops, " +
+      "but a bottle is rarely exactly ⅓ full — it's more like 42%. " +
+      "This ships a continuous drag slider in the three places the " +
+      "chips already live: the ItemCard FILL LEVEL editor (primary, " +
+      "precision pick), the Kitchen row fill chip (tap to expand an " +
+      "inline slider under the row — no ItemCard drill needed for a " +
+      "quick adjustment), and the post-cook confirm-removal screen " +
+      "(fine-tune where the fraction decrement lands before saving). " +
+      "Chips stay on every surface as quick-picks — the slider is " +
+      "additive precision, not a replacement.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "ItemCard FILL LEVEL editor gets a <input type=\"range\"> at the top of the edit block. Color-keyed accent (red ≤¼, amber ≤½, green above) matches the bar. Chips stay below as quick-picks for common stops",
+        commits: ["__fill_slider_itemcard__"],
+      },
+      {
+        kind: "feature",
+        text: "Kitchen row fill chip is now a button — tap expands an inline slider + shortcut chips (EMPTY / ¼ / ½ / ¾ / FULL / ✕) under the row. Live onChange so the chip + bar colors update as you drag. Tap ✕ or the chip again to close",
+        commits: ["__fill_slider_kitchen__"],
+      },
+      {
+        kind: "feature",
+        text: "Post-cook confirm-removal screen shows a FINE-TUNE slider (0–100%) under every fraction-mode entry. Writes back through the matching used-items row so the resulting LEAVES-LEFT readout recomputes on drag. Lets you commit 42% instead of ⅓ or ½",
+        commits: ["__fill_slider_cook__"],
+      },
+    ],
+    coming_soon: [
+      "Visual bottle/jar silhouettes that fill proportionally to fill_level (SVG iconography path)",
+      "Fraction mode on AddItem + Scan rows (stock a new half-used bottle from a gift)",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.7.7",
     date:    "2026-04-17",

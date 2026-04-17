@@ -933,62 +933,95 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                     {editingField === "fill" && (
                       <div
                         onClick={e => e.stopPropagation()}
-                        style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 8 }}
+                        style={{ marginTop: 10 }}
                       >
-                        {FRACTIONS.map(f => (
+                        {/* Drag-to-set slider — continuous value between
+                            0 and 1 in 1% steps. The fraction-chips below
+                            stay as quick-picks for the common stops; the
+                            slider is for \"my bottle is closer to 42% than
+                            ⅓ or ½.\" Live onChange calls onUpdate so the
+                            bar animates as you drag. */}
+                        <input
+                          type="range"
+                          min="0" max="1" step="0.01"
+                          value={current ?? 0}
+                          onChange={e => onUpdate?.({ fillLevel: Number(e.target.value) })}
+                          aria-label="Fill level slider"
+                          style={{
+                            width: "100%", accentColor: barColor,
+                            marginBottom: 8,
+                          }}
+                        />
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                          {FRACTIONS.map(f => (
+                            <button
+                              key={f.label}
+                              onClick={() => commit({ fillLevel: f.v })}
+                              style={{
+                                padding: "4px 8px",
+                                background: Math.abs(f.v - current) < 0.02 ? "#1a1608" : "#0a0a0a",
+                                border: `1px solid ${Math.abs(f.v - current) < 0.02 ? "#f5c842" : "#2a2a2a"}`,
+                                borderRadius: 4,
+                                color: Math.abs(f.v - current) < 0.02 ? "#f5c842" : "#aaa",
+                                fontFamily: "'DM Mono',monospace", fontSize: 11,
+                                cursor: "pointer", letterSpacing: "0.05em",
+                              }}
+                            >
+                              {f.label}
+                            </button>
+                          ))}
                           <button
-                            key={f.label}
-                            onClick={() => commit({ fillLevel: f.v })}
+                            onClick={() => commit({ fillLevel: null })}
+                            title="Stop tracking fill level for this item"
                             style={{
                               padding: "4px 8px",
-                              background: Math.abs(f.v - current) < 0.02 ? "#1a1608" : "#0a0a0a",
-                              border: `1px solid ${Math.abs(f.v - current) < 0.02 ? "#f5c842" : "#2a2a2a"}`,
-                              borderRadius: 4,
-                              color: Math.abs(f.v - current) < 0.02 ? "#f5c842" : "#aaa",
-                              fontFamily: "'DM Mono',monospace", fontSize: 11,
+                              background: "transparent",
+                              border: "1px dashed #2a2a2a",
+                              borderRadius: 4, color: "#666",
+                              fontFamily: "'DM Mono',monospace", fontSize: 10,
                               cursor: "pointer", letterSpacing: "0.05em",
                             }}
                           >
-                            {f.label}
+                            ✕ UNTRACK
                           </button>
-                        ))}
-                        <button
-                          onClick={() => commit({ fillLevel: null })}
-                          title="Stop tracking fill level for this item"
-                          style={{
-                            padding: "4px 8px",
-                            background: "transparent",
-                            border: "1px dashed #2a2a2a",
-                            borderRadius: 4, color: "#666",
-                            fontFamily: "'DM Mono',monospace", fontSize: 10,
-                            cursor: "pointer", letterSpacing: "0.05em",
-                          }}
-                        >
-                          ✕ UNTRACK
-                        </button>
+                        </div>
                       </div>
                     )}
                   </div>
                 ) : editingField === "fill" ? (
                   <div
                     onClick={e => e.stopPropagation()}
-                    style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}
+                    style={{ marginTop: 6 }}
                   >
-                    {FRACTIONS.map(f => (
-                      <button
-                        key={f.label}
-                        onClick={() => commit({ fillLevel: f.v })}
-                        style={{
-                          padding: "4px 8px",
-                          background: "#0a0a0a", border: "1px solid #2a2a2a",
-                          borderRadius: 4, color: "#aaa",
-                          fontFamily: "'DM Mono',monospace", fontSize: 11,
-                          cursor: "pointer", letterSpacing: "0.05em",
-                        }}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
+                    {/* First-time track: slider starts at the midpoint so
+                        a single drag commits a sensible non-zero fill.
+                        Chip picks still available below for the common
+                        stops. */}
+                    <input
+                      type="range"
+                      min="0" max="1" step="0.01"
+                      defaultValue="0.5"
+                      onChange={e => onUpdate?.({ fillLevel: Number(e.target.value) })}
+                      aria-label="Fill level slider"
+                      style={{ width: "100%", accentColor: "#7ec87e", marginBottom: 8 }}
+                    />
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {FRACTIONS.map(f => (
+                        <button
+                          key={f.label}
+                          onClick={() => commit({ fillLevel: f.v })}
+                          style={{
+                            padding: "4px 8px",
+                            background: "#0a0a0a", border: "1px solid #2a2a2a",
+                            borderRadius: 4, color: "#aaa",
+                            fontFamily: "'DM Mono',monospace", fontSize: 11,
+                            cursor: "pointer", letterSpacing: "0.05em",
+                          }}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#666", marginTop: 3, letterSpacing: "0.05em" }}>
