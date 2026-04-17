@@ -554,38 +554,40 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   )}
                 </div>
               )}
-              {/* MADE OF — lists every canonical tag on this item.
-                  Renamed from IDENTIFIED AS in chunk 16d to separate
-                  compositional identity ("what is this made from")
-                  from organizational identity ("what kind of thing
-                  is this", now the IDENTIFIED AS line above).
-                  Single-tag items render exactly like before; multi-
-                  tag items (Italian blend, frozen pizza, etc.) render
-                  all their tags joined with "·" so the full identity
-                  is visible at a glance before opening the deep-dive. */}
-              {tags.length > 0 && (() => {
-                // Skip the line if the ONLY tag's name matches the
-                // user-typed name — avoids "Prosciutto · PROSCIUTTO"
-                // redundancy. Multi-tag always shows.
-                if (tags.length === 1 &&
-                    item.name?.toLowerCase() === tags[0].canonical.name?.toLowerCase()) {
-                  return null;
-                }
+              {/* MADE OF — lists every canonical tag on this item,
+                  stacked with the identity chips (CANONICAL, CATEGORY,
+                  STORED IN) so it reads as one cluster. Always renders
+                  when onEditTags is wired — empty state shows '+ ADD
+                  TAGS' so the entry point lives with the rest of the
+                  identity fields rather than being hidden and then
+                  resurfaced down by the INFORMATION divider. */}
+              {(onEditTags || tags.length > 0) && (() => {
+                // Skip the inline list of tag names when the ONLY tag's
+                // name matches the user-typed name (avoids the
+                // "Prosciutto · PROSCIUTTO" redundancy) — but still
+                // render the row so the + EDIT affordance is available.
+                const hideTagList = tags.length === 1 &&
+                  item.name?.toLowerCase() === tags[0].canonical.name?.toLowerCase();
                 const overflowing = tags.length > TAGS_VISIBLE && !showAllTags;
                 const visible = overflowing ? tags.slice(0, TAGS_VISIBLE) : tags;
                 const hidden  = overflowing ? tags.length - TAGS_VISIBLE : 0;
                 return (
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5 }}>
-                    MADE OF:{" "}
-                    {visible.map((t, i) => (
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span>MADE OF:</span>
+                    {tags.length === 0 && onEditTags && (
+                      <span style={{ color: "#555", fontStyle: "italic" }}>
+                        nothing yet
+                      </span>
+                    )}
+                    {!hideTagList && visible.map((t, i) => (
                       <span key={t.id}>
                         {i > 0 && <span style={{ color: "#444" }}> · </span>}
                         <span style={{ color: "#f5c842" }}>{t.canonical.name.toUpperCase()}</span>
                       </span>
                     ))}
-                    {hidden > 0 && (
+                    {!hideTagList && hidden > 0 && (
                       <>
-                        <span style={{ color: "#444" }}> · </span>
+                        <span style={{ color: "#444" }}>·</span>
                         <button
                           onClick={(e) => { e.stopPropagation(); setShowAllTags(true); }}
                           style={{
@@ -600,9 +602,9 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                         </button>
                       </>
                     )}
-                    {showAllTags && tags.length > TAGS_VISIBLE && (
+                    {!hideTagList && showAllTags && tags.length > TAGS_VISIBLE && (
                       <>
-                        <span style={{ color: "#444" }}> · </span>
+                        <span style={{ color: "#444" }}>·</span>
                         <button
                           onClick={(e) => { e.stopPropagation(); setShowAllTags(false); }}
                           style={{
@@ -617,27 +619,19 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                         </button>
                       </>
                     )}
-                    {/* Edit-tags affordance inline with the IDENTIFIED AS
-                        line. Opens LinkIngredient against this item via
-                        the parent's onEditTags callback. Hidden when the
-                        parent didn't wire it (read-only embeds, e.g. a
-                        nested drill view). */}
                     {onEditTags && (
-                      <>
-                        <span style={{ color: "#444" }}> · </span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onEditTags(); }}
-                          style={{
-                            background: "transparent", border: "1px solid #3a2f10",
-                            padding: "1px 7px",
-                            color: "#f5c842", cursor: "pointer",
-                            fontFamily: "'DM Mono',monospace", fontSize: 9,
-                            letterSpacing: "0.1em", borderRadius: 4,
-                          }}
-                        >
-                          + EDIT
-                        </button>
-                      </>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onEditTags(); }}
+                        style={{
+                          background: "transparent", border: "1px solid #3a2f10",
+                          padding: "1px 7px",
+                          color: "#f5c842", cursor: "pointer",
+                          fontFamily: "'DM Mono',monospace", fontSize: 9,
+                          letterSpacing: "0.1em", borderRadius: 4,
+                        }}
+                      >
+                        + EDIT
+                      </button>
                     )}
                   </div>
                 );
@@ -1190,20 +1184,6 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   INFORMATION
                 </div>
                 <div style={{ flex: 1, height: 1, background: "#242424" }} />
-                {onEditTags && (
-                  <button
-                    onClick={onEditTags}
-                    style={{
-                      background: "transparent", border: "1px solid #3a2f10",
-                      padding: "3px 9px",
-                      color: "#f5c842", cursor: "pointer",
-                      fontFamily: "'DM Mono',monospace", fontSize: 9,
-                      letterSpacing: "0.12em", borderRadius: 5,
-                    }}
-                  >
-                    + EDIT
-                  </button>
-                )}
               </div>
               <IngredientCard
                 key={embedId}
