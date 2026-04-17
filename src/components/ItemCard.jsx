@@ -1063,33 +1063,63 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             </div>
           </div>
 
-          {/* Item-level enrichment CTA. Mirrors the one on the embedded
-              IngredientCard below, but attached to the ITEM section so
-              users can enrich right from the top without scrolling.
-              Surfaces only when there's no metadata YET for whatever
-              identity the item maps to (canonical slug or the user's
-              raw name). Once a pending or approved row exists, the
-              button hides — the bottom IngredientCard renders the
-              metadata and owns any future re-enrichment. */}
+          {/* Item-level enrichment CTA — always visible so the user has
+              an explicit, unambiguous "enrich THIS item" affordance
+              distinct from the per-ingredient button inside the embedded
+              IngredientCard below.
+
+              Why always visible: composed items (Hot Dog with tags
+              [ground_pork, bread]) have the embedded IngredientCard
+              default to tags[0] — its bottom "Add AI Enrichment" button
+              targets that tag (ground_pork), not the item. If a user
+              wanted Hot Dog metadata and clicked the bottom button they
+              got ground_pork instead. This top button always enriches
+              the ITEM's identity (canonical_id or slugified source
+              name), and stays visible even after enrichment lands so
+              re-enrichment is obvious.
+
+              Label includes the item's identity so there's no ambiguity
+              about which entity is being enriched. */}
           {onUpdate && (() => {
             const slug = item.canonicalId || slugifyIngredientName(item.name || "");
             if (!slug) return null;
-            const hasInfo =
-              (item.canonicalId && getDbInfo(item.canonicalId)) ||
-              getPendingInfo(slug);
-            if (hasInfo) return null;
+            const itemIdentityName = currentCanonical?.name || item.name || "this item";
+            const hasApprovedInfo = item.canonicalId && getDbInfo(item.canonicalId);
+            const hasPending = !!getPendingInfo(slug);
+            const state = hasApprovedInfo
+              ? "approved"
+              : hasPending ? "pending" : "none";
             return (
               <div style={{
                 display: "flex", alignItems: "center", gap: 10,
                 padding: "10px 12px", marginBottom: 12,
-                background: "#0f0f0f", border: "1px dashed #2a2a2a", borderRadius: 10,
+                background: "#0f0f0f",
+                border: state === "none"
+                  ? "1px dashed #2a2a2a"
+                  : "1px solid #1e1e1e",
+                borderRadius: 10,
               }}>
-                <div style={{
-                  flex: 1,
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#888", letterSpacing: "0.08em",
-                }}>
-                  NO ITEM METADATA YET
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: state === "approved" ? "#7ec87e"
+                         : state === "pending"  ? "#f5c842"
+                         : "#888",
+                    letterSpacing: "0.08em",
+                  }}>
+                    {state === "approved" ? "ITEM METADATA ✓ APPROVED"
+                     : state === "pending" ? "ITEM METADATA ✨ PENDING"
+                     : "NO ITEM METADATA YET"}
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                    color: "#666", fontStyle: "italic", marginTop: 2,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {state === "none"
+                      ? `Enrich ${itemIdentityName}`
+                      : `Re-enrich ${itemIdentityName}`}
+                  </div>
                 </div>
                 {item.canonicalId ? (
                   <EnrichmentButton canonicalId={item.canonicalId} compact />
