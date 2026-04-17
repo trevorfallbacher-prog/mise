@@ -137,6 +137,20 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
 
+  // Staged-edits pattern. Every inline change gets merged into
+  // pendingChanges instead of firing onUpdate immediately. The user
+  // sees staged values in the UI (the merged `item` below uses
+  // pending over prop), then taps UPDATE in the floating action bar
+  // at the bottom to commit everything in one write. DISCARD reverts
+  // to the pristine prop values. Declared up here so every other
+  // hook in this component can close over the merged `item` without
+  // a TDZ error.
+  const [pendingChanges, setPendingChanges] = useState({});
+  const item = useMemo(
+    () => ({ ...(itemProp || {}), ...pendingChanges }),
+    [itemProp, pendingChanges],
+  );
+
   // All ingredient tags on this item (migration 0033's ingredient_ids
   // array), normalized to a list of canonical-ingredient objects plus
   // their ids. For single-tag items this is a 1-element array — same
@@ -331,31 +345,6 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
-
-  // Staged-edits pattern. Every inline change gets merged into
-  // pendingChanges instead of firing onUpdate immediately. The user
-  // sees staged values in the UI (the merged `item` below uses
-  // pending over prop), then taps UPDATE in the floating action bar
-  // at the bottom to commit everything in one write. DISCARD reverts
-  // to the pristine prop values.
-  //
-  // Why: auto-commit on every tap meant a user poking at LOCATION /
-  // CATEGORY / CANONICAL to see their options could accidentally
-  // land changes they didn't mean to keep. Drafts let them explore
-  // without consequence.
-  //
-  // LOCATION moves still get a confirm overlay before staging (user
-  // explicitly requested it in the prior commit) — but that's
-  // unchanged by this refactor; location just happens to trigger
-  // an extra confirmation on top of the shared drafts pattern.
-  const [pendingChanges, setPendingChanges] = useState({});
-  // Merged item view — what the render sees. Staged changes win so
-  // tapping FRIDGE then looking at the LOCATION field shows the
-  // staged fridge value. Re-computes whenever either side changes.
-  const item = useMemo(
-    () => ({ ...itemProp, ...pendingChanges }),
-    [itemProp, pendingChanges],
-  );
 
   if (!itemProp) return null;
 
