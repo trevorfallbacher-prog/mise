@@ -25,7 +25,7 @@ import { supabase } from "../lib/supabase";
 //   userId    — viewer id (informational, not used for filtering)
 //   onClose() — dismiss
 export default function AdminPanel({ userId, onClose }) {
-  const [tab, setTab] = useState("users"); // "users" | "receipts"
+  const [tab, setTab] = useState("users"); // "users" | "receipts" | "enrichments"
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
@@ -71,8 +71,9 @@ export default function AdminPanel({ userId, onClose }) {
 
         <div style={{ display: "flex", gap: 0, margin: "0 0 14px", padding: 4, background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 12 }}>
           {[
-            { id: "users",    label: "USERS" },
-            { id: "receipts", label: "RECEIPTS" },
+            { id: "users",       label: "USERS" },
+            { id: "receipts",    label: "RECEIPTS" },
+            { id: "enrichments", label: "ENRICHMENTS" },
           ].map(t => (
             <button
               key={t.id}
@@ -91,8 +92,9 @@ export default function AdminPanel({ userId, onClose }) {
           ))}
         </div>
 
-        {tab === "users"    && <UsersList viewerId={userId} />}
-        {tab === "receipts" && <ReceiptsList viewerId={userId} />}
+        {tab === "users"       && <UsersList viewerId={userId} />}
+        {tab === "receipts"    && <ReceiptsList viewerId={userId} />}
+        {tab === "enrichments" && <PendingEnrichmentsList viewerId={userId} />}
       </div>
     </div>
   );
@@ -229,6 +231,214 @@ function ReceiptsList({ viewerId }) {
       })}
     </div>
   );
+}
+
+// ── Pending enrichments list ─────────────────────────────────────
+// Every user-triggered AI enrichment lands in public.pending_ingredient_info
+// with status='pending'. Admins see the queue here, eyeball the generated
+// JSONB, optionally edit it, and promote approved rows into the canonical
+// ingredient_info table with a clean ingredient_id (either minted fresh
+// from the slug or mapped to an existing canonical the admin recognizes).
+//
+// RLS (migration 0047):
+//   * admins SELECT all pending rows
+//   * admins UPDATE pending rows (flip status, edit info)
+//   * admins INSERT into ingredient_info (the approval destination) —
+//     tightened from "any auth user" to is_admin() in the same migration
+function PendingEnrichmentsList({ viewerId: _viewerId }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(null); // row id
+  const [busy, setBusy] = useState(null); // row id currently being approved/rejected
+
+  async function reload() {
+    const { data, error: err } = await supabase
+      .from("pending_ingredient_info")
+      .select("id, user_id, slug, source_name, pantry_item_id, info, status, created_at")
+      .eq("status", "pending")
+      .order("created_at", { ascending: false });
+    if (err) { setError(err.message); setRows([]); return; }
+    setRows(data || []);
+  }
+
+  useEffect(() => {
+    reload();
+  }, []);
+
+  async function approve(row) {
+    const suggested = row.slug;
+    // eslint-disable-next-line no-alert
+    const canonicalId = window.prompt(
+      `Promote "${row.source_name}" to the canonical ingredient_info table.\n\n` +
+        `Enter the canonical ingredient_id to use. Either mint a new one ` +
+        `(slug from the source name is pre-filled) or map to an existing ` +
+        `canonical id you recognize (e.g. "nori" for "Nori from the Japanese store").`,
+      suggested,
+    );
+    if (!canonicalId) return;
+
+    setBusy(row.id);
+    try {
+      // Stamp reviewed=true in _meta and upsert into ingredient_info.
+      const reviewedInfo = {
+        ...row.info,
+        _meta: {
+          ...(row.info?._meta || {}),
+          reviewed: true,
+          reviewed_by: _viewerId,
+          reviewed_at: new Date().toISOString(),
+          source: row.info?._meta?.source || "user_enrichment",
+        },
+      };
+      const { error: upErr } = await supabase
+        .from("ingredient_info")
+        .upsert({ ingredient_id: canonicalId, info: reviewedInfo }, { onConflict: "ingredient_id" });
+      if (upErr) throw upErr;
+
+      const { error: pErr } = await supabase
+        .from("pending_ingredient_info")
+        .update({ status: "approved", approved_canonical_id: canonicalId, info: reviewedInfo })
+        .eq("id", row.id);
+      if (pErr) throw pErr;
+
+      // Notify the submitting user their draft is live.
+      await supabase.from("notifications").insert({
+        user_id: row.user_id,
+        msg: `Your enrichment for ${row.source_name} was approved as "${canonicalId}"`,
+        emoji: "✅",
+        kind: "success",
+      });
+
+      await reload();
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Approve failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function reject(row) {
+    // eslint-disable-next-line no-alert
+    const reason = window.prompt(`Reject "${row.source_name}"? Optional reason:`, "");
+    if (reason === null) return; // cancelled
+
+    setBusy(row.id);
+    try {
+      const { error: pErr } = await supabase
+        .from("pending_ingredient_info")
+        .update({ status: "rejected", rejection_note: reason || null })
+        .eq("id", row.id);
+      if (pErr) throw pErr;
+
+      await supabase.from("notifications").insert({
+        user_id: row.user_id,
+        msg: reason
+          ? `Your enrichment for ${row.source_name} was rejected — ${reason}`
+          : `Your enrichment for ${row.source_name} was rejected`,
+        emoji: "❌",
+        kind: "warn",
+      });
+
+      await reload();
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Reject failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (rows === null) return <Loading />;
+  if (rows.length === 0) {
+    return <Empty msg={error ? `Load failed: ${error}` : "No pending enrichments."} />;
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", padding: "0 4px 4px" }}>
+        {rows.length} PENDING
+      </div>
+      {rows.map(r => {
+        const isOpen = expanded === r.id;
+        const isBusy = busy === r.id;
+        const descrip = r.info?.description || "(no description)";
+        return (
+          <div key={r.id} style={{
+            padding: "12px", background: "#141414",
+            border: "1px solid #242424", borderRadius: 10,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Fraunces',serif", fontSize: 14, color: "#f0ece4", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {r.source_name}
+                </div>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", marginTop: 2, letterSpacing: "0.04em" }}>
+                  {r.slug} · {r.user_id.slice(0, 8)}… · {new Date(r.created_at).toLocaleDateString()}
+                </div>
+              </div>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+                color: "#f5c842", background: "#2a2205",
+                border: "1px solid #5a4a0a",
+                padding: "2px 7px", borderRadius: 10, letterSpacing: "0.08em",
+              }}>
+                PENDING
+              </span>
+            </div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#aaa", lineHeight: 1.5, marginBottom: 10 }}>
+              {String(descrip).slice(0, 180)}{String(descrip).length > 180 ? "…" : ""}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button
+                onClick={() => setExpanded(isOpen ? null : r.id)}
+                style={adminBtnStyle("#2a2a2a", "#aaa")}
+              >
+                {isOpen ? "HIDE JSON" : "VIEW JSON"}
+              </button>
+              <button
+                onClick={() => approve(r)}
+                disabled={isBusy}
+                style={adminBtnStyle("#0a2a12", "#7ec87e")}
+              >
+                {isBusy ? "…" : "APPROVE"}
+              </button>
+              <button
+                onClick={() => reject(r)}
+                disabled={isBusy}
+                style={adminBtnStyle("#2a0a0a", "#d98a8a")}
+              >
+                REJECT
+              </button>
+            </div>
+            {isOpen && (
+              <pre style={{
+                marginTop: 10, padding: 10, background: "#0a0a0a",
+                border: "1px solid #1e1e1e", borderRadius: 8,
+                fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#bbb",
+                overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word",
+                maxHeight: 400,
+              }}>
+                {JSON.stringify(r.info, null, 2)}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function adminBtnStyle(bg, fg) {
+  return {
+    padding: "6px 10px",
+    background: bg,
+    border: `1px solid ${fg}44`,
+    color: fg,
+    borderRadius: 6,
+    fontFamily: "'DM Mono',monospace", fontSize: 10,
+    letterSpacing: "0.08em", cursor: "pointer", fontWeight: 700,
+  };
 }
 
 // ── Shared loading / empty ────────────────────────────────────────

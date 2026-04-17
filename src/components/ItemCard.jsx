@@ -3,7 +3,7 @@ import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, st
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
-import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
 import { FRIDGE_TILES } from "../lib/fridgeTiles";
@@ -1148,14 +1148,24 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             />
           </>
         ) : (
-          <div style={{
-            padding: "18px", textAlign: "center",
-            background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
-            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic",
-          }}>
-            Free-text row — no canonical ingredient tagged. Link it to unlock the deep-dive content.
+          // Free-text row — no canonical ingredient tagged. We still embed
+          // an IngredientCard keyed by a slug derived from item.name so the
+          // user's own AI-enrichment draft (if any) renders, and so the
+          // empty-state "Add AI Enrichment" button works. Separately we
+          // surface the "+ LINK INGREDIENTS" button above it — an admin
+          // approving the enrichment would normally also link the canonical
+          // id, but the user can also link manually.
+          <>
             {onEditTags && (
-              <div style={{ marginTop: 12 }}>
+              <div style={{
+                padding: "12px", textAlign: "center",
+                background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
+                marginBottom: 12,
+                fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888",
+              }}>
+                <div style={{ marginBottom: 10, fontStyle: "italic" }}>
+                  No canonical ingredient tagged.
+                </div>
                 <button
                   onClick={onEditTags}
                   style={{
@@ -1170,7 +1180,18 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                 </button>
               </div>
             )}
-          </div>
+            <IngredientCard
+              key={`custom:${item.id}`}
+              ingredientId={slugifyIngredientName(item.name)}
+              fallbackName={item.name}
+              fallbackEmoji={item.emoji || "🥫"}
+              pantry={pantry}
+              onClose={onClose}
+              embedded
+              sourceName={item.name}
+              pantryItemId={item.id}
+            />
+          </>
         )}
       </ModalSheet>
 
