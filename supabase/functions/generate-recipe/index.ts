@@ -24,7 +24,10 @@
 //       difficulty?: "easy" | "medium" | "advanced"
 //       time?:       "quick" | "medium" | "long"   (≤30 / ≤60 / any)
 //       notes?:      free-text from the user ("spicy please", "no nuts")
-//     }
+//     },
+//     avoidTitles?: string[]   // recent drafts the user has already seen —
+//                              // makes REGEN actually produce something
+//                              // different instead of the same dish back.
 //   }
 //
 // Response:
@@ -62,7 +65,7 @@ type Prefs = {
   notes?: string;
 };
 
-function buildPrompt(pantry: PantryItem[], prefs: Prefs): string {
+function buildPrompt(pantry: PantryItem[], prefs: Prefs, avoidTitles: string[]): string {
   const pantryLines = pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
@@ -81,12 +84,30 @@ function buildPrompt(pantry: PantryItem[], prefs: Prefs): string {
     prefs.notes ? `- user notes: ${prefs.notes}` : "",
   ].filter(Boolean).join("\n") || "(none — use your judgment)";
 
+  // Avoid-list + random nonce — together these are what make REGEN
+  // actually produce a different dish rather than the model's single
+  // most-likely output for this pantry. Temperature alone isn't enough;
+  // we also tell the model explicitly what it already handed us.
+  const avoidBlock = avoidTitles.length > 0
+    ? `\nRECENTLY SUGGESTED — pick a genuinely different dish, not a variant:\n${
+        avoidTitles.map((t) => `- ${t}`).join("\n")
+      }\n`
+    : "";
+  const nonce = crypto.randomUUID();
+
   return `You are drafting a single recipe for a home cook. Use the
 pantry below as your primary source of ingredients — lean on what's
 actually on hand. A handful of assumed staples (salt, pepper, oil,
 water) is fine; don't invent uncommon ingredients that aren't in the
 pantry.
 
+Lean toward creative, non-obvious combinations. When the user asks
+for a draft from their pantry, boring defaults (generic pasta, plain
+omelette) are a failure mode; reach for something the user might not
+have thought of themselves.
+
+Variety seed: ${nonce}
+${avoidBlock}
 PANTRY:
 ${pantryLines}
 
@@ -167,6 +188,14 @@ Deno.serve(async (req) => {
 
   const pantry = Array.isArray(body.pantry) ? body.pantry : [];
   const prefs = body.prefs || {};
+  // Truncate the avoid list so a long regen session doesn't blow out
+  // the prompt. The last five titles are plenty to steer away from
+  // whatever the user actually saw most recently.
+  const avoidTitles = Array.isArray((body as { avoidTitles?: string[] }).avoidTitles)
+    ? ((body as { avoidTitles?: string[] }).avoidTitles as string[])
+        .filter((t) => typeof t === "string" && t.trim().length > 0)
+        .slice(-5)
+    : [];
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
@@ -191,8 +220,12 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: MODEL,
         max_tokens: 2500,
+        // temperature=1 is the API default but we set it explicitly so
+        // nobody accidentally pins it to 0 during debugging and wipes
+        // out regen variety without realizing why.
+        temperature: 1,
         messages: [
-          { role: "user", content: [{ type: "text", text: buildPrompt(pantry, prefs) }] },
+          { role: "user", content: [{ type: "text", text: buildPrompt(pantry, prefs, avoidTitles) }] },
         ],
       }),
     });

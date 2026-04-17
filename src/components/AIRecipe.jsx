@@ -50,6 +50,10 @@ export default function AIRecipe({
   const [phase,  setPhase]  = useState("setup");     // setup | loading | preview | error
   const [recipe, setRecipe] = useState(null);
   const [errMsg, setErrMsg] = useState("");
+  // Titles we've already shown the user this session — handed to the
+  // edge function on every draft so REGEN produces a genuinely
+  // different dish instead of converging on the same one every time.
+  const [previousTitles, setPreviousTitles] = useState([]);
   // Per-action busy state so exactly one button shows SAVING… and
   // the other two stay tappable / disabled appropriately.
   const [busy,   setBusy]   = useState(null);         // null | "save" | "schedule" | "cook"
@@ -75,9 +79,17 @@ export default function AIRecipe({
           category:    p.category ?? null,
         })),
         prefs: { cuisine, time, difficulty, notes: notes.trim() || undefined },
+        avoidTitles: previousTitles,
       };
       const { recipe: drafted } = await generateRecipe(payload);
       setRecipe(drafted);
+      // Remember this draft's title so the next REGEN steers away from
+      // it. The edge function truncates to the last 5; we stash the
+      // full session history so a user who scrolls through many drafts
+      // never sees a repeat from earlier in the same sitting.
+      if (drafted?.title) {
+        setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
+      }
       setPhase("preview");
     } catch (e) {
       console.error("AI recipe draft failed:", e);
@@ -235,10 +247,10 @@ export default function AIRecipe({
           display: "flex", gap: 8,
         }}>
           <button
-            onClick={() => setPhase("setup")}
+            onClick={start}
             disabled={!!busy}
             style={{ ...iconActionBtn, opacity: busy ? 0.5 : 1 }}
-            title="Draft again"
+            title="Draft a different recipe"
           >
             ↻
           </button>

@@ -12,13 +12,18 @@ import { supabase } from "./supabase";
  * Ask Claude to draft a recipe from the current pantry.
  *
  * @param {object} opts
- * @param {Array<object>} opts.pantry   — [{ name, canonicalId?, amount?, unit?, category? }, ...]
- * @param {object} [opts.prefs]         — { cuisine?, difficulty?, time?, notes? }
+ * @param {Array<object>} opts.pantry        — [{ name, canonicalId?, amount?, unit?, category? }, ...]
+ * @param {object}        [opts.prefs]       — { cuisine?, difficulty?, time?, notes? }
+ * @param {Array<string>} [opts.avoidTitles] — recent drafts to steer away from on REGEN
  * @returns {Promise<{ recipe: object }>}
  */
-export async function generateRecipe({ pantry = [], prefs } = {}) {
+export async function generateRecipe({ pantry = [], prefs, avoidTitles } = {}) {
   const { data, error } = await supabase.functions.invoke("generate-recipe", {
-    body: { pantry, prefs: prefs || {} },
+    body: {
+      pantry,
+      prefs: prefs || {},
+      avoidTitles: Array.isArray(avoidTitles) ? avoidTitles : [],
+    },
   });
 
   if (error) {
