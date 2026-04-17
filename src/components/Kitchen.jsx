@@ -53,6 +53,7 @@ import {
 } from "../lib/userTemplates";
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
 import {
   findScanCorrections,
   rememberScanCorrection,
@@ -176,6 +177,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   // already approved.
   const { profile } = useProfile(userId);
   const isAdmin = profile?.role === "admin";
+  // dbMap from the ingredient_info context — we use it so auto-star-
+  // link can match against admin-approved canonicals (e.g. a custom
+  // "pepperoni" slug the admin already approved) not just the bundled
+  // INGREDIENTS registry. Without this, scanning "PEPPERONI" after
+  // approving pepperoni wouldn't auto-pair because fuzzyMatchIngredient
+  // only iterates bundled.
+  const { dbMap } = useIngredientInfo();
 
   // Family's user templates for scan-side matching (chunk 17b). When
   // the scanner returns a raw name that matches a template, we use
@@ -545,29 +553,66 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         }
         return patched;
       };
-      // Auto-link on strong match. After the correction overlay has had
-      // its say, any row still missing a canonicalId gets a fuzzy lookup
-      // against the bundled registry — if the top match scores ≥ 80
-      // we stamp the canonical automatically so the user doesn't have
-      // to tap in just to accept the obvious.
-      //
-      // Threshold rationale: scoreIngredientMatch gives 100 for an
-      // exact name match, 80 when either side is a substring of the
-      // other (plus up to 20 Levenshtein bonus). "SHREDDED MOZZARELLA"
-      // → mozzarella, "2% MILK" → milk, "GROUND BEEF 80/20" →
-      // ground_beef all land in the 80-95 band. 90 was too strict —
-      // it only auto-linked the rare 100-score exact hit while the
-      // STAR row in LinkIngredient was sitting at 85 unlinked.
-      // 80 matches the module-author's own "suggested: 70+"
-      // guidance above the fuzzyMatchIngredient export and catches
-      // the substring-contains band without dipping into the
-      // token-overlap "Weak" zone.
-      const AUTO_LINK_SCORE = 80;
+      // Auto-link on strong match. After the correction overlay has
+      // had its say, any row still missing a canonicalId gets a
+      // fuzzy lookup against BOTH the bundled registry AND the
+      // admin-approved synthetics (ingredient_info rows whose id
+      // isn't in bundled). Threshold 70 matches the module author's
+      // own "suggested: 70+" guidance above fuzzyMatchIngredient.
+      // That covers the full substring-contains band (80-100) and
+      // the stronger token-overlap hits (70-79) — e.g. "GROUND BEEF"
+      // → ground_beef scores around 80, "CKN BRST" → chicken_breast
+      // lands at 70 via token overlap. Stays above the weak-overlap
+      // noise floor (<70) so we don't mis-pair "pickles" → "pickled
+      // herring" on one shared token.
+      const AUTO_LINK_SCORE = 70;
+      const approvedSynthetics = [];
+      for (const [slug, info] of Object.entries(dbMap || {})) {
+        if (!slug || findIngredient(slug)) continue;
+        const displayOverride = info?.display_name;
+        const name = (typeof displayOverride === "string" && displayOverride.trim())
+          ? displayOverride.trim()
+          : slug.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+        approvedSynthetics.push({
+          id: slug,
+          name,
+          emoji: info?.emoji || "✨",
+          category: info?.category || "user",
+          shortName: null,
+        });
+      }
+      // Cheap substring scorer for synthetics — matches
+      // LinkIngredient.scoreSynthetic so the picker and the auto-link
+      // agree on what's "a match". Exact-name / exact-slug hits get
+      // 100; substring either way 60-80.
+      const scoreSyntheticForAuto = (needle, canon) => {
+        const n = (needle || "").toLowerCase().trim();
+        if (!n) return 0;
+        const nameLow = canon.name.toLowerCase();
+        const slugLow = canon.id.toLowerCase();
+        if (nameLow === n || slugLow === n) return 100;
+        if (slugLow === n.replace(/\s+/g, "_")) return 100;
+        if (nameLow.startsWith(n) || slugLow.startsWith(n.replace(/\s+/g, "_"))) return 85;
+        if (nameLow.includes(n) || slugLow.includes(n.replace(/\s+/g, "_"))) return 70;
+        return 0;
+      };
       const autoStar = (row) => {
         if (row.canonicalId || row.ingredientId) return row;
         const needle = (row.name || "").trim();
         if (!needle) return row;
-        const [top] = fuzzyMatchIngredient(needle, 1);
+        // Pool of bundled fuzzy + admin-approved synthetics.
+        const bundled = fuzzyMatchIngredient(needle, 1);
+        let bestBundled = bundled[0] || null;
+        let bestSynth = null;
+        for (const canon of approvedSynthetics) {
+          const score = scoreSyntheticForAuto(needle, canon);
+          if (score > 0 && (!bestSynth || score > bestSynth.score)) {
+            bestSynth = { ingredient: canon, score };
+          }
+        }
+        const top = (bestSynth && (!bestBundled || bestSynth.score > bestBundled.score))
+          ? bestSynth
+          : bestBundled;
         if (!top || top.score < AUTO_LINK_SCORE) return row;
         const canon = top.ingredient;
         return {

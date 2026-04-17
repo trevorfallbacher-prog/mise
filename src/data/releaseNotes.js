@@ -42,9 +42,92 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.9.2";
+export const CURRENT_VERSION = "0.10.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.10.0",
+    date:    "2026-04-17",
+    title:   "Receipt scan honesty + canonical plumbing overhaul",
+    summary:
+      "Big pass on the two things that were costing you trust: (1) the " +
+      "scanner was inventing words that weren't on your receipt, and " +
+      "(2) user-created canonicals were drifting between the write and " +
+      "read paths so metadata wouldn't stick. Raw text is now the " +
+      "source of truth on scan — Claude only rewrites the name when " +
+      "it's highly confident, and a ↺ RAW button sits next to any row " +
+      "where it did so you can revert to what's literally on the " +
+      "receipt. Canonicals got a proper lifecycle: admins auto-approve " +
+      "on create (no PENDING for you), user-approved canonicals surface " +
+      "in the ingredient picker family-wide, and admin RENAME rewires " +
+      "every pantry row stamped with the old slug. Plus: clean delete " +
+      "flow on receipts, two migrations to unblock photos + admin " +
+      "cleanup, and a version marker so you know what you're running.",
+    shipped: [
+      { kind: "fix",
+        text: "Scan 'raw text is sacred' rewrite. Claude returns both the literal receipt text AND a display name; when confidence is below high it sets them equal so no hallucinated expansions slip through.",
+        commits: ["f0de69b"] },
+      { kind: "ux",
+        text: "↺ RAW chip next to any scan row name that differs from the receipt. One tap restores the receipt text and propagates to sibling rows.",
+        commits: ["f0de69b"] },
+      { kind: "fix",
+        text: "Auto-link threshold lowered 90 → 70 and now pools admin-approved canonicals alongside the bundled registry. Substring + token-overlap matches pre-pair without a tap, and a pepperoni approved once can auto-link every future scan.",
+        commits: ["4870d0c", "__auto_link_synthetics__"] },
+      { kind: "fix",
+        text: "Scan CANONICAL axis is single-pick. The chip opens LinkIngredient in single mode so one tap commits. Multi-tag composition stays multi.",
+        commits: ["4910b50"] },
+      { kind: "fix",
+        text: "PENDING state on scan CANONICAL chip. User-created slugs render with a ✨ + 'PENDING' badge instead of falling back to unset. Hidden for admins.",
+        commits: ["bb735c8"] },
+      { kind: "feature",
+        text: "Admin auto-approves own canonical creations. Scan, AddItemModal, or ItemCard '+ CREATE' upserts an ingredient_info stub so the PENDING badge never shows to the admin.",
+        commits: ["114d482"] },
+      { kind: "fix",
+        text: "Admin-approved canonicals appear in the tag picker family-wide. LinkIngredient merges synthetics from ingredient_info into its fuzzy match list.",
+        commits: ["2f60d3d"] },
+      { kind: "fix",
+        text: "Enrichment key drift eliminated. EnrichmentButton stamps canonical_id on the pantry row before firing so pending + pantry agree on the slug. Admin rename during approval rewires every matching row.",
+        commits: ["0568fbe"] },
+      { kind: "feature",
+        text: "AddItemModal gets a tappable CANONICAL tap line (tan) between NAME and FOOD CATEGORY. Shows the auto-derived canonical dimmed with · AUTO until explicitly locked.",
+        commits: ["58ddf9d"] },
+      { kind: "ux",
+        text: "Identity-stack order is now a universal rule (CLAUDE.md). NAME → CANONICAL → CATEGORY → STORED IN → STATE → INGREDIENTS, same order in every entry point. STATE moved from blue to muted purple to stop colliding with STORED IN.",
+        commits: ["0382129"] },
+      { kind: "ux",
+        text: "INGREDIENT → INGREDIENTS (plural) across ItemCard and AddItemModal.",
+        commits: ["8ad7007"] },
+      { kind: "fix",
+        text: "Receipt delete: inline 'Keep the receipt' / 'Delete forever' flow replaces the browser popup. Full cascade — pantry items linked to the receipt, the storage photo, and the receipt row all go together.",
+        commits: ["7d00441", "d00b2ac"] },
+      { kind: "feature",
+        text: "Admin RECEIPTS tab gets DELETE on every row with the same cascade. Admins can clean up broken scans so families can re-scan.",
+        commits: ["a07daa5"] },
+      { kind: "feature",
+        text: "Admin CANONICALS tab gets RENAME on bundled canonicals (writes an info.display_name override). APPROVE/REJECT still custom-only.",
+        commits: ["efb71a4"] },
+      { kind: "architecture",
+        text: "Migration 0048 creates the 'scans' Storage bucket in SQL. Unblocks receipt + shelf-scan photo uploads that were failing with 'bucket not found'.",
+        commits: ["2262a5c"] },
+      { kind: "architecture",
+        text: "Migration 0049 adds admin-delete policies on receipts, pantry_items, pantry_scans, and storage.objects. 0042 gave admins SELECT bypass; 0049 extends to DELETE on the scan-artifact surface.",
+        commits: ["a07daa5"] },
+      { kind: "fix",
+        text: "YOUR CIRCLE feed no longer flashes 'Quiet around here' on first load while relationships are still resolving. Loading state is held until the family list settles.",
+        commits: ["6376709"] },
+      { kind: "fix",
+        text: "scan-receipt max_tokens bumped 2000 → 4000. Longer receipts (25+ items) stop truncating mid-JSON, which surfaced as 'edge function returned non-2xx'.",
+        commits: ["fdd2446"] },
+      { kind: "ux",
+        text: "Duplicate INGREDIENT [+] separator at the bottom of AddItemModal removed — the tap line in the identity stack is the one entry point.",
+        commits: ["c4a8bae"] },
+    ],
+    coming_soon: [
+      "Soft-delete on receipts with an undo grace window",
+      "Admin-enrich: canonical create also queues an AI enrichment so metadata lands without a second tap",
+      "Revert-raw extended to the ItemCard so edits made after save can still restore the receipt text",
+    ],
+  },
   {
     version: "0.9.2",
     date:    "2026-04-17",
