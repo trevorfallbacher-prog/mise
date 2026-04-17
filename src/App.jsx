@@ -345,6 +345,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             profile={profile}
             userId={user.id}
             familyIds={familyIds}
+            familyLoading={relationships.loading}
             nameFor={nameFor}
             openProfile={openProfile}
             openCook={openCook}

@@ -87,7 +87,11 @@ export function useActivityFeed(userId, familyIds = [], limit = 20) {
     setLoading(false);
   }, [cohort, limit]);
 
-  useEffect(() => { load(); }, [load]);
+  // Re-run the load whenever cohort identity changes (userId resolves,
+  // familyIds arrives after relationships hook settles, etc). The
+  // cohortKey string is the canonical signal — its value is stable if
+  // the set of ids hasn't actually changed, so no extra refetch thrash.
+  useEffect(() => { load(); }, [load, cohortKey]);
 
   // Lightweight realtime — prepend on INSERTs from any cohort member on
   // either source table. Updates/deletes would rarely matter here (the

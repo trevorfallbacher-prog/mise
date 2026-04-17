@@ -47,7 +47,7 @@ function avatarColor(name) {
  * stats and the feed as a pinned row.
  */
 export default function Home({
-  profile, userId, familyIds = [], nameFor,
+  profile, userId, familyIds = [], familyLoading = false, nameFor,
   openProfile, openCook,
 }) {
   const streak    = profile.streak_count || 0;
@@ -178,7 +178,7 @@ export default function Home({
           )}
         </div>
 
-        {feed.loading ? (
+        {(feed.loading || familyLoading) ? (
           <div style={{ padding: "20px", textAlign: "center", color: "#555", fontFamily: "'DM Sans',sans-serif", fontSize: 13, fontStyle: "italic" }}>
             Loading…
           </div>
