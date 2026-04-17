@@ -158,7 +158,17 @@ export default function IngredientCard({
   // by slugified source name.
   sourceName = null,
   pantryItemId = null,
+  // When true, start in a compact "preview" state — header + pantry
+  // stock + truncated description + a SEE FULL DETAILS toggle. The
+  // heavy sections (flavor wheel, substitutions, pairs, diet chips,
+  // market, skill dev, cultural notes) stay hidden until the user
+  // explicitly expands. Used by ItemCard to keep the outer item-level
+  // view focused. Also hides the empty-state "Add AI Enrichment"
+  // button since the parent already exposes an item-level one.
+  preview = false,
 }) {
+  const [previewExpanded, setPreviewExpanded] = useState(false);
+  const showFullSections = !preview || previewExpanded;
   // Internal id we actually display. Seeded from prop; substitution pill
   // taps flip it without closing the card, so "butter → clarified butter
   // → ghee" chained learning feels natural.
@@ -361,7 +371,7 @@ export default function IngredientCard({
             context refreshes and this block disappears. Custom items
             (sourceName set, no canonical id) use the source_name path;
             everything else uses the canonical id. */}
-        {(viewingId || sourceName) && !info?.description && !info?.flavorProfile && !info?.storage && (
+        {!preview && (viewingId || sourceName) && !info?.description && !info?.flavorProfile && !info?.storage && (
           <div style={{
             padding: "16px 14px", background: "#0f0f0f",
             border: "1px dashed #2a2a2a", borderRadius: 12,
@@ -385,18 +395,43 @@ export default function IngredientCard({
           </div>
         )}
 
-        {/* Description */}
-        {info?.description && (
-          <p style={{
-            fontFamily: "'DM Sans',sans-serif", fontSize: 14, lineHeight: 1.55,
-            color: "#ccc", margin: "0 0 14px",
-          }}>
-            {info.description}
-          </p>
+        {/* Description — truncated in preview mode until the user
+            taps SEE FULL DETAILS, full-length otherwise. */}
+        {info?.description && (() => {
+          const full = info.description;
+          const truncated = preview && !previewExpanded && full.length > 180
+            ? `${full.slice(0, 180).trimEnd()}…`
+            : full;
+          return (
+            <p style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 14, lineHeight: 1.55,
+              color: "#ccc", margin: "0 0 14px",
+            }}>
+              {truncated}
+            </p>
+          );
+        })()}
+
+        {/* Preview-mode expand toggle. Everything below this point is
+            gated on `showFullSections` so the embedded card stays
+            compact until the user opts in. */}
+        {preview && !previewExpanded && (
+          <button
+            onClick={() => setPreviewExpanded(true)}
+            style={{
+              width: "100%", padding: "10px 12px", marginBottom: 14,
+              background: "transparent", border: "1px dashed #3a2f10",
+              borderRadius: 10, cursor: "pointer",
+              fontFamily: "'DM Mono',monospace", fontSize: 11,
+              color: "#f5c842", letterSpacing: "0.1em", fontWeight: 600,
+            }}
+          >
+            + SEE FULL DETAILS
+          </button>
         )}
 
         {/* Flavor profile (prose) */}
-        {info?.flavorProfile && (
+        {showFullSections && info?.flavorProfile && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>
               FLAVOR PROFILE
@@ -408,7 +443,7 @@ export default function IngredientCard({
         )}
 
         {/* v2: structured flavor — primary tags, intensity dots, heat-change */}
-        {info?.flavor && (info.flavor.primary?.length || info.flavor.intensity || info.flavor.heatChange) && (
+        {showFullSections && info?.flavor && (info.flavor.primary?.length || info.flavor.intensity || info.flavor.heatChange) && (
           <div style={{ marginBottom: 14, padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               FLAVOR WHEEL
@@ -456,7 +491,7 @@ export default function IngredientCard({
 
         {/* v2: dietary / lifestyle flags — compact chip row. Only populated
             fields render; sparse ingredients skip the whole section. */}
-        {info?.diet && (() => {
+        {showFullSections && info?.diet && (() => {
           const chips = [];
           const d = info.diet;
           for (const key of ["vegan","vegetarian","keto","halal","nightshade","allium"]) {
@@ -499,7 +534,7 @@ export default function IngredientCard({
 
         {/* Cultural notes — separate section so the origin chip up top
             stays compact and we can let the story breathe. */}
-        {info?.culturalNotes && (
+        {showFullSections && info?.culturalNotes && (
           <div style={{ marginBottom: 14, padding: "10px 12px", background: "#161208", border: "1px solid #2a2015", borderRadius: 10 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em", marginBottom: 6 }}>
               THE STORY
@@ -513,7 +548,7 @@ export default function IngredientCard({
         {/* Storage — location chip + shelf-life (per-location when v2 map
             present) + tips. v2 also adds spoilage signs, freezability, and
             a prep-yield line if the entry carries them. */}
-        {info?.storage && (
+        {showFullSections && info?.storage && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               STORAGE
@@ -586,7 +621,7 @@ export default function IngredientCard({
         )}
 
         {/* Prep tips */}
-        {info?.prepTips && (
+        {showFullSections && info?.prepTips && (
           <div style={{ marginBottom: 14, padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>
               PREP TIP
@@ -598,7 +633,7 @@ export default function IngredientCard({
         )}
 
         {/* Nutrition — compact 4-tile readout */}
-        {info?.nutrition && (
+        {showFullSections && info?.nutrition && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em" }}>
@@ -637,7 +672,7 @@ export default function IngredientCard({
 
         {/* v2: irreplaceable callout — rendered instead of (or above) the
             substitutions list when the ingredient has no real sub. */}
-        {info?.irreplaceable && (
+        {showFullSections && info?.irreplaceable && (
           <div style={{ marginBottom: 14, padding: "10px 12px", background: "#1a1408", border: "1px solid #3a2a15", borderRadius: 10, display: "flex", gap: 10, alignItems: "flex-start" }}>
             <span style={{ fontSize: 18, lineHeight: 1.2 }}>🚫</span>
             <div>
@@ -780,7 +815,7 @@ export default function IngredientCard({
         {/* v2: market — price tier + availability chips + "worth buying nice"
             callout when qualityMatters. Keeps the long-form sourcing prose
             above for detail; these chips are scannable. */}
-        {info?.market && (info.market.priceTier || info.market.availability || info.market.qualityMatters || info.market.organicCommon) && (
+        {showFullSections && info?.market && (info.market.priceTier || info.market.availability || info.market.qualityMatters || info.market.organicCommon) && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               MARKET
@@ -820,7 +855,7 @@ export default function IngredientCard({
 
         {/* v2: skill development — badges for skills this ingredient exercises,
             difficulty tone, and a "make from scratch" link when proFromScratch. */}
-        {info?.skillDev && (skills.length > 0 || info.skillDev.difficulty || info.skillDev.proFromScratch) && (
+        {showFullSections && info?.skillDev && (skills.length > 0 || info.skillDev.difficulty || info.skillDev.proFromScratch) && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               BUILDS SKILLS
@@ -972,7 +1007,7 @@ export default function IngredientCard({
         })()}
 
         {/* Wine pairings */}
-        {info?.winePairings?.length > 0 && (
+        {showFullSections && info?.winePairings?.length > 0 && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               GOES WITH
@@ -1027,7 +1062,7 @@ export default function IngredientCard({
         )}
 
         {/* Suggested ideas from the info dictionary (subcategory fallback). */}
-        {info?.recipes?.length > 0 && (
+        {showFullSections && info?.recipes?.length > 0 && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>
               GOOD FOR

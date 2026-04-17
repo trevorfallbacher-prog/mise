@@ -1319,130 +1319,71 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             canonical the embedded IngredientCard renders. Suppressed
             entirely for composed items — the COMPONENTS section above
             is authoritative for those. */}
-        {isComposed ? null : activeTag ? (
-          <>
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10,
-              margin: "8px 0 4px", color: "#444",
-            }}>
-              <div style={{ flex: 1, height: 1, background: "#242424" }} />
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
-                {tags.length > 1 ? "INGREDIENTS" : "INGREDIENT"}
-              </div>
-              <div style={{ flex: 1, height: 1, background: "#242424" }} />
-              {/* Edit-tags on the legacy (pre-6c) section too. Re-linking
-                  a multi-tagged item through LinkIngredient's new flow
-                  writes component rows and flips kind='meal', promoting
-                  the card to the COMPONENTS view on the next open. */}
-              {onEditTags && (
-                <button
-                  onClick={onEditTags}
-                  style={{
-                    background: "transparent", border: "1px solid #3a2f10",
-                    padding: "3px 9px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    letterSpacing: "0.12em", borderRadius: 5,
-                  }}
-                >
-                  + EDIT
-                </button>
-              )}
-            </div>
-            {tags.length > 1 && (
-              // Tab row — one chip per canonical tag. Tap to swap the
-              // embedded IngredientCard's viewingId. Horizontally
-              // scrollable on narrow viewports via the flex-wrap +
-              // overflow combo.
+        {/* Embedded IngredientCard — now scoped STRICTLY to the item's
+            CANONICAL identity (item.canonicalId) so the preview below
+            is about the ITEM, not whichever tag happens to be first.
+            Composed items still render the COMPONENTS section above
+            instead. If there's no canonical yet, fall back to the old
+            active-tag behavior so non-canonical items still get SOMETHING
+            to look at. Rendered in `preview` mode — compact description
+            + "SEE FULL DETAILS" toggle, heavy sections hidden until the
+            user explicitly expands. Keeps the outer ItemCard focused
+            on the item. */}
+        {(() => {
+          if (isComposed) return null;
+          const isCanonicalEmbed = Boolean(item.canonicalId);
+          const embedId = item.canonicalId
+            || activeTag?.id
+            || (item.name ? slugifyIngredientName(item.name) : null);
+          if (!embedId) return null;
+          const embedFallbackEmoji =
+            currentCanonical?.emoji
+            || activeTag?.canonical?.emoji
+            || item.emoji
+            || "🥫";
+          return (
+            <>
               <div style={{
-                display: "flex", gap: 6, marginBottom: 12,
-                padding: 4, background: "#0a0a0a", border: "1px solid #1e1e1e",
-                borderRadius: 10, overflowX: "auto",
+                display: "flex", alignItems: "center", gap: 10,
+                margin: "8px 0 4px", color: "#444",
               }}>
-                {tags.map((t, i) => {
-                  const active = i === safeIdx;
-                  return (
-                    <button
-                      key={t.id}
-                      onClick={() => setActiveTagIdx(i)}
-                      style={{
-                        flex: "0 0 auto",
-                        padding: "7px 11px",
-                        background: active ? "#1a1608" : "transparent",
-                        border: `1px solid ${active ? "#f5c842" : "transparent"}`,
-                        color: active ? "#f5c842" : "#888",
-                        borderRadius: 7,
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        letterSpacing: "0.05em",
-                        cursor: "pointer",
-                        display: "flex", alignItems: "center", gap: 6,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <span style={{ fontSize: 14 }}>{t.canonical.emoji || "🥣"}</span>
-                      <span>{t.canonical.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            <IngredientCard
-              key={activeTag.id /* force remount on tab change so
-                                   internal viewingId + scroll reset */}
-              ingredientId={activeTag.id}
-              fallbackName={item.name}
-              fallbackEmoji={activeTag.canonical.emoji}
-              pantry={pantry}
-              onClose={onClose}
-              embedded
-            />
-          </>
-        ) : (
-          // Free-text row — no canonical ingredient tagged. We still embed
-          // an IngredientCard keyed by a slug derived from item.name so the
-          // user's own AI-enrichment draft (if any) renders, and so the
-          // empty-state "Add AI Enrichment" button works. Separately we
-          // surface the "+ LINK INGREDIENTS" button above it — an admin
-          // approving the enrichment would normally also link the canonical
-          // id, but the user can also link manually.
-          <>
-            {onEditTags && (
-              <div style={{
-                padding: "12px", textAlign: "center",
-                background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
-                marginBottom: 12,
-                fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888",
-              }}>
-                <div style={{ marginBottom: 10, fontStyle: "italic" }}>
-                  No canonical ingredient tagged.
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
+                  INGREDIENT
                 </div>
-                <button
-                  onClick={onEditTags}
-                  style={{
-                    padding: "10px 16px",
-                    background: "#1a1608", border: "1px solid #3a2f10",
-                    color: "#f5c842", borderRadius: 8,
-                    fontFamily: "'DM Mono',monospace", fontSize: 11,
-                    letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
-                  }}
-                >
-                  + LINK INGREDIENTS
-                </button>
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
+                {onEditTags && (
+                  <button
+                    onClick={onEditTags}
+                    style={{
+                      background: "transparent", border: "1px solid #3a2f10",
+                      padding: "3px 9px",
+                      color: "#f5c842", cursor: "pointer",
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      letterSpacing: "0.12em", borderRadius: 5,
+                    }}
+                  >
+                    + EDIT
+                  </button>
+                )}
               </div>
-            )}
-            <IngredientCard
-              key={`custom:${item.id}`}
-              ingredientId={slugifyIngredientName(item.name)}
-              fallbackName={item.name}
-              fallbackEmoji={item.emoji || "🥫"}
-              pantry={pantry}
-              onClose={onClose}
-              embedded
-              sourceName={item.name}
-              pantryItemId={item.id}
-            />
-          </>
-        )}
+              <IngredientCard
+                key={embedId}
+                ingredientId={embedId}
+                fallbackName={item.name}
+                fallbackEmoji={embedFallbackEmoji}
+                pantry={pantry}
+                onClose={onClose}
+                embedded
+                preview
+                {...(!isCanonicalEmbed
+                  ? { sourceName: item.name, pantryItemId: item.id }
+                  : {})}
+              />
+            </>
+          );
+        })()}
+
       </ModalSheet>
 
       {/* ─── Stacked drill modals ───────────────────────────────────────

@@ -53,7 +53,7 @@ const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
 // Haiku 4.5 — fast (~2-5s), cheap, plenty smart for structured JSON synthesis.
 const MODEL = "claude-haiku-4-5-20251001";
-const PROMPT_VERSION = "v1";
+const PROMPT_VERSION = "v2";
 
 // Slugify a free-text name into a stable per-user key. "Nori from the
 // Japanese store" → "nori_from_the_japanese_store". Collisions within
@@ -86,11 +86,16 @@ omitted when not applicable. Every other field is REQUIRED.
 
   "storage": {
     "location": "pantry" | "fridge" | "freezer" | "counter",
-    "shelfLifeDays": number,            // realistic days in recommended location
-    "shelfLife": {                       // per-location; use null when not applicable
+    "shelfLifeDays": number,            // realistic days in recommended location (unopened)
+    "shelfLife": {                       // per-location unopened; use null when not applicable
       "pantry": number | null,
       "fridge": number | null,
       "freezer": number | null
+    },
+    "shelfLifeOpened": {                 // once-opened shelf life in the recommended location
+      "days": number | null,
+      "location": "pantry" | "fridge" | "freezer" | null,
+      "note": "OPTIONAL — 1 sentence (e.g. 'transfer to airtight jar')"
     },
     "tips": "1 sentence — storage best practice",
     "spoilageSigns": "1 sentence — what going bad looks/smells like",
@@ -105,6 +110,7 @@ omitted when not applicable. Every other field is REQUIRED.
     { "id": "string_slug", "tier": "direct" | "caution" | "creative", "note": "short note" }
   ],
   "pairs": ["array", "of", "ingredient_slugs_that_pair_well"],
+  "aliases": ["common", "alt", "names"], // e.g. ["coriander","chinese parsley"] for cilantro
 
   "nutrition": {
     "per": "serving size, e.g. '1 oz' or '100g'",
@@ -114,6 +120,19 @@ omitted when not applicable. Every other field is REQUIRED.
     "carb_g": number,                    // OPTIONAL
     "fiber_g": number,                   // OPTIONAL
     "sodium_mg": number                  // OPTIONAL
+  },
+
+  "density": {                           // OPTIONAL — volume↔weight for pantry math
+    "volume": "1 cup" | "1 tbsp" | etc.,
+    "weight_g": number
+  },
+
+  "package": {                           // OPTIONAL — typical grocery packaging
+    "typicalSizes": ["16 oz", "1 lb bag", "1 gallon jug"],
+    "unitsPerPackage": "OPTIONAL — e.g. '1 bag = ~4 cups flour' for pantry math",
+    "aisle": "produce" | "dairy" | "meat" | "seafood" | "pantry" | "baking" |
+             "frozen" | "bakery" | "deli" | "spice" | "condiment" | "beverage" |
+             "international" | "specialty" | null
   },
 
   "allergens": ["milk" | "eggs" | "fish" | "shellfish" | "tree_nuts" | "peanuts" | "wheat" | "soy" | "sesame"],
@@ -134,27 +153,45 @@ omitted when not applicable. Every other field is REQUIRED.
     "qualityNote": "OPTIONAL — 1 sentence on when quality matters"
   },
 
-  // ── Forward-looking AI meal-planning fields ──
+  // ── Meal-planning signals (for AI meal generation downstream) ──
 
   "flavor_profile": {                    // 0-5 scale per axis
     "salty": 0-5, "sweet": 0-5, "sour": 0-5, "bitter": 0-5,
-    "umami": 0-5, "spicy": 0-5, "fat": 0-5, "aromatic_intensity": 0-5
+    "umami": 0-5, "heat": 0-5, "fat": 0-5, "aromatic_intensity": 0-5
   },
 
-  "aromatic_category": "allium" | "herbaceous" | "citrus" | "warm_spice" | "earthy" | "floral" | "smoky" | "fermented" | "sulfurous" | "nutty" | "marine" | "none",
+  "aromatic_category": "allium" | "herbaceous" | "citrus" | "warm_spice" |
+    "earthy" | "floral" | "smoky" | "fermented" | "sulfurous" | "nutty" |
+    "marine" | "none",
 
   "cooking_behaviors": [                 // array; pick all that apply
     "browns" | "caramelizes" | "wilts" | "renders_fat" | "emulsifies" |
-    "thickens" | "softens" | "holds_shape" | "shrinks" | "releases_liquid" |
-    "crisps" | "toasts" | "rehydrates"
+    "melts" | "thickens" | "ferments" | "softens" | "holds_shape" |
+    "shrinks" | "releases_liquid" | "crisps" | "toasts" | "rehydrates"
   ],
 
   "role_tendencies": {                   // 0-5 scale — how often plays each role in a dish
-    "base": 0-5, "aromatic": 0-5, "protein": 0-5, "bulk": 0-5,
-    "acid": 0-5, "richness": 0-5, "finish": 0-5, "garnish": 0-5
+    "base": 0-5, "protein": 0-5, "aromatic": 0-5, "acid": 0-5,
+    "fat": 0-5, "seasoning": 0-5, "garnish": 0-5
   },
 
-  "heat_stability": "heat_labile" | "moderate" | "heat_stable" | "heat_improves"
+  "heat_stability": "raw_only" | "low_heat" | "medium_heat" | "high_heat" | "burns_easily",
+
+  "cookingMethods": [                    // where this ingredient shines
+    "raw" | "grill" | "roast" | "bake" | "fry" | "sauté" | "braise" |
+    "steam" | "boil" | "simmer" | "poach" | "smoke" | "pickle" | "ferment"
+  ],
+
+  "mealTypes": [                         // meal-slot affinity
+    "breakfast" | "lunch" | "dinner" | "snack" | "party" | "dessert"
+  ],
+
+  "cuisines": [                          // cuisine affinity (lowercase slugs)
+    "italian" | "french" | "mexican" | "chinese" | "japanese" | "korean" |
+    "thai" | "indian" | "middle_eastern" | "mediterranean" | "american" |
+    "southern_us" | "cajun" | "bbq" | "greek" | "vietnamese" | "filipino" |
+    "latin_american" | "caribbean" | "ethiopian" | "moroccan" | "other"
+  ]
 }
 
 Guidance:
