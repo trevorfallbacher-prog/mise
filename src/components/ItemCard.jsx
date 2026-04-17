@@ -555,18 +555,43 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                   )}
                 </div>
               )}
-              {/* MADE OF — lists every canonical tag on this item,
-                  stacked with the identity chips (CANONICAL, CATEGORY,
-                  STORED IN) so it reads as one cluster. Always renders
-                  when onEditTags is wired — empty state shows '+ ADD
-                  TAGS' so the entry point lives with the rest of the
-                  identity fields rather than being hidden and then
-                  resurfaced down by the INFORMATION divider. */}
+              {/* Identity stack order — UNIVERSAL (see CLAUDE.md):
+                    1. CUSTOM NAME   (title above)
+                    2. CANONICAL     (tan,    above this block)
+                    3. FOOD CATEGORY (orange, above this block)
+                    4. STORED IN     (blue,   above this block)
+                    5. STATE         (purple)
+                    6. INGREDIENTS   (yellow)
+                  Never reorder. */}
+
+              {/* STATE — muted purple (matches the AddItemModal +
+                  scan-row chip). Tappable when the canonical has a
+                  state vocabulary (bread: loaf/slices/crumbs, etc.). */}
+              {(() => {
+                const states = statesForIngredient(canonical);
+                if (!states || states.length === 0) return null;
+                const label = stateText || "SET STATE";
+                return (
+                  <div
+                    onClick={e => { e.stopPropagation(); startEdit("state"); }}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: stateText ? "#c7a8d4" : "#555",
+                      letterSpacing: "0.08em", marginTop: 3,
+                      textTransform: "uppercase",
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                  >
+                    STATE: <span style={{
+                      color: stateText ? "#c7a8d4" : "#888",
+                      borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
+                    }}>{label}</span>
+                  </div>
+                );
+              })()}
+
+              {/* INGREDIENTS — yellow. Multi-tag composition. */}
               {(onEditTags || tags.length > 0) && (() => {
-                // Skip the inline list of tag names when the ONLY tag's
-                // name matches the user-typed name (avoids the
-                // "Prosciutto · PROSCIUTTO" redundancy) — but still
-                // render the row so the + EDIT affordance is available.
                 const hideTagList = tags.length === 1 &&
                   item.name?.toLowerCase() === tags[0].canonical.name?.toLowerCase();
                 const overflowing = tags.length > TAGS_VISIBLE && !showAllTags;
@@ -637,11 +662,9 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                   </div>
                 );
               })()}
-              {/* FLAVOR roll-up — only renders for multi-tag items. A
-                  pizza tagged with mozz + sausage + bbq + dough reads
-                  as the UNION of their flavor primaries. Single-tag
-                  items get the same info inside the deep-dive so
-                  showing it here would be redundant. */}
+
+              {/* FLAVOR roll-up — derived from the INGREDIENTS tags,
+                  so it renders after them (multi-tag only). */}
               {rolledFlavor && (
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   <span>FLAVOR:</span>
@@ -656,32 +679,6 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                   )}
                 </div>
               )}
-              {/* STATE line — tappable when the canonical ingredient has a
-                  state vocabulary (bread: loaf/slices/crumbs; cheese: block
-                  /grated/shredded; chicken: raw/cooked/shredded_cooked).
-                  Ingredients without states stay hidden. */}
-              {(() => {
-                const states = statesForIngredient(canonical);
-                if (!states || states.length === 0) return null;
-                const label = stateText || "SET STATE";
-                return (
-                  <div
-                    onClick={e => { e.stopPropagation(); startEdit("state"); }}
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: stateText ? "#7eb8d4" : "#555",
-                      letterSpacing: "0.08em", marginTop: 3,
-                      textTransform: "uppercase",
-                      cursor: readOnly ? "default" : "pointer",
-                    }}
-                  >
-                    STATE: <span style={{
-                      color: stateText ? "#7eb8d4" : "#888",
-                      borderBottom: readOnly ? "none" : "1px dashed #7eb8d444",
-                    }}>{label}</span>
-                  </div>
-                );
-              })()}
             </div>
           </div>
 

@@ -174,7 +174,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   // ingredient_info stub (same shape AdminPanel.approveCustom writes)
   // and skip the visual "PENDING" badge — nothing to review, it's
   // already approved.
-  const [profile] = useProfile(userId);
+  const { profile } = useProfile(userId);
   const isAdmin = profile?.role === "admin";
 
   // Family's user templates for scan-side matching (chunk 17b). When
@@ -1938,117 +1938,26 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 }}
               />
 
-              {/* Live canonical preview (0039). Shows the derived
-                  "thing" identity right under the user's custom
-                  name so the distinction sinks in —
-                    "Frank's Best Cheese Dogs"
-                       → 🌭 Hot Dog
-                  Name-match > type-default > nothing. Updates live
-                  as the user types + picks a Food Category. Hidden
-                  when there's no canonical yet (no need to surface
-                  the absence). */}
-              {(() => {
-                const derived = customCanonicalId
-                  || inferCanonicalFromName(customName.trim())
-                  || canonicalIdForType(customTypeId)
-                  || null;
-                if (!derived) return null;
-                const canon = findIngredient(derived);
-                if (!canon) return null;
-                return (
-                  <div style={{
-                    marginTop: 6,
-                    display: "flex", alignItems: "center", gap: 8,
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: "#888", letterSpacing: "0.06em",
-                  }}>
-                    <span style={{ color: "#555" }}>→</span>
-                    <span style={{ fontSize: 13 }}>{canon.emoji || "🏷️"}</span>
-                    <span style={{
-                      color: "#d4c9ac", fontFamily: "'Fraunces',serif",
-                      fontSize: 13, fontStyle: "italic",
-                    }}>
-                      {canon.name}
-                    </span>
-                    <span style={{ color: "#444", fontSize: 9 }}>· IS-A</span>
-                  </div>
-                );
-              })()}
+              {/* Identity stack order — UNIVERSAL (see CLAUDE.md):
+                    1. CUSTOM NAME (input above)
+                    2. CANONICAL       (tan     #b8a878)
+                    3. FOOD CATEGORY   (orange  #e07a3a)
+                    4. STORED IN       (blue    #7eb8d4)
+                    5. STATE           (purple  #c7a8d4)
+                    6. INGREDIENTS     (yellow  #f5c842)
+                  Never reorder. Every entry-point (ItemCard,
+                  AddItemModal, scan rows) renders them in this order. */}
 
-              {/* FOOD CATEGORY tap line — orange badge (reserved color
-                  across the app for the food-category axis). Empty
-                  state stays colored "+ SET CATEGORY" so you can
-                  visually identify the field before tapping. */}
-              <div
-                onClick={() => setTypePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#e07a3a",
-                  letterSpacing: "0.08em", marginTop: 6,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
-                {customTypeId ? (
-                  <>
-                    <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
-                    <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
-                      {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
-                    + SET CATEGORY
-                  </span>
-                )}
-              </div>
-
-              {/* STORED IN tap line — blue badge (reserved color across
-                  the app for storage location / tile placement). */}
-              <div
-                onClick={() => setTilePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#7eb8d4",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
-                {customTileId ? (() => {
-                  const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
-                  const found = allBuiltIns.find(t => t.id === customTileId);
-                  return (
-                    <>
-                      <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
-                      <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
-                        {(found?.label || "CUSTOM TILE").toUpperCase()}
-                      </span>
-                    </>
-                  );
-                })() : (
-                  <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
-                    + SET LOCATION
-                  </span>
-                )}
-              </div>
-
-              {/* CANONICAL tap line — tan (reserved for the identity
-                  axis). Taps open LinkIngredient in single mode so the
-                  user picks one canonical. "+ CREATE <query>" inside
-                  the sheet lets them mint a brand-new slug when the
-                  registry has nothing close. Live-preview under the
-                  name input already shows the DERIVED canonical when
-                  the user hasn't explicitly picked one; tapping this
-                  line LOCKS the identity to whatever they pick. */}
+              {/* CANONICAL — tan. Tap opens LinkIngredient single
+                  mode; empty state falls back to the derived preview
+                  (name-match > category default) with a · AUTO chip
+                  so users see the inferred identity before committing. */}
               <div
                 onClick={() => setCustomCanonicalOpen(true)}
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
                   color: "#b8a878",
-                  letterSpacing: "0.08em", marginTop: 3,
+                  letterSpacing: "0.08em", marginTop: 6,
                   cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 6,
                   flexWrap: "wrap",
@@ -2056,12 +1965,6 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               >
                 <span style={{ color: "#b8a878" }}>CANONICAL:</span>
                 {(() => {
-                  // Display resolution order:
-                  //  1. Explicit pick (customCanonicalId) — always wins.
-                  //  2. Name-derived canonical (preview).
-                  //  3. Category-default canonical (preview).
-                  // Previews render dimmer so "explicit pick" reads as
-                  // the more-committed state.
                   const explicit = customCanonicalId;
                   const derivedPreview = explicit
                     ? null
@@ -2094,13 +1997,86 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 })()}
               </div>
 
-              {/* INGREDIENTS tap line — mirrors ItemCard's identity
-                  stack. Taps open LinkIngredient (same picker pantry
-                  rows use) so the composition tags can be set before
-                  the item saves. Shows the list of tags currently on
-                  deck, or "+ ADD" when empty. Yellow is the shared
-                  composition color; separate from the big-3 axis
-                  colors (canonical/category/storage). */}
+              {/* FOOD CATEGORY — orange. */}
+              <div
+                onClick={() => setTypePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#e07a3a",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
+                {customTypeId ? (
+                  <>
+                    <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
+                    <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
+                      {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
+                    + SET CATEGORY
+                  </span>
+                )}
+              </div>
+
+              {/* STORED IN — blue. */}
+              <div
+                onClick={() => setTilePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#7eb8d4",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
+                {customTileId ? (() => {
+                  const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                  const found = allBuiltIns.find(t => t.id === customTileId);
+                  return (
+                    <>
+                      <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
+                      <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
+                        {(found?.label || "CUSTOM TILE").toUpperCase()}
+                      </span>
+                    </>
+                  );
+                })() : (
+                  <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
+                    + SET LOCATION
+                  </span>
+                )}
+              </div>
+
+              {/* STATE — muted purple. */}
+              <div
+                onClick={() => setStatePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#c7a8d4",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#c7a8d4" }}>STATE:</span>
+                {customState ? (
+                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
+                    {customState.toUpperCase()}
+                  </span>
+                ) : (
+                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
+                    + SET STATE
+                  </span>
+                )}
+              </div>
+
+              {/* INGREDIENTS — yellow. Composition tags (multi-tag). */}
               <div
                 onClick={() => setCustomComponentsOpen(true)}
                 style={{
@@ -2129,32 +2105,6 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                       <span style={{ color: "#888" }}>+{customComponents.length - 4}</span>
                     )}
                   </>
-                )}
-              </div>
-
-              {/* STATE tap line — muted purple so it reads as a
-                  distinct axis from INGREDIENT (yellow). State isn't
-                  part of the big-3 classification (category/storage/
-                  canonical) so it sits on its own color. */}
-              <div
-                onClick={() => setStatePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#c7a8d4",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#c7a8d4" }}>STATE:</span>
-                {customState ? (
-                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
-                    {customState.toUpperCase()}
-                  </span>
-                ) : (
-                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
-                    + SET STATE
-                  </span>
                 )}
               </div>
 
@@ -2800,7 +2750,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   const [scanning, setScanning] = useState(false);
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
-  const [profile] = useProfile(userId);
+  const { profile } = useProfile(userId);
   const isAdmin = profile?.role === "admin";
   // Search replaces the old category filter pills — one input searches item
   // names, hub names, and categories.
