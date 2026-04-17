@@ -508,7 +508,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            onUpdate({ canonicalId: null });
+                            commit({ canonicalId: null });
                           }}
                           aria-label="Unlink canonical"
                           style={{
@@ -808,7 +808,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                           // Write the amount but DO NOT close the editor here.
                           // The outer onBlur above handles close-on-leave.
                           const v = parseFloat(e.target.value);
-                          onUpdate?.({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
+                          commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
                         }}
                         onKeyDown={e => {
                           if (e.key === "Enter") {
@@ -826,7 +826,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       />
                       <select
                         defaultValue={item.unit}
-                        onChange={e => onUpdate?.({ unit: e.target.value })}
+                        onChange={e => commit({ unit: e.target.value })}
                         style={{
                           padding: "3px 2px",
                           background: "#0a0a0a", border: "1px solid #f5c842",
@@ -848,7 +848,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       type="range"
                       min="0" max={maxVal} step={step}
                       value={Number(item.amount) || 0}
-                      onChange={e => onUpdate?.({ amount: Number(e.target.value) })}
+                      onChange={e => commit({ amount: Number(e.target.value) })}
                       aria-label={`Estimate ${item.name} remaining`}
                       style={{ width: "100%", accentColor: sliderColor }}
                     />
@@ -925,7 +925,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       const v = e.target.value;
                       if (!v) return;
                       // Pin to noon UTC to dodge DST edge cases.
-                      onUpdate?.({ expiresAt: new Date(`${v}T12:00:00Z`) });
+                      commit({ expiresAt: new Date(`${v}T12:00:00Z`) });
                     }}
                     onBlur={() => setEditingField(null)}
                     onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") setEditingField(null); }}
@@ -1360,7 +1360,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               // tile_id back to null so the renderer falls through
               // to the heuristic classifier. Location stays put
               // unless the picker handed back an explicit change.
-              onUpdate?.({
+              commit({
                 tileId: tileId || null,
                 ...(location && location !== item.location
                     ? { location }
@@ -1471,7 +1471,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             const createNew = () => {
               const slug = slugifyIngredientName(canonicalSearch);
               if (!slug) return;
-              onUpdate({ canonicalId: slug });
+              commit({ canonicalId: slug });
               // Admin auto-approve — skip the PENDING state entirely
               // by upserting the ingredient_info stub the same way
               // AdminPanel.approveCustom writes it. Non-admins fall
@@ -1570,7 +1570,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         <button
                           key={ing.id}
                           onClick={() => {
-                            onUpdate({ canonicalId: ing.id });
+                            commit({ canonicalId: ing.id });
                             setCanonicalPickerOpen(false);
                             setCanonicalSearch("");
                           }}
@@ -1668,7 +1668,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               // rewrite a more-specific canonical already set by name
               // match or the user's explicit pick; changing canonical
               // is done via the CANONICAL tap line + inline picker.
-              onUpdate?.(patch);
+              commit(patch);
               setTypePickerOpen(false);
             }}
           />
