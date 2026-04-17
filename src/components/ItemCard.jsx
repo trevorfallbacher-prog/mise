@@ -358,169 +358,8 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             ITEM
           </div>
 
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
-            {/* LEFT COLUMN — identity controls. Three stacked buttons
-                (canonical / category / stored in) + a fridge|pantry|
-                freezer emoji quick-pick row. Each button shows its
-                reserved axis color whether filled or empty, so you
-                can see what's set at a glance. */}
-            <div style={{
-              width: 146, flexShrink: 0,
-              display: "flex", flexDirection: "column", gap: 6,
-            }}>
-              {/* Emoji tile. */}
-              <div style={{
-                fontSize: 34, height: 58, width: "100%",
-                background: "#0f0f0f", border: "1px solid #1e1e1e",
-                borderRadius: 10,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                {item.emoji || "🥫"}
-              </div>
-
-              {/* CANONICAL (tan). */}
-              {onUpdate && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "8px 10px", minHeight: 36,
-                    background: currentCanonical ? "#1a1508" : "transparent",
-                    border: `1px ${currentCanonical ? "solid" : "dashed"} #b8a878`,
-                    borderRadius: 8, cursor: "pointer", width: "100%",
-                    textAlign: "left",
-                  }}
-                >
-                  {currentCanonical ? (
-                    <>
-                      <span style={{ fontSize: 14, flexShrink: 0 }}>
-                        {currentCanonical.emoji || "🏷️"}
-                      </span>
-                      <span style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#d4c9ac", letterSpacing: "0.06em",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {currentCanonical.name.toUpperCase()}
-                      </span>
-                    </>
-                  ) : (
-                    <span style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#b8a878", letterSpacing: "0.08em",
-                    }}>
-                      + SET CANONICAL
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {/* CATEGORY (orange). */}
-              {onUpdate && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "8px 10px", minHeight: 36,
-                    background: currentType ? "#1a1108" : "transparent",
-                    border: `1px ${currentType ? "solid" : "dashed"} #e07a3a`,
-                    borderRadius: 8, cursor: "pointer", width: "100%",
-                    textAlign: "left",
-                  }}
-                >
-                  {currentType ? (
-                    <>
-                      <span style={{ fontSize: 14, flexShrink: 0 }}>
-                        {currentType.emoji}
-                      </span>
-                      <span style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#e07a3a", letterSpacing: "0.06em",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {(currentType.label || "CUSTOM TYPE").toUpperCase()}
-                      </span>
-                    </>
-                  ) : (
-                    <span style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#e07a3a", letterSpacing: "0.08em",
-                    }}>
-                      + SET CATEGORY
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {/* STORED IN (blue). */}
-              {onUpdate && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "8px 10px", minHeight: 36,
-                    background: currentTile ? "#0f1620" : "transparent",
-                    border: `1px ${currentTile ? "solid" : "dashed"} #7eb8d4`,
-                    borderRadius: 8, cursor: "pointer", width: "100%",
-                    textAlign: "left",
-                  }}
-                >
-                  {currentTile ? (
-                    <>
-                      <span style={{ fontSize: 14, flexShrink: 0 }}>
-                        {currentTile.emoji}
-                      </span>
-                      <span style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#7eb8d4", letterSpacing: "0.06em",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>
-                        {(currentTile.label || "CUSTOM TILE").toUpperCase()}
-                      </span>
-                    </>
-                  ) : (
-                    <span style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#7eb8d4", letterSpacing: "0.08em",
-                    }}>
-                      + SET STORED IN
-                    </span>
-                  )}
-                </button>
-              )}
-
-              {/* Fridge | Pantry | Freezer quick-pick row — the emoji
-                  trio. Sets item.location; doesn't touch tileId so
-                  users can place a row in "fridge" without committing
-                  to a specific shelf. */}
-              {onUpdate && (
-                <div style={{ display: "flex", gap: 4 }}>
-                  {LOCATIONS.map(loc => {
-                    const active = currentLocation === loc.id;
-                    return (
-                      <button
-                        key={loc.id}
-                        onClick={(e) => { e.stopPropagation(); onUpdate({ location: loc.id }); }}
-                        title={loc.label}
-                        aria-label={loc.label}
-                        style={{
-                          flex: 1, height: 36, padding: 0,
-                          fontSize: 18,
-                          background: active ? "#0f1620" : "#0a0a0a",
-                          border: `1px solid ${active ? "#7eb8d4" : "#1e1e1e"}`,
-                          borderRadius: 8, cursor: "pointer",
-                          display: "flex", alignItems: "center", justifyContent: "center",
-                        }}
-                      >
-                        {loc.emoji}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* RIGHT COLUMN — name + made-of/flavor/state. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
+            <div style={{ fontSize: 40, flexShrink: 0 }}>{item.emoji || "🥫"}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               {editingField === "name" ? (
                 <input
@@ -553,9 +392,82 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   {item.name}
                 </h2>
               )}
+              {/* CANONICAL — tan badge. Color reserved across the app
+                  so users visually identify this field at a glance —
+                  orange = FOOD CATEGORY, blue = STORED IN, tan =
+                  CANONICAL. Empty state stays colored ("+ SET CANONICAL"
+                  in tan) rather than greying out, so you can see what
+                  you're setting from the preview before tapping. */}
+              {onUpdate && (
+                <div
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: "#b8a878",
+                    letterSpacing: "0.06em", marginTop: 4,
+                    display: "flex", alignItems: "center", gap: 6,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span style={{ color: "#b8a878" }}>CANONICAL:</span>
+                  {currentCanonical ? (
+                    <>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          cursor: "pointer",
+                          borderBottom: "1px dashed #b8a87844",
+                          paddingBottom: 1,
+                        }}
+                      >
+                        <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
+                        <span style={{
+                          color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                          fontSize: 14, fontStyle: "italic", fontWeight: 400,
+                        }}>
+                          {currentCanonical.name}
+                        </span>
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ canonicalId: null });
+                        }}
+                        aria-label="Unlink canonical"
+                        style={{
+                          background: "transparent",
+                          border: "1px solid #3a2a2a",
+                          color: "#d98a8a", cursor: "pointer",
+                          borderRadius: 6,
+                          padding: "1px 7px",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          letterSpacing: "0.06em",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        ✕ UNLINK
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                      style={{
+                        color: "#b8a878",
+                        borderBottom: "1px dashed #b8a87844",
+                        cursor: "pointer",
+                      }}
+                    >
+                      + SET CANONICAL
+                    </span>
+                  )}
+                </div>
+              )}
+
               {/* Inline canonical picker — text search across the full
-                  registry. Opens when the user taps the + SET CANONICAL
-                  button in the left column. Collapses after a pick. */}
+                  registry. When the user's query doesn't match any
+                  bundled canonical, a dashed-tan "+ CREATE <query>"
+                  row appears inline so new canonicals are discovered
+                  by typing, not by hunting for a create button. */}
               {canonicalPickerOpen && onUpdate && (() => {
                 const q = canonicalSearch.trim().toLowerCase();
                 const matches = q
@@ -565,6 +477,19 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                       i.id.includes(q.replace(/\s+/g, "_"))
                     ).slice(0, 30)
                   : INGREDIENTS.slice(0, 12);
+                const qTrim = canonicalSearch.trim();
+                const exactInRegistry = qTrim && matches.some(m =>
+                  m.name.toLowerCase() === q ||
+                  m.id === slugifyIngredientName(qTrim)
+                );
+                const showCreate = qTrim.length >= 2 && !exactInRegistry;
+                const createNew = () => {
+                  const slug = slugifyIngredientName(canonicalSearch);
+                  if (!slug) return;
+                  onUpdate({ canonicalId: slug });
+                  setCanonicalPickerOpen(false);
+                  setCanonicalSearch("");
+                };
                 return (
                   <div
                     onClick={(e) => e.stopPropagation()}
@@ -604,111 +529,166 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                         CLOSE
                       </button>
                     </div>
-                    {(() => {
-                      const qTrim = q.trim();
-                      const exactMatch = qTrim && matches.some(m =>
-                        m.name.toLowerCase() === qTrim ||
-                        m.id === qTrim.replace(/\s+/g, "_")
-                      );
-                      const showCreate = qTrim.length >= 2 && !exactMatch;
-                      const createNew = () => {
-                        const slug = slugifyIngredientName(canonicalSearch);
-                        onUpdate({ canonicalId: slug });
-                        setCanonicalPickerOpen(false);
-                        setCanonicalSearch("");
-                      };
-                      if (matches.length === 0 && !showCreate) {
-                        return (
-                          <div style={{
-                            padding: "12px 6px", textAlign: "center",
-                            fontFamily: "'DM Mono',monospace", fontSize: 10,
-                            color: "#555", letterSpacing: "0.08em",
-                          }}>
-                            NO MATCHES
-                          </div>
-                        );
-                      }
-                      return (
-                        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" }}>
-                          {showCreate && (
+                    {matches.length === 0 && !showCreate ? (
+                      <div style={{
+                        padding: "12px 6px", textAlign: "center",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#555", letterSpacing: "0.08em",
+                      }}>
+                        NO MATCHES
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" }}>
+                        {showCreate && (
+                          <button
+                            onClick={createNew}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "8px 10px", textAlign: "left",
+                              background: "#1a1508",
+                              border: "1px dashed #b8a878",
+                              borderRadius: 8, cursor: "pointer",
+                            }}
+                          >
+                            <span style={{ fontSize: 16 }}>✨</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{
+                                fontFamily: "'DM Mono',monospace", fontSize: 11,
+                                color: "#b8a878", letterSpacing: "0.08em",
+                              }}>
+                                + CREATE “{qTrim}”
+                              </div>
+                              <div style={{
+                                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                color: "#6e6458", letterSpacing: "0.06em", marginTop: 1,
+                              }}>
+                                NEW CANONICAL — ENRICH LATER
+                              </div>
+                            </div>
+                          </button>
+                        )}
+                        {matches.map(ing => {
+                          const isCurrent = currentCanonical?.id === ing.id;
+                          return (
                             <button
-                              onClick={createNew}
+                              key={ing.id}
+                              onClick={() => {
+                                onUpdate({ canonicalId: ing.id });
+                                setCanonicalPickerOpen(false);
+                                setCanonicalSearch("");
+                              }}
                               style={{
                                 display: "flex", alignItems: "center", gap: 8,
                                 padding: "6px 10px", textAlign: "left",
-                                background: "#1a1508",
-                                border: "1px dashed #b8a878",
+                                background: isCurrent ? "#1a1608" : "transparent",
+                                border: `1px solid ${isCurrent ? "#f5c842" : "#1e1e1e"}`,
                                 borderRadius: 8, cursor: "pointer",
                               }}
                             >
-                              <span style={{ fontSize: 16 }}>✨</span>
+                              <span style={{ fontSize: 16 }}>{ing.emoji || "🏷️"}</span>
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <div style={{
-                                  fontFamily: "'DM Mono',monospace", fontSize: 11,
-                                  color: "#b8a878",
-                                  letterSpacing: "0.08em",
+                                  fontFamily: "'Fraunces',serif", fontSize: 13,
+                                  fontStyle: "italic",
+                                  color: isCurrent ? "#f5c842" : "#d4c9ac",
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                                 }}>
-                                  + CREATE “{canonicalSearch.trim()}”
+                                  {ing.name}
                                 </div>
                                 <div style={{
                                   fontFamily: "'DM Mono',monospace", fontSize: 9,
-                                  color: "#6e6458", letterSpacing: "0.06em", marginTop: 1,
+                                  color: "#555", letterSpacing: "0.06em", marginTop: 1,
                                 }}>
-                                  NEW CANONICAL — ENRICH LATER
+                                  {ing.id}
+                                  {ing.category && ` · ${ing.category.toUpperCase()}`}
                                 </div>
                               </div>
+                              {isCurrent && (
+                                <span style={{ fontSize: 10, color: "#f5c842", fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>
+                                  ✓
+                                </span>
+                              )}
                             </button>
-                          )}
-                          {matches.map(ing => {
-                            const isCurrent = currentCanonical?.id === ing.id;
-                            return (
-                              <button
-                                key={ing.id}
-                                onClick={() => {
-                                  onUpdate({ canonicalId: ing.id });
-                                  setCanonicalPickerOpen(false);
-                                  setCanonicalSearch("");
-                                }}
-                                style={{
-                                  display: "flex", alignItems: "center", gap: 8,
-                                  padding: "6px 10px", textAlign: "left",
-                                  background: isCurrent ? "#1a1608" : "transparent",
-                                  border: `1px solid ${isCurrent ? "#f5c842" : "#1e1e1e"}`,
-                                  borderRadius: 8, cursor: "pointer",
-                                }}
-                              >
-                                <span style={{ fontSize: 16 }}>{ing.emoji || "🏷️"}</span>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{
-                                    fontFamily: "'Fraunces',serif", fontSize: 13,
-                                    fontStyle: "italic",
-                                    color: isCurrent ? "#f5c842" : "#d4c9ac",
-                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                                  }}>
-                                    {ing.name}
-                                  </div>
-                                  <div style={{
-                                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                                    color: "#555", letterSpacing: "0.06em", marginTop: 1,
-                                  }}>
-                                    {ing.id}
-                                    {ing.category && ` · ${ing.category.toUpperCase()}`}
-                                  </div>
-                                </div>
-                                {isCurrent && (
-                                  <span style={{ fontSize: 10, color: "#f5c842", fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>
-                                    ✓
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()}
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
+              {/* FOOD CATEGORY — orange badge. Reserved color across
+                  the app for the WWEIA "what kind of thing is this"
+                  axis. Empty state stays in orange ("+ SET CATEGORY")
+                  instead of greying, so you can visually identify the
+                  field before tapping. */}
+              {onUpdate && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#e07a3a",
+                    letterSpacing: "0.08em", marginTop: 3,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ color: "#e07a3a" }}>FOOD CATEGORY:</span>
+                  {currentType ? (
+                    <>
+                      <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
+                      <span style={{
+                        color: "#e07a3a",
+                        borderBottom: "1px dashed #e07a3a44",
+                      }}>
+                        {currentType.label?.toUpperCase() || "CUSTOM TYPE"}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      color: "#e07a3a",
+                      borderBottom: "1px dashed #e07a3a44",
+                    }}>
+                      + SET CATEGORY
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* STORED IN — blue badge. Reserved color across the app
+                  for tile placement / storage location. Empty state
+                  stays blue ("+ SET LOCATION") for consistent visual
+                  identification. */}
+              {onUpdate && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#7eb8d4",
+                    letterSpacing: "0.08em", marginTop: 3,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
+                  {currentTile ? (
+                    <>
+                      <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
+                      <span style={{
+                        color: "#7eb8d4",
+                        borderBottom: "1px dashed #7eb8d444",
+                      }}>
+                        {currentTile.label?.toUpperCase() || "CUSTOM TILE"}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      color: "#7eb8d4",
+                      borderBottom: "1px dashed #7eb8d444",
+                    }}>
+                      + SET LOCATION
+                    </span>
+                  )}
+                </div>
+              )}
               {/* MADE OF — lists every canonical tag on this item.
                   Renamed from IDENTIFIED AS in chunk 16d to separate
                   compositional identity ("what is this made from")
