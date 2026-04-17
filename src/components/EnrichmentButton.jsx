@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { supabase } from "../lib/supabase";
 import { enrichIngredient } from "../lib/enrichIngredient";
-import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 
 // Button that triggers on-demand AI enrichment for an ingredient with no
 // metadata. Two call modes (pick one via props):
@@ -10,7 +11,14 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 //
 //   <EnrichmentButton sourceName="Nori from the Japanese store"
 //                     pantryItemId={item.id} />
-//     For a user-custom pantry item (ingredient_id === null).
+//     For a user-custom pantry item (canonical_id === null). The button
+//     stamps canonical_id = slugify(sourceName) onto the pantry row
+//     BEFORE requesting the enrichment — so every downstream lookup
+//     (ItemCard, admin queue, approved ingredient_info join) agrees on
+//     a single key. Without this stamping, the pending row was keyed by
+//     slugify(source_name_at_enrichment_time) and the read path re-
+//     slugified item.name; any drift in between (user edits the name,
+//     admin renames, different slugifiers) orphaned the enrichment.
 //
 // States:
 //   idle       → "✨ Add AI Enrichment"
@@ -42,9 +50,37 @@ export default function EnrichmentButton({
     setState("enriching");
     setErrMsg("");
     try {
+      // Resolve the canonical id we'll submit + store. Case A: a real
+      // bundled canonical was passed in, use it. Case B: sourceName
+      // only — slugify it and stamp it onto the pantry row FIRST so
+      // the enrichment lands keyed by that same slug and subsequent
+      // reads (ItemCard's getPendingInfo(item.canonicalId)) can find
+      // it. Without the stamp, pending_ingredient_info.slug and
+      // item.canonicalId can drift apart and the enrichment falls
+      // off the UI even though it was saved.
+      let resolvedCanonicalId = canonicalId;
+      if (!resolvedCanonicalId && sourceName) {
+        const slug = slugifyIngredientName(sourceName);
+        if (slug) {
+          resolvedCanonicalId = slug;
+          if (pantryItemId) {
+            // Best-effort — a failure here doesn't block enrichment,
+            // but it does mean the read path won't find the pending
+            // row until the admin approves (ingredient_info keyed by
+            // the admin-chosen canonical).
+            const { error: stampErr } = await supabase
+              .from("pantry_items")
+              .update({ canonical_id: slug })
+              .eq("id", pantryItemId)
+              .is("canonical_id", null);
+            if (stampErr) console.warn("[enrichment] canonical stamp failed:", stampErr.message);
+          }
+        }
+      }
+
       const { pending } = await enrichIngredient({
-        canonical_id: canonicalId,
-        source_name: sourceName,
+        canonical_id: resolvedCanonicalId,
+        source_name: resolvedCanonicalId ? null : sourceName,
         pantry_item_id: pantryItemId,
       });
       await refreshPending();

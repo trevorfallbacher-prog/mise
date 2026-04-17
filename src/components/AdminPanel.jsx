@@ -349,6 +349,21 @@ function PendingEnrichmentsList({ viewerId: _viewerId }) {
         .upsert({ ingredient_id: canonicalId, info: reviewedInfo }, { onConflict: "ingredient_id" });
       if (upErr) throw upErr;
 
+      // Slug reconciliation. When the admin promotes a pending row
+      // to a DIFFERENT canonical id than its slug (e.g. slug =
+      // "organic_mac_n_cheese", approved id = "mac_and_cheese"), any
+      // pantry_items that were stamped with the pending slug need to
+      // be migrated over — otherwise the row keeps pointing at a
+      // canonical_id that has no ingredient_info row and the UI
+      // reads as if the enrichment never approved. Same slug: no-op.
+      if (row.slug && row.slug !== canonicalId) {
+        const { error: rewireErr } = await supabase
+          .from("pantry_items")
+          .update({ canonical_id: canonicalId })
+          .eq("canonical_id", row.slug);
+        if (rewireErr) console.warn("[approve] pantry_items rewire failed:", rewireErr.message);
+      }
+
       const { error: pErr } = await supabase
         .from("pending_ingredient_info")
         .update({ status: "approved", approved_canonical_id: canonicalId, info: reviewedInfo })

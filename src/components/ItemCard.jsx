@@ -911,10 +911,21 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
               Label includes the item's identity so there's no ambiguity
               about which entity is being enriched. */}
           {onUpdate && (() => {
+            // Prefer canonicalId — that's the stable key the write
+            // path (EnrichmentButton, which stamps canonicalId before
+            // requesting) and the admin approval path both agree on.
+            // Falling back to slugify(item.name) was the old behavior
+            // that caused enrichments to "detach" when the user edited
+            // the item's name after triggering the request.
             const slug = item.canonicalId || slugifyIngredientName(item.name || "");
             if (!slug) return null;
             const itemIdentityName = currentCanonical?.name || item.name || "this item";
-            const hasApprovedInfo = item.canonicalId && getDbInfo(item.canonicalId);
+            // Approved info: ingredient_info is keyed by ingredient_id
+            // which the admin sets to the item's canonicalId on
+            // approve — look up by canonicalId OR the fallback slug
+            // so items that pre-date the canonical-stamp fix still
+            // read their enrichment.
+            const hasApprovedInfo = !!getDbInfo(slug);
             const hasPending = !!getPendingInfo(slug);
             const state = hasApprovedInfo
               ? "approved"
