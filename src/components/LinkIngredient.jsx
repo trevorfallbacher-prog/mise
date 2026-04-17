@@ -42,11 +42,14 @@ function confidenceTone(score) {
  *
  * Props:
  *   item           — the pantry row being linked ({ name, emoji, ingredientIds, … })
+ *   mode           — "multi" (default) accumulates tags; "single" commits
+ *                    immediately on any tap (scan CANONICAL axis).
  *   onLink(ids)    — called with an ARRAY of canonical ids when the user
  *                    taps DONE. Always an array; pass [] to clear tagging.
  *   onClose()      — dismiss without committing.
  */
-export default function LinkIngredient({ item, onLink, onClose }) {
+export default function LinkIngredient({ item, mode = "multi", onLink, onClose }) {
+  const singleMode = mode === "single";
   const [search, setSearch] = useState("");
   const needle = search.trim() || item.name;
 
@@ -78,6 +81,11 @@ export default function LinkIngredient({ item, onLink, onClose }) {
   const toggleTag = (id) => {
     const canonical = findIngredient(id);
     if (!canonical) return;
+    if (singleMode) {
+      // Single-axis pick (scan CANONICAL chip): commit and close on tap.
+      onLink([id]);
+      return;
+    }
     setSelected(prev =>
       prev.some(s => s.id === id)
         ? prev.filter(s => s.id !== id)
@@ -112,6 +120,12 @@ export default function LinkIngredient({ item, onLink, onClose }) {
     if (name.length < 2) return;
     const id = slugifyIngredientName(name);
     if (!id) return;
+    if (singleMode) {
+      // Single-axis pick: creating a new canonical commits straight away
+      // so the user isn't stranded staring at a sheet with no DONE button.
+      onLink([id]);
+      return;
+    }
     setSelected(prev => {
       if (prev.some(s => s.id === id)) return prev;
       const existing = findIngredient(id);
@@ -241,12 +255,15 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           "{item.name}"
         </h2>
         <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
-          Tap to add ingredients to this row. Multi-tag for composed
-          items — burritos, pizzas, shredded blends.
+          {singleMode
+            ? "Pick one canonical. Tap a match to commit, or type to search / create."
+            : "Tap to add ingredients to this row. Multi-tag for composed items — burritos, pizzas, shredded blends."}
         </p>
 
         {/* SELECTED — the accumulator. Shown at the very top so the
-            user always sees what's on deck before committing. */}
+            user always sees what's on deck before committing. Hidden
+            in single mode since every tap commits immediately. */}
+        {!singleMode && (
         <div style={{
           padding: "10px 12px", marginBottom: 14,
           background: selected.length ? "#1a1608" : "#0f0f0f",
@@ -299,6 +316,7 @@ export default function LinkIngredient({ item, onLink, onClose }) {
             </div>
           )}
         </div>
+        )}
 
         {/* ⭐ STAR — the top-scoring canonical for the needle. */}
         {star && (
@@ -323,8 +341,9 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           </>
         )}
 
-        {/* BLEND PRESETS — composite tags applied in one tap. */}
-        {presetMatches.length > 0 && (
+        {/* BLEND PRESETS — composite tags applied in one tap. Hidden in
+            single mode since blends are inherently multi-tag. */}
+        {!singleMode && presetMatches.length > 0 && (
           <>
             <div style={{
               fontFamily: "'DM Mono',monospace", fontSize: 9,
@@ -491,36 +510,69 @@ export default function LinkIngredient({ item, onLink, onClose }) {
           );
         })()}
 
-        {/* Primary action bar. DONE is always available — empty selection
-            is a valid commit (returns row to free-text). */}
-        <div style={{ display: "flex", gap: 8 }}>
-          <button
-            onClick={onClose}
-            style={{
-              flex: 1, padding: "12px",
-              background: "#1a1a1a", border: "1px solid #2a2a2a",
-              color: "#888", borderRadius: 12,
-              fontFamily: "'DM Mono',monospace", fontSize: 12,
-              letterSpacing: "0.08em", cursor: "pointer",
-            }}
-          >
-            CANCEL
-          </button>
-          <button
-            onClick={commit}
-            style={{
-              flex: 2, padding: "12px",
-              background: "#f5c842", border: "none",
-              color: "#111", borderRadius: 12,
-              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
-              letterSpacing: "0.08em", cursor: "pointer",
-            }}
-          >
-            {selected.length === 0
-              ? "KEEP AS FREE TEXT"
-              : `DONE · ${selected.length} TAG${selected.length === 1 ? "" : "S"}`}
-          </button>
-        </div>
+        {/* Primary action bar. In multi mode: DONE commits the full
+            accumulator. In single mode: taps commit immediately, so
+            the bar is just CANCEL + a "CLEAR" shortcut when there's
+            currently a canonical on the row. */}
+        {singleMode ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={onClose}
+              style={{
+                flex: 1, padding: "12px",
+                background: "#1a1a1a", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 12,
+                letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >
+              CANCEL
+            </button>
+            {selected.length > 0 && (
+              <button
+                onClick={() => onLink([])}
+                style={{
+                  flex: 1, padding: "12px",
+                  background: "transparent", border: "1px solid #3a1a1a",
+                  color: "#d98a8a", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                CLEAR CANONICAL
+              </button>
+            )}
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={onClose}
+              style={{
+                flex: 1, padding: "12px",
+                background: "#1a1a1a", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 12,
+                letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >
+              CANCEL
+            </button>
+            <button
+              onClick={commit}
+              style={{
+                flex: 2, padding: "12px",
+                background: "#f5c842", border: "none",
+                color: "#111", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >
+              {selected.length === 0
+                ? "KEEP AS FREE TEXT"
+                : `DONE · ${selected.length} TAG${selected.length === 1 ? "" : "S"}`}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

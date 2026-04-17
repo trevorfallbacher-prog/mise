@@ -6,7 +6,7 @@ import {
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
   stateLabel, statesForIngredient, detectStateFromText,
-  inferCanonicalFromName,
+  inferCanonicalFromName, fuzzyMatchIngredient,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -188,6 +188,9 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const [editingNameIdx, setEditingNameIdx] = useState(null);
   const [editingExpiryScanIdx, setEditingExpiryScanIdx] = useState(null);
   const [linkingScanIdx, setLinkingScanIdx] = useState(null);
+  // Scan-row link sheet mode. "canonical" = single pick (CANONICAL axis —
+  // one tap commits). "tags" = multi-tag composition (ItemCard onEditTags).
+  const [linkingScanMode, setLinkingScanMode] = useState("canonical");
   // Per-row pickers for FOOD CATEGORY (type) and STORED IN (tile)
   // during scan-confirm. OCR + heuristics are going to misfire — the
   // user needs to tap a chip and override without having to wait until
@@ -505,7 +508,32 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         }
         return patched;
       };
-      setScannedItems(normalized.map(applyCorrection));
+      // Auto-link on exact match. After the correction overlay has had
+      // its say, any row still missing a canonicalId gets a fuzzy lookup
+      // against the bundled registry — if the top match scores ≥ 90
+      // (the "Exact" bucket inside LinkIngredient), we stamp the
+      // canonical automatically so the user doesn't have to tap in
+      // just to accept the obvious. Rows with lower-confidence matches
+      // stay unset so the user reviews them deliberately.
+      const AUTO_LINK_SCORE = 90;
+      const autoStar = (row) => {
+        if (row.canonicalId || row.ingredientId) return row;
+        const needle = (row.name || "").trim();
+        if (!needle) return row;
+        const [top] = fuzzyMatchIngredient(needle, 1);
+        if (!top || top.score < AUTO_LINK_SCORE) return row;
+        const canon = top.ingredient;
+        return {
+          ...row,
+          canonicalId: canon.id,
+          ingredientId: canon.id,
+          ingredientIds: [canon.id],
+          emoji:    row.emoji    || canon.emoji,
+          category: row.category || canon.category,
+          autoLinked: true,
+        };
+      };
+      setScannedItems(normalized.map(applyCorrection).map(autoStar));
       setPhase("confirm");
     } catch (err) {
       setError(err?.message || "Couldn't read the receipt. Try again.");
@@ -749,7 +777,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         const canonEmoji = canon?.emoji || "🏷️";
                         return (
                           <button
-                            onClick={e => { e.stopPropagation(); setLinkingScanIdx(idx); }}
+                            onClick={e => { e.stopPropagation(); setLinkingScanMode("canonical"); setLinkingScanIdx(idx); }}
                             aria-label={canon ? `Change canonical (currently ${canon.name})` : "Set canonical"}
                             title={canon ? `Canonical: ${canon.name} — tap to change` : "Tap to set canonical"}
                             style={canon ? {
@@ -1096,6 +1124,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
       {linkingScanIdx != null && scannedItems[linkingScanIdx] && (
         <LinkIngredient
           item={scannedItems[linkingScanIdx]}
+          mode={linkingScanMode === "canonical" ? "single" : "multi"}
           onLink={ids => {
             // Scan-draft commit. The row doesn't exist in pantry_items
             // yet — addScannedItems creates it on scan-confirm — so we
@@ -1109,6 +1138,11 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             // ids back to a components-write step.
             const primaryId = ids[0] || null;
             const canon = primaryId ? findIngredient(primaryId) : null;
+            // In single mode (CANONICAL axis) the row's tags shouldn't
+            // be disturbed — the user is picking the row's identity,
+            // not its composition. In multi mode (ItemCard onEditTags)
+            // the tags array IS the edit target.
+            const isCanonicalAxis = linkingScanMode === "canonical";
             // Propagate identity fields to sibling rows with the same
             // raw scanner read. Receipt "2 × ACQUAMAR FLA" → correcting
             // one row to Imitation Crab corrects the other automatically.
@@ -1120,13 +1154,28 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             // as an IS-A subline, so the user's branded name survives the
             // correction. (Previous behavior stomped on the user's text
             // and was flagged as a bug.)
-            propagateCorrection(linkingScanIdx, {
-              ingredientId: primaryId,
-              ingredientIds: ids,
-              kind: kindForTagCount(ids.length),
+            //
+            // canonicalId is the single-identity axis (0039 column);
+            // ingredientIds is the multi-tag composition. Canonical-axis
+            // picks write both so the chip re-renders immediately and
+            // the scan-confirm insert carries the slug. Emoji/category
+            // fall back to the row's existing values when the user
+            // creates a brand-new canonical (findIngredient returns null
+            // for user-created slugs) — without that fallback the chip
+            // would flash unset after save.
+            const patch = {
+              canonicalId: primaryId,
               emoji:    canon?.emoji    || scannedItems[linkingScanIdx].emoji,
               category: canon?.category || scannedItems[linkingScanIdx].category,
-            });
+            };
+            if (isCanonicalAxis) {
+              patch.ingredientId = primaryId;
+            } else {
+              patch.ingredientId = primaryId;
+              patch.ingredientIds = ids;
+              patch.kind = kindForTagCount(ids.length);
+            }
+            propagateCorrection(linkingScanIdx, patch);
             setLinkingScanIdx(null);
           }}
           onClose={() => setLinkingScanIdx(null)}
@@ -1252,7 +1301,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           onUpdate={(patch) => {
             propagateCorrection(expandedScanIdx, patch);
           }}
-          onEditTags={() => setLinkingScanIdx(expandedScanIdx)}
+          onEditTags={() => { setLinkingScanMode("tags"); setLinkingScanIdx(expandedScanIdx); }}
           onClose={() => setExpandedScanIdx(null)}
         />
       )}
