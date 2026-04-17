@@ -42,9 +42,55 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.6";
+export const CURRENT_VERSION = "0.7.7";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.7",
+    date:    "2026-04-17",
+    title:   "Cook it by feel — \"I used ⅓ of the bottle\" decrements the fill",
+    summary:
+      "Part A of the proportional-inventory pair, closing the six-" +
+      "version \"per-component proportion slider\" backlog. When you " +
+      "cook a recipe and the ingredient's source pantry row is " +
+      "fill-tracked (bottles, jars, blocks), each used-item card " +
+      "gets a row of fraction chips — ⅛ ¼ ⅓ ½ ⅔ ¾ ALL. Picking one " +
+      "measures by feel instead of making you convert tablespoons: " +
+      "the source row's fill_level decrements multiplicatively (half " +
+      "a half-full bottle = quarter left) and the confirm-removal " +
+      "screen shows \"−⅓ OF WHAT'S LEFT · LEAVES ⅔ LEFT\" so the math " +
+      "is auditable before you hit save. Counted items (eggs, cans, " +
+      "sticks of butter) keep their amount/unit flow — the fraction " +
+      "row only shows up for items YOU opted into fill-tracking on.",
+    shipped: [
+      {
+        kind: "feature",
+        text: "Used-item cards gain a fraction chip row (⅛ / ¼ / ⅓ / ½ / ⅔ / ¾ / ALL) whenever the matched source pantry row has fillLevel != null. Picking one flips that row to fraction-mode — the amount input fades to 35% opacity so it's clear only one measure is active. ✕ returns to amount mode",
+        commits: ["__cook_fraction_picker__"],
+      },
+      {
+        kind: "feature",
+        text: "Confirm-removal screen renders fraction-mode entries with a different readout: \"−⅓ · OF WHAT'S LEFT\" on the right, \"LEAVES ⅔ LEFT\" on the source-row summary. When the fraction drains a single-container row (amount ≤ 1) it reads ITEM CLEARS; when there are more containers behind it, OPENS NEXT with the new count",
+        commits: ["__cook_fraction_ui__"],
+      },
+      {
+        kind: "architecture",
+        text: "buildRemovalPlan gains a mode discriminator ('fraction' | 'amount'). Fraction entries carry newFillLevel instead of newAmount and skip the unit-converter path entirely. Save loop branches on mode — fraction mode decrements pantry_items.fill_level multiplicatively (relative: new = old × (1 − fraction)), matching how a cook reasons about \"how much is left\"",
+        commits: ["__cook_removal_plan__"],
+      },
+      {
+        kind: "ux",
+        text: "Multi-container handling: when a fraction cook empties the open container but amount > 1, the row's count drops by one and fill_level resets to FULL for the next unopened one. No silent deletes when the user still has stock",
+        commits: ["__cook_removal_plan__"],
+      },
+    ],
+    coming_soon: [
+      "Auto-nudge to shopping list when a tracked row crosses ¼ after a fraction cook",
+      "Fraction mode on AddItem + Scan rows (stock new bottles partially-filled, for restocks / gifts)",
+      "Per-component proportion slider on user-composed items (not just recipe cooks)",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.7.6",
     date:    "2026-04-17",

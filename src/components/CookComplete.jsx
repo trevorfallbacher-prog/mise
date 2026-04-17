@@ -78,6 +78,14 @@ export function buildInitialUsedItems(recipe, pantry) {
       selectedRowId: defaultMatch?.id || null,
       usedAmount: ing.qty?.amount ?? null,
       usedUnit:   ing.qty?.unit   ?? (defaultMatch?.unit ?? null),
+      // Part A (0.7.7): proportion-based consumption. Null = use
+      // absolute amount/unit (the default, today's behavior). When set
+      // to 0..1 the source row's fill_level is decremented
+      // multiplicatively at save time and usedAmount is ignored.
+      // Only surfaced in the UI when the selected pantry row has
+      // fillLevel != null (i.e. the user opted into fill tracking on
+      // that row).
+      usedFraction: null,
     };
   });
 }
@@ -98,10 +106,41 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   const out = [];
   for (const row of usedItems) {
     if (row.skipped || !row.selectedRowId) continue;
-    if (row.usedAmount == null || !Number.isFinite(Number(row.usedAmount))) continue;
-    if (!row.usedUnit) continue;
     const pantryRow = lookup(row.selectedRowId);
     if (!pantryRow) continue;
+    // Fraction-mode branch (Part A). When usedFraction is set AND the
+    // source row is fill-tracked, decrement fill_level multiplicatively
+    // and skip the amount math entirely. Relative semantics — if the
+    // bottle was half full and the user says "I used ⅓", ⅓ of what's
+    // left goes (new = 0.5 * (1 - 1/3) = 0.333…), not ⅓ of the whole
+    // capacity. That's how a cook standing at the stove reasons about
+    // "how much is left."
+    if (
+      row.usedFraction != null
+      && Number.isFinite(Number(row.usedFraction))
+      && pantryRow.fillLevel != null
+    ) {
+      const frac = Math.max(0, Math.min(1, Number(row.usedFraction)));
+      const newFillLevel = Math.max(0, Number(pantryRow.fillLevel) * (1 - frac));
+      out.push({
+        pantryRowId: pantryRow.id,
+        pantryRow,
+        ingredient: row.canonical,
+        used: { fraction: frac },
+        mode: "fraction",
+        newFillLevel,
+        // Amount untouched in fraction mode — the row is being
+        // consumed by fill, not by counted quantity.
+        newAmount: Number(pantryRow.amount),
+        convertible: true,
+        source: "recipe",
+        displayName: row.canonical?.name || row.recipeIng.item || "Ingredient",
+        displayEmoji: row.canonical?.emoji || row.recipeIng.emoji || "🥣",
+      });
+      continue;
+    }
+    if (row.usedAmount == null || !Number.isFinite(Number(row.usedAmount))) continue;
+    if (!row.usedUnit) continue;
     const used = { amount: Number(row.usedAmount), unit: row.usedUnit };
     const newAmount = row.canonical ? decrementRow(pantryRow, used, row.canonical) : null;
     out.push({
@@ -109,6 +148,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
       pantryRow,
       ingredient: row.canonical,
       used,
+      mode: "amount",
       newAmount,
       convertible: newAmount != null,
       source: "recipe",
@@ -300,14 +340,42 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         //     left untouched — the confirm-removal screen flagged them red
         //     and we don't want to risk a bad write based on a unit we
         //     couldn't resolve.
+        //
+        //     Two modes:
+        //     * mode='fraction' → decrements fill_level only, keeps
+        //       amount. Row is deleted only when fill goes to zero AND
+        //       amount is already at/below 1 (user poured the last of
+        //       a single bottle). Otherwise we leave amount at the
+        //       current count — they still have N containers, the
+        //       currently-open one just ran dry.
+        //     * mode='amount' (the historical default) → decrements
+        //       amount, deletes the row when amount hits zero.
         for (const entry of plan) {
           if (!entry.convertible) continue;
           const row = byId.get(entry.pantryRowId);
           if (!row) continue;
-          if (entry.newAmount <= 0) {
-            byId.delete(row.id);
+          if (entry.mode === "fraction") {
+            const drained = entry.newFillLevel <= 0;
+            if (drained && Number(row.amount) <= 1) {
+              byId.delete(row.id);
+            } else if (drained) {
+              // Multi-container case: the open one's empty — drop the
+              // count by one and reset fill to FULL for the next one
+              // the user will open. Small but right.
+              byId.set(row.id, {
+                ...row,
+                amount: Math.max(0, Number(row.amount) - 1),
+                fillLevel: 1,
+              });
+            } else {
+              byId.set(row.id, { ...row, fillLevel: entry.newFillLevel });
+            }
           } else {
-            byId.set(row.id, { ...row, amount: entry.newAmount });
+            if (entry.newAmount <= 0) {
+              byId.delete(row.id);
+            } else {
+              byId.set(row.id, { ...row, amount: entry.newAmount });
+            }
           }
         }
 
@@ -622,22 +690,89 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   </div>
                 </div>
                 {canEditAmount && !row.skipped ? (
-                  <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
-                    <input
-                      type="number" min="0" step="any"
-                      value={row.usedAmount ?? ""}
-                      onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
-                      style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
-                    />
-                    <select
-                      value={row.usedUnit || ""}
-                      onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
-                      style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
-                    >
-                      {unitOptions.map(u => (
-                        <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
-                      ))}
-                    </select>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0 }}>
+                    {/* Amount + unit — disabled (visually faded) when
+                        the user has switched this row to fraction mode,
+                        so it's clear only one of the two is the active
+                        measurement. */}
+                    <div style={{ display:"flex", alignItems:"center", gap:4, opacity: row.usedFraction != null ? 0.35 : 1 }}>
+                      <input
+                        type="number" min="0" step="any"
+                        value={row.usedAmount ?? ""}
+                        onChange={e => setRow(row.idx, {
+                          usedAmount: e.target.value === "" ? null : Number(e.target.value),
+                          // Editing amount clears fraction mode for this row.
+                          usedFraction: null,
+                        })}
+                        style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
+                      />
+                      <select
+                        value={row.usedUnit || ""}
+                        onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
+                        style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
+                      >
+                        {unitOptions.map(u => (
+                          <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Fraction picker — only for rows whose source pantry
+                        item is fill-tracked. "I used ⅓ of the bottle"
+                        skips the tbsp math and decrements the source's
+                        fill_level multiplicatively. ✕ returns to amount
+                        mode. Row below the amount input so vertical
+                        rhythm stays visually consistent with non-tracked
+                        rows. */}
+                    {match && match.fillLevel != null && (
+                      <div style={{ display:"flex", alignItems:"center", gap:4, flexWrap:"wrap", justifyContent:"flex-end", maxWidth:220 }}>
+                        {[
+                          { v: 1/8, label: "⅛" },
+                          { v: 1/4, label: "¼" },
+                          { v: 1/3, label: "⅓" },
+                          { v: 1/2, label: "½" },
+                          { v: 2/3, label: "⅔" },
+                          { v: 3/4, label: "¾" },
+                          { v: 1,   label: "ALL" },
+                        ].map(f => {
+                          const active = row.usedFraction != null && Math.abs(row.usedFraction - f.v) < 0.02;
+                          return (
+                            <button
+                              key={f.label}
+                              onClick={() => setRow(row.idx, { usedFraction: f.v })}
+                              title={`I used ${f.label === "ALL" ? "all of what's left" : f.label + " of what's left"}`}
+                              style={{
+                                padding:"3px 7px",
+                                background: active ? "#1a1608" : "#0a0a0a",
+                                border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                                borderRadius:4,
+                                color: active ? "#f5c842" : "#888",
+                                fontFamily:"'DM Mono',monospace", fontSize:10,
+                                cursor:"pointer", letterSpacing:"0.04em",
+                              }}
+                            >
+                              {f.label}
+                            </button>
+                          );
+                        })}
+                        {row.usedFraction != null && (
+                          <button
+                            onClick={() => setRow(row.idx, { usedFraction: null })}
+                            title="Use amount instead"
+                            style={{
+                              padding:"3px 6px",
+                              background:"transparent",
+                              border:"1px dashed #2a2a2a",
+                              borderRadius:4,
+                              color:"#666",
+                              fontFamily:"'DM Mono',monospace", fontSize:10,
+                              cursor:"pointer",
+                            }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : null}
                 <button
@@ -969,19 +1104,46 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         ) : (
           <div style={{ flex:1, display:"flex", flexDirection:"column", gap:10, marginBottom:18 }}>
             {plan.map((entry, i) => {
-              const uLabel = entry.ingredient
-                ? unitLabel(entry.ingredient, entry.used.unit)
-                : entry.used.unit;
+              const isFraction = entry.mode === "fraction";
+              // Fraction-mode: surface "⅓ of what's left" as the
+              // minus-readout and a fill-level "LEAVES ⅔ LEFT" summary.
+              // Nearest-stop label so 0.333… shows as "⅓" not "33%",
+              // matches the ItemCard + Kitchen chip vocabulary.
+              const FRACS = [
+                { v: 0,    label: "EMPTY" },
+                { v: 1/8,  label: "⅛" },
+                { v: 1/4,  label: "¼" },
+                { v: 1/3,  label: "⅓" },
+                { v: 1/2,  label: "½" },
+                { v: 2/3,  label: "⅔" },
+                { v: 3/4,  label: "¾" },
+                { v: 1,    label: "FULL" },
+              ];
+              const nearest = (v) => FRACS.reduce((a, b) => Math.abs(b.v - v) < Math.abs(a.v - v) ? b : a);
+              const uLabel = isFraction
+                ? "OF WHAT'S LEFT"
+                : (entry.ingredient
+                    ? unitLabel(entry.ingredient, entry.used.unit)
+                    : entry.used.unit);
               const rowUnitLabel = entry.ingredient
                 ? unitLabel(entry.ingredient, entry.pantryRow.unit)
                 : entry.pantryRow.unit;
-              // Remaining readout: "leaves 0.75 sticks" or "pantry row clears"
-              // when decrement hits 0.
-              const leaves = entry.convertible
-                ? (entry.newAmount === 0
-                    ? "ITEM CLEARS"
-                    : `LEAVES ${formatQty({ amount: entry.newAmount, unit: entry.pantryRow.unit }, entry.ingredient)} ${rowUnitLabel}`)
-                : "UNIT MISMATCH · TAP BACK TO FIX";
+              // Remaining readout: "leaves 0.75 sticks" / "⅔ LEFT" /
+              // "pantry row clears" when decrement hits 0.
+              let leaves;
+              if (!entry.convertible) {
+                leaves = "UNIT MISMATCH · TAP BACK TO FIX";
+              } else if (isFraction) {
+                leaves = entry.newFillLevel <= 0
+                  ? (Number(entry.pantryRow.amount) <= 1
+                      ? "ITEM CLEARS"
+                      : `OPENS NEXT · ${Math.max(0, Number(entry.pantryRow.amount) - 1)} LEFT`)
+                  : `LEAVES ${nearest(entry.newFillLevel).label} LEFT`;
+              } else if (entry.newAmount === 0) {
+                leaves = "ITEM CLEARS";
+              } else {
+                leaves = `LEAVES ${formatQty({ amount: entry.newAmount, unit: entry.pantryRow.unit }, entry.ingredient)} ${rowUnitLabel}`;
+              }
               return (
                 <div
                   key={`${entry.pantryRowId}-${i}`}
@@ -1005,7 +1167,9 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   </div>
                   <div style={{ textAlign:"right", flexShrink:0 }}>
                     <div style={{ fontFamily:"'Fraunces',serif", fontSize:16, color:"#f5c842", fontStyle:"italic" }}>
-                      −{formatQty(entry.used, entry.ingredient)}
+                      {isFraction
+                        ? `−${nearest(entry.used.fraction).label}`
+                        : `−${formatQty(entry.used, entry.ingredient)}`}
                     </div>
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.05em" }}>
                       {uLabel}
