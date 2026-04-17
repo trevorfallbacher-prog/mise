@@ -287,12 +287,15 @@ function AuthedApp({ user, profile, upsertProfile }) {
         )}
       </button>
 
-      {/* Admin badge — passive visual indicator so the admin always knows
-          elevated permissions are active. Shown only when the viewer's
-          profile.role === 'admin'; no interaction, just a confirmation. */}
+      {/* Admin quick-link — pill in the top-left that both confirms
+          elevated permissions and opens the admin portal in one tap.
+          Previously display-only; now the primary entry point so the
+          admin doesn't have to walk Settings → ADMIN TOOLS. */}
       {profile?.role === "admin" && (
-        <div
-          title="You are signed in as an admin"
+        <button
+          onClick={() => setAdminOpen(true)}
+          title="Open admin tools"
+          aria-label="Open admin tools"
           style={{
             position: "fixed", top: 12, left: 12, zIndex: 50,
             background: "#2a0a0a",
@@ -302,11 +305,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
             fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
             letterSpacing: "0.14em",
             display: "flex", alignItems: "center", gap: 6,
-            userSelect: "none",
+            cursor: "pointer",
           }}
         >
           🛠 ADMIN
-        </div>
+        </button>
       )}
 
       <button
