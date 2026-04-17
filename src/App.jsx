@@ -537,6 +537,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
         <QuickCook
           userId={user.id}
           profile={profile}
+          familyKey={familyKey}
           pantry={pantry}
           setPantry={setPantry}
           shoppingList={shoppingList}

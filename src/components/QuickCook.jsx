@@ -10,6 +10,8 @@ import {
 } from "../data/recipes";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useCookLog } from "../lib/useCookLog";
 import { useToast } from "../lib/toast";
 
 // QuickCook — full-screen overlay launched by the center ➕ in the tab bar.
@@ -27,7 +29,7 @@ import { useToast } from "../lib/toast";
 // shared=true since scheduled meals are family-visible.
 
 export default function QuickCook({
-  userId, profile,
+  userId, profile, familyKey,
   pantry, setPantry, shoppingList, setShoppingList, onGoToShopping,
   family = [], friends = [],
   onClose, onCooked,
@@ -42,6 +44,16 @@ export default function QuickCook({
   const { recipes: userRecipes, saveRecipe } = useUserRecipes(userId);
   const { schedule } = useScheduledMeals(userId);
   const { push: pushToast } = useToast();
+  // Ingredient enrichment is provided once at App level; reading it
+  // here lets AIRecipe's context builder look up flavorProfile/pairs/
+  // diet per pantry item without re-fetching.
+  const ingredientInfo = useIngredientInfo();
+  // Cook logs feed the AI-context "recent history" summary. Lazily
+  // loaded at the QuickCook level so users who never open the overlay
+  // don't pay for the subscription. Cookbook's own useCookLog call
+  // dedupes via supabase channel naming, so a second subscriber here
+  // costs roughly nothing.
+  const { logs: cookLogs = [] } = useCookLog(userId, familyKey);
 
   const userName = profile?.name?.trim().split(/\s+/)[0] || null;
   const hasFamily = family.length > 0;
@@ -205,6 +217,9 @@ export default function QuickCook({
       <div style={OVERLAY_STYLE}>
         <AIRecipe
           pantry={pantry}
+          profile={profile}
+          cookLogs={cookLogs}
+          ingredientInfo={ingredientInfo}
           onCancel={backToChoose}
           onSave={handleSave("ai")}
           onSchedule={handleSchedule("ai")}

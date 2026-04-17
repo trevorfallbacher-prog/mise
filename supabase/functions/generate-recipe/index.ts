@@ -53,9 +53,19 @@ const MODEL = "claude-haiku-4-5-20251001";
 type PantryItem = {
   name?: string;
   canonicalId?: string;
-  amount?: number;
+  ingredientIds?: string[];
+  amount?: number | string;
   unit?: string;
   category?: string;
+  state?: string | null;
+  location?: string | null;
+  daysToExpiry?: number | null;
+  kind?: string | null;
+  enrichment?: {
+    flavorProfile?: string | null;
+    pairs?: string[];
+    diet?: Record<string, unknown> | null;
+  };
 };
 
 type Prefs = {
@@ -65,15 +75,53 @@ type Prefs = {
   notes?: string;
 };
 
-function buildPrompt(pantry: PantryItem[], prefs: Prefs, avoidTitles: string[]): string {
+type RichContext = {
+  profile?: {
+    dietary?:    string | null;
+    veganStyle?: string | null;
+    level?:      string | null;
+    goal?:       string | null;
+    topSkills?:  Array<{ id: string; level: number }>;
+  } | null;
+  history?: {
+    cookCount?:          number;
+    ratingCounts?:       Record<string, number>;
+    topCuisines?:        Array<{ id: string; count: number }>;
+    topFavoritedTitles?: string[];
+  } | null;
+} | null;
+
+function buildPrompt(
+  pantry: PantryItem[],
+  prefs: Prefs,
+  avoidTitles: string[],
+  context: RichContext,
+): string {
   const pantryLines = pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
         .map((p) => {
           const amount = p.amount != null ? `${p.amount}${p.unit || ""}` : "";
-          const tail = [amount, p.canonicalId ? `id:${p.canonicalId}` : "",
-            p.category || ""].filter(Boolean).join(" · ");
-          return `- ${p.name || "unknown"}${tail ? ` (${tail})` : ""}`;
+          const facts = [
+            amount,
+            p.canonicalId ? `id:${p.canonicalId}` : "",
+            p.category || "",
+            p.state ? `state:${p.state}` : "",
+            p.location ? `loc:${p.location}` : "",
+            p.kind && p.kind !== "ingredient" ? `kind:${p.kind}` : "",
+            typeof p.daysToExpiry === "number"
+              ? (p.daysToExpiry <= 0 ? "EXPIRED" : `expires in ${p.daysToExpiry}d`)
+              : "",
+          ].filter(Boolean).join(" · ");
+          const base = `- ${p.name || "unknown"}${facts ? ` (${facts})` : ""}`;
+          const enr = p.enrichment;
+          if (!enr) return base;
+          const enrBits = [
+            enr.flavorProfile ? `flavor: ${enr.flavorProfile}` : "",
+            enr.pairs && enr.pairs.length ? `pairs: ${enr.pairs.join(", ")}` : "",
+            dietSummary(enr.diet),
+          ].filter(Boolean).join(" | ");
+          return enrBits ? `${base}\n    ${enrBits}` : base;
         })
         .join("\n");
 
@@ -83,6 +131,12 @@ function buildPrompt(pantry: PantryItem[], prefs: Prefs, avoidTitles: string[]):
     prefs.time ? `- time preference: ${prefs.time}` : "",
     prefs.notes ? `- user notes: ${prefs.notes}` : "",
   ].filter(Boolean).join("\n") || "(none — use your judgment)";
+
+  // Profile + cook-history blocks — only present on first-draft calls.
+  // REGEN deliberately drops these so the second draft isn't pulled
+  // back toward the same flavor-profile pairings as the first.
+  const profileBlock = context?.profile ? profileSection(context.profile) : "";
+  const historyBlock = context?.history ? historySection(context.history) : "";
 
   // Avoid-list + random nonce — together these are what make REGEN
   // actually produce a different dish rather than the model's single
@@ -113,7 +167,7 @@ ${pantryLines}
 
 USER PREFERENCES:
 ${prefLines}
-
+${profileBlock}${historyBlock}
 Return ONLY a single JSON object (no markdown, no prose) with this
 exact shape. Every field is REQUIRED unless marked optional.
 
@@ -148,7 +202,19 @@ exact shape. Every field is REQUIRED unless marked optional.
     },
     ...
   ],
-  "tags": ["<short tag>", ...]                          // 2-5 useful tags
+  "tags": ["<short tag>", ...],                         // 2-5 useful tags
+  "aiRationale": "<1-3 sentences in plain language, written TO the user in second person,
+                 explaining WHY you picked this dish. Cite specific signals you used — items
+                 about to expire, user's dietary constraints, recent cuisines they've leaned
+                 into, their cooking level. Examples:
+                   'Your heavy cream and tomatoes both expire this week, so I leaned into a
+                    creamy tomato sauce. You've nailed three Italian dishes recently, so I
+                    stayed in that lane but pushed toward something a little more adventurous.'
+                   'You mentioned spicy, and you've got all the aromatics for a Thai curry
+                    on hand. The fish sauce and coconut milk open that door — and it comes
+                    together in 25 minutes, matching your quick-cook preference.'
+                 Do NOT invent signals that weren't in the context. If no rich context was
+                 provided, keep it to one sentence about the pantry fit."
 }
 
 Rules:
@@ -163,8 +229,61 @@ Rules:
   - If the pantry can't plausibly yield a coherent dish, still return a
     recipe that uses staples + 1-2 pantry items, but note the assumed
     staples in the ingredients list.
+  - Respect dietary constraints in the PROFILE block if present. If the
+    user is vegetarian/vegan, do not propose meat or fish even if the
+    pantry contains it (their family may have added it).
+  - If pantry items show "EXPIRED" or "expires in Nd" where N is small,
+    STRONGLY prefer recipes that use them — reducing waste is a first-
+    class goal.
+  - Respect the skill level implied by profile.level and topSkills. A
+    "beginner" shouldn't get a five-step braise; an "advanced" cook is
+    bored by scrambled eggs.
+  - The aiRationale field is how the user finds out WHY you picked
+    this dish. Make it specific and grounded in what you saw in the
+    context. Don't pad with generic food-writing prose.
 
 Return the JSON object and nothing else.`;
+}
+
+// Compact single-line summary of the diet flags so the model sees
+// vegan/vegetarian/gluten-free signals without drowning in a giant
+// per-ingredient blob.
+function dietSummary(diet: Record<string, unknown> | null | undefined): string {
+  if (!diet || typeof diet !== "object") return "";
+  const flags: string[] = [];
+  for (const key of ["vegan", "vegetarian", "glutenFree", "keto", "halal", "kosher"]) {
+    const v = (diet as Record<string, unknown>)[key];
+    if (v === true) flags.push(key);
+  }
+  return flags.length ? `diet: ${flags.join(",")}` : "";
+}
+
+function profileSection(p: NonNullable<NonNullable<RichContext>["profile"]>): string {
+  const lines: string[] = [];
+  if (p.dietary)    lines.push(`- dietary: ${p.dietary}${p.veganStyle ? ` (${p.veganStyle})` : ""}`);
+  if (p.level)      lines.push(`- cooking level: ${p.level}`);
+  if (p.goal)       lines.push(`- goal: ${p.goal}`);
+  if (p.topSkills && p.topSkills.length) {
+    lines.push(`- practiced skills: ${p.topSkills.map((s) => `${s.id}(L${s.level})`).join(", ")}`);
+  }
+  if (!lines.length) return "";
+  return `\nPROFILE:\n${lines.join("\n")}\n`;
+}
+
+function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): string {
+  if (!h.cookCount) return "";
+  const ratings = h.ratingCounts
+    ? Object.entries(h.ratingCounts)
+        .filter(([, c]) => c > 0)
+        .map(([k, c]) => `${k}:${c}`).join(" ")
+    : "";
+  const cuisines = (h.topCuisines || []).map((c) => `${c.id}(${c.count})`).join(", ");
+  const favs = (h.topFavoritedTitles || []).join(" | ");
+  const lines: string[] = [`- recent cooks: ${h.cookCount}`];
+  if (ratings)  lines.push(`- rating mix: ${ratings}`);
+  if (cuisines) lines.push(`- top cuisines: ${cuisines}`);
+  if (favs)     lines.push(`- favorited: ${favs}`);
+  return `\nRECENT HISTORY:\n${lines.join("\n")}\n`;
 }
 
 Deno.serve(async (req) => {
@@ -177,7 +296,12 @@ Deno.serve(async (req) => {
     });
   }
 
-  let body: { pantry?: PantryItem[]; prefs?: Prefs };
+  let body: {
+    pantry?: PantryItem[];
+    prefs?: Prefs;
+    avoidTitles?: string[];
+    context?: RichContext;
+  };
   try {
     body = await req.json();
   } catch {
@@ -188,12 +312,13 @@ Deno.serve(async (req) => {
 
   const pantry = Array.isArray(body.pantry) ? body.pantry : [];
   const prefs = body.prefs || {};
+  const context = body.context || null;
   // Truncate the avoid list so a long regen session doesn't blow out
   // the prompt. The last five titles are plenty to steer away from
   // whatever the user actually saw most recently.
-  const avoidTitles = Array.isArray((body as { avoidTitles?: string[] }).avoidTitles)
-    ? ((body as { avoidTitles?: string[] }).avoidTitles as string[])
-        .filter((t) => typeof t === "string" && t.trim().length > 0)
+  const avoidTitles = Array.isArray(body.avoidTitles)
+    ? body.avoidTitles
+        .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
         .slice(-5)
     : [];
 
@@ -225,7 +350,7 @@ Deno.serve(async (req) => {
         // out regen variety without realizing why.
         temperature: 1,
         messages: [
-          { role: "user", content: [{ type: "text", text: buildPrompt(pantry, prefs, avoidTitles) }] },
+          { role: "user", content: [{ type: "text", text: buildPrompt(pantry, prefs, avoidTitles, context) }] },
         ],
       }),
     });
@@ -291,6 +416,12 @@ Deno.serve(async (req) => {
     ingredients: recipe.ingredients,
     steps:      recipe.steps,
     tags:       Array.isArray(recipe.tags) ? recipe.tags : [],
+    // Narrative "why this dish" string for the preview banner.
+    // Truncated defensively so a verbose model doesn't eat the
+    // preview UI. Null when the model skipped the field.
+    aiRationale: typeof recipe.aiRationale === "string"
+      ? String(recipe.aiRationale).slice(0, 400).trim() || null
+      : null,
   };
 
   return new Response(JSON.stringify({ recipe: finalRecipe }), { headers: JSON_HEADERS });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { generateRecipe } from "../lib/generateRecipe";
+import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
@@ -42,10 +43,13 @@ const DIFFICULTY_CHIPS = [
 
 export default function AIRecipe({
   pantry = [],
+  profile,          // viewer's profile row (dietary, level, skill_levels, …)
+  cookLogs = [],    // viewer's recent cook_log rows for the history summary
+  ingredientInfo,   // the useIngredientInfo() context — optional
   onCancel,
-  onSave,          // (recipe) => Promise — persist privately, then close
-  onSchedule,      // (recipe) => Promise — parent persists + opens SchedulePicker
-  onSaveAndCook,   // (recipe) => Promise — existing save + cook path
+  onSave,           // (recipe) => Promise — persist privately, then close
+  onSchedule,       // (recipe) => Promise — parent persists + opens SchedulePicker
+  onSaveAndCook,    // (recipe) => Promise — existing save + cook path
 }) {
   const [phase,  setPhase]  = useState("setup");     // setup | loading | preview | error
   const [recipe, setRecipe] = useState(null);
@@ -70,16 +74,24 @@ export default function AIRecipe({
     setPhase("loading");
     setErrMsg("");
     try {
+      // Rich context (profile + history + pantry enrichment) on the
+      // first draft of a session — that's when the model benefits
+      // most from specific signals. REGEN calls (previousTitles
+      // non-empty) strip back to lean so the second draft doesn't
+      // re-anchor on the same pairings as the first.
+      const isRegen = previousTitles.length > 0;
+      const built = buildAIContext({
+        pantry,
+        profile,
+        ingredientInfo,
+        cookLogs,
+        mode: isRegen ? "lean" : "rich",
+      });
       const payload = {
-        pantry: pantry.map(p => ({
-          name:        p.name || "",
-          canonicalId: p.canonicalId || null,
-          amount:      p.amount ?? null,
-          unit:        p.unit ?? null,
-          category:    p.category ?? null,
-        })),
+        pantry: built.pantry,
         prefs: { cuisine, time, difficulty, notes: notes.trim() || undefined },
         avoidTitles: previousTitles,
+        context: built.context,
       };
       const { recipe: drafted } = await generateRecipe(payload);
       setRecipe(drafted);
@@ -183,6 +195,38 @@ export default function AIRecipe({
               {(recipe.cuisine || "").toUpperCase()} · {totalTimeMin(recipe)} MIN · {difficultyLabel(recipe.difficulty).toUpperCase()} · SERVES {recipe.serves}
             </div>
           </div>
+
+          {recipe.aiRationale && (
+            // "Why I picked this" banner. Claude cites the concrete
+            // signals it used — expiring items, the user's stated
+            // preferences, recent cuisine runs, cooking level — so
+            // the draft doesn't feel like a black box. Styled softer
+            // than the bundled copy so it reads as AI commentary, not
+            // part of the recipe.
+            <div style={{
+              marginTop: 8, padding: "12px 14px",
+              background: "linear-gradient(135deg, #1a1624 0%, #141018 100%)",
+              border: "1px solid #2e2538",
+              borderRadius: 12,
+              display: "flex", gap: 10, alignItems: "flex-start",
+            }}>
+              <div style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>✨</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+                  color: "#c7a8d4", letterSpacing: "0.12em", marginBottom: 4,
+                }}>
+                  WHY THIS DISH
+                </div>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                  color: "#d8d2c8", lineHeight: 1.55,
+                }}>
+                  {recipe.aiRationale}
+                </div>
+              </div>
+            </div>
+          )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

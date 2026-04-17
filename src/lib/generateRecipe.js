@@ -12,17 +12,22 @@ import { supabase } from "./supabase";
  * Ask Claude to draft a recipe from the current pantry.
  *
  * @param {object} opts
- * @param {Array<object>} opts.pantry        — [{ name, canonicalId?, amount?, unit?, category? }, ...]
+ * @param {Array<object>} opts.pantry        — curated pantry rows (see src/lib/aiContext.js)
  * @param {object}        [opts.prefs]       — { cuisine?, difficulty?, time?, notes? }
  * @param {Array<string>} [opts.avoidTitles] — recent drafts to steer away from on REGEN
+ * @param {object}        [opts.context]     — rich context (profile slice + cook history
+ *                                             summary); omit or pass null on REGEN to keep
+ *                                             the model from re-anchoring on the same
+ *                                             pairings as the first draft.
  * @returns {Promise<{ recipe: object }>}
  */
-export async function generateRecipe({ pantry = [], prefs, avoidTitles } = {}) {
+export async function generateRecipe({ pantry = [], prefs, avoidTitles, context } = {}) {
   const { data, error } = await supabase.functions.invoke("generate-recipe", {
     body: {
       pantry,
       prefs: prefs || {},
       avoidTitles: Array.isArray(avoidTitles) ? avoidTitles : [],
+      context: context || null,
     },
   });
 

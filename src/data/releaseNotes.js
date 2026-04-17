@@ -42,9 +42,51 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.11.1";
+export const CURRENT_VERSION = "0.11.2";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.11.2",
+    date:    "2026-04-17",
+    title:   "Smarter AI recipes — and \"why I picked this\"",
+    summary:
+      "The AI draft used to see only your pantry's names and " +
+      "categories, which is why the recipes felt a bit generic. " +
+      "This update gives Claude a much richer picture: what's about " +
+      "to expire, how each item pairs with others (via the canonical " +
+      "library), your dietary preferences and cooking level, and a " +
+      "short summary of recent cooks (ratings + cuisines). The " +
+      "result: drafts that prioritize food before it spoils, respect " +
+      "vegetarian / vegan, and lean into what you've been nailing. " +
+      "And every draft now comes with a \"Why this dish\" banner — " +
+      "Claude writes 1–3 sentences explaining the signals it used, " +
+      "so the AI doesn't feel like a black box.",
+    shipped: [
+      { kind: "feature",
+        text: "\"Why this dish\" rationale on every AI draft — Claude cites expiring items, your dietary preferences, recent cuisines, and cooking level.",
+        commits: [] },
+      { kind: "feature",
+        text: "AI now sees expiration dates and prioritizes dishes that use food before it spoils.",
+        commits: [] },
+      { kind: "feature",
+        text: "Dietary flags from ingredient enrichment + your profile are respected — the AI won't propose meat to a vegetarian even if something meaty is in the family pantry.",
+        commits: [] },
+      { kind: "feature",
+        text: "Recent cook history (ratings + top cuisines) feeds the draft so the AI learns what you cook well and leans into those lanes.",
+        commits: [] },
+      { kind: "ux",
+        text: "REGEN uses a leaner context than the first draft so the second suggestion doesn't re-anchor on the same flavor pairings — keeps variety high.",
+        commits: [] },
+      { kind: "safety",
+        text: "User-entered strings (item names, recipe titles) are sanitized before entering the AI prompt. Defensive against the odd edge case; doesn't change what you see.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Family-pantry-aware drafts (recipes that use what's in the shared fridge specifically).",
+      "Edit an AI draft in place before saving — tweak an ingredient or a step without regenerating.",
+      "Inline image generation for drafted recipes.",
+    ],
+  },
   {
     version: "0.11.1",
     date:    "2026-04-17",
