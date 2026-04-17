@@ -82,6 +82,28 @@ function fromDb(row) {
   // what Claude actually read before the canonical substitution. Lets
   // the ItemCard show "raw scan: SHRD MOZZ" for debugging and trust.
   if (row.scan_raw           !== undefined) item.scanRaw           = row.scan_raw || null;
+  // tile_id memory (migration 0036). Explicit tile placement set by
+  // the user at add-time or inherited from a template. Short-circuits
+  // the heuristic classifier when present.
+  if (row.tile_id            !== undefined) item.tileId            = row.tile_id || null;
+  // type_id (migration 0038) — IDENTIFIED AS layer. Holds either a
+  // bundled WWEIA id ('wweia_pizza') or a user_types.id uuid.
+  if (row.type_id            !== undefined) item.typeId            = row.type_id || null;
+  // canonical_id (migration 0039) — the canonical-identity bridge.
+  // Singular id from src/data/ingredients.js ('hot_dog', 'mayo',
+  // 'green_onion'). Identity, NOT composition — user-composed
+  // ingredient_ids[] stays free-form.
+  if (row.canonical_id       !== undefined) item.canonicalId       = row.canonical_id || null;
+  // protected (migration 0044) — sentimental / keepsake rows that
+  // shouldn't be ✕-deletable. DB enforces via the delete policy;
+  // this mapping just lets the UI know so it can hide the delete
+  // control.
+  if (row.protected          !== undefined) item.protected         = !!row.protected;
+  // fill_level (migration 0043) is dormant — we rolled the whole
+  // proportional-inventory concept back into plain amount+max sliders
+  // in 0.7.9. Column stays in the DB for forward compat but the
+  // client doesn't read or write it. A future migration can DROP
+  // COLUMN if it stays dead long enough.
   return item;
 }
 
@@ -126,6 +148,10 @@ function toDb(item) {
     ...(item.sourceReceiptId   !== undefined ? { source_receipt_id: item.sourceReceiptId || null } : {}),
     ...(item.sourceScanId      !== undefined ? { source_scan_id: item.sourceScanId || null } : {}),
     ...(item.scanRaw           !== undefined ? { scan_raw: item.scanRaw || null } : {}),
+    ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
+    ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
+    ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
+    ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
   };
 }
 

@@ -304,6 +304,12 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
           if (!entry.convertible) continue;
           const row = byId.get(entry.pantryRowId);
           if (!row) continue;
+          // Protected keepsake rows (migration 0044) never get deleted
+          // or decremented by a cook. The DB delete policy would block
+          // the DELETE anyway, but clamping client-side keeps the
+          // optimistic state honest — no flicker, no ghost row, no
+          // accidental "I cooked with Bella's gummy bear" math.
+          if (row.protected) continue;
           if (entry.newAmount <= 0) {
             byId.delete(row.id);
           } else {
@@ -622,22 +628,46 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   </div>
                 </div>
                 {canEditAmount && !row.skipped ? (
-                  <div style={{ display:"flex", alignItems:"center", gap:4, flexShrink:0 }}>
-                    <input
-                      type="number" min="0" step="any"
-                      value={row.usedAmount ?? ""}
-                      onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
-                      style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
-                    />
-                    <select
-                      value={row.usedUnit || ""}
-                      onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
-                      style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
-                    >
-                      {unitOptions.map(u => (
-                        <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
-                      ))}
-                    </select>
+                  <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0, minWidth:160 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      <input
+                        type="number" min="0" step="any"
+                        value={row.usedAmount ?? ""}
+                        onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
+                        style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
+                      />
+                      <select
+                        value={row.usedUnit || ""}
+                        onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
+                        style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
+                      >
+                        {unitOptions.map(u => (
+                          <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Estimate slider — drag to set how much of THIS
+                        ingredient you used. Range 0..source's current
+                        amount (or 0..1 if the recipe-hinted amount
+                        can't be converted; the caller then commits the
+                        amount directly). Nobody's weighing half a bag
+                        of chips; slide to what looks right. Live write
+                        to usedAmount so the confirm-removal screen's
+                        \"LEAVES x\" readout updates as you drag. */}
+                    {match && Number(match.amount) > 0 && (() => {
+                      const maxVal = Number(match.amount);
+                      const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
+                      return (
+                        <input
+                          type="range"
+                          min="0" max={maxVal} step={step}
+                          value={Number.isFinite(Number(row.usedAmount)) ? Math.min(Number(row.usedAmount), maxVal) : 0}
+                          onChange={e => setRow(row.idx, { usedAmount: Number(e.target.value), usedUnit: row.usedUnit || match.unit })}
+                          aria-label={`Estimate ${displayName} used`}
+                          style={{ width:"100%", accentColor:"#f5c842" }}
+                        />
+                      );
+                    })()}
                   </div>
                 ) : null}
                 <button
@@ -975,11 +1005,9 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               const rowUnitLabel = entry.ingredient
                 ? unitLabel(entry.ingredient, entry.pantryRow.unit)
                 : entry.pantryRow.unit;
-              // Remaining readout: "leaves 0.75 sticks" or "pantry row clears"
-              // when decrement hits 0.
               const leaves = entry.convertible
                 ? (entry.newAmount === 0
-                    ? "PANTRY ROW CLEARS"
+                    ? "ITEM CLEARS"
                     : `LEAVES ${formatQty({ amount: entry.newAmount, unit: entry.pantryRow.unit }, entry.ingredient)} ${rowUnitLabel}`)
                 : "UNIT MISMATCH · TAP BACK TO FIX";
               return (
@@ -1052,8 +1080,8 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         </h2>
         <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:28 }}>
           {isCompoundProduce
-            ? "We'll add it to your pantry so you can pull from it next time a recipe calls for it."
-            : "Put a portion in the fridge / freezer and it'll show up in your pantry for a future meal."}
+            ? "We'll add it to your kitchen so you can pull from it next time a recipe calls for it."
+            : "Put a portion in the fridge / freezer and it'll show up in your kitchen for a future meal."}
         </p>
 
         <div style={{ flex:1, display:"flex", flexDirection:"column", gap:12 }}>
@@ -1123,7 +1151,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       { id: "fridge",  emoji: "🧊", label: "Fridge",  hint: "Use within a few days" },
       { id: "freezer", emoji: "❄️", label: "Freezer", hint: "Good for weeks to months" },
       { id: "pantry",  emoji: "🥫", label: "Pantry",  hint: "Shelf-stable only" },
-      { id: "garbage", emoji: "🗑️", label: "Garbage", hint: "Tossing the extra — no pantry row" },
+      { id: "garbage", emoji: "🗑️", label: "Garbage", hint: "Tossing the extra — nothing stored" },
     ];
     const isGarbage = leftoverLocation === "garbage";
 

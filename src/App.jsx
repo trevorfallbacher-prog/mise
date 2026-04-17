@@ -4,11 +4,15 @@ import Home from "./components/Home";
 import Cook from "./components/Cook";
 import Plan from "./components/Plan";
 import Cookbook from "./components/Cookbook";
-import Pantry from "./components/Pantry";
+import Kitchen from "./components/Kitchen";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
+import AdminPanel from "./components/AdminPanel";
 import NotificationsPanel from "./components/NotificationsPanel";
 import UserProfile from "./components/UserProfile";
+import WhatsNewNotification from "./components/WhatsNewNotification";
+import ReleaseNotesModal from "./components/ReleaseNotesModal";
+import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
 import { usePantry } from "./lib/usePantry";
@@ -24,7 +28,7 @@ const NAV = [
   { id:"cook",     emoji:"🧑‍🍳", label:"Cook"     },
   { id:"plan",     emoji:"📅",   label:"Plan"     },
   { id:"cookbook", emoji:"📖",   label:"Cookbook" },
-  { id:"pantry",   emoji:"🥫",   label:"Pantry"   },
+  { id:"pantry",   emoji:"🍽️",  label:"Kitchen"  },
 ];
 
 const pageShell = {
@@ -119,6 +123,12 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
 
+  // What's-new notification state. Compares the bundled CURRENT_VERSION
+  // against the user's locally-stored last-seen version; surfaces a
+  // slim notification + (on tap) the full ReleaseNotesModal. First-paint
+  // unknown-history is silent — see useWhatsNew.js for the rationale.
+  const whatsNew = useWhatsNew();
+
   // NOTE: the ingredient_info seed + fetch used to live here as a separate
   // useEffect. It's now consolidated inside IngredientInfoProvider so the
   // seeded data is actually in React state (not just in the DB) by the
@@ -167,6 +177,9 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [notifsOpen, setNotifsOpen]       = useState(false);
+  // Admin-panel open state. Only reachable via Settings → ADMIN entry,
+  // which is itself gated on profile.role === 'admin' (0042).
+  const [adminOpen, setAdminOpen]         = useState(false);
   // deepLink is set when a notification tap wants to navigate. Cookbook
   // consumes it on mount and calls setDeepLink(null) to clear.
   // Shape: { kind: 'cook_log', id: '<uuid>' } | null
@@ -215,6 +228,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
   //   * 'user_profile' — opens the target user's profile overlay (used
   //                      by badge earn/fan-out notifications so a tap
   //                      lands on the badge wall).
+  //   * 'receipt'      — lands on Kitchen tab and opens ReceiptView on
+  //                      the receipt row (photo, total, item list).
+  //                      Populated by migration 0040.
+  //   * 'pantry_scan'  — same as receipt but for a fridge/pantry/
+  //                      freezer scan artifact (pantry_scans.id).
   // Unknown kinds fall through silently so future server-side targets
   // ship without breaking old clients.
   const openNotificationTarget = useCallback((targetKind, targetId) => {
@@ -228,6 +246,13 @@ function AuthedApp({ user, profile, upsertProfile }) {
     if (targetKind === "user_profile") {
       setNotifsOpen(false);
       setProfileUserId(targetId);
+      return;
+    }
+    if (targetKind === "receipt" || targetKind === "pantry_scan") {
+      setDeepLink({ kind: targetKind, id: targetId });
+      setPantryView("stock");
+      setTab("pantry");
+      setNotifsOpen(false);
       return;
     }
   }, []);
@@ -274,11 +299,19 @@ function AuthedApp({ user, profile, upsertProfile }) {
         }}
       >
         🔔
-        {notifications.unreadCount > 0 && (
-          <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            {notifications.unreadCount > 99 ? "99+" : notifications.unreadCount}
-          </span>
-        )}
+        {(() => {
+          // Badge counts real unread notifications PLUS the synthetic
+          // release-notes pin when an unacknowledged release exists.
+          // Mirrors what the user actually sees when they open the
+          // panel — pin is rendered as if it were one extra row.
+          const total = notifications.unreadCount + (whatsNew.showNotification ? 1 : 0);
+          if (total <= 0) return null;
+          return (
+            <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              {total > 99 ? "99+" : total}
+            </span>
+          );
+        })()}
       </button>
 
       <div style={{ paddingBottom:80 }}>
@@ -321,6 +354,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
+            onOpenCook={openCook}
           />
         )}
         {tab === "cookbook" && (
@@ -334,7 +368,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
           />
         )}
         {tab === "pantry"   && (
-          <Pantry
+          <Kitchen
             userId={user.id}
             pantry={pantry}
             setPantry={setPantry}
@@ -342,6 +376,8 @@ function AuthedApp({ user, profile, upsertProfile }) {
             setShoppingList={setShoppingList}
             view={pantryView}
             setView={setPantryView}
+            deepLink={deepLink}
+            onDeepLinkConsumed={() => setDeepLink(null)}
           />
         )}
       </div>
@@ -353,6 +389,19 @@ function AuthedApp({ user, profile, upsertProfile }) {
           upsertProfile={upsertProfile}
           onClose={() => setSettingsOpen(false)}
           onOpenProfile={openProfile}
+          // Re-open release notes from Settings — covers both casual
+          // re-reading and the silent first-paint heuristic in
+          // useWhatsNew (new users get notes silently marked-as-seen
+          // and need this entry to ever see them).
+          onOpenReleaseNotes={() => { setSettingsOpen(false); whatsNew.openFromSettings(); }}
+          onOpenAdmin={() => { setSettingsOpen(false); setAdminOpen(true); }}
+        />
+      )}
+
+      {adminOpen && (
+        <AdminPanel
+          userId={user.id}
+          onClose={() => setAdminOpen(false)}
         />
       )}
 
@@ -384,6 +433,24 @@ function AuthedApp({ user, profile, upsertProfile }) {
           clearAll={notifications.clearAll}
           onClose={() => setNotifsOpen(false)}
           onOpen={openNotificationTarget}
+          // Pinned release-notes entry — only when there's an
+          // unacknowledged release. whatsNew.showNotification is the
+          // single source of truth for "user hasn't seen this version
+          // yet" — if the slim modal is/was eligible to fire, the
+          // panel pin is too. Tap routes to the full modal (closes
+          // panel first so the modal isn't buried), dismiss marks
+          // the version as seen via useWhatsNew.
+          pinned={whatsNew.showNotification ? [{
+            id: `release-${whatsNew.latestVersion || "current"}`,
+            emoji: "📋",
+            msg: whatsNew.latestTitle || "What's new in this release",
+            sublabel: `v${whatsNew.latestVersion || ""} · TAP TO READ`,
+            onTap: () => { setNotifsOpen(false); whatsNew.openFromSettings(); },
+            onDismiss: () => whatsNew.dismiss(),
+          }] : []}
+          // Always-available footer link to browse past notes anytime.
+          // Closes the panel first so the modal lands clean.
+          onOpenReleaseNotes={() => { setNotifsOpen(false); whatsNew.openFromSettings(); }}
         />
       )}
 
@@ -397,6 +464,20 @@ function AuthedApp({ user, profile, upsertProfile }) {
           </button>
         ))}
       </div>
+
+      {/* Post-update notification + full release-notes modal. The slim
+          notification opens automatically via useWhatsNew when the
+          bundled version differs from the user's last-seen; the full
+          modal opens from "SEE WHAT'S NEW" or (later) Settings. */}
+      {whatsNew.showNotification && (
+        <WhatsNewNotification
+          onSeeWhatsNew={whatsNew.openFull}
+          onDismiss={whatsNew.dismiss}
+        />
+      )}
+      {whatsNew.showFullModal && (
+        <ReleaseNotesModal onClose={whatsNew.closeFull} />
+      )}
     </div>
   );
 }

@@ -690,6 +690,16 @@ export const INGREDIENTS = [
     defaultUnit: "count",
   },
   {
+    id: "hot_dog", name: "Hot Dog", shortName: "Hot Dog",
+    parentId: "pork_hub", emoji: "🌭", category: "meat",
+    units: [
+      { id: "count", label: "dogs", toBase: 50 },
+      { id: "pack",  label: "packs", toBase: 400 }, // ~8 per pack
+      { id: "lb",    label: "lb",    toBase: 453.6 },
+    ],
+    defaultUnit: "count",
+  },
+  {
     id: "bacon", name: "Bacon / Pancetta", shortName: "Bacon",
     parentId: "pork_hub", emoji: "🥓", category: "meat",
     units: [
@@ -850,6 +860,15 @@ export const INGREDIENTS = [
   {
     id: "pearl_onion", name: "Pearl Onions", emoji: "🧅", category: "produce",
     units: [{ id: "count", label: "onions", toBase: 1 }],
+    defaultUnit: "count",
+  },
+  {
+    id: "green_onion", name: "Green Onion", shortName: "Green Onion",
+    emoji: "🌱", category: "produce",
+    units: [
+      { id: "count", label: "stalks",  toBase: 1 },
+      { id: "bunch", label: "bunches", toBase: 8 },
+    ],
     defaultUnit: "count",
   },
   {
@@ -1052,11 +1071,134 @@ export const INGREDIENTS = [
   },
 
   // ── pantry / dry goods ──────────────────────────────────────────────────
+  // Flours — hub member registry. Protein content varies dramatically
+  // across types and drives gluten behavior, so they are NOT
+  // interchangeable in baking. The hub groups them for the picker
+  // while keeping each as a first-class canonical for recipe matching.
   {
-    id: "flour", name: "All-Purpose Flour", emoji: "🌾", category: "pantry",
+    id: "flour", name: "All-Purpose Flour", shortName: "All-Purpose",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
     units: [
       { id: "cup",  label: "cups", toBase: 120 },
       { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "bread_flour", name: "Bread Flour", shortName: "Bread",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "whole_wheat_flour", name: "Whole Wheat Flour", shortName: "Whole Wheat",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "pastry_flour", name: "Pastry Flour", shortName: "Pastry",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "cake_flour", name: "Cake Flour", shortName: "Cake",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "zero_zero_flour", name: "00 Flour", shortName: "00",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
+      { id: "tbsp", label: "tbsp", toBase: 7.5 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "kg",   label: "kg",   toBase: 1000 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "semolina", name: "Semolina Flour", shortName: "Semolina",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 160 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "rice_flour", name: "Rice Flour", shortName: "Rice",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 160 },
+      { id: "tbsp", label: "tbsp", toBase: 10 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "almond_flour", name: "Almond Flour", shortName: "Almond",
+    parentId: "flour_hub", emoji: "🌰", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 96 },
+      { id: "tbsp", label: "tbsp", toBase: 6 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "coconut_flour", name: "Coconut Flour", shortName: "Coconut",
+    parentId: "flour_hub", emoji: "🥥", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 112 },
+      { id: "tbsp", label: "tbsp", toBase: 7 },
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "cornmeal", name: "Cornmeal", shortName: "Cornmeal",
+    parentId: "flour_hub", emoji: "🌽", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 140 },
+      { id: "tbsp", label: "tbsp", toBase: 9 },
+      { id: "g",    label: "g",    toBase: 1 },
+      { id: "lb",   label: "lb",   toBase: 453.6 },
+    ],
+    defaultUnit: "cup",
+  },
+  {
+    id: "masa_harina", name: "Masa Harina", shortName: "Masa",
+    parentId: "flour_hub", emoji: "🌽", category: "pantry",
+    units: [
+      { id: "cup",  label: "cups", toBase: 120 },
       { id: "g",    label: "g",    toBase: 1 },
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
@@ -1146,6 +1288,152 @@ export const INGREDIENTS = [
       { id: "sheet", label: "sheets",  toBase: 20 },
     ],
     defaultUnit: "box",
+  },
+  {
+    // Generic pasta fallback for "I just have pasta" / recipe-matching
+    // when the user's item doesn't specify a shape. Sits alongside the
+    // specific cuts — recipes calling for "pasta" match this OR any
+    // of the specific members (via the hub membership).
+    id: "pasta", name: "Pasta", shortName: "Pasta",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+      { id: "g",   label: "g",     toBase: 1 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "cavatappi", name: "Cavatappi", shortName: "Cavatappi",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "fusilli", name: "Fusilli", shortName: "Fusilli",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "rotini", name: "Rotini", shortName: "Rotini",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "farfalle", name: "Farfalle", shortName: "Bow-Tie",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "macaroni", name: "Elbow Macaroni", shortName: "Macaroni",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+      { id: "cup", label: "cups",  toBase: 140 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "bucatini", name: "Bucatini", shortName: "Bucatini",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "linguine", name: "Linguine", shortName: "Linguine",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "angel_hair", name: "Angel Hair", shortName: "Angel Hair",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "ziti", name: "Ziti", shortName: "Ziti",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "orecchiette", name: "Orecchiette", shortName: "Orecchiette",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "box", label: "boxes", toBase: 454 },
+    ],
+    defaultUnit: "box",
+  },
+  {
+    id: "tortellini", name: "Tortellini", shortName: "Tortellini",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "pkg", label: "pkgs",  toBase: 255 },  // ~9oz fresh pkg
+    ],
+    defaultUnit: "pkg",
+  },
+  {
+    id: "ravioli", name: "Ravioli", shortName: "Ravioli",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "pkg", label: "pkgs",  toBase: 255 },
+    ],
+    defaultUnit: "pkg",
+  },
+  {
+    id: "gnocchi", name: "Gnocchi", shortName: "Gnocchi",
+    parentId: "pasta_hub", emoji: "🍝", category: "pantry",
+    units: [
+      { id: "oz",  label: "oz",    toBase: 28.35 },
+      { id: "lb",  label: "lb",    toBase: 453.6 },
+      { id: "pkg", label: "pkgs",  toBase: 500 },  // ~1.1lb shelf-stable pkg
+    ],
+    defaultUnit: "pkg",
   },
 
   // Bread ───────────────────
@@ -1943,6 +2231,20 @@ export const HUBS = [
     aggregateBase: 453.6,
   },
   {
+    // Flour hub (chunk 13c) — protein content varies dramatically
+    // across types (all-purpose ~11%, bread ~13%, cake ~8%, 00 varies),
+    // and they are NOT 1:1 interchangeable in baking. Grouping them
+    // under a hub keeps the picker manageable while preserving each
+    // as a first-class canonical for recipe matching.
+    id: "flour_hub",
+    name: "Flour",
+    emoji: "🌾",
+    category: "pantry",
+    aggregateUnit: "lb",
+    aggregateLabel: "lb",
+    aggregateBase: 453.6,
+  },
+  {
     id: "rice_hub",
     name: "Rice",
     emoji: "🍚",
@@ -1984,6 +2286,63 @@ export function membersOfHub(hubId) {
 // Ingredients that are NOT in any hub — shown alongside hub tiles in pickers.
 export function standaloneIngredients() {
   return INGREDIENTS.filter(i => !i.parentId);
+}
+
+// Lookup table for canonical inference: lowercase name/shortName →
+// ingredient id. Built lazily so it's a one-time cost on first use.
+// Only includes tokens ≥ 3 chars to avoid spurious matches
+// ("a"/"i" would fire on almost anything).
+let _canonicalAliasMap = null;
+function getCanonicalAliasMap() {
+  if (_canonicalAliasMap) return _canonicalAliasMap;
+  const map = new Map();
+  for (const ing of INGREDIENTS) {
+    const tokens = [ing.name, ing.shortName].filter(Boolean);
+    for (const t of tokens) {
+      const key = t.toLowerCase().trim();
+      if (key.length < 3) continue;
+      // Keep the FIRST match if duplicate names exist — preserves
+      // registry order (specifics before generics when carefully
+      // ordered). "Sausage" (specific) wins over a hypothetical
+      // broader "Sausage / whatever" appearing later.
+      if (!map.has(key)) map.set(key, ing.id);
+    }
+  }
+  _canonicalAliasMap = map;
+  return map;
+}
+
+/**
+ * Infer the most-specific canonical ingredient id from a free-text
+ * name. Returns the id or null. Longest-matching alias wins; ties
+ * break on registry order.
+ *
+ * Example:
+ *   "Oscar Mayer Bratwurst"        → 'sausage' (no bratwurst canonical;
+ *                                   falls through to type default)
+ *   "Mama Bear's Green Onion"      → 'green_onion'
+ *   "Franks Best Cheese Dogs"      → 'hot_dog'
+ *   "Home Run Inn Pizza"           → null  (no pizza canonical yet)
+ *   "random text"                  → null
+ *
+ * Pair with canonicalIdForType (foodTypes.js) — name-based wins when
+ * it fires, type default fires otherwise.
+ */
+export function inferCanonicalFromName(name) {
+  const lower = (name || "").toLowerCase().trim();
+  if (lower.length < 3) return null;
+  const map = getCanonicalAliasMap();
+  let bestId = null;
+  let bestLen = 0;
+  for (const [alias, id] of map) {
+    if (alias.length < 3) continue;
+    if (!lower.includes(alias)) continue;
+    if (alias.length > bestLen) {
+      bestId = id;
+      bestLen = alias.length;
+    }
+  }
+  return bestId;
 }
 
 export function unitLabel(ingredient, unitId) {

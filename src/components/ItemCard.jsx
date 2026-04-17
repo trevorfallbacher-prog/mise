@@ -1,8 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel } from "../data/ingredients";
+import { useEffect, useMemo, useState } from "react";
+import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
+import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
+import ModalSheet from "./ModalSheet";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useItemComponents } from "../lib/useItemComponents";
+import { useUserTiles } from "../lib/useUserTiles";
+import { FRIDGE_TILES } from "../lib/fridgeTiles";
+import { PANTRY_TILES } from "../lib/pantryTiles";
+import { FREEZER_TILES } from "../lib/freezerTiles";
+import { inferTileFromName } from "../lib/tileKeywords";
+import { Z } from "../lib/tokens";
+import TypePicker from "./TypePicker";
+import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
+import { useUserTypes } from "../lib/useUserTypes";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -23,6 +34,11 @@ import { useItemComponents } from "../lib/useItemComponents";
 //   onOpenProvenance(link)— optional; called when the user taps a tappable
 //                           provenance line. `link` is { kind, id } where
 //                           kind is 'receipt' | 'cook' | etc. Parent routes.
+//   onEditTags()          — optional; called when the user taps any of the
+//                           "+ EDIT TAGS" / "+ ADD" affordances on the card.
+//                           Parent opens LinkIngredient against this item
+//                           (layered on top at a higher z-index). Absent
+//                           = button is hidden (read-only embeds).
 //   onClose()             — dismiss the card
 //
 // When the item has no ingredientId (pure free-text row), the card still
@@ -112,13 +128,10 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance, onClose }) {
-  // Close on Escape for keyboard users — mirrors other modals in the app.
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenProvenance, onEditTags, onClose }) {
+  // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
+  // drag handle, top-right ✕) are owned by ModalSheet; this component
+  // only describes the card's content.
 
   // All ingredient tags on this item (migration 0033's ingredient_ids
   // array), normalized to a list of canonical-ingredient objects plus
@@ -148,6 +161,64 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   const TAGS_VISIBLE = 5;
   const [showAllTags, setShowAllTags] = useState(false);
   useEffect(() => { setShowAllTags(false); }, [item?.id]);
+
+  // Family's custom tiles for tile-id resolution. RLS handles family
+  // scope so we get self+family rows. Empty array when no user tiles
+  // exist yet; built-in resolution still works fine.
+  const [userTiles] = useUserTiles(userId);
+
+  // Resolve a tile_id -> display info ({emoji, label, location, source}).
+  // Checks built-ins first (FRIDGE/PANTRY/FREEZER_TILES), then user
+  // tiles. Returns null when the id doesn't match either — which
+  // happens for in-flight realtime writes or a tile a family member
+  // deleted; UI falls back to a generic "Custom Tile" label.
+  const currentTile = useMemo(() => {
+    if (!item?.tileId) return null;
+    const id = item.tileId;
+    const fridgeHit  = FRIDGE_TILES.find(t => t.id === id);
+    if (fridgeHit)  return { ...fridgeHit,  location: "fridge",  source: "builtin" };
+    const pantryHit  = PANTRY_TILES.find(t => t.id === id);
+    if (pantryHit)  return { ...pantryHit,  location: "pantry",  source: "builtin" };
+    const freezerHit = FREEZER_TILES.find(t => t.id === id);
+    if (freezerHit) return { ...freezerHit, location: "freezer", source: "builtin" };
+    const userHit = userTiles.find(t => t.id === id);
+    if (userHit)    return { ...userHit, source: "custom" };
+    return null;
+  }, [item?.tileId, userTiles]);
+
+  // Stacked tile-picker state. Opened when the IDENTIFIED AS line is
+  // tapped. Renders in its own ModalSheet over the ItemCard at a
+  // higher z-index so the pick flow doesn't close the card.
+  const [tilePickerOpen, setTilePickerOpen] = useState(false);
+
+  // IDENTIFIED AS (type) resolution. Mirrors the tile resolver
+  // above — bundled WWEIA types checked first (O(1) lookup),
+  // user types via useUserTypes fallback. Null when the id doesn't
+  // resolve (stale template referencing a deleted user_type, etc.).
+  const [userTypes] = useUserTypes(userId);
+  const currentType = useMemo(() => {
+    if (!item?.typeId) return null;
+    const bundled = findFoodType(item.typeId);
+    if (bundled) return { ...bundled, source: "bundled" };
+    const userHit = userTypes.find(t => t.id === item.typeId);
+    if (userHit) return { ...userHit, source: "custom" };
+    return null;
+  }, [item?.typeId, userTypes]);
+
+  // Canonical identity resolution (0039). The "final resting name"
+  // of the thing — a Frank's Best Cheese Dogs row has canonical_id
+  // = 'hot_dog' pointing at the bundled Hot Dog canonical, which
+  // surfaces its emoji + display name on a dedicated line above
+  // Food Category / Stored In. Separate from composition (what's
+  // INSIDE the thing — lives on ingredient_ids[]).
+  const currentCanonical = useMemo(() => {
+    if (!item?.canonicalId) return null;
+    return findIngredient(item.canonicalId);
+  }, [item?.canonicalId]);
+
+  // Stacked type picker — separate from tilePicker so both can
+  // exist but don't step on each other.
+  const [typePickerOpen, setTypePickerOpen] = useState(false);
 
   // Safe bound — if the tag list shrinks below activeTagIdx (user
   // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
@@ -250,50 +321,6 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
 
-  // Swipe-down-to-dismiss state.
-  //
-  //   dragY        — current vertical offset the inner modal is translated
-  //                  by. Tracks the finger while dragging, then either
-  //                  snaps back to 0 (not dismissed) or animates out
-  //                  past the viewport (dismissed).
-  //   dragStartRef — ref holding the touch-start Y and whether the scroll
-  //                  container was at its top when the drag began. The
-  //                  gesture only activates at scrollTop === 0 so scrolling
-  //                  through the deep-dive content never accidentally
-  //                  triggers dismiss.
-  const DISMISS_THRESHOLD = 100;
-  const [dragY, setDragY] = useState(0);
-  const dragStartRef = useRef(null);
-  const scrollRef = useRef(null);
-
-  const onTouchStart = (e) => {
-    const el = scrollRef.current;
-    if (!el) return;
-    // Only arm the drag when the scroll is at the top. If the user has
-    // scrolled down and starts a new touch, we assume they want to keep
-    // scrolling, not dismiss.
-    if (el.scrollTop > 0) return;
-    dragStartRef.current = { y: e.touches[0].clientY };
-  };
-  const onTouchMove = (e) => {
-    if (!dragStartRef.current) return;
-    const diff = e.touches[0].clientY - dragStartRef.current.y;
-    if (diff <= 0) { setDragY(0); return; } // upward drag: ignore
-    setDragY(diff);
-  };
-  const onTouchEnd = () => {
-    if (!dragStartRef.current) return;
-    const finalY = dragY;
-    dragStartRef.current = null;
-    if (finalY >= DISMISS_THRESHOLD) {
-      // Snap out + dismiss. Animation handles the motion; cleanup on unmount.
-      setDragY(window.innerHeight);
-      setTimeout(() => onClose?.(), 180);
-    } else {
-      setDragY(0); // snap back
-    }
-  };
-
   if (!item) return null;
 
   const readOnly = !onUpdate;
@@ -314,57 +341,8 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
   const currentLocation = item.location || "pantry";
 
   return (
-    <div style={{
-      position: "fixed", inset: 0,
-      // Fade the backdrop with the drag so the dismiss feels physical.
-      background: `rgba(0,0,0,${0.87 * Math.max(0, 1 - dragY / 400)})`,
-      zIndex: 320,
-      display: "flex", alignItems: "flex-end",
-      maxWidth: 480, margin: "0 auto",
-      transition: dragStartRef.current ? "none" : "background 0.18s ease",
-    }}>
-      <div
-        ref={scrollRef}
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
-        onTouchCancel={onTouchEnd}
-        style={{
-          width: "100%", background: "#141414",
-          borderRadius: "20px 20px 0 0", padding: "18px 22px 36px",
-          maxHeight: "92vh", overflowY: "auto",
-          position: "relative",
-          // Translate the card with the finger; snap-back and snap-out use
-          // the same transition timing so they feel like the same gesture.
-          transform: `translateY(${dragY}px)`,
-          transition: dragStartRef.current ? "none" : "transform 0.18s ease",
-          // Prevent overscroll-chaining on iOS when the user starts pulling
-          // at the top of the scroll area — otherwise the whole page
-          // bounces instead of the card translating.
-          overscrollBehaviorY: "contain",
-        }}
-      >
-        {/* Drag handle — visual affordance that the sheet can be swiped
-            down. Centered at the top. */}
-        <div style={{
-          width: 44, height: 4, background: "#2a2a2a", borderRadius: 2,
-          margin: "0 auto 14px", flexShrink: 0,
-        }} />
-        {/* Close button, top-right. */}
-        <button
-          onClick={onClose}
-          aria-label="Close"
-          style={{
-            position: "absolute", top: 12, right: 14,
-            width: 32, height: 32,
-            background: "#0a0a0a", border: "1px solid #2a2a2a",
-            color: "#aaa", borderRadius: 16,
-            fontFamily: "'DM Mono',monospace", fontSize: 14,
-            cursor: "pointer", zIndex: 1,
-          }}
-        >
-          ✕
-        </button>
+    <>
+      <ModalSheet onClose={onClose} zIndex={Z.card}>
 
         {/* ─── ITEM SECTION (this specific row) ─── */}
         <div style={{ paddingTop: 12 }}>
@@ -406,11 +384,117 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                   {item.name}
                 </h2>
               )}
-              {/* IDENTIFIED AS — lists every canonical tag on this item.
-                  Single-tag items render exactly like before; multi-tag
-                  items (Italian blend, frozen pizza, etc.) render all
-                  their tags joined with "·" so the full identity is
-                  visible at a glance before opening the deep-dive. */}
+              {/* CANONICAL — the final-resting-name of the thing
+                  (Hot Dog, Mayo, Green Onion). USDA-defensible
+                  identity that recipes call by. Sits directly below
+                  the user's custom name so "Frank's Best Cheese
+                  Dogs" reads instantly as "→ Hot Dog". Rendered
+                  when canonical is resolved; dashed when missing
+                  so the user can tap IDENTIFIED AS below to fill
+                  it (type-pick flows write canonical automatically).
+                  Render is READ-ONLY today — canonical is derived,
+                  not hand-picked; re-picking IDENTIFIED AS swaps
+                  the canonical through for you. */}
+              {currentCanonical && (
+                <div
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: "#b8a878",
+                    letterSpacing: "0.06em", marginTop: 4,
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
+                  <span style={{
+                    color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                    fontSize: 14, fontStyle: "italic", fontWeight: 400,
+                  }}>
+                    {currentCanonical.name}
+                  </span>
+                </div>
+              )}
+              {/* FOOD CATEGORY (IDENTIFIED AS) — what KIND of thing
+                  this is (Pizza, Cheese, Sausages). Separate from
+                  STORED IN below which answers WHERE it lives. Tap
+                  to re-pick — opens a stacked TypePicker modal. */}
+              {onUpdate && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setTypePickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: currentType ? "#f5c842" : "#666",
+                    letterSpacing: "0.08em", marginTop: 3,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ color: "#888" }}>FOOD CATEGORY:</span>
+                  {currentType ? (
+                    <>
+                      <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
+                      <span style={{
+                        color: "#f5c842",
+                        borderBottom: "1px dashed #f5c84244",
+                      }}>
+                        {currentType.label?.toUpperCase() || "CUSTOM TYPE"}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      color: "#888",
+                      borderBottom: "1px dashed #66666644",
+                    }}>
+                      TAP TO IDENTIFY
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* STORED IN — the item's tile placement (where it lives).
+                  Distinct from MADE OF below which lists component
+                  ingredients. Tap to re-pick — opens a stacked
+                  IdentifiedAsPicker modal. Hidden entirely when
+                  there's no onUpdate (read-only embeds). */}
+              {onUpdate && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setTilePickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: currentTile ? "#f5c842" : "#666",
+                    letterSpacing: "0.08em", marginTop: 3,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  <span style={{ color: "#888" }}>STORED IN:</span>
+                  {currentTile ? (
+                    <>
+                      <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
+                      <span style={{
+                        color: "#f5c842",
+                        borderBottom: "1px dashed #f5c84244",
+                      }}>
+                        {currentTile.label?.toUpperCase() || "CUSTOM TILE"}
+                      </span>
+                    </>
+                  ) : (
+                    <span style={{
+                      color: "#888",
+                      borderBottom: "1px dashed #66666644",
+                    }}>
+                      TAP TO PLACE
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* MADE OF — lists every canonical tag on this item.
+                  Renamed from IDENTIFIED AS in chunk 16d to separate
+                  compositional identity ("what is this made from")
+                  from organizational identity ("what kind of thing
+                  is this", now the IDENTIFIED AS line above).
+                  Single-tag items render exactly like before; multi-
+                  tag items (Italian blend, frozen pizza, etc.) render
+                  all their tags joined with "·" so the full identity
+                  is visible at a glance before opening the deep-dive. */}
               {tags.length > 0 && (() => {
                 // Skip the line if the ONLY tag's name matches the
                 // user-typed name — avoids "Prosciutto · PROSCIUTTO"
@@ -424,7 +508,7 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 const hidden  = overflowing ? tags.length - TAGS_VISIBLE : 0;
                 return (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5 }}>
-                    IDENTIFIED AS:{" "}
+                    MADE OF:{" "}
                     {visible.map((t, i) => (
                       <span key={t.id}>
                         {i > 0 && <span style={{ color: "#444" }}> · </span>}
@@ -462,6 +546,28 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                           }}
                         >
                           SHOW LESS
+                        </button>
+                      </>
+                    )}
+                    {/* Edit-tags affordance inline with the IDENTIFIED AS
+                        line. Opens LinkIngredient against this item via
+                        the parent's onEditTags callback. Hidden when the
+                        parent didn't wire it (read-only embeds, e.g. a
+                        nested drill view). */}
+                    {onEditTags && (
+                      <>
+                        <span style={{ color: "#444" }}> · </span>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onEditTags(); }}
+                          style={{
+                            background: "transparent", border: "1px solid #3a2f10",
+                            padding: "1px 7px",
+                            color: "#f5c842", cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            letterSpacing: "0.1em", borderRadius: 4,
+                          }}
+                        >
+                          + EDIT
                         </button>
                       </>
                     )}
@@ -606,45 +712,73 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
                 const hasCurrent = units.some(u => u.id === item.unit);
                 const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
+                // Slider range: 0..max (max is the high-water amount
+                // this row has ever held — tracked automatically in
+                // usePantry on adds/restocks). Drag = estimate what's
+                // left after a half-bag-of-chips scenario. Step sized
+                // against max so the slider feels precise on both
+                // small-max items (3 eggs) and large-max items (5 lbs
+                // flour). Color keyed to the same thresholds the
+                // amount-bar already uses for visual consistency.
+                const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);
+                const ratio = Math.min(1, (Number(item.amount) || 0) / maxVal);
+                const sliderColor = ratio <= 0.25 ? "#ef4444"
+                  : ratio <= 0.5 ? "#f59e0b"
+                  : "#7ec87e";
+                const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
                 return (
                   <div
-                    style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}
+                    style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
                     onClick={e => e.stopPropagation()}
                   >
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <input
+                        type="number" inputMode="decimal" min="0" step="any"
+                        autoFocus
+                        defaultValue={item.amount}
+                        onBlur={e => {
+                          const v = parseFloat(e.target.value);
+                          commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === "Enter") e.target.blur();
+                          if (e.key === "Escape") setEditingField(null);
+                        }}
+                        style={{
+                          width: 60, padding: "3px 6px",
+                          background: "#0a0a0a", border: "1px solid #f5c842",
+                          color: "#f5c842", borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+                        }}
+                      />
+                      <select
+                        defaultValue={item.unit}
+                        onChange={e => onUpdate?.({ unit: e.target.value })}
+                        style={{
+                          padding: "3px 2px",
+                          background: "#0a0a0a", border: "1px solid #f5c842",
+                          color: "#f5c842", borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 10, outline: "none",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {opts.map(u => (
+                          <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Slide-to-estimate. Half a bag of chips is eaten,
+                        nobody's weighing what's left — drag to what
+                        looks right. Writes live through onUpdate so the
+                        number input + bar color update as you drag. */}
                     <input
-                      type="number" inputMode="decimal" min="0" step="any"
-                      autoFocus
-                      defaultValue={item.amount}
-                      onBlur={e => {
-                        const v = parseFloat(e.target.value);
-                        commit({ amount: Number.isFinite(v) && v >= 0 ? v : item.amount });
-                      }}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") e.target.blur();
-                        if (e.key === "Escape") setEditingField(null);
-                      }}
-                      style={{
-                        width: 60, padding: "3px 6px",
-                        background: "#0a0a0a", border: "1px solid #f5c842",
-                        color: "#f5c842", borderRadius: 6,
-                        fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
-                      }}
+                      type="range"
+                      min="0" max={maxVal} step={step}
+                      value={Number(item.amount) || 0}
+                      onChange={e => onUpdate?.({ amount: Number(e.target.value) })}
+                      aria-label={`Estimate ${item.name} remaining`}
+                      style={{ width: "100%", accentColor: sliderColor }}
                     />
-                    <select
-                      defaultValue={item.unit}
-                      onChange={e => onUpdate?.({ unit: e.target.value })}
-                      style={{
-                        padding: "3px 2px",
-                        background: "#0a0a0a", border: "1px solid #f5c842",
-                        color: "#f5c842", borderRadius: 6,
-                        fontFamily: "'DM Mono',monospace", fontSize: 10, outline: "none",
-                        cursor: "pointer",
-                      }}
-                    >
-                      {opts.map(u => (
-                        <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
-                      ))}
-                    </select>
                   </div>
                 );
               })() : (
@@ -750,6 +884,7 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
             </div>
           </div>
 
+
           {/* Raw scanner read — when the row came from a scan, show what
               Claude actually saw on the label before canonical substitution.
               Folded into a compact line so it doesn't dominate the card; if
@@ -835,6 +970,20 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 COMPONENTS · {components.length}
               </div>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
+              {onEditTags && (
+                <button
+                  onClick={onEditTags}
+                  style={{
+                    background: "transparent", border: "1px solid #3a2f10",
+                    padding: "3px 9px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    letterSpacing: "0.12em", borderRadius: 5,
+                  }}
+                >
+                  + EDIT
+                </button>
+              )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
               {components.map(comp => {
@@ -931,6 +1080,24 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
                 {tags.length > 1 ? "INGREDIENTS" : "INGREDIENT"}
               </div>
               <div style={{ flex: 1, height: 1, background: "#242424" }} />
+              {/* Edit-tags on the legacy (pre-6c) section too. Re-linking
+                  a multi-tagged item through LinkIngredient's new flow
+                  writes component rows and flips kind='meal', promoting
+                  the card to the COMPONENTS view on the next open. */}
+              {onEditTags && (
+                <button
+                  onClick={onEditTags}
+                  style={{
+                    background: "transparent", border: "1px solid #3a2f10",
+                    padding: "3px 9px",
+                    color: "#f5c842", cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    letterSpacing: "0.12em", borderRadius: 5,
+                  }}
+                >
+                  + EDIT
+                </button>
+              )}
             </div>
             {tags.length > 1 && (
               // Tab row — one chip per canonical tag. Tap to swap the
@@ -987,9 +1154,25 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
             fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic",
           }}>
             Free-text row — no canonical ingredient tagged. Link it to unlock the deep-dive content.
+            {onEditTags && (
+              <div style={{ marginTop: 12 }}>
+                <button
+                  onClick={onEditTags}
+                  style={{
+                    padding: "10px 16px",
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    color: "#f5c842", borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
+                  }}
+                >
+                  + LINK INGREDIENTS
+                </button>
+              </div>
+            )}
           </div>
         )}
-      </div>
+      </ModalSheet>
 
       {/* ─── Stacked drill modals ───────────────────────────────────────
           Tapping a component opens a child card layered on top of this
@@ -997,17 +1180,14 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           dismissing the whole stack. Item-kind drills recurse through
           ItemCard (so a 3-level Meal tree is just 3 stacked cards);
           ingredient-kind drills land on IngredientCard's standard
-          modal mode. Mounted *outside* the inner scroll container so
-          they're z-indexed above this card's body. */}
+          modal mode. Siblings of ModalSheet in the render tree so
+          they're not affected by the parent sheet's swipe transform
+          and render at their own z-index layer on top. */}
       {drilledItem && (
         <ItemCard
           item={drilledItem}
           pantry={pantry}
-          // Snapshot mode: child item was consumed — we're rendering
-          // from the component's frozen identity, so editing would be
-          // meaningless. Live drills get the same onUpdate the parent
-          // had, so the user can edit a sub-meal in place if it still
-          // exists in pantry.
+          userId={userId}
           onUpdate={snapshotMode ? undefined : onUpdate}
           onOpenProvenance={onOpenProvenance}
           onClose={() => { setDrilledItem(null); setSnapshotMode(false); }}
@@ -1020,6 +1200,121 @@ export default function ItemCard({ item, pantry = [], onUpdate, onOpenProvenance
           onClose={() => setDrilledIngredientId(null)}
         />
       )}
-    </div>
+
+      {/* IDENTIFIED AS picker — stacked modal over the ItemCard.
+          Mounted as a sibling so its fixed positioning isn't contained
+          by ModalSheet's swipe transform (same pattern as drilled
+          modals). Writes via onUpdate so the parent's usePantry flow
+          persists the new tile_id + location. */}
+      {tilePickerOpen && (
+        <ModalSheet
+          onClose={() => setTilePickerOpen(false)}
+          zIndex={Z.picker}
+          label="STORED IN"
+          maxHeight="85vh"
+        >
+          <h2 style={{
+            fontFamily: "'Fraunces',serif", fontSize: 22,
+            fontStyle: "italic", color: "#f0ece4",
+            fontWeight: 400, margin: "2px 0 10px",
+          }}>
+            Where does this live?
+          </h2>
+          <p style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+          }}>
+            Pick a tile to place {item.name} in your kitchen. Or
+            create a new one at the bottom.
+          </p>
+          <IdentifiedAsPicker
+            userId={userId}
+            locationHint={item.location || currentTile?.location || null}
+            selectedTileId={item.tileId || null}
+            // Name-keyword suggestion using chunk 16e's dictionary.
+            // Only fires when no tile is set yet — re-pickers have
+            // an explicit intent, don't want the system second-
+            // guessing them.
+            suggestedTileId={!item.tileId ? inferTileFromName(item.name) : null}
+            onPick={(tileId, location) => {
+              onUpdate?.({
+                tileId,
+                // Honor the picker's location when it differs from
+                // the item's current location (e.g. user re-placing
+                // a fridge item to Pantry tile). Keeps the pantry
+                // row consistent with its new tile assignment.
+                ...(location && location !== item.location
+                    ? { location }
+                    : {}),
+              });
+              setTilePickerOpen(false);
+            }}
+          />
+        </ModalSheet>
+      )}
+
+      {/* IDENTIFIED AS (type) picker — stacked modal over the
+          ItemCard, sibling to the tile picker so both can exist
+          independently. When the user picks a type, we do the
+          auto-suggest-tile-on-empty dance here too: if item.tileId
+          is null and the picked type has a defaultTileId, set both
+          in one onUpdate call. */}
+      {typePickerOpen && (
+        <ModalSheet
+          onClose={() => setTypePickerOpen(false)}
+          zIndex={Z.picker}
+          label="IDENTIFIED AS"
+          maxHeight="85vh"
+        >
+          <h2 style={{
+            fontFamily: "'Fraunces',serif", fontSize: 22,
+            fontStyle: "italic", color: "#f0ece4",
+            fontWeight: 400, margin: "2px 0 10px",
+          }}>
+            What kind of thing is this?
+          </h2>
+          <p style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+          }}>
+            Pick a type for {item.name}. Default categories come from
+            USDA's food classifications; you can also create your own.
+          </p>
+          <TypePicker
+            userId={userId}
+            selectedTypeId={item.typeId || null}
+            // Keyword-inferred suggestion — only fires when no type
+            // is set yet (re-pickers have explicit intent).
+            suggestedTypeId={!item.typeId ? inferFoodTypeFromName(item.name) : null}
+            onPick={(typeId, defaultTileId, defaultLocation) => {
+              const patch = { typeId };
+              // Cross-axis auto-fill: if the item has no tile yet
+              // and the picked type defaults to one, set it. User can
+              // still re-pick tile separately via the STORED IN line.
+              if (defaultTileId && !item.tileId) {
+                patch.tileId = defaultTileId;
+              }
+              if (defaultLocation && !item.location) {
+                patch.location = defaultLocation;
+              }
+              // Canonical identity swap (0039). ingredient_ids[]
+              // stays untouched — that's USER composition, not ours
+              // to rewrite on a type change. Swap the canonical_id
+              // to the new type's default. If the user's NAME
+              // carries a more-specific canonical (e.g. "Bratwurst"
+              // with a bratwurst canonical), prefer that over the
+              // broader type default.
+              const prior = item.canonicalId || null;
+              const next  = inferCanonicalFromName(item.name)
+                         || canonicalIdForType(typeId)
+                         || null;
+              if (next !== prior) patch.canonicalId = next;
+              onUpdate?.(patch);
+              setTypePickerOpen(false);
+            }}
+          />
+        </ModalSheet>
+      )}
+    </>
   );
 }

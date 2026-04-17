@@ -69,7 +69,14 @@ const BREAD_IDS = new Set([
 // FRIDGE_TILES, or "condiments" as the catch-all fridge bucket so nothing
 // ever silently disappears from the UI.
 export function tileIdForItem(item, { findIngredient, hubForIngredient }) {
-  // Explicit user tag wins if/when we add manual tile assignment later.
+  // Explicit user placement wins (migration 0036). When the user or a
+  // family-shared template set item.tileId, skip the heuristic and
+  // return it directly. Solves the "frozen pizza lands on dairy
+  // because mozzarella is its primary component" problem — the
+  // aggregate Meal has its own identity that no heuristic on its
+  // components can recover.
+  if (item?.tileId) return item.tileId;
+  // Legacy explicit tag (pre-0036). Kept for back-compat.
   if (item?.fridgeTile) return item.fridgeTile;
 
   const ing = item?.ingredientId ? findIngredient(item.ingredientId) : null;

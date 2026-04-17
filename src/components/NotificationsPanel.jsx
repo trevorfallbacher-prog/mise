@@ -68,6 +68,17 @@ export default function NotificationsPanel({
   // carries a deep-link target. App.jsx routes the tap to the right tab
   // (currently only 'cook_log' → Cookbook). If omitted, rows are plain.
   onOpen,
+  // Synthetic pinned entries injected at the top of the list. Used for
+  // app-level context that isn't a real notifications-table row — the
+  // release-notes pin is the canonical example. Each entry carries its
+  // own onTap + onDismiss so the parent owns its lifecycle (we don't
+  // dismiss a synthetic via the notifications table).
+  //   { id, emoji, msg, sublabel, kind, onTap, onDismiss }
+  pinned = [],
+  // Always-available footer affordance to open the full release notes
+  // modal. Wired even when no pin is showing — lets users come back to
+  // past notes while perusing the inbox.
+  onOpenReleaseNotes,
 }) {
   // Auto-mark-read on open. We deliberately fire this only on mount —
   // markAllRead's identity changes every render, but we don't want to
@@ -173,7 +184,7 @@ export default function NotificationsPanel({
               Loading…
             </div>
           )}
-          {!loading && notifications.length === 0 && (
+          {!loading && notifications.length === 0 && pinned.length === 0 && (
             <div style={{ padding: "40px 16px", textAlign: "center", color: "#666",
                           fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
               <div style={{ fontSize: 36, marginBottom: 10, opacity: 0.5 }}>🔔</div>
@@ -181,6 +192,80 @@ export default function NotificationsPanel({
               update the shopping list, or schedule meals, you'll see it here.
             </div>
           )}
+
+          {/* Pinned synthetic entries — release notes, future system
+              messages. Always render at the top of the list, before
+              the time-bucketed real notifications. The parent decides
+              when to populate this (today: only when there's an
+              unseen release). */}
+          {pinned.map(p => (
+            <div
+              key={p.id}
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 10,
+                padding: "11px 12px",
+                marginBottom: 6,
+                background: "#0f1620",
+                border: "1px solid #1f3040",
+                borderRadius: 10,
+              }}
+            >
+              <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.2 }}>
+                {p.emoji || "📋"}
+              </span>
+              <button
+                onClick={p.onTap}
+                style={{
+                  flex: 1, minWidth: 0,
+                  background: "transparent", border: "none", padding: 0,
+                  textAlign: "left", cursor: "pointer", color: "inherit",
+                  display: "flex", alignItems: "flex-start", gap: 10,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                    color: "#f0ece4", lineHeight: 1.35,
+                  }}>
+                    {p.msg}
+                  </div>
+                  {p.sublabel && (
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#7eb8d4", letterSpacing: "0.08em", marginTop: 4,
+                    }}>
+                      {p.sublabel}
+                    </div>
+                  )}
+                </div>
+                <span
+                  aria-hidden
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    color: "#7eb8d4", letterSpacing: "0.04em",
+                    flexShrink: 0, alignSelf: "center",
+                  }}
+                >
+                  →
+                </span>
+              </button>
+              {p.onDismiss && (
+                <button
+                  onClick={p.onDismiss}
+                  aria-label="Dismiss"
+                  style={{
+                    background: "transparent", border: "none", color: "#555",
+                    fontSize: 16, lineHeight: 1, cursor: "pointer", padding: 4,
+                    flexShrink: 0,
+                  }}
+                  title="Dismiss"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+
           {grouped.map((entry, i) => {
             if (entry.kind === "header") {
               return (
@@ -291,6 +376,32 @@ export default function NotificationsPanel({
             );
           })}
         </div>
+
+        {/* Footer link to the full release-notes modal. Always visible
+            (even without a pinned entry) so users can browse back
+            through past notes while perusing the inbox. */}
+        {onOpenReleaseNotes && (
+          <div style={{
+            borderTop: "1px solid #1a1a1a",
+            padding: "10px 18px 14px",
+          }}>
+            <button
+              onClick={onOpenReleaseNotes}
+              style={{
+                width: "100%",
+                background: "transparent", border: "1px solid #1f3040",
+                color: "#7eb8d4", borderRadius: 10,
+                padding: "10px 12px",
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.1em", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+              }}
+            >
+              <span>📋 RELEASE NOTES · WHAT'S CHANGED</span>
+              <span>→</span>
+            </button>
+          </div>
+        )}
       </div>
     </>
   );

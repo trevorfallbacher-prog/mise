@@ -101,6 +101,9 @@ const BUTTER_DAIRY_IDS = new Set([
 // Fallback is meal_prep — the natural home for "I cooked this and
 // froze it," which is the most common untracked-registry freezer row.
 export function freezerTileIdForItem(item, { findIngredient, hubForIngredient }) {
+  // Explicit user placement wins (migration 0036) — see fridgeTiles.js
+  // for the rationale. User-set tile_id trumps the heuristic.
+  if (item?.tileId) return item.tileId;
   if (item?.freezerTile) return item.freezerTile;
 
   const ing = item?.ingredientId ? findIngredient(item.ingredientId) : null;
