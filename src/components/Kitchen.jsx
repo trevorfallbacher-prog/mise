@@ -1417,6 +1417,13 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Inline expiration + state — new in the ItemCard-styled add form.
+  // Both optional. customExpiresAt is a Date (or null); customState is
+  // one of the ingredient-specific state ids (e.g. "whole" | "diced"),
+  // only meaningful once the item has a canonical match.
+  const [customExpiresAt, setCustomExpiresAt] = useState(null);
+  const [customState, setCustomState] = useState(null);
+  const [statePickerOpen, setStatePickerOpen] = useState(false);
   // Optional components for the custom item. Lets the user build a
   // "curry ketchup" inline by picking [ketchup, curry_powder] instead
   // of having to save the free-text row first and then link it later.
@@ -1573,6 +1580,12 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       // category. Setting it here gives picker-based placement
       // authority over the heuristic.
       ...(customLocation ? { location: customLocation } : {}),
+      // Optional inline expiration + state — new in the ItemCard-styled
+      // add form. Expiration is omitted when null so Pantry's onAdd
+      // doesn't accidentally write a null into a column that expects
+      // undefined-as-unset.
+      ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
+      ...(customState ? { state: customState } : {}),
     };
 
     onAdd(item);
@@ -1645,6 +1658,22 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
       showClose={false}
       maxHeight="85vh"
     >
+        {/* Close — absolutely positioned upper-right (ModalSheet's own
+            close is suppressed via showClose={false}; we render our own
+            so the visual matches ItemCard). */}
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: "absolute", top: 12, right: 14,
+            width: 36, height: 36,
+            background: "#0a0a0a", border: "1px solid #2a2a2a",
+            color: "#aaa", borderRadius: 18,
+            fontFamily: "'DM Mono',monospace", fontSize: 16,
+            cursor: "pointer", zIndex: 2,
+          }}
+        >✕</button>
+
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:6 }}>
           {target === "shopping"
             ? "+ TO SHOPPING LIST"
@@ -1652,11 +1681,6 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
               ? `+ TO ${tileContext.tabId.toUpperCase()} · ${tileContext.tileLabel.toUpperCase()}`
               : "+ TO KITCHEN"}
         </div>
-        <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:14 }}>
-          {tileContext
-            ? `Add ${/^[aeiou]/i.test(tileContext.tileLabel) ? "an" : "a"} ${tileContext.tileLabel.toLowerCase()}`
-            : "Add an ingredient"}
-        </h3>
 
         {/* Tile-context banner — shown when the modal opened from a
             specific tile. Suggestions that classify into the tile float
@@ -1709,12 +1733,40 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 "WILL MERGE INTO EXISTING" hint so the user knows
                 saving bumps the existing template instead of making
                 a dup — transparency around the strict-dedup rule. */}
-            <div style={{ marginBottom:12, position:"relative" }}>
+            {/* Header row — mirrors ItemCard's visual layout so the
+                "Add" flow looks like the filled-out item it'll become.
+                Emoji on the left, kicker + title-style name input + 3
+                tap lines for FOOD CATEGORY / STORED IN / STATE on the
+                right. The typeahead stays inside the name input's
+                relative wrapper so the suggestion dropdown still
+                positions correctly below. */}
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 14 }}>
+              <div style={{ fontSize: 44, lineHeight: 1, paddingTop: 18, flexShrink: 0 }}>
+                {(() => {
+                  const derived = customCanonicalId
+                    || inferCanonicalFromName(customName.trim())
+                    || canonicalIdForType(customTypeId);
+                  return findIngredient(derived)?.emoji || "🥫";
+                })()}
+              </div>
+              <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
+                  ITEM
+                </div>
               <input
                 value={customName}
                 onChange={e => setCustomName(e.target.value)}
-                placeholder="Name (e.g. Capers, Home Run Inn Pizza)"
-                style={{ width:"100%", padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", outline:"none", boxSizing:"border-box" }}
+                placeholder="Add an item"
+                style={{
+                  width: "100%",
+                  background: "transparent",
+                  border: "none", outline: "none",
+                  fontFamily: "'Fraunces',serif", fontSize: 26,
+                  fontStyle: "italic", fontWeight: 300,
+                  color: "#f0ece4",
+                  padding: "2px 0 0",
+                  boxSizing: "border-box",
+                }}
               />
 
               {/* Live canonical preview (0039). Shows the derived
@@ -1753,6 +1805,90 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   </div>
                 );
               })()}
+
+              {/* FOOD CATEGORY tap line. Mirrors ItemCard's exact style
+                  (dashed underline, yellow when set, grey when empty).
+                  Tapping toggles the inline TypePicker below. */}
+              <div
+                onClick={() => setTypePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: customTypeId ? "#f5c842" : "#666",
+                  letterSpacing: "0.08em", marginTop: 6,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#888" }}>FOOD CATEGORY:</span>
+                {customTypeId ? (
+                  <>
+                    <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
+                    <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                      {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
+                    </span>
+                  </>
+                ) : (
+                  <span style={{ color: "#888", borderBottom: "1px dashed #66666644" }}>
+                    TAP TO IDENTIFY
+                  </span>
+                )}
+              </div>
+
+              {/* STORED IN tap line — opens the tile picker inline. */}
+              <div
+                onClick={() => setTilePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: customTileId ? "#f5c842" : "#666",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#888" }}>STORED IN:</span>
+                {customTileId ? (() => {
+                  const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                  const found = allBuiltIns.find(t => t.id === customTileId);
+                  return (
+                    <>
+                      <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
+                      <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                        {(found?.label || "CUSTOM TILE").toUpperCase()}
+                      </span>
+                    </>
+                  );
+                })() : (
+                  <span style={{ color: "#888", borderBottom: "1px dashed #66666644" }}>
+                    TAP TO PLACE
+                  </span>
+                )}
+              </div>
+
+              {/* STATE tap line — opens a simple state picker inline.
+                  States are ingredient-specific, so we only have real
+                  options once the name resolves to a canonical. */}
+              <div
+                onClick={() => setStatePickerOpen(v => !v)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: customState ? "#f5c842" : "#666",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                }}
+              >
+                <span style={{ color: "#888" }}>STATE:</span>
+                {customState ? (
+                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                    {customState.toUpperCase()}
+                  </span>
+                ) : (
+                  <span style={{ color: "#888", borderBottom: "1px dashed #66666644" }}>
+                    WHAT STATE IS THIS IN?
+                  </span>
+                )}
+              </div>
+
               {(() => {
                 const typed = (customName || "").trim().toLowerCase();
                 if (!typed) return null;
@@ -1894,127 +2030,167 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   </div>
                 );
               })()}
+              </div>
             </div>
 
-            <div style={{ display:"flex", gap:10, marginBottom:12 }}>
-              <input
-                type="number"
-                inputMode="decimal"
-                value={amount}
-                onChange={e => setAmount(e.target.value)}
-                placeholder="Amount"
-                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
-              />
-              <input
-                value={customUnit}
-                onChange={e => setCustomUnit(e.target.value)}
-                placeholder="Unit (oz, cup…)"
-                style={{ flex:1, padding:"12px 14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:14, color:"#f0ece4", outline:"none" }}
-              />
-            </div>
-
-            <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:20 }}>
-              {ADD_CATEGORIES.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => setCustomCategory(c.id)}
-                  style={{ background: customCategory===c.id?"#f5c842":"#1a1a1a", border:`1px solid ${customCategory===c.id?"#f5c842":"#2a2a2a"}`, borderRadius:20, padding:"7px 12px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color: customCategory===c.id?"#111":"#888", cursor:"pointer" }}
-                >
-                  {c.label}
-                </button>
-              ))}
-            </div>
-
-            {/* IDENTIFIED AS section — what KIND of thing this is.
-                Separate from STORED IN below which answers WHERE it
-                lives. Most items have a clean type-to-tile mapping
-                (Pizza → Frozen Meals, Cheese → Dairy) so picking a
-                type here auto-suggests the tile below, BUT user can
-                override either independently — the axes are
-                orthogonal (Italian Blend is Cheese but might be
-                stored in Frozen). */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842", letterSpacing: "0.12em",
-                }}>
-                  FOOD CATEGORY {customTypeId ? "" : "(OPTIONAL)"}
+            {/* State picker — inline when STATE tap line is tapped.
+                States are ingredient-specific; show options when the
+                name resolves to a canonical, otherwise explain. */}
+            {statePickerOpen && (() => {
+              const derived = customCanonicalId
+                || inferCanonicalFromName(customName.trim())
+                || canonicalIdForType(customTypeId);
+              const canon = findIngredient(derived);
+              const states = canon ? (statesForIngredient(canon) || []) : [];
+              return (
+                <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10, marginBottom: 14 }}>
+                  {states.length === 0 ? (
+                    <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", fontStyle: "italic", lineHeight: 1.5 }}>
+                      Pick a Food Category or type a name that matches a canonical ingredient first — states depend on what the item IS.
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {states.map(s => (
+                        <button
+                          key={s}
+                          onClick={() => { setCustomState(s); setStatePickerOpen(false); }}
+                          style={{
+                            padding: "6px 10px",
+                            background: customState === s ? "#1a1608" : "transparent",
+                            border: `1px solid ${customState === s ? "#f5c842" : "#2a2a2a"}`,
+                            color: customState === s ? "#f5c842" : "#aaa",
+                            borderRadius: 16, cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+                          }}
+                        >
+                          {stateLabel(s).toUpperCase()}
+                        </button>
+                      ))}
+                      {customState && (
+                        <button
+                          onClick={() => { setCustomState(null); setStatePickerOpen(false); }}
+                          style={{
+                            padding: "6px 10px",
+                            background: "transparent",
+                            border: "1px solid #3a2f10",
+                            color: "#d98a8a",
+                            borderRadius: 16, cursor: "pointer",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+                          }}
+                        >
+                          ✕ CLEAR
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => setTypePickerOpen(v => !v)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid #3a2f10",
-                    padding: "4px 10px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    letterSpacing: "0.1em", borderRadius: 6,
-                  }}
-                >
-                  {typePickerOpen ? "HIDE" : (customTypeId ? "CHANGE" : "PICK")}
-                </button>
+              );
+            })()}
+
+            {/* Quantity + Location + Expires — 3-column grid mirroring
+                ItemCard's inline edit row. Location (fridge/pantry/freezer)
+                replaces the old 6-chip food-category row; that field was
+                the ingredient classification, which now lives in the
+                FOOD CATEGORY tap line above. */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 18 }}>
+              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={e => setAmount(e.target.value)}
+                    placeholder="0"
+                    style={{
+                      width: "100%",
+                      background: "transparent", border: "none", outline: "none",
+                      fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4",
+                      padding: 0, minWidth: 0,
+                    }}
+                  />
+                  <input
+                    value={customUnit}
+                    onChange={e => setCustomUnit(e.target.value)}
+                    placeholder="unit"
+                    style={{
+                      width: 48,
+                      background: "transparent", border: "none", outline: "none",
+                      fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#aaa",
+                      padding: 0, minWidth: 0,
+                    }}
+                  />
+                </div>
               </div>
 
-              {/* Current pick preview — bundled lookup is O(1); user
-                  types show a generic label until the full picker
-                  opens (rare; users usually see their own types). */}
-              {!typePickerOpen && customTypeId && (() => {
-                const bundled = findFoodType(customTypeId);
-                const label = bundled?.label || "Custom type";
-                const emoji = bundled?.emoji || "🏷️";
-                return (
-                  <div style={{
-                    padding: "8px 12px",
-                    background: "#1a1608", border: "1px solid #3a2f10",
-                    borderRadius: 10,
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <span style={{ fontSize: 18 }}>{emoji}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f5c842" }}>
-                        {label}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {!typePickerOpen && !customTypeId && (
-                <div style={{
-                  padding: "10px 12px",
-                  background: "#0a0a0a", border: "1px dashed #242424",
-                  borderRadius: 10,
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
-                  fontStyle: "italic", lineHeight: 1.5,
-                }}>
-                  What kind of thing is this? Pizza, Cheese, Sausages…
-                  Helps recipes and drill-into-type later.
+              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>LOCATION</div>
+                <div style={{ display: "flex", gap: 4, marginTop: 4 }}>
+                  {[
+                    { id: "fridge",  emoji: "🧊" },
+                    { id: "pantry",  emoji: "🥫" },
+                    { id: "freezer", emoji: "❄️" },
+                  ].map(l => (
+                    <button
+                      key={l.id}
+                      onClick={() => {
+                        setCustomLocation(l.id);
+                        // Mirror into customCategory so the existing save
+                        // path (which writes `category`) doesn't regress:
+                        //   fridge → dairy (most common fridge item),
+                        //   pantry → pantry, freezer → frozen
+                        setCustomCategory(l.id === "fridge" ? "dairy" : l.id === "freezer" ? "frozen" : "pantry");
+                      }}
+                      aria-label={l.id}
+                      style={{
+                        flex: 1, padding: "4px 0",
+                        background: customLocation === l.id ? "#1a1608" : "transparent",
+                        border: `1px solid ${customLocation === l.id ? "#f5c842" : "#2a2a2a"}`,
+                        color: customLocation === l.id ? "#f5c842" : "#888",
+                        borderRadius: 6, cursor: "pointer",
+                        fontSize: 16, lineHeight: 1,
+                      }}
+                    >
+                      {l.emoji}
+                    </button>
+                  ))}
                 </div>
-              )}
+              </div>
 
-              {typePickerOpen && (
+              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>EXPIRES</div>
+                <input
+                  type="date"
+                  value={customExpiresAt ? new Date(customExpiresAt).toISOString().slice(0, 10) : ""}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setCustomExpiresAt(v ? new Date(`${v}T12:00:00Z`) : null);
+                  }}
+                  style={{
+                    width: "100%",
+                    background: "transparent", border: "none", outline: "none",
+                    fontFamily: "'DM Mono',monospace", fontSize: customExpiresAt ? 12 : 11,
+                    color: customExpiresAt ? "#f0ece4" : "#666",
+                    padding: "4px 0 0", marginTop: 0,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Inline pickers — shown when the FOOD CATEGORY or STORED IN
+                tap lines are tapped. The full label/preview UI moved to
+                the tap lines at the top of the modal, so these are the
+                picker-only renders. */}
+            {typePickerOpen && (
+              <div style={{ marginBottom: 16 }}>
                 <TypePicker
                   userId={userId}
                   selectedTypeId={customTypeId}
                   suggestedTypeId={inferFoodTypeFromName(customName)}
                   onPick={(typeId, defaultTileId, defaultLocation) => {
                     setCustomTypeId(typeId);
-                    // Auto-suggest STORED IN from the type's default
-                    // UNLESS the user has already explicitly set a
-                    // tile (don't overwrite their intent). Same for
-                    // location.
-                    if (defaultTileId && !customTileId) {
-                      setCustomTileId(defaultTileId);
-                    }
-                    if (defaultLocation && !customLocation) {
-                      setCustomLocation(defaultLocation);
-                    }
-                    // Auto-derive canonical identity from the type's
-                    // default UNLESS the user already explicitly set
-                    // one (name-match may have found something more
-                    // specific). Name-match still wins at save time.
+                    if (defaultTileId && !customTileId) setCustomTileId(defaultTileId);
+                    if (defaultLocation && !customLocation) setCustomLocation(defaultLocation);
                     if (!customCanonicalId) {
                       const fromType = canonicalIdForType(typeId);
                       if (fromType) setCustomCanonicalId(fromType);
@@ -2022,101 +2198,15 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                     setTypePickerOpen(false);
                   }}
                 />
-              )}
-            </div>
-
-            {/* STORED IN section. Shows current tile placement
-                (via built-in classifier for canonical picks, or
-                user's explicit choice). Tap to expand the full
-                picker inline. Users can also create new tiles from
-                the picker's + CREATE NEW affordance. Purely optional —
-                leaving untouched falls through to the heuristic
-                classifier at render time, same as before tile memory
-                existed. */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842", letterSpacing: "0.12em",
-                }}>
-                  STORED IN {customTileId ? "" : "(OPTIONAL)"}
-                </div>
-                <div style={{ flex: 1 }} />
-                <button
-                  onClick={() => setTilePickerOpen(v => !v)}
-                  style={{
-                    background: "transparent",
-                    border: "1px solid #3a2f10",
-                    padding: "4px 10px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    letterSpacing: "0.1em", borderRadius: 6,
-                  }}
-                >
-                  {tilePickerOpen ? "HIDE" : (customTileId ? "CHANGE" : "PICK")}
-                </button>
               </div>
+            )}
 
-              {/* Current pick preview — when a tile is chosen and the
-                  picker is collapsed. Gives the user a read at a glance
-                  without forcing expand. */}
-              {!tilePickerOpen && customTileId && (() => {
-                // Look up the label/emoji for a tile id. Built-ins are
-                // in the three *_TILES arrays imported at module scope;
-                // user tiles would require the hook which we don't want
-                // inside a preview closure. Fall through to a generic
-                // "✓ TILE SET" when we can't resolve (user tile, live
-                // picker has the real data).
-                const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
-                const found = allBuiltIns.find(t => t.id === customTileId);
-                return (
-                  <div style={{
-                    padding: "8px 12px",
-                    background: "#1a1608", border: "1px solid #3a2f10",
-                    borderRadius: 10,
-                    display: "flex", alignItems: "center", gap: 10,
-                  }}>
-                    <span style={{ fontSize: 18 }}>{found?.emoji || "🗂️"}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f5c842" }}>
-                        {found?.label || "Custom tile"}
-                      </div>
-                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.06em", marginTop: 2 }}>
-                        {customLocation ? customLocation.toUpperCase() : "LOCATION TBD"}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Collapsed + no pick = quiet invitation. The heuristic
-                  classifier will route at render time — this is just
-                  an affordance to override when the user knows better. */}
-              {!tilePickerOpen && !customTileId && (
-                <div style={{
-                  padding: "10px 12px",
-                  background: "#0a0a0a", border: "1px dashed #242424",
-                  borderRadius: 10,
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
-                  fontStyle: "italic", lineHeight: 1.5,
-                }}>
-                  We'll route this to a tile based on components. Tap PICK to place it somewhere specific.
-                </div>
-              )}
-
-              {/* Expanded picker — inline, scrollable list of tiles +
-                  CREATE NEW. Picking auto-collapses so the form stays
-                  focused on what's next. */}
-              {tilePickerOpen && (
+            {tilePickerOpen && (
+              <div style={{ marginBottom: 16 }}>
                 <IdentifiedAsPicker
                   userId={userId}
                   locationHint={customLocation}
                   selectedTileId={customTileId}
-                  // Keyword-inferred suggestion. Recomputed inline from
-                  // the current customName so the highlighted chip
-                  // updates as the user types. Nothing auto-selects —
-                  // the user still taps, we just rank the most likely
-                  // tile first with a ⭐ SUGGESTED treatment.
                   suggestedTileId={inferTileFromName(customName)}
                   onPick={(tileId, location) => {
                     setCustomTileId(tileId);
@@ -2124,48 +2214,44 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                     setTilePickerOpen(false);
                   }}
                 />
-              )}
-            </div>
+              </div>
+            )}
 
-            {/* Components builder. Lets the user construct a composed
-                custom item ("Curry Ketchup" = [ketchup, curry_powder,
-                coriander]) inline during add, instead of saving a
-                free-text row first and linking it after. Optional —
-                zero components keeps the row free-text. */}
+            {/* Components builder — now rendered as an INGREDIENT
+                separator with a big [+] button, matching ItemCard's
+                INGREDIENT bar. The user taps [+] to open the composer
+                inline. Zero components keeps the row free-text. */}
             <div style={{ marginBottom: 16 }}>
+              {/* INGREDIENT separator — mirrors ItemCard's separator bar.
+                  Big [+] button on the right opens the components picker
+                  inline. When components exist they render as chips
+                  below, same as before. */}
               <div style={{
-                display: "flex", alignItems: "center", gap: 10, marginBottom: 8,
+                display: "flex", alignItems: "center", gap: 12, marginBottom: 10,
               }}>
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
                 <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em" }}>
-                  COMPONENTS · {customComponents.length}
+                  INGREDIENT{customComponents.length > 0 && ` · ${customComponents.length}`}
                 </div>
-                <div style={{ flex: 1 }} />
+                <div style={{ flex: 1, height: 1, background: "#242424" }} />
                 <button
                   onClick={() => setCustomComponentsOpen(true)}
+                  aria-label={customComponents.length > 0 ? "Edit components" : "Add components"}
                   style={{
-                    background: "transparent", border: "1px solid #3a2f10",
-                    padding: "4px 10px",
-                    color: "#f5c842", cursor: "pointer",
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    letterSpacing: "0.1em", borderRadius: 6,
+                    width: 36, height: 36,
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    color: "#f5c842", borderRadius: 10,
+                    fontSize: 22, fontWeight: 300, lineHeight: 1,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    flexShrink: 0,
                   }}
                 >
-                  {customComponents.length > 0 ? "+ EDIT" : "+ ADD"}
+                  +
                 </button>
               </div>
 
-              {customComponents.length === 0 ? (
-                <div style={{
-                  padding: "12px 14px",
-                  background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666",
-                  fontStyle: "italic", lineHeight: 1.5,
-                }}>
-                  Optional. Pick canonical ingredients this item is made from —
-                  e.g. a "Curry Ketchup" = [ketchup, curry_powder]. One pick =
-                  tagged ingredient; two or more = a composed Meal with a tree.
-                </div>
-              ) : (
+              {customComponents.length === 0 ? null : (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                   {customComponents.map(c => (
                     <button
