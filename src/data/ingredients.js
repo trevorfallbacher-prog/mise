@@ -5406,14 +5406,51 @@ export function statesForIngredient(ingredientOrId) {
 // specific ingredient; category-first keeps it consistent.
 export function statesForItem(item) {
   if (!item) return null;
-  // typeId wins — food category determines state.
+  // 1. Direct typeId → hub mapping. Food category drives state — the
+  // primary path.
   const hubId = item.typeId ? FOOD_TYPE_STATE_HUB[item.typeId] : null;
   if (hubId && INGREDIENT_STATES[hubId]) return INGREDIENT_STATES[hubId];
-  // Legacy fallback for items without a typeId (pre-typeId data,
-  // manual entries that skipped category picking). Uses the
-  // canonical's own vocab via the parent chain.
+  // 2. Canonical's own vocab via parent chain. Covers bundled
+  // canonicals that inherit (hot_dog → pork_hub, ribeye → beef_hub,
+  // parmesan → cheese_hub, etc.).
   const canonical = findIngredient(item.canonicalId || item.ingredientId);
-  return statesForIngredient(canonical || item.canonicalId || item.ingredientId);
+  const fromCanon = statesForIngredient(canonical || item.canonicalId || item.ingredientId);
+  if (fromCanon && fromCanon.length > 0) return fromCanon;
+  // 3. Proxy-canonical fallback. If item.typeId is a bundled WWEIA
+  // type that points at a canonical via canonicalIdForType (e.g.
+  // wweia_sausages → "sausage"), walk THAT canonical's parent chain.
+  // Catches cases where FOOD_TYPE_STATE_HUB is missing a mapping or
+  // the item's own canonical/ingredient is unlinked but the type is
+  // still set. Late-import-safe: uses the same INGREDIENTS array and
+  // statesForIngredient helper we already have.
+  if (item.typeId) {
+    const proxyId = proxyCanonicalForFoodType(item.typeId);
+    if (proxyId) {
+      const proxy = findIngredient(proxyId);
+      const fromProxy = statesForIngredient(proxy || proxyId);
+      if (fromProxy && fromProxy.length > 0) return fromProxy;
+    }
+  }
+  return null;
+}
+
+// Locally-resolved mirror of the FOOD_TYPES canonicalId bridge —
+// avoids importing from foodTypes.js (which imports from us, circular).
+// Keeps the small subset we actually need for state lookup. Expand if
+// FOOD_TYPES grows new WWEIA types with canonical bridges.
+function proxyCanonicalForFoodType(typeId) {
+  const BRIDGE = {
+    wweia_sausages:  "sausage",
+    wweia_hot_dogs:  "hot_dog",
+    wweia_bacon:     "bacon",
+    wweia_beef:      "beef_hub",
+    wweia_pork:      "pork_hub",
+    wweia_poultry:   "chicken_hub",
+    wweia_lamb:      "beef_hub",
+    wweia_cheese:    "cheese_hub",
+    wweia_bread:     "bread",
+  };
+  return BRIDGE[typeId] || null;
 }
 
 // Default-state counterpart to statesForItem. Same priority:
