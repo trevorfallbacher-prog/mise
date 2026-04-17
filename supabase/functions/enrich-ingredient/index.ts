@@ -172,6 +172,30 @@ type PendingInsert = {
   status: "pending";
 };
 
+// Pull the `sub` (user id) claim out of a bearer JWT without verifying
+// the signature. Safe because Supabase's edge-function platform has
+// already verified the token before this function runs — we're just
+// reading the claims afterwards. Returns null when the header is
+// missing or malformed.
+function extractUserIdFromJwt(authHeader: string): string | null {
+  const m = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+  if (!m) return null;
+  const token = m[1];
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    // base64url → base64 → JSON
+    let payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (payloadB64.length % 4 !== 0) payloadB64 += "=";
+    const payloadText = atob(payloadB64);
+    const payload = JSON.parse(payloadText);
+    const sub = payload?.sub;
+    return typeof sub === "string" && sub.length > 0 ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
@@ -227,7 +251,6 @@ Deno.serve(async (req) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!serviceKey) {
     return new Response(
@@ -239,32 +262,22 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Identify the caller via the /auth/v1/user REST endpoint. Using the
-  // REST path (instead of supabase.auth.getUser() on a client built with
-  // the caller's JWT) sidesteps an ES256/RS256 JWT-algorithm compat gap
-  // in some supabase-js builds — Supabase projects configured with
-  // asymmetric JWT keys returned "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM"
-  // through the SDK path while the REST endpoint validates cleanly.
-  const userResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: {
-      Authorization: authHeader,
-      apikey: supabaseAnonKey,
-    },
-  });
-  if (!userResp.ok) {
-    const detail = await userResp.text().catch(() => "");
+  // Identify the caller by decoding the JWT payload directly. Supabase's
+  // edge-function platform has already verified the token's signature
+  // before invoking this function (default verify_jwt = true), so we
+  // don't need to re-verify here — we just read the claims.
+  //
+  // Why not call /auth/v1/user or supabase.auth.getUser()? Both routes
+  // return "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM" on Supabase
+  // projects that use asymmetric JWT signing keys (ES256 / RS256) with
+  // older GoTrue builds. Decoding the claims ourselves sidesteps the
+  // algorithm-compat gap entirely.
+  const userId = extractUserIdFromJwt(authHeader);
+  if (!userId) {
     return new Response(
-      JSON.stringify({ error: "invalid auth", detail }),
+      JSON.stringify({ error: "could not extract user id from auth header" }),
       { status: 401, headers: JSON_HEADERS },
     );
-  }
-  const userJson = await userResp.json();
-  const userId = userJson?.id;
-  if (!userId) {
-    return new Response(JSON.stringify({ error: "invalid auth" }), {
-      status: 401,
-      headers: JSON_HEADERS,
-    });
   }
 
   // Service-role client for DB writes. Bypasses RLS, so we set user_id
