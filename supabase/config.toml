@@ -5,3 +5,7 @@ verify_jwt = false
 
 [functions.scan-shelf]
 verify_jwt = false
+
+[functions.enrich-ingredient]
+verify_jwt = false
+
