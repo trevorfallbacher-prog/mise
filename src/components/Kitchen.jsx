@@ -3895,15 +3895,17 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                             <button
                               key={item.id}
                               onClick={() => {
-                                // Jump straight to the storage tab + drill
-                                // into the tile the result actually lives
-                                // in. Clears the search so the tile view
-                                // renders clean.
-                                if (item.location && item.location !== storageTab) {
-                                  setStorageTabRaw(item.location);
-                                }
-                                setDrilledTile(tile?.id || null);
-                                setTileSearch("");
+                                // Tap a search result → open the full
+                                // ItemCard directly. Editing from here
+                                // is the only way out when an item has
+                                // drifted into a location it can't be
+                                // navigated to (e.g. location=fridge
+                                // with a pantry-side tileId). Clearing
+                                // the search + collapsing the sheet is
+                                // deferred to the card's onClose so
+                                // users can jump back to the list if
+                                // they cancel.
+                                setOpenItem(item);
                               }}
                               style={{
                                 display:"flex", alignItems:"center", gap:10,
