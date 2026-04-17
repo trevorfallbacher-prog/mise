@@ -42,9 +42,55 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.10.0";
+export const CURRENT_VERSION = "0.11.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.11.0",
+    date:    "2026-04-17",
+    title:   "Quick Cook — make it, brainstorm it, or follow a template",
+    summary:
+      "Nav got a rethink. Starting a cook used to mean walking the COOK " +
+      "tab's template list; there was no way to save your own recipe and " +
+      "no way to ask Claude to draft one against your pantry. This " +
+      "release puts a raised ➕ QUICK COOK button in the middle of the " +
+      "tab bar that opens a three-way chooser: write your own recipe, " +
+      "have Claude draft one from what's on your shelves, or pick a " +
+      "template. Custom and AI recipes save to your own library so you " +
+      "can cook them again. COOKBOOK stopped being a tab — the full " +
+      "archive now lives inside your profile behind VIEW FULL COOKBOOK. " +
+      "The old COOK tab's skill-tree content graduated into its own " +
+      "COURSES tab, and PLAN was renamed CALENDAR since that's what it " +
+      "actually is.",
+    shipped: [
+      { kind: "feature",
+        text: "Floating ➕ QUICK COOK button opens a chooser for Custom / AI / Template recipes.",
+        commits: [] },
+      { kind: "feature",
+        text: "Write your own recipes — multi-step builder with title, timing, ingredients, and steps. Saves so you can cook them again.",
+        commits: [] },
+      { kind: "feature",
+        text: "AI recipes from your pantry — Claude drafts a recipe against what's actually on your shelves, with cuisine/time/difficulty nudges and a notes field.",
+        commits: [] },
+      { kind: "ux",
+        text: "New tab bar: HOME · COURSES · ➕ · CALENDAR · KITCHEN. PLAN was renamed CALENDAR.",
+        commits: [] },
+      { kind: "ux",
+        text: "COURSES tab surfaces the skill-tree progression that used to be buried in COOK → LEARN.",
+        commits: [] },
+      { kind: "ux",
+        text: "Full cookbook moved inside your profile — RECENT COOKS has a VIEW FULL COOKBOOK link that opens the searchable archive right where your stats live.",
+        commits: [] },
+      { kind: "architecture",
+        text: "New user_recipes table (migration 0051) with family-shared RLS and realtime sync, so recipes you or your family create show up on every device.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Edit-in-place for AI recipes so you can tweak a draft without re-running the generator.",
+      "Empty-state illustrations on COURSES and the cookbook archive for first-time users.",
+      "Press-scale animation on the floating ➕ button.",
+    ],
+  },
   {
     version: "0.10.0",
     date:    "2026-04-17",

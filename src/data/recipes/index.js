@@ -41,7 +41,18 @@ export const RECIPES = [
   homemadeChickenStock,
 ];
 
-export const findRecipe = (slug) => RECIPES.find(r => r.slug === slug) || null;
+// findRecipe checks the bundled library by default. Callers that want
+// user-authored recipes included (CookMode opened from UserProfile,
+// Cookbook deep-links to a custom cook) pass a resolver — typically
+// useUserRecipes().findBySlug — as the second arg. Bundled slugs win
+// on exact collision, matching the "bundled is the stable canon"
+// contract we document in the migration 0051 header.
+export const findRecipe = (slug, userResolver) => {
+  const bundled = RECIPES.find(r => r.slug === slug);
+  if (bundled) return bundled;
+  if (typeof userResolver === "function") return userResolver(slug) || null;
+  return null;
+};
 export const recipesByCuisine  = (c) => RECIPES.filter(r => r.cuisine === c);
 export const recipesByCategory = (c) => RECIPES.filter(r => r.category === c);
 export const recipesOnRoute    = (r) => RECIPES.filter(x => x.routes.includes(r));

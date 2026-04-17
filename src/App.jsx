@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Onboarding from "./components/Onboarding";
 import Home from "./components/Home";
-import Cook from "./components/Cook";
+import Courses from "./components/Courses";
 import Plan from "./components/Plan";
-import Cookbook from "./components/Cookbook";
+import QuickCook from "./components/QuickCook";
 import Kitchen from "./components/Kitchen";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
@@ -23,12 +23,14 @@ import { ToastProvider, useToast } from "./lib/toast";
 import { supabase } from "./lib/supabase";
 import { IngredientInfoProvider } from "./lib/useIngredientInfo";
 
+// Four regular tabs + a floating ➕ Quick Cook button slotted between
+// slot 2 (COURSES) and slot 3 (CALENDAR). The ➕ is not a tab — it opens
+// an overlay chooser, so the currently-active tab stays active underneath.
 const NAV = [
-  { id:"home",     emoji:"🏠",   label:"Home"     },
-  { id:"cook",     emoji:"🧑‍🍳", label:"Cook"     },
-  { id:"plan",     emoji:"📅",   label:"Plan"     },
-  { id:"cookbook", emoji:"📖",   label:"Cookbook" },
-  { id:"pantry",   emoji:"🍽️",  label:"Kitchen"  },
+  { id:"home",    emoji:"🏠",   label:"Home"     },
+  { id:"courses", emoji:"🎓",   label:"Courses"  },
+  { id:"plan",    emoji:"📅",   label:"Calendar" },
+  { id:"pantry",  emoji:"🍽️",  label:"Kitchen"  },
 ];
 
 const pageShell = {
@@ -177,6 +179,9 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [notifsOpen, setNotifsOpen]       = useState(false);
+  // Quick Cook chooser overlay. Opened by the floating ➕ in the tab
+  // bar; renders on top of whatever tab is currently active.
+  const [quickCookOpen, setQuickCookOpen] = useState(false);
   // Admin-panel open state. Only reachable via Settings → ADMIN entry,
   // which is itself gated on profile.role === 'admin' (0042).
   const [adminOpen, setAdminOpen]         = useState(false);
@@ -208,13 +213,16 @@ function AuthedApp({ user, profile, upsertProfile }) {
   }, []);
 
   // Same deep-link path the UserProfile's CookRow uses — lets the Home
-  // feed hand a cook_log id and land on its detail in Cookbook.
+  // feed hand a cook_log id and surface the meal's detail. Cookbook is
+  // no longer a top-level tab (v0.11.0 nav restructure); the full
+  // archive now lives inside UserProfile behind "VIEW FULL COOKBOOK",
+  // so we open the viewer's own profile with the deep-link attached
+  // and let UserProfile's Cookbook overlay consume it.
   const openCook = useCallback((cookLogId) => {
     if (!cookLogId) return;
-    setProfileUserId(null);
     setDeepLink({ kind: "cook_log", id: cookLogId });
-    setTab("cookbook");
-  }, []);
+    setProfileUserId(user.id);
+  }, [user?.id]);
 
   // Stabilized list of family otherIds for the activity feed cohort.
   const familyIds = useMemo(
@@ -238,9 +246,12 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const openNotificationTarget = useCallback((targetKind, targetId) => {
     if (!targetId) return;
     if (targetKind === "cook_log") {
+      // Cookbook tab was removed in v0.11.0. Route through the viewer's
+      // own UserProfile → Cookbook overlay, which consumes the deep-link
+      // exactly the same way the tab did.
       setDeepLink({ kind: targetKind, id: targetId });
-      setTab("cookbook");
       setNotifsOpen(false);
+      setProfileUserId(user.id);
       return;
     }
     if (targetKind === "user_profile") {
@@ -351,11 +362,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
             openCook={openCook}
           />
         )}
-        {tab === "cook"     && (
-          <Cook
+        {tab === "courses"  && (
+          <Courses
             profile={profile}
             userId={user.id}
-            onCooked={() => setTab("cookbook")}
+            familyKey={familyKey}
             pantry={pantry}
             setPantry={setPantry}
             shoppingList={shoppingList}
@@ -363,7 +374,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
             family={relationships.family}
             friends={relationships.friends}
-            hasFamily={relationships.family.length > 0}
+            onCooked={() => setProfileUserId(user.id)}
           />
         )}
         {tab === "plan"     && (
@@ -381,16 +392,6 @@ function AuthedApp({ user, profile, upsertProfile }) {
             setShoppingList={setShoppingList}
             onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
             onOpenCook={openCook}
-          />
-        )}
-        {tab === "cookbook" && (
-          <Cookbook
-            userId={user.id}
-            familyKey={familyKey}
-            nameFor={nameFor}
-            deepLink={deepLink}
-            onConsumeDeepLink={() => setDeepLink(null)}
-            onOpenProfile={openProfile}
           />
         )}
         {tab === "pantry"   && (
@@ -436,14 +437,16 @@ function AuthedApp({ user, profile, upsertProfile }) {
           targetUserId={profileUserId}
           viewerId={user.id}
           relationship={relationshipFor(profileUserId)}
+          familyKey={familyKey}
           nameFor={nameFor}
+          deepLink={deepLink}
+          onConsumeDeepLink={() => setDeepLink(null)}
+          onOpenProfile={openProfile}
           onOpenCook={(cookId) => {
-            // Route through the existing cook_log deep-link: close
-            // the profile, switch to the Cookbook tab, and let it open
-            // the detail once it finds the row in either scope.
-            setProfileUserId(null);
+            // Cookbook is now an overlay inside UserProfile, so we
+            // stay on this profile and just hand the deep link in —
+            // the embedded Cookbook opens the detail once it resolves.
             setDeepLink({ kind: "cook_log", id: cookId });
-            setTab("cookbook");
           }}
           onClose={() => setProfileUserId(null)}
         />
@@ -480,8 +483,42 @@ function AuthedApp({ user, profile, upsertProfile }) {
         />
       )}
 
+      {/* Bottom tab bar — four regular tabs (HOME · COURSES · CALENDAR ·
+          KITCHEN) with a floating ➕ Quick Cook button slotted between
+          tabs 2 and 3. The ➕ isn't a tab — tapping it opens QuickCook
+          as a full-screen overlay on top of whichever tab is active. */}
       <div style={{ position:"fixed", bottom:0, left:0, right:0, maxWidth:480, margin:"0 auto", background:"#0f0f0f", borderTop:"1px solid #1e1e1e", display:"flex", padding:"12px 0 20px" }}>
-        {NAV.map(({ id, emoji, label }) => (
+        {NAV.slice(0, 2).map(({ id, emoji, label }) => (
+          <button key={id} onClick={() => setTab(id)} style={{ flex:1, background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, opacity: tab===id ? 1 : 0.35, transition:"opacity 0.2s" }}>
+            <span style={{ fontSize:20 }}>{emoji}</span>
+            <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: tab===id?"#f5c842":"#666", letterSpacing:"0.08em" }}>
+              {label.toUpperCase()}
+            </span>
+          </button>
+        ))}
+
+        {/* Floating ➕ — raised circle, reserves a flex slot so the
+            labels on either side don't collide with it. */}
+        <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"flex-start" }}>
+          <button
+            onClick={() => setQuickCookOpen(true)}
+            title="Quick Cook"
+            aria-label="Quick Cook"
+            style={{
+              width:56, height:56, borderRadius:28,
+              background:"#f5c842", color:"#111",
+              border:"none", cursor:"pointer",
+              fontSize:28, lineHeight:1, fontWeight:300,
+              display:"flex", alignItems:"center", justifyContent:"center",
+              transform:"translateY(-18px)",
+              boxShadow:"0 6px 18px rgba(245,200,66,0.35), 0 2px 6px rgba(0,0,0,0.45)",
+            }}
+          >
+            +
+          </button>
+        </div>
+
+        {NAV.slice(2).map(({ id, emoji, label }) => (
           <button key={id} onClick={() => setTab(id)} style={{ flex:1, background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, opacity: tab===id ? 1 : 0.35, transition:"opacity 0.2s" }}>
             <span style={{ fontSize:20 }}>{emoji}</span>
             <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: tab===id?"#f5c842":"#666", letterSpacing:"0.08em" }}>
@@ -490,6 +527,30 @@ function AuthedApp({ user, profile, upsertProfile }) {
           </button>
         ))}
       </div>
+
+      {/* Quick Cook overlay — the three-branch chooser (custom / AI /
+          template) launched by the floating ➕ above. Returns via
+          onClose. onCooked fires after CookMode's done-flow so we can
+          land the user on their own profile archive where the freshly
+          logged cook surfaces. */}
+      {quickCookOpen && (
+        <QuickCook
+          userId={user.id}
+          profile={profile}
+          pantry={pantry}
+          setPantry={setPantry}
+          shoppingList={shoppingList}
+          setShoppingList={setShoppingList}
+          onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); setQuickCookOpen(false); }}
+          family={relationships.family}
+          friends={relationships.friends}
+          onClose={() => setQuickCookOpen(false)}
+          onCooked={() => {
+            setQuickCookOpen(false);
+            setProfileUserId(user.id);
+          }}
+        />
+      )}
 
       {/* Post-update notification + full release-notes modal. The slim
           notification opens automatically via useWhatsNew when the

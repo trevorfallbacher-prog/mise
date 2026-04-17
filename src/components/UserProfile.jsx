@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Cookbook from "./Cookbook";
 import { useUserProfile } from "../lib/useUserProfile";
 import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
@@ -59,10 +60,32 @@ function avatarColor(name) {
  */
 export default function UserProfile({
   targetUserId, viewerId, relationship = "stranger",
-  nameFor, onOpenCook, onClose,
+  familyKey, nameFor, onOpenCook, onOpenProfile, onClose,
+  // Cook-log deep link handed in from App (notification tap / Home
+  // feed). When present, we auto-open the full Cookbook overlay so the
+  // embedded Cookbook's own pipeline resolves the detail view.
+  deepLink, onConsumeDeepLink,
 }) {
   const { profile, cooks, stats, sharedCooks, loading, error } =
     useUserProfile(targetUserId, viewerId);
+
+  // "VIEW FULL COOKBOOK" — opens the existing Cookbook component as a
+  // modal overlay. Cookbook ships with scope / filter / search / detail
+  // built in, so folding it in here gives UserProfile the full archive
+  // surface without duplicating that logic. Limited to self + family
+  // since RLS only returns cook_logs for those scopes anyway.
+  const [showCookbook, setShowCookbook] = useState(false);
+
+  // Auto-open the Cookbook overlay whenever a cook_log deep-link lands.
+  // The embedded Cookbook then consumes the same deepLink prop and
+  // opens the detail view. Only self-view can show the archive
+  // (family-scoped cook_logs only come back for the viewer's own id),
+  // so we gate on that to avoid opening an empty overlay.
+  useEffect(() => {
+    if (deepLink?.kind === "cook_log" && viewerId === targetUserId) {
+      setShowCookbook(true);
+    }
+  }, [deepLink, viewerId, targetUserId]);
 
   const isSelf = relationship === "self" || (viewerId && viewerId === targetUserId);
   const name   = profile?.name || (isSelf ? "You" : "Someone");
@@ -209,6 +232,20 @@ export default function UserProfile({
                     <CookRow key={c.id} cook={c} onOpen={onOpenCook} />
                   ))}
                 </div>
+                {(isSelf || relationship === "family") && cooks.length >= 1 && (
+                  <button
+                    onClick={() => setShowCookbook(true)}
+                    style={{
+                      marginTop:10, width:"100%", padding:"12px",
+                      background:"#161616", border:"1px solid #2a2a2a",
+                      color:"#f5c842", borderRadius:12,
+                      fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600,
+                      letterSpacing:"0.1em", cursor:"pointer",
+                    }}
+                  >
+                    VIEW FULL COOKBOOK →
+                  </button>
+                )}
               </Section>
             ) : (
               <Section label={isSelf ? "YOUR RECENT COOKS" : "RECENT COOKS"}>
@@ -278,6 +315,35 @@ export default function UserProfile({
           </>
         )}
       </div>
+
+      {/* Full-cookbook overlay — launched from VIEW FULL COOKBOOK.
+          Cookbook renders its own list + filters + detail, so we just
+          host the component inside a fixed overlay and provide a back
+          button. Familyscope cook_logs reads self+family, so the list
+          will mirror what the viewer sees in the feed. */}
+      {showCookbook && (
+        <div style={{ position:"fixed", inset:0, background:"#111", zIndex:220, maxWidth:480, margin:"0 auto", overflowY:"auto" }}>
+          <div style={{ position:"sticky", top:0, zIndex:2, background:"#111", padding:"12px 20px 8px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #1e1e1e" }}>
+            <button
+              onClick={() => setShowCookbook(false)}
+              style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:18, width:34, height:34, color:"#aaa", fontSize:16, cursor:"pointer", lineHeight:1 }}
+            >
+              ←
+            </button>
+            <div style={{ flex:1, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em" }}>
+              FULL COOKBOOK
+            </div>
+          </div>
+          <Cookbook
+            userId={viewerId}
+            familyKey={familyKey}
+            nameFor={nameFor}
+            deepLink={deepLink}
+            onConsumeDeepLink={onConsumeDeepLink || (() => {})}
+            onOpenProfile={onOpenProfile}
+          />
+        </div>
+      )}
     </div>
   );
 }

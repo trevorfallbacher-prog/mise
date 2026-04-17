@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import CookMode from "./CookMode";
 import SchedulePicker from "./SchedulePicker";
-import SuggestMeal from "./SuggestMeal";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import {
   RECIPES,
@@ -9,9 +8,21 @@ import {
   difficultyLabel,
   totalTimeMin,
 } from "../data/recipes";
+import { SKILL_TREE } from "../data";
 
-// Map each skill level requirement against the user's current levels.
-// Returns [] if unlocked, or an array of { skill, need, have } describing gaps.
+// A course is a LEARN-route recipe whose unlock gate is driven by the
+// user's skill levels. The Courses tab surfaces two things stacked:
+//   1. The skill tree — visible progress with color-coded fill. A tap
+//      on a skill scrolls to (or filters) the ladder below.
+//   2. The ladder — every LEARN recipe, sorted by difficulty, grouped
+//      by cuisine. Locked recipes are dimmed + marked with the
+//      specific skill gap.
+//
+// This is the promotion of what used to live inside the Cook tab's
+// "LEARN" sub-route. Giving it its own tab gives the skill-progression
+// story room to breathe and frees Cook (template browser) to get
+// absorbed into Quick Cook.
+
 function lockGaps(recipe, skillLevels) {
   const gaps = [];
   const req = recipe.minSkillLevels || {};
@@ -22,10 +33,46 @@ function lockGaps(recipe, skillLevels) {
   return gaps;
 }
 
-// 10 → 5-segment difficulty bar. Round up so 4.5 shows as 3/5.
 function difficultyBar(n) {
   const filled = Math.ceil((n / 10) * 5);
   return Array.from({ length: 5 }, (_, i) => i < filled);
+}
+
+function SkillTile({ skill, onTap, active }) {
+  const pct = (skill.level / skill.maxLevel) * 100;
+  return (
+    <button
+      onClick={onTap}
+      style={{
+        background: active ? "#1a1608" : "#161616",
+        border: `1px solid ${active ? skill.color : "#2a2a2a"}`,
+        borderRadius: 12, padding: "12px 12px",
+        display: "flex", alignItems: "center", gap: 10,
+        cursor: "pointer", textAlign: "left",
+        transition: "all 0.2s",
+      }}
+    >
+      <div style={{ fontSize: 22, flexShrink: 0 }}>{skill.emoji}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+            {skill.name}
+          </span>
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: skill.level > 0 ? skill.color : "#555" }}>
+            {skill.level}/{skill.maxLevel}
+          </span>
+        </div>
+        <div style={{ height: 3, background: "#222", borderRadius: 2, overflow: "hidden" }}>
+          <div style={{
+            height: "100%", width: `${pct}%`,
+            background: skill.color,
+            boxShadow: skill.level > 0 ? `0 0 6px ${skill.color}88` : "none",
+            transition: "width 0.3s",
+          }} />
+        </div>
+      </div>
+    </button>
+  );
 }
 
 function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
@@ -62,7 +109,6 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-            {/* difficulty bar */}
             <div style={{ display: "flex", gap: 3 }}>
               {bars.map((on, i) => (
                 <div key={i} style={{
@@ -86,27 +132,38 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
   );
 }
 
-export default function Cook({ profile, userId, onCooked, pantry, setPantry, shoppingList, setShoppingList, onGoToShopping, family = [], friends = [], hasFamily = false }) {
-  const [route, setRoute]     = useState("plan");   // "plan" | "learn"
-  const [cuisine, setCuisine] = useState("all");    // "all" | "italian" | "french" | ...
+export default function Courses({
+  profile, userId,
+  pantry, setPantry, shoppingList, setShoppingList, onGoToShopping,
+  family = [], friends = [], hasFamily = false,
+  onCooked,
+}) {
+  const [cuisine, setCuisine]   = useState("all");
+  const [skillFilter, setSkillFilter] = useState(null);  // skill id or null
   const [openRecipe, setOpenRecipe] = useState(null);
   const [schedulingRecipe, setSchedulingRecipe] = useState(null);
-  const [suggesting, setSuggesting] = useState(false);
 
   const skillLevels = profile?.skill_levels || {};
   const { schedule } = useScheduledMeals(userId);
   const userName = profile?.name?.trim().split(/\s+/)[0];
 
-  const list = useMemo(() => {
-    const filtered = RECIPES.filter(r =>
-      r.routes.includes(route) &&
-      (cuisine === "all" || r.cuisine === cuisine)
-    );
-    // Sort by difficulty ascending — builds the natural ladder feel.
-    return [...filtered].sort((a, b) => a.difficulty - b.difficulty);
-  }, [route, cuisine]);
+  const skills = useMemo(
+    () => SKILL_TREE.map(s => ({ ...s, level: skillLevels[s.id] ?? 0 })),
+    [skillLevels],
+  );
 
-  // Group by cuisine when "all" is selected, so the list doesn't blur together.
+  // The LEARN ladder — every recipe that opts into the LEARN route.
+  // Filtered by optional cuisine chip + optional skill-tile tap.
+  const list = useMemo(() => {
+    const filtered = RECIPES.filter(r => {
+      if (!r.routes.includes("learn")) return false;
+      if (cuisine !== "all" && r.cuisine !== cuisine) return false;
+      if (skillFilter && !(r.minSkillLevels || {})[skillFilter]) return false;
+      return true;
+    });
+    return [...filtered].sort((a, b) => a.difficulty - b.difficulty);
+  }, [cuisine, skillFilter]);
+
   const grouped = useMemo(() => {
     if (cuisine !== "all") return [{ cuisine, recipes: list }];
     const map = new Map();
@@ -117,8 +174,9 @@ export default function Cook({ profile, userId, onCooked, pantry, setPantry, sho
     return [...map.entries()].map(([c, rs]) => ({ cuisine: c, recipes: rs }));
   }, [cuisine, list]);
 
-  // If a recipe is open, render CookMode instead of the browser.
-  // Schedule picker can layer on top when the user taps "Schedule".
+  // An opened recipe takes over the surface — CookMode handles cooking,
+  // SchedulePicker layers on top for a deferred cook. On complete,
+  // bubble back up so App can bounce to the profile archive.
   if (openRecipe) {
     return (
       <>
@@ -164,71 +222,52 @@ export default function Cook({ profile, userId, onCooked, pantry, setPantry, sho
     );
   }
 
-  const routePill = (id, label) => (
-    <button
-      key={id}
-      onClick={() => setRoute(id)}
-      style={{
-        flex: 1, padding: "12px 0",
-        background: route === id ? "#f5c842" : "#161616",
-        color: route === id ? "#111" : "#888",
-        border: `1px solid ${route === id ? "#f5c842" : "#2a2a2a"}`,
-        borderRadius: 12,
-        fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
-        letterSpacing: "0.12em", cursor: "pointer", transition: "all 0.2s",
-      }}
-    >
-      {label}
-    </button>
-  );
-
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
       <div style={{ padding: "24px 20px 0" }}>
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>WHAT'S FOR</div>
-        <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 38, fontWeight: 300, fontStyle: "italic", color: "#f0ece4", letterSpacing: "-0.03em" }}>Dinner</h1>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>LEVEL UP YOUR</div>
+        <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 38, fontWeight: 300, fontStyle: "italic", color: "#f0ece4", letterSpacing: "-0.03em" }}>Courses</h1>
+        <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", lineHeight: 1.5 }}>
+          Skill-tree progression. Every finished cook levels the relevant skills; harder dishes unlock as you climb.
+        </div>
       </div>
 
-      {/* PLAN vs LEARN */}
-      <div style={{ display: "flex", gap: 8, padding: "16px 20px 0" }}>
-        {routePill("plan", "PLAN")}
-        {routePill("learn", "LEARN")}
-      </div>
-      <div style={{ padding: "8px 20px 0", fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#555", lineHeight: 1.5 }}>
-        {route === "plan"
-          ? "Cook whatever you want. Schedule it, prep it, eat it."
-          : "Skill-tree progression. Harder dishes unlock as your skills level up."}
-      </div>
-
-      {/* Suggest-a-meal — prominent when pantry has anything in it */}
-      {pantry && pantry.length > 0 && (
-        <div style={{ padding: "16px 20px 0" }}>
+      {/* Skill tree — 2-column grid of tiles. Tap a tile to filter the
+          ladder below to recipes that touch that skill. Tap again to
+          clear. */}
+      <div style={{ padding: "18px 20px 0" }}>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em", marginBottom: 10 }}>
+          YOUR SKILLS
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          {skills.map(s => (
+            <SkillTile
+              key={s.id}
+              skill={s}
+              active={skillFilter === s.id}
+              onTap={() => setSkillFilter(skillFilter === s.id ? null : s.id)}
+            />
+          ))}
+        </div>
+        {skillFilter && (
           <button
-            onClick={() => setSuggesting(true)}
+            onClick={() => setSkillFilter(null)}
             style={{
-              width: "100%", padding: "14px 16px",
-              background: "linear-gradient(135deg, #1e1a0e 0%, #141414 100%)",
-              border: "1px solid #f5c84244", borderRadius: 14,
-              display: "flex", alignItems: "center", gap: 12,
-              cursor: "pointer", textAlign: "left",
+              marginTop: 10, width: "100%", padding: "8px",
+              background: "transparent", border: "1px solid #2a2a2a",
+              color: "#888", borderRadius: 10,
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              letterSpacing: "0.08em", cursor: "pointer",
             }}
           >
-            <div style={{ fontSize: 24 }}>✨</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
-                SUGGEST A MEAL
-              </div>
-              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb", marginTop: 2 }}>
-                See what you could make with what you have
-              </div>
-            </div>
-            <span style={{ color: "#f5c842", fontSize: 18 }}>→</span>
+            CLEAR SKILL FILTER
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Cuisine chips */}
-      <div style={{ display: "flex", gap: 8, padding: "16px 20px 0", overflowX: "auto", scrollbarWidth: "none" }}>
+      {/* Cuisine chips — mirror Cook's original chip strip so the
+          control surface stays familiar. */}
+      <div style={{ display: "flex", gap: 8, padding: "20px 20px 0", overflowX: "auto", scrollbarWidth: "none" }}>
         {["all", ...CUISINES].map(c => (
           <button
             key={c}
@@ -248,7 +287,8 @@ export default function Cook({ profile, userId, onCooked, pantry, setPantry, sho
         ))}
       </div>
 
-      {/* Groups */}
+      {/* Recipe ladder — groups by cuisine, sorted by difficulty within
+          each group. Locked recipes dim and show the required skill. */}
       <div style={{ padding: "8px 20px 0" }}>
         {grouped.map(({ cuisine: groupCuisine, recipes }) => (
           <div key={groupCuisine} style={{ marginTop: 20 }}>
@@ -257,8 +297,7 @@ export default function Cook({ profile, userId, onCooked, pantry, setPantry, sho
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {recipes.map(r => {
-                // Learn gates on skill levels; Plan doesn't.
-                const gaps = route === "learn" ? lockGaps(r, skillLevels) : [];
+                const gaps = lockGaps(r, skillLevels);
                 const locked = gaps.length > 0;
                 return (
                   <RecipeCard
@@ -279,18 +318,10 @@ export default function Cook({ profile, userId, onCooked, pantry, setPantry, sho
             marginTop: 40, padding: "30px 20px", textAlign: "center",
             fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#666",
           }}>
-            No recipes yet for this filter. More coming soon.
+            No courses yet for this filter.
           </div>
         )}
       </div>
-
-      {suggesting && (
-        <SuggestMeal
-          pantry={pantry}
-          onPick={(r) => { setSuggesting(false); setOpenRecipe(r); }}
-          onClose={() => setSuggesting(false)}
-        />
-      )}
     </div>
   );
 }
