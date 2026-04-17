@@ -228,22 +228,50 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!serviceKey) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "server is missing SUPABASE_SERVICE_ROLE_KEY — edge functions need it to write to pending_ingredient_info on behalf of the caller",
+      }),
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
 
-  // User-scoped client — writes go through RLS as the caller, so
-  // pending_ingredient_info rows land with user_id = auth.uid() and
-  // notifications land in the caller's inbox.
-  const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authHeader } },
+  // Identify the caller via the /auth/v1/user REST endpoint. Using the
+  // REST path (instead of supabase.auth.getUser() on a client built with
+  // the caller's JWT) sidesteps an ES256/RS256 JWT-algorithm compat gap
+  // in some supabase-js builds — Supabase projects configured with
+  // asymmetric JWT keys returned "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM"
+  // through the SDK path while the REST endpoint validates cleanly.
+  const userResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      Authorization: authHeader,
+      apikey: supabaseAnonKey,
+    },
   });
-
-  const { data: userData, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !userData.user) {
+  if (!userResp.ok) {
+    const detail = await userResp.text().catch(() => "");
+    return new Response(
+      JSON.stringify({ error: "invalid auth", detail }),
+      { status: 401, headers: JSON_HEADERS },
+    );
+  }
+  const userJson = await userResp.json();
+  const userId = userJson?.id;
+  if (!userId) {
     return new Response(JSON.stringify({ error: "invalid auth" }), {
       status: 401,
       headers: JSON_HEADERS,
     });
   }
-  const userId = userData.user.id;
+
+  // Service-role client for DB writes. Bypasses RLS, so we set user_id
+  // explicitly on every insert to keep the per-user scope correct.
+  const supabase = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
 
   const displayName = canonical_id ?? source_name!;
   const isCanonical = Boolean(canonical_id);

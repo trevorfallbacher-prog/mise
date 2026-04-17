@@ -287,6 +287,28 @@ function AuthedApp({ user, profile, upsertProfile }) {
         )}
       </button>
 
+      {/* Admin badge — passive visual indicator so the admin always knows
+          elevated permissions are active. Shown only when the viewer's
+          profile.role === 'admin'; no interaction, just a confirmation. */}
+      {profile?.role === "admin" && (
+        <div
+          title="You are signed in as an admin"
+          style={{
+            position: "fixed", top: 12, left: 12, zIndex: 50,
+            background: "#2a0a0a",
+            border: "1px solid #ef4444",
+            color: "#ef4444",
+            borderRadius: 14, padding: "4px 10px",
+            fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+            letterSpacing: "0.14em",
+            display: "flex", alignItems: "center", gap: 6,
+            userSelect: "none",
+          }}
+        >
+          🛠 ADMIN
+        </div>
+      )}
+
       <button
         onClick={openNotifs}
         title="Notifications"

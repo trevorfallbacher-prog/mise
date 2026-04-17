@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -219,6 +219,13 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
   // Stacked type picker — separate from tilePicker so both can
   // exist but don't step on each other.
   const [typePickerOpen, setTypePickerOpen] = useState(false);
+  // Canonical picker — new in chunk 19a. Previously canonical_id was
+  // derived-only (set via type pick or name match); users now tap the
+  // golden canonical line to search the registry and swap it, or tap
+  // the ✕ next to it to unlink. Orthogonal to the type picker — the
+  // canonical IS the final-resting-name, the type is the WWEIA kind.
+  const [canonicalPickerOpen, setCanonicalPickerOpen] = useState(false);
+  const [canonicalSearch, setCanonicalSearch] = useState("");
 
   // Safe bound — if the tag list shrinks below activeTagIdx (user
   // removed a tag via the LinkIngredient flow in 5d), snap back to 0.
@@ -387,32 +394,186 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               {/* CANONICAL — the final-resting-name of the thing
                   (Hot Dog, Mayo, Green Onion). USDA-defensible
                   identity that recipes call by. Sits directly below
-                  the user's custom name so "Frank's Best Cheese
-                  Dogs" reads instantly as "→ Hot Dog". Rendered
-                  when canonical is resolved; dashed when missing
-                  so the user can tap IDENTIFIED AS below to fill
-                  it (type-pick flows write canonical automatically).
-                  Render is READ-ONLY today — canonical is derived,
-                  not hand-picked; re-picking IDENTIFIED AS swaps
-                  the canonical through for you. */}
-              {currentCanonical && (
+                  the user's custom name. Tap to change (opens the
+                  canonical picker below); tap the ✕ to unlink. When
+                  no canonical is set, renders a grey "CANONICAL: TAP
+                  TO PICK" affordance so the user can attach one
+                  explicitly — previously this field was derive-only. */}
+              {onUpdate && (
                 <div
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 11,
-                    color: "#b8a878",
+                    color: currentCanonical ? "#b8a878" : "#666",
                     letterSpacing: "0.06em", marginTop: 4,
                     display: "flex", alignItems: "center", gap: 6,
+                    flexWrap: "wrap",
                   }}
                 >
-                  <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
-                  <span style={{
-                    color: "#d4c9ac", fontFamily: "'Fraunces',serif",
-                    fontSize: 14, fontStyle: "italic", fontWeight: 400,
-                  }}>
-                    {currentCanonical.name}
-                  </span>
+                  <span style={{ color: "#888" }}>CANONICAL:</span>
+                  {currentCanonical ? (
+                    <>
+                      <span
+                        onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 6,
+                          cursor: "pointer",
+                          borderBottom: "1px dashed #b8a87844",
+                          paddingBottom: 1,
+                        }}
+                      >
+                        <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
+                        <span style={{
+                          color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                          fontSize: 14, fontStyle: "italic", fontWeight: 400,
+                        }}>
+                          {currentCanonical.name}
+                        </span>
+                      </span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onUpdate({ canonicalId: null });
+                        }}
+                        aria-label="Unlink canonical"
+                        style={{
+                          background: "transparent",
+                          border: "1px solid #3a2a2a",
+                          color: "#d98a8a", cursor: "pointer",
+                          borderRadius: 6,
+                          padding: "1px 7px",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          letterSpacing: "0.06em",
+                          lineHeight: 1.4,
+                        }}
+                      >
+                        ✕ UNLINK
+                      </button>
+                    </>
+                  ) : (
+                    <span
+                      onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                      style={{
+                        color: "#888",
+                        borderBottom: "1px dashed #66666644",
+                        cursor: "pointer",
+                      }}
+                    >
+                      TAP TO PICK
+                    </span>
+                  )}
                 </div>
               )}
+
+              {/* Inline canonical picker — text search across the full
+                  registry. Opens when the user taps the canonical line
+                  above (set OR unset). Collapses after a pick. */}
+              {canonicalPickerOpen && onUpdate && (() => {
+                const q = canonicalSearch.trim().toLowerCase();
+                const matches = q
+                  ? INGREDIENTS.filter(i =>
+                      i.name.toLowerCase().includes(q) ||
+                      (i.shortName && i.shortName.toLowerCase().includes(q)) ||
+                      i.id.includes(q.replace(/\s+/g, "_"))
+                    ).slice(0, 30)
+                  : INGREDIENTS.slice(0, 12);
+                return (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      marginTop: 8,
+                      padding: 10,
+                      background: "#0a0a0a",
+                      border: "1px solid #3a2f10",
+                      borderRadius: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                      <input
+                        autoFocus
+                        value={canonicalSearch}
+                        onChange={(e) => setCanonicalSearch(e.target.value)}
+                        placeholder="Search canonicals (avocado, garlic, nori…)"
+                        style={{
+                          flex: 1,
+                          padding: "7px 10px",
+                          background: "#0a0a0a", border: "1px solid #242424",
+                          borderRadius: 8,
+                          fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                          color: "#f0ece4", outline: "none",
+                        }}
+                      />
+                      <button
+                        onClick={() => { setCanonicalPickerOpen(false); setCanonicalSearch(""); }}
+                        style={{
+                          background: "transparent", border: "1px solid #2a2a2a",
+                          color: "#888", cursor: "pointer",
+                          borderRadius: 8, padding: "4px 10px",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          letterSpacing: "0.08em",
+                        }}
+                      >
+                        CLOSE
+                      </button>
+                    </div>
+                    {matches.length === 0 ? (
+                      <div style={{
+                        padding: "12px 6px", textAlign: "center",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#555", letterSpacing: "0.08em",
+                      }}>
+                        NO MATCHES
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" }}>
+                        {matches.map(ing => {
+                          const isCurrent = currentCanonical?.id === ing.id;
+                          return (
+                            <button
+                              key={ing.id}
+                              onClick={() => {
+                                onUpdate({ canonicalId: ing.id });
+                                setCanonicalPickerOpen(false);
+                                setCanonicalSearch("");
+                              }}
+                              style={{
+                                display: "flex", alignItems: "center", gap: 8,
+                                padding: "6px 10px", textAlign: "left",
+                                background: isCurrent ? "#1a1608" : "transparent",
+                                border: `1px solid ${isCurrent ? "#f5c842" : "#1e1e1e"}`,
+                                borderRadius: 8, cursor: "pointer",
+                              }}
+                            >
+                              <span style={{ fontSize: 16 }}>{ing.emoji || "🏷️"}</span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  fontFamily: "'Fraunces',serif", fontSize: 13,
+                                  fontStyle: "italic",
+                                  color: isCurrent ? "#f5c842" : "#d4c9ac",
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                }}>
+                                  {ing.name}
+                                </div>
+                                <div style={{
+                                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                  color: "#555", letterSpacing: "0.06em", marginTop: 1,
+                                }}>
+                                  {ing.id}
+                                  {ing.category && ` · ${ing.category.toUpperCase()}`}
+                                </div>
+                              </div>
+                              {isCurrent && (
+                                <span style={{ fontSize: 10, color: "#f5c842", fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>
+                                  ✓
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {/* FOOD CATEGORY (IDENTIFIED AS) — what KIND of thing
                   this is (Pizza, Cheese, Sausages). Separate from
                   STORED IN below which answers WHERE it lives. Tap
