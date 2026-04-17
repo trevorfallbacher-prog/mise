@@ -68,23 +68,41 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
     setSaving(false);
   };
 
-  // Delete the scan artifact (receipt or pantry_scan). Related pantry
-  // rows stay — they're real food the family might already be eating;
-  // losing the source link is harmless (the component already renders
-  // gracefully for pre-0029 rows with no source). DELETE on receipts is
-  // owner-only by policy (0006 / 0041 comment), so non-owners will get
-  // an RLS error surfaced via alert.
+  // Delete the scan artifact (receipt or pantry_scan). Full cascade:
+  // every pantry_items row that points at this artifact is removed,
+  // the uploaded photo leaves Storage, then the artifact row itself
+  // is deleted. Order matters — nuke dependents first so nothing
+  // orphans mid-delete. Self-delete RLS (0006 for receipts) scopes
+  // each statement to the caller's own data; admin bypass (0049)
+  // lets admins wipe other people's receipts from the admin portal.
   const deleteArtifact = async () => {
     if (!artifactId || deleting) return;
     setDeleting(true);
     const table = kind === "pantry_scan" ? "pantry_scans" : "receipts";
-    const { error } = await supabase.from(table).delete().eq("id", artifactId);
-    setDeleting(false);
-    if (error) {
-      alert(`Couldn't delete: ${error.message}`);
-      return;
+    const fkCol  = kind === "pantry_scan" ? "source_scan_id" : "source_receipt_id";
+    try {
+      // 1. pantry_items first — once gone there's no dangling FK.
+      const { error: itemsErr } = await supabase
+        .from("pantry_items")
+        .delete()
+        .eq(fkCol, artifactId);
+      if (itemsErr) throw itemsErr;
+      // 2. storage image — best-effort, a missing object isn't fatal.
+      if (receipt?.image_path) {
+        const { error: storageErr } = await supabase.storage
+          .from("scans")
+          .remove([receipt.image_path]);
+        if (storageErr) console.warn("[receipt delete] image remove failed:", storageErr.message);
+      }
+      // 3. artifact row itself.
+      const { error: rowErr } = await supabase.from(table).delete().eq("id", artifactId);
+      if (rowErr) throw rowErr;
+      setDeleting(false);
+      onClose?.();
+    } catch (e) {
+      setDeleting(false);
+      alert(`Couldn't delete: ${e.message || e}`);
     }
-    onClose?.();
   };
 
   // Load the artifact row (receipts or pantry_scans) + signed image URL.
@@ -380,72 +398,62 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
               >
                 {deleting ? "DELETING…" : `🗑  DELETE ${kind === "pantry_scan" ? "SHELF SCAN" : "RECEIPT"}`}
               </button>
-            ) : (() => {
-              const label = kind === "pantry_scan" ? "shelf scan" : "receipt";
-              const n = relatedItems.length;
-              return (
+            ) : (
+              <div style={{
+                padding: "18px 18px 16px",
+                background: "#1a0a0a", border: "1px solid #3a1a1a",
+                borderRadius: 12,
+              }}>
                 <div style={{
-                  padding: "14px 14px 12px",
-                  background: "#1a0a0a", border: "1px solid #3a1a1a",
-                  borderRadius: 10,
+                  fontFamily: "'Fraunces',serif", fontSize: 16,
+                  fontStyle: "italic", color: "#f0d4d4",
+                  lineHeight: 1.45, marginBottom: 6,
                 }}>
-                  <div style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: "#d98a8a", letterSpacing: "0.14em",
-                    marginBottom: 6,
-                  }}>
-                    DELETE {kind === "pantry_scan" ? "SHELF SCAN" : "RECEIPT"}?
-                  </div>
-                  <div style={{
-                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                    color: "#c4a8a8", lineHeight: 1.5, marginBottom: 12,
-                  }}>
-                    {n > 0 ? (
-                      <>
-                        The {label} row and its photo will be removed.
-                        The <b style={{ color: "#d98a8a" }}>{n} pantry item{n === 1 ? "" : "s"}</b> that
-                        came from it will stay in your kitchen — you won't lose any food.
-                      </>
-                    ) : (
-                      <>The {label} row and its photo will be removed. Can't be undone.</>
-                    )}
-                  </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      onClick={() => setArmingDelete(false)}
-                      disabled={deleting}
-                      style={{
-                        flex: 1, padding: "10px 12px",
-                        background: "transparent",
-                        border: "1px solid #2a2a2a",
-                        color: "#888",
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        letterSpacing: "0.12em",
-                        borderRadius: 8, cursor: "pointer",
-                      }}
-                    >
-                      CANCEL
-                    </button>
-                    <button
-                      onClick={deleteArtifact}
-                      disabled={deleting}
-                      style={{
-                        flex: 2, padding: "10px 12px",
-                        background: deleting ? "#3a1a1a" : "#5a1818",
-                        border: "none",
-                        color: "#fff",
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        fontWeight: 700, letterSpacing: "0.12em",
-                        borderRadius: 8,
-                        cursor: deleting ? "default" : "pointer",
-                      }}
-                    >
-                      {deleting ? "DELETING…" : "YES, DELETE"}
-                    </button>
-                  </div>
+                  Deleting this {kind === "pantry_scan" ? "scan" : "receipt"} means your pantry
+                  forgets everything that came with it. The ingredients,
+                  the quantities, all of it.
                 </div>
-              );
-            })()}
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#c4a8a8", lineHeight: 1.5, marginBottom: 14,
+                }}>
+                  We just want to make sure. This can't be undone.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => setArmingDelete(false)}
+                    disabled={deleting}
+                    style={{
+                      flex: 1, padding: "12px 12px",
+                      background: "transparent",
+                      border: "1px solid #2a2a2a",
+                      color: "#aaa",
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      letterSpacing: "0.08em",
+                      borderRadius: 10, cursor: "pointer",
+                    }}
+                  >
+                    Keep the receipt
+                  </button>
+                  <button
+                    onClick={deleteArtifact}
+                    disabled={deleting}
+                    style={{
+                      flex: 1, padding: "12px 12px",
+                      background: deleting ? "#3a1a1a" : "#5a1818",
+                      border: "none",
+                      color: "#fff",
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      fontWeight: 700, letterSpacing: "0.08em",
+                      borderRadius: 10,
+                      cursor: deleting ? "default" : "pointer",
+                    }}
+                  >
+                    {deleting ? "DELETING…" : "Delete forever"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
