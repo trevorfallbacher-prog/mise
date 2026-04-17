@@ -1,7 +1,50 @@
 import { useMemo, useState } from "react";
 import { findIngredient, fuzzyMatchIngredient } from "../data/ingredients";
 import { BLEND_PRESETS } from "../data/blendPresets";
-import { slugifyIngredientName } from "../lib/useIngredientInfo";
+import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
+
+// Turn an admin-approved ingredient_info slug ("pepperoni") into a
+// synthetic canonical object so the picker can surface it alongside
+// bundled INGREDIENTS. Pulls a display name from info.display_name when
+// the admin renamed the canonical, else decases the slug.
+function syntheticCanonicalForSlug(slug, info) {
+  const displayOverride = info?.display_name;
+  const name = (typeof displayOverride === "string" && displayOverride.trim())
+    ? displayOverride.trim()
+    : slug.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  return {
+    id: slug,
+    name,
+    emoji: info?.emoji || "✨",
+    category: info?.category || "user",
+    shortName: null,
+    parentId: undefined,
+    // Legal unit list — keep it permissive so toBase/unitLabel don't
+    // blow up when user-canonical rows get quantities assigned.
+    units: [
+      { id: "unit", label: "unit", toBase: 1 },
+      { id: "oz",   label: "oz",   toBase: 1 },
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+  };
+}
+
+// Lightweight fuzzy scorer for synthetic (admin-approved) canonicals
+// since scoreIngredientMatch lives inside ingredients.js and isn't
+// exported. Substring match + exact-slug match are enough to get them
+// to surface in the picker; the registry's ranking is still canonical
+// for ordering overall.
+function scoreSynthetic(needle, canon) {
+  const n = (needle || "").toLowerCase().trim();
+  if (!n) return 0;
+  const nameLow = canon.name.toLowerCase();
+  const slugLow = canon.id.toLowerCase();
+  if (nameLow === n || slugLow === n) return 100;
+  if (slugLow === n.replace(/\s+/g, "_")) return 100;
+  if (nameLow.startsWith(n) || slugLow.startsWith(n.replace(/\s+/g, "_"))) return 80;
+  if (nameLow.includes(n) || slugLow.includes(n.replace(/\s+/g, "_"))) return 60;
+  return 0;
+}
 
 // Confidence bucketing for the match list — the raw 0–120 score reads as
 // noise; these labels give the user something to decide on. Thresholds
@@ -53,33 +96,80 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
   const [search, setSearch] = useState("");
   const needle = search.trim() || item.name;
 
+  // Admin-approved canonicals that aren't in the bundled registry.
+  // `dbMap` from the IngredientInfo context is keyed by ingredient_id;
+  // any row whose id isn't in INGREDIENTS is a user-minted canonical
+  // that an admin approved. Those need to show up in this picker or
+  // users who created them can never re-tag another item with them.
+  const { dbMap } = useIngredientInfo();
+  const approvedSynthetics = useMemo(() => {
+    const out = [];
+    for (const [slug, info] of Object.entries(dbMap || {})) {
+      if (!slug) continue;
+      if (findIngredient(slug)) continue; // bundled handles itself
+      out.push(syntheticCanonicalForSlug(slug, info));
+    }
+    return out;
+  }, [dbMap]);
+
+  // Combined match list: bundled fuzzy + synthetic substring, merged
+  // and re-sorted by score. Synthetics score 60-100 depending on
+  // match-type so an exact "pepperoni" outranks a weak bundled match.
+  const mergedMatches = useMemo(() => {
+    const bundled = fuzzyMatchIngredient(needle, 40);
+    const bundledIds = new Set(bundled.map(m => m.ingredient.id));
+    const synth = [];
+    for (const canon of approvedSynthetics) {
+      if (bundledIds.has(canon.id)) continue;
+      const score = scoreSynthetic(needle, canon);
+      if (score > 0) synth.push({ ingredient: canon, score });
+    }
+    return [...bundled, ...synth].sort((a, b) => b.score - a.score);
+  }, [needle, approvedSynthetics]);
+
   // fuzzyMatchIngredient returns matches sorted descending by score.
   // We slice to 4 = 1 star + 3 likely. Search mode pulls more.
-  const topMatches = useMemo(() => fuzzyMatchIngredient(needle, 4), [needle]);
+  const topMatches = useMemo(() => mergedMatches.slice(0, 4), [mergedMatches]);
   const searchNeedle = search.trim();
   const searchMatches = useMemo(() => {
     if (!searchNeedle) return [];
     // Up to 20 for search mode — catalog-on-demand, capped so the
     // sheet doesn't explode on generic terms like "cheese".
-    return fuzzyMatchIngredient(searchNeedle, 20);
-  }, [searchNeedle]);
+    const bundled = fuzzyMatchIngredient(searchNeedle, 20);
+    const bundledIds = new Set(bundled.map(m => m.ingredient.id));
+    const synth = [];
+    for (const canon of approvedSynthetics) {
+      if (bundledIds.has(canon.id)) continue;
+      const score = scoreSynthetic(searchNeedle, canon);
+      if (score > 0) synth.push({ ingredient: canon, score });
+    }
+    return [...bundled, ...synth].sort((a, b) => b.score - a.score).slice(0, 20);
+  }, [searchNeedle, approvedSynthetics]);
 
   // Seed the selection from the item's current tags so re-opening the
   // sheet on an already-tagged item lets the user incrementally adjust
   // instead of starting from zero. Prefers ingredientIds (plural, 0033)
-  // and falls back to the legacy scalar.
+  // and falls back to the legacy scalar. Resolves against bundled
+  // first, then admin-approved synthetics (dbMap-keyed).
+  const resolveAny = (id) => {
+    const bundled = findIngredient(id);
+    if (bundled) return bundled;
+    const info = dbMap?.[id];
+    if (info !== undefined) return syntheticCanonicalForSlug(id, info);
+    return null;
+  };
   const [selected, setSelected] = useState(() => {
     const seed = Array.isArray(item?.ingredientIds) && item.ingredientIds.length
       ? item.ingredientIds
       : (item?.ingredientId ? [item.ingredientId] : []);
     return seed
-      .map(id => ({ id, canonical: findIngredient(id) }))
+      .map(id => ({ id, canonical: resolveAny(id) }))
       .filter(s => s.canonical);
   });
   const selectedIds = useMemo(() => new Set(selected.map(s => s.id)), [selected]);
 
   const toggleTag = (id) => {
-    const canonical = findIngredient(id);
+    const canonical = resolveAny(id);
     if (!canonical) return;
     if (singleMode) {
       // Single-axis pick (scan CANONICAL chip): commit and close on tap.
