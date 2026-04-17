@@ -771,32 +771,72 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                         opening the full card. */}
                     <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                       {/* CANONICAL (tan) — reserved color for the
-                          final-resting identity axis. Replaces the old
-                          green/blue LINK chip. Grey dashed when unset. */}
+                          final-resting identity axis. Three render
+                          states:
+                            1. Linked to a BUNDLED canonical — registry
+                               match, solid tan chip.
+                            2. Linked to a PENDING (user-created) slug
+                               — same tan chip but with a ✨ emoji and
+                               "· PENDING" so the user knows enrichment
+                               hasn't landed yet. Fixes the bug where
+                               "+ CREATE mac_n_cheese" would render as
+                               unset because findIngredient returns
+                               null for user-created slugs.
+                            3. Unset — grey dashed "+ set canonical". */}
                       {(() => {
-                        const canonEmoji = canon?.emoji || "🏷️";
+                        const slug = item.canonicalId || item.ingredientId || null;
+                        const isPending = !!slug && !canon;
+                        const displayName = canon
+                          ? canon.name
+                          : (slug ? slug.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "");
+                        const displayEmoji = canon?.emoji || (isPending ? "✨" : "🏷️");
+                        if (!slug) {
+                          return (
+                            <button
+                              onClick={e => { e.stopPropagation(); setLinkingScanMode("canonical"); setLinkingScanIdx(idx); }}
+                              aria-label="Set canonical"
+                              title="Tap to set canonical"
+                              style={{
+                                fontFamily:"'DM Mono',monospace", fontSize:9,
+                                color:"#666", background:"transparent",
+                                border:"1px dashed #2a2a2a",
+                                borderRadius:4, padding:"1px 6px",
+                                letterSpacing:"0.08em", cursor:"pointer",
+                              }}
+                            >
+                              + set canonical
+                            </button>
+                          );
+                        }
                         return (
                           <button
                             onClick={e => { e.stopPropagation(); setLinkingScanMode("canonical"); setLinkingScanIdx(idx); }}
-                            aria-label={canon ? `Change canonical (currently ${canon.name})` : "Set canonical"}
-                            title={canon ? `Canonical: ${canon.name} — tap to change` : "Tap to set canonical"}
-                            style={canon ? {
+                            aria-label={`Change canonical (currently ${displayName}${isPending ? ", pending" : ""})`}
+                            title={isPending
+                              ? `Canonical: ${displayName} — pending review. Tap to change.`
+                              : `Canonical: ${displayName} — tap to change`}
+                            style={{
+                              display:"inline-flex", alignItems:"center", gap:4,
                               fontFamily:"'DM Mono',monospace", fontSize:9,
                               color:"#b8a878", background:"#1a1508",
                               border:"1px solid #3a2f10",
                               borderRadius:4, padding:"2px 6px",
                               letterSpacing:"0.08em", cursor:"pointer",
-                            } : {
-                              fontFamily:"'DM Mono',monospace", fontSize:9,
-                              color:"#666", background:"transparent",
-                              border:"1px dashed #2a2a2a",
-                              borderRadius:4, padding:"1px 6px",
-                              letterSpacing:"0.08em", cursor:"pointer",
                             }}
                           >
-                            {canon
-                              ? <>{canonEmoji} {canon.name.toUpperCase()}</>
-                              : "+ set canonical"}
+                            <span>{displayEmoji} {displayName.toUpperCase()}</span>
+                            {isPending && (
+                              <span style={{
+                                marginLeft: 2,
+                                color:"#d4c9ac", fontSize: 8,
+                                background:"#2a2110",
+                                border:"1px solid #3a2f10",
+                                borderRadius: 3, padding:"1px 4px",
+                                letterSpacing:"0.1em",
+                              }}>
+                                PENDING
+                              </span>
+                            )}
                           </button>
                         );
                       })()}
