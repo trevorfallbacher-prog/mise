@@ -1908,6 +1908,44 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 )}
               </div>
 
+              {/* INGREDIENT tap line — mirrors ItemCard's identity
+                  stack. Taps open LinkIngredient (same picker pantry
+                  rows use) so the composition tags can be set before
+                  the item saves. Shows the list of tags currently on
+                  deck, or "+ ADD" when empty. Yellow is the shared
+                  composition color; separate from the big-3 axis
+                  colors (canonical/category/storage). */}
+              <div
+                onClick={() => setCustomComponentsOpen(true)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ color: "#f5c842" }}>INGREDIENT:</span>
+                {customComponents.length === 0 ? (
+                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                    + ADD
+                  </span>
+                ) : (
+                  <>
+                    {customComponents.slice(0, 4).map((c, i) => (
+                      <span key={c.id} style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
+                        {i > 0 && <span style={{ color: "#444", marginRight: 4 }}>·</span>}
+                        {(c.canonical?.name || c.id).toUpperCase()}
+                      </span>
+                    ))}
+                    {customComponents.length > 4 && (
+                      <span style={{ color: "#888" }}>+{customComponents.length - 4}</span>
+                    )}
+                  </>
+                )}
+              </div>
+
               {/* STATE tap line — neutral yellow (not part of the big-3
                   color hierarchy since state isn't a classification
                   axis on par with category/location/canonical). */}
