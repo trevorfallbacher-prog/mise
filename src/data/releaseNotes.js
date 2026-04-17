@@ -42,9 +42,53 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.11.0";
+export const CURRENT_VERSION = "0.11.1";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.11.1",
+    date:    "2026-04-17",
+    title:   "Save, schedule, and recall your recipes",
+    summary:
+      "Quick Cook got three jobs-to-be-done we punted on in 0.11.0: " +
+      "saving a recipe without cooking it right away, scheduling a " +
+      "recipe straight to your calendar, and finding a recipe you " +
+      "made earlier. The AI preview and the custom builder now show " +
+      "SAVE, 📅 SCHEDULE, and COOK IT as separate actions. Your " +
+      "saved recipes show up in Quick Cook → Pick a Recipe under " +
+      "YOUR RECIPES (custom) and AI DRAFTS, each tagged so you can " +
+      "tell them apart from the bundled templates at a glance. " +
+      "Recipes are private to you by default — opt in to share with " +
+      "family via a toggle on the custom builder, and scheduling a " +
+      "recipe auto-shares it so the family calendar actually works. " +
+      "Custom recipes you're proud of can also be submitted for admin " +
+      "review so they might get promoted into the built-in library.",
+    shipped: [
+      { kind: "feature",
+        text: "SAVE button on AI and custom recipes — persist without entering CookMode.",
+        commits: [] },
+      { kind: "feature",
+        text: "📅 SCHEDULE button — saves the recipe and drops it onto the calendar in one flow.",
+        commits: [] },
+      { kind: "feature",
+        text: "Quick Cook → Pick a Recipe now lists YOUR RECIPES + AI DRAFTS + bundled templates, tagged and searchable.",
+        commits: [] },
+      { kind: "safety",
+        text: "User recipes are private to you by default; family only sees them if you opt in. Scheduling a recipe auto-shares it since the calendar is family-visible.",
+        commits: [] },
+      { kind: "feature",
+        text: "Submit to admin — check a box on the custom builder to queue a recipe for review; admins can approve promising ones for future inclusion in the built-in library.",
+        commits: [] },
+      { kind: "architecture",
+        text: "findRecipe() now resolves user-authored slugs in the calendar and cookbook surfaces so custom/AI meals render correctly everywhere.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Library edit — change an existing saved recipe without re-creating it.",
+      "Promote-to-bundled — admin one-click path from the review queue into the built-in library.",
+      "Share with a specific family member (not just the whole family).",
+    ],
+  },
   {
     version: "0.11.0",
     date:    "2026-04-17",

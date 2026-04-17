@@ -39,7 +39,13 @@ function slugify(s) {
     .slice(0, 60);
 }
 
-export default function CustomRecipeBuilder({ pantry = [], onCancel, onSaveAndCook }) {
+export default function CustomRecipeBuilder({
+  pantry = [],
+  onCancel,
+  onSave,          // (recipe, opts) => Promise — persist, then close
+  onSchedule,      // (recipe, opts) => Promise — parent persists + opens SchedulePicker
+  onSaveAndCook,   // (recipe, opts) => Promise — existing save + cook path
+}) {
   // Identity
   const [title,      setTitle]      = useState("");
   const [emoji,      setEmoji]      = useState("🍽️");
@@ -66,7 +72,16 @@ export default function CustomRecipeBuilder({ pantry = [], onCancel, onSaveAndCo
     { id: uid(), title: "", instruction: "" },
   ]);
 
-  const [saving, setSaving] = useState(false);
+  // Per-action busy state so each button can show SAVING… without
+  // racing its siblings.
+  const [busy, setBusy] = useState(null);  // null | "save" | "schedule" | "cook"
+  const saving = !!busy;
+  // Privacy + admin-review opt-ins. Default private (per-user spec).
+  // Submitting to admin implies the author wants the recipe considered
+  // for promotion to the bundled library — only meaningful for CUSTOM
+  // recipes (AI drafts aren't offered the same lane).
+  const [shareWithFamily, setShareWithFamily]  = useState(false);
+  const [submitForReview, setSubmitForReview]  = useState(false);
 
   // Pantry-match suggestions — for each ingredient row, show a
   // compact list of pantry items whose name or canonicalId matches
@@ -105,49 +120,70 @@ export default function CustomRecipeBuilder({ pantry = [], onCancel, onSaveAndCo
     setSteps(prev => [...prev, { id: uid(), title: "", instruction: "" }]);
   };
 
-  const handleSave = async () => {
-    if (!isValid || saving) return;
-    setSaving(true);
+  // Snapshot the form into a schema.js-shaped recipe object. Pure —
+  // called by all three action handlers with the same inputs so the
+  // persisted row matches no matter which button fires.
+  const buildRecipe = () => {
+    const slug = slugify(title) || "my-recipe";
+    const cleanIngredients = ingredients
+      .filter(i => i.item.trim())
+      .map(i => ({
+        amount:       i.amount.trim() || null,
+        item:         i.item.trim(),
+        ingredientId: i.ingredientId || null,
+      }));
+    const cleanSteps = steps
+      .filter(s => s.title.trim() || s.instruction.trim())
+      .map((s, idx) => ({
+        id:          `step${idx + 1}`,
+        title:       s.title.trim() || `Step ${idx + 1}`,
+        instruction: s.instruction.trim(),
+        icon:        "👨‍🍳",
+        timer:       null,
+        tip:         null,
+      }));
+    return {
+      slug,
+      title:      title.trim(),
+      subtitle:   null,
+      emoji:      emoji || "🍽️",
+      cuisine,
+      category,
+      difficulty: clamp(difficulty, 1, 10),
+      routes:     ["plan"],
+      time:       { prep: Number(prep) || 0, cook: Number(cook) || 0 },
+      serves:     clamp(serves, 1, 20),
+      tools:      [],
+      ingredients: cleanIngredients,
+      steps:       cleanSteps,
+      tags:        [],
+    };
+  };
+
+  // One handler for all three actions — differs only in the parent
+  // callback invoked and the sharing rule (scheduling implies shared=true,
+  // everything else respects the toggle).
+  const handleAction = (kind) => async () => {
+    if (!isValid || busy) return;
+    setBusy(kind);
     try {
-      const slug = slugify(title) || "my-recipe";
-      const cleanIngredients = ingredients
-        .filter(i => i.item.trim())
-        .map(i => ({
-          amount:       i.amount.trim() || null,
-          item:         i.item.trim(),
-          ingredientId: i.ingredientId || null,
-        }));
-      const cleanSteps = steps
-        .filter(s => s.title.trim() || s.instruction.trim())
-        .map((s, idx) => ({
-          id:          `step${idx + 1}`,
-          title:       s.title.trim() || `Step ${idx + 1}`,
-          instruction: s.instruction.trim(),
-          icon:        "👨‍🍳",
-          timer:       null,
-          tip:         null,
-        }));
-      const recipe = {
-        slug,
-        title:      title.trim(),
-        subtitle:   null,
-        emoji:      emoji || "🍽️",
-        cuisine,
-        category,
-        difficulty: clamp(difficulty, 1, 10),
-        routes:     ["plan"],
-        time:       { prep: Number(prep) || 0, cook: Number(cook) || 0 },
-        serves:     clamp(serves, 1, 20),
-        tools:      [],
-        ingredients: cleanIngredients,
-        steps:       cleanSteps,
-        tags:        [],
+      const recipe = buildRecipe();
+      const opts = {
+        shared: kind === "schedule" ? true : shareWithFamily,
+        submitForReview,
       };
-      await onSaveAndCook?.(recipe);
+      if (kind === "save")     await onSave?.(recipe, opts);
+      if (kind === "schedule") await onSchedule?.(recipe, opts);
+      if (kind === "cook")     await onSaveAndCook?.(recipe, opts);
+    } catch (e) {
+      console.error(`[custom builder] ${kind} failed:`, e);
     } finally {
-      setSaving(false);
+      setBusy(null);
     }
   };
+  const handleSave     = handleAction("save");
+  const handleSchedule = handleAction("schedule");
+  const handleCook     = handleAction("cook");
 
   return (
     <div>
@@ -272,22 +308,72 @@ export default function CustomRecipeBuilder({ pantry = [], onCancel, onSaveAndCo
           <button onClick={addStep} style={addBtn}>+ ADD STEP</button>
         </Section>
 
-        {/* Save */}
-        <div style={{ marginTop: 28, display: "flex", gap: 10 }}>
+        {/* Privacy + admin-review toggles. Recipes default private;
+            user opts in to family visibility or to submit for admin
+            review. Scheduling auto-overrides privacy (see handleAction). */}
+        <div style={{ marginTop: 24 }}>
+          <Toggle
+            label="Share with family"
+            hint="They'll see it in the recipe picker and can schedule it."
+            checked={shareWithFamily}
+            onChange={setShareWithFamily}
+          />
+          <Toggle
+            label="Submit to admin for template review"
+            hint="An admin may promote great recipes into the bundled library."
+            checked={submitForReview}
+            onChange={setSubmitForReview}
+          />
+        </div>
+
+        {/* Action bar — CANCEL (narrow) + SAVE + SCHEDULE + SAVE & COOK. */}
+        <div style={{ marginTop: 18, display: "flex", gap: 8 }}>
           <button
             onClick={onCancel}
+            disabled={saving}
             style={{
-              flex: 1, padding: "14px",
+              width: 52, padding: "14px 0",
               background: "#1a1a1a", border: "1px solid #2a2a2a",
               color: "#888", borderRadius: 12,
-              fontFamily: "'DM Mono',monospace", fontSize: 11, letterSpacing: "0.08em",
-              cursor: "pointer",
+              fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.06em",
+              cursor: saving ? "not-allowed" : "pointer", flexShrink: 0,
+              opacity: saving ? 0.5 : 1,
             }}
           >
-            CANCEL
+            ✕
           </button>
           <button
             onClick={handleSave}
+            disabled={!isValid || saving}
+            style={{
+              flex: 1, padding: "14px 8px",
+              background: "transparent", border: `1px solid ${isValid && !saving ? "#3a3a3a" : "#222"}`,
+              color: isValid && !saving ? "#b8a878" : "#555",
+              borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+              cursor: isValid && !saving ? "pointer" : "not-allowed",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {busy === "save" ? "…" : "SAVE"}
+          </button>
+          <button
+            onClick={handleSchedule}
+            disabled={!isValid || saving}
+            style={{
+              flex: 1, padding: "14px 8px",
+              background: "transparent", border: `1px solid ${isValid && !saving ? "#3a3a3a" : "#222"}`,
+              color: isValid && !saving ? "#b8a878" : "#555",
+              borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+              cursor: isValid && !saving ? "pointer" : "not-allowed",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {busy === "schedule" ? "…" : "📅 SCHED"}
+          </button>
+          <button
+            onClick={handleCook}
             disabled={!isValid || saving}
             style={{
               flex: 2, padding: "14px",
@@ -299,7 +385,7 @@ export default function CustomRecipeBuilder({ pantry = [], onCancel, onSaveAndCo
               cursor: isValid && !saving ? "pointer" : "not-allowed",
             }}
           >
-            {saving ? "SAVING…" : "SAVE & COOK →"}
+            {busy === "cook" ? "SAVING…" : "COOK IT →"}
           </button>
         </div>
       </div>
@@ -309,6 +395,46 @@ export default function CustomRecipeBuilder({ pantry = [], onCancel, onSaveAndCo
 
 // ─────────────────────────────────────────────────────────────────────────
 // Subcomponents
+
+// Compact self-labeled toggle used for the privacy + submit-for-review
+// opt-ins below the review step. Emits a plain boolean so the parent
+// can feed it straight into save opts.
+function Toggle({ label, hint, checked, onChange }) {
+  return (
+    <label style={{
+      display: "flex", alignItems: "flex-start", gap: 12,
+      padding: "10px 12px", marginBottom: 8,
+      background: "#121212", border: `1px solid ${checked ? "#3a3019" : "#1e1e1e"}`,
+      borderRadius: 12, cursor: "pointer",
+    }}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        style={{
+          width: 16, height: 16, marginTop: 2, accentColor: "#f5c842",
+          cursor: "pointer", flexShrink: 0,
+        }}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+          color: checked ? "#f5c842" : "#bbb", letterSpacing: "0.04em",
+        }}>
+          {label}
+        </div>
+        {hint && (
+          <div style={{
+            marginTop: 2, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+            color: "#777", lineHeight: 1.4,
+          }}>
+            {hint}
+          </div>
+        )}
+      </div>
+    </label>
+  );
+}
 
 function IngredientRow({ index, ing, pantry, onChange, onRemove }) {
   const [suggestOpen, setSuggestOpen] = useState(false);

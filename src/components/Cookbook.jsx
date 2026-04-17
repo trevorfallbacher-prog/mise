@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCookLog, useDinerLog, useCookLogReviews, useMyFavorites, useCookSavers, useCookPhotos } from "../lib/useCookLog";
+import { useUserRecipes } from "../lib/useUserRecipes";
 import { findRecipe } from "../data/recipes";
 
 // Mapping the DB's rating column onto the visual language used throughout
@@ -383,7 +384,11 @@ function PhotoGallery({ cookLogId, viewerId, nameFor, onOpenProfile }) {
 //     own review + everyone else's reviews.
 function CookLogDetail({ log, viewerId, onBack, onToggleFavorite, onDelete, onLeave, nameFor, onOpenProfile }) {
   const meta = ratingMeta(log.rating);
-  const recipe = findRecipe(log.recipeSlug);
+  // Include the viewer's user recipes in the slug lookup so a cook log
+  // logged against a custom/AI recipe resolves to its title, emoji, and
+  // ingredients/steps rather than a blank tile.
+  const { findBySlug: findUserRecipe } = useUserRecipes(viewerId);
+  const recipe = findRecipe(log.recipeSlug, findUserRecipe);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const isChef = viewerId === log.userId;
   const { reviews, myReview, upsertMyReview, deleteMyReview } = useCookLogReviews(log.id, viewerId);

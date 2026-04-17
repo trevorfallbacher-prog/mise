@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import CookMode from "./CookMode";
 import SchedulePicker from "./SchedulePicker";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
+import { useUserRecipes } from "../lib/useUserRecipes";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
 import { supabase } from "../lib/supabase";
 
@@ -460,6 +461,12 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     familyKey,
   });
 
+  // User-recipe resolver — lets findRecipe() below resolve slugs that
+  // point at user_recipes rows (custom or AI recipes scheduled via
+  // Quick Cook). Without this wired in, scheduled user recipes would
+  // render as blank tiles on the calendar.
+  const { findBySlug: findUserRecipe } = useUserRecipes(userId);
+
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we
   // just filter by the cooked_at range. Viewer-scoped list — every member
@@ -690,7 +697,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
 
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {dayMeals.map(meal => {
-                  const recipe = findRecipe(meal.recipe_slug);
+                  const recipe = findRecipe(meal.recipe_slug, findUserRecipe);
                   const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
                   const isRequest = meal.cook_id == null;
                   const cookLabel = isRequest
@@ -768,13 +775,13 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       {openMeal && (
         <MealDetailDrawer
           meal={openMeal}
-          recipe={findRecipe(openMeal.recipe_slug)}
+          recipe={findRecipe(openMeal.recipe_slug, findUserRecipe)}
           userId={userId}
           nameFor={nameFor}
           family={family}
           onClose={() => setOpenMeal(null)}
           onCookNow={() => {
-            const r = findRecipe(openMeal.recipe_slug);
+            const r = findRecipe(openMeal.recipe_slug, findUserRecipe);
             setOpenMeal(null);
             if (r) setCookingRecipe(r);
           }}

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { INGREDIENTS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
+import { useUserRecipes } from "../lib/useUserRecipes";
+import { totalTimeMin, difficultyLabel } from "../data/recipes";
 
 // AdminPanel — elevated-permissions inspector, scoped to profiles
 // where role = 'admin' (see migration 0042). Mounted from Settings
@@ -27,7 +29,7 @@ import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientIn
 //   userId    — viewer id (informational, not used for filtering)
 //   onClose() — dismiss
 export default function AdminPanel({ userId, onClose }) {
-  const [tab, setTab] = useState("users"); // "users" | "receipts" | "enrichments" | "canonicals"
+  const [tab, setTab] = useState("users"); // "users" | "receipts" | "enrichments" | "canonicals" | "recipes"
 
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
@@ -71,12 +73,13 @@ export default function AdminPanel({ userId, onClose }) {
           Elevated permissions
         </h2>
 
-        <div style={{ display: "flex", gap: 0, margin: "0 0 14px", padding: 4, background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 12 }}>
+        <div style={{ display: "flex", gap: 0, margin: "0 0 14px", padding: 4, background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 12, overflowX: "auto" }}>
           {[
             { id: "users",       label: "USERS" },
             { id: "receipts",    label: "RECEIPTS" },
             { id: "enrichments", label: "ENRICHMENTS" },
             { id: "canonicals",  label: "CANONICALS" },
+            { id: "recipes",     label: "RECIPES" },
           ].map(t => (
             <button
               key={t.id}
@@ -99,6 +102,7 @@ export default function AdminPanel({ userId, onClose }) {
         {tab === "receipts"    && <ReceiptsList viewerId={userId} />}
         {tab === "enrichments" && <PendingEnrichmentsList viewerId={userId} />}
         {tab === "canonicals"  && <CanonicalsList viewerId={userId} />}
+        {tab === "recipes"     && <RecipeSubmissionsList viewerId={userId} />}
       </div>
     </div>
   );
@@ -920,6 +924,180 @@ function adminBtnStyle(bg, fg) {
     fontFamily: "'DM Mono',monospace", fontSize: 10,
     letterSpacing: "0.08em", cursor: "pointer", fontWeight: 700,
   };
+}
+
+// ── Recipe submissions ────────────────────────────────────────────
+// Lists user-authored recipes currently in the review queue
+// (submitted_for_review=true AND review_status='pending'). Approve /
+// reject flips status and clears submitted_for_review, dropping the
+// row out of admin SELECT scope — see migration 0052 for the RLS.
+// Approval is intentionally non-destructive: it just stamps the row
+// as approved. Actual promotion into src/data/recipes/ is still a
+// manual code edit; this queue is the trigger for that work.
+function RecipeSubmissionsList({ viewerId }) {
+  const { adminList, adminDecide } = useUserRecipes(viewerId);
+  const [rows, setRows] = useState(null);        // null = loading
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(null);        // row id currently being decided
+  const [preview, setPreview] = useState(null);  // row being previewed, or null
+
+  const reload = async () => {
+    try {
+      const data = await adminList();
+      setRows(data);
+      setError(null);
+    } catch (e) {
+      console.error("[admin recipes] load failed:", e);
+      setError(e.message || "load failed");
+      setRows([]);
+    }
+  };
+  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const decide = async (row, status) => {
+    setBusy(row.id);
+    try {
+      await adminDecide(row.id, { status });
+      setRows(prev => (prev || []).filter(r => r.id !== row.id));
+      if (preview?.id === row.id) setPreview(null);
+    } catch (e) {
+      console.error("[admin recipes] decide failed:", e);
+      setError(e.message || "update failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (rows === null) return <Loading />;
+  if (error) return <Empty msg={`Load failed: ${error}`} />;
+  if (!rows.length) return <Empty msg="No recipes pending review." />;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {rows.map(row => {
+        const r = row.recipe || {};
+        return (
+          <div key={row.id} style={{
+            background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
+            padding: "12px 14px",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ fontSize: 26, flexShrink: 0 }}>{r.emoji || "🍽️"}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {r.title || "(untitled)"}
+                </div>
+                <div style={{
+                  marginTop: 2, fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#666", letterSpacing: "0.06em",
+                }}>
+                  {(r.cuisine || "OTHER").toUpperCase()} · {totalTimeMin(r)} MIN · {difficultyLabel(r.difficulty).toUpperCase()} · SERVES {r.serves || "?"}
+                </div>
+              </div>
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button onClick={() => setPreview(row)} style={adminBtnStyle("#1a1a1a", "#888")}>PREVIEW</button>
+              <button
+                onClick={() => decide(row, "approved")}
+                disabled={busy === row.id}
+                style={{ ...adminBtnStyle("#0f2215", "#4ade80"), opacity: busy === row.id ? 0.5 : 1 }}
+              >
+                {busy === row.id ? "…" : "APPROVE"}
+              </button>
+              <button
+                onClick={() => decide(row, "rejected")}
+                disabled={busy === row.id}
+                style={{ ...adminBtnStyle("#2a1515", "#ef4444"), opacity: busy === row.id ? 0.5 : 1 }}
+              >
+                REJECT
+              </button>
+            </div>
+          </div>
+        );
+      })}
+
+      {preview && <RecipePreviewModal row={preview} onClose={() => setPreview(null)} />}
+    </div>
+  );
+}
+
+function RecipePreviewModal({ row, onClose }) {
+  const r = row.recipe || {};
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 380,
+        background: "#000000dd",
+        display: "flex", alignItems: "flex-end",
+        maxWidth: 480, margin: "0 auto",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: "100%", background: "#111",
+          borderRadius: "18px 18px 0 0",
+          maxHeight: "90vh", overflowY: "auto",
+          padding: "18px 20px 28px",
+        }}
+      >
+        <div style={{ width: 44, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 12px" }} />
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 42 }}>{r.emoji || "🍽️"}</div>
+          <div style={{ fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4", margin: "6px 0 4px" }}>
+            {r.title || "(untitled)"}
+          </div>
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em" }}>
+            {(r.cuisine || "OTHER").toUpperCase()} · {totalTimeMin(r)} MIN · {difficultyLabel(r.difficulty).toUpperCase()} · SERVES {r.serves || "?"}
+          </div>
+        </div>
+        <div style={{ marginTop: 18, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.1em" }}>
+          INGREDIENTS
+        </div>
+        <ul style={{ margin: "8px 0 0", padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+          {(r.ingredients || []).map((ing, i) => (
+            <li key={i} style={{
+              padding: "6px 10px", background: "#161616", borderRadius: 8,
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#ddd",
+              display: "flex", gap: 8,
+            }}>
+              <span style={{ color: "#b8a878", fontFamily: "'DM Mono',monospace", fontSize: 10, minWidth: 52 }}>
+                {ing.amount || "—"}
+              </span>
+              <span>{ing.item}</span>
+            </li>
+          ))}
+        </ul>
+        <div style={{ marginTop: 18, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.1em" }}>
+          STEPS
+        </div>
+        <ol style={{ margin: "8px 0 0", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 8 }}>
+          {(r.steps || []).map((s, i) => (
+            <li key={i} style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#ccc", lineHeight: 1.5 }}>
+              <strong style={{ color: "#f0ece4" }}>{s.title}</strong>
+              {s.instruction ? <> — {s.instruction}</> : null}
+            </li>
+          ))}
+        </ol>
+        <button
+          onClick={onClose}
+          style={{
+            marginTop: 18, width: "100%", padding: "12px",
+            background: "#1a1a1a", border: "1px solid #2a2a2a",
+            color: "#888", borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 11, letterSpacing: "0.08em",
+            cursor: "pointer",
+          }}
+        >
+          CLOSE
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── Shared loading / empty ────────────────────────────────────────

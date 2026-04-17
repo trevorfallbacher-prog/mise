@@ -5,11 +5,17 @@ import { totalTimeMin, difficultyLabel } from "../data/recipes";
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — pick cuisine / time / notes, tap DRAFT to call the edge fn
 //   loading — skeleton while the edge function is running
-//   preview — show the generated recipe; REGENERATE / COOK IT
+//   preview — show the generated recipe; four actions below
 //
-// When COOK IT is tapped, we hand the recipe to the parent
-// (QuickCook) via onSaveAndCook, which persists to user_recipes and
-// enters CookMode.
+// Preview action bar (four buttons):
+//   ↻ REGEN    — back to setup, same prefs
+//   SAVE       — onSave(recipe) → persist privately, close
+//   📅 SCHED   — onSchedule(recipe) → parent persists (shared=true)
+//                and opens SchedulePicker
+//   COOK IT    — onSaveAndCook(recipe) → persist + enter CookMode
+//
+// The parent (QuickCook) owns the shared/private semantics. This
+// component just emits events.
 
 const CUISINE_CHIPS = [
   { id: "any",      label: "Any cuisine"   },
@@ -34,11 +40,19 @@ const DIFFICULTY_CHIPS = [
   { id: "advanced", label: "Advanced"},
 ];
 
-export default function AIRecipe({ pantry = [], onCancel, onSaveAndCook }) {
+export default function AIRecipe({
+  pantry = [],
+  onCancel,
+  onSave,          // (recipe) => Promise — persist privately, then close
+  onSchedule,      // (recipe) => Promise — parent persists + opens SchedulePicker
+  onSaveAndCook,   // (recipe) => Promise — existing save + cook path
+}) {
   const [phase,  setPhase]  = useState("setup");     // setup | loading | preview | error
   const [recipe, setRecipe] = useState(null);
   const [errMsg, setErrMsg] = useState("");
-  const [saving, setSaving] = useState(false);
+  // Per-action busy state so exactly one button shows SAVING… and
+  // the other two stay tappable / disabled appropriately.
+  const [busy,   setBusy]   = useState(null);         // null | "save" | "schedule" | "cook"
 
   // Prefs
   const [cuisine,    setCuisine]    = useState("any");
@@ -72,15 +86,21 @@ export default function AIRecipe({ pantry = [], onCancel, onSaveAndCook }) {
     }
   };
 
-  const handleCookIt = async () => {
-    if (!recipe || saving) return;
-    setSaving(true);
+  // Each action guards on busy so a double-tap can't fire twice.
+  const handleAction = (kind, cb) => async () => {
+    if (!recipe || busy) return;
+    setBusy(kind);
     try {
-      await onSaveAndCook?.(recipe);
+      await cb?.(recipe);
+    } catch (e) {
+      console.error(`[ai recipe] ${kind} failed:`, e);
     } finally {
-      setSaving(false);
+      setBusy(null);
     }
   };
+  const handleSave     = handleAction("save",     onSave);
+  const handleSchedule = handleAction("schedule", onSchedule);
+  const handleCookIt   = handleAction("cook",     onSaveAndCook);
 
   // Header is shared across phases so the back button is always where
   // the user expects it.
@@ -204,23 +224,44 @@ export default function AIRecipe({ pantry = [], onCancel, onSaveAndCook }) {
           </Section>
         </div>
 
-        {/* Bottom action bar — pinned so the call-to-action is always reachable */}
+        {/* Bottom action bar — four actions. REGEN is narrow (secondary,
+            non-destructive); SAVE + SCHEDULE are medium-weight outline
+            buttons; COOK IT is the flex-2 yellow CTA. */}
         <div style={{
           position: "fixed", bottom: 0, left: 0, right: 0,
           maxWidth: 480, margin: "0 auto",
           padding: "14px 20px 22px",
           background: "linear-gradient(180deg, rgba(11,11,11,0) 0%, #0b0b0b 40%)",
-          display: "flex", gap: 10,
+          display: "flex", gap: 8,
         }}>
-          <button onClick={() => setPhase("setup")} style={secondaryBtn}>
-            ↻ REGEN
+          <button
+            onClick={() => setPhase("setup")}
+            disabled={!!busy}
+            style={{ ...iconActionBtn, opacity: busy ? 0.5 : 1 }}
+            title="Draft again"
+          >
+            ↻
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={!!busy}
+            style={{ ...outlineBtn, opacity: busy ? 0.5 : 1 }}
+          >
+            {busy === "save" ? "…" : "SAVE"}
+          </button>
+          <button
+            onClick={handleSchedule}
+            disabled={!!busy}
+            style={{ ...outlineBtn, opacity: busy ? 0.5 : 1 }}
+          >
+            {busy === "schedule" ? "…" : "📅 SCHED"}
           </button>
           <button
             onClick={handleCookIt}
-            disabled={saving}
-            style={{ ...primaryBtn, flex: 2, opacity: saving ? 0.6 : 1 }}
+            disabled={!!busy}
+            style={{ ...primaryBtn, flex: 2, opacity: busy ? 0.6 : 1 }}
           >
-            {saving ? "SAVING…" : "COOK IT →"}
+            {busy === "cook" ? "SAVING…" : "COOK IT →"}
           </button>
         </div>
       </div>
@@ -362,4 +403,24 @@ const secondaryBtn = {
   color: "#888", borderRadius: 12,
   fontFamily: "'DM Mono',monospace", fontSize: 12,
   letterSpacing: "0.08em", cursor: "pointer",
+};
+// Used in the preview action bar — a neutral outline button that sits
+// between REGEN (subtle) and COOK IT (yellow CTA) so SAVE / SCHEDULE
+// don't fight the primary action for attention.
+const outlineBtn = {
+  flex: 1, padding: "12px 8px",
+  background: "transparent", border: "1px solid #3a3a3a",
+  color: "#c7a8d4", borderRadius: 12,
+  fontFamily: "'DM Mono',monospace", fontSize: 10,
+  fontWeight: 600, letterSpacing: "0.06em",
+  cursor: "pointer", whiteSpace: "nowrap",
+};
+// Narrow square REGEN tap target — frees horizontal space for the
+// three action buttons to breathe.
+const iconActionBtn = {
+  width: 42, padding: "12px 0",
+  background: "#1a1a1a", border: "1px solid #2a2a2a",
+  color: "#888", borderRadius: 12,
+  fontFamily: "'DM Mono',monospace", fontSize: 16,
+  cursor: "pointer", flexShrink: 0,
 };

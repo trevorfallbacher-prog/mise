@@ -2,26 +2,29 @@ import { useMemo, useState } from "react";
 import CookMode from "./CookMode";
 import CustomRecipeBuilder from "./CustomRecipeBuilder";
 import AIRecipe from "./AIRecipe";
+import SchedulePicker from "./SchedulePicker";
 import {
   RECIPES,
   totalTimeMin,
   difficultyLabel,
 } from "../data/recipes";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { useScheduledMeals } from "../lib/useScheduledMeals";
+import { useToast } from "../lib/toast";
 
 // QuickCook — full-screen overlay launched by the center ➕ in the tab bar.
 //
 // Drives a small state machine:
-//   choose   → three big cards (CUSTOM / AI / TEMPLATE)
-//   custom   → multi-step recipe builder, saves to user_recipes
-//   ai       → Claude-drafted recipe from the pantry
-//   template → browseable picker over the bundled library
-//   cook     → hands the resolved recipe to CookMode
+//   choose    → three big cards (CUSTOM / AI / TEMPLATE)
+//   custom    → multi-step recipe builder, saves to user_recipes
+//   ai        → Claude-drafted recipe from the pantry
+//   template  → browseable picker over YOUR RECIPES + AI DRAFTS + bundled
+//   cook      → hands the resolved recipe to CookMode
+// (orthogonal) scheduling → SchedulePicker overlaid on any mode
 //
-// Each path's final action hands a recipe object (matching the bundled
-// schema) into `cook` mode so CookMode doesn't care where it came from.
-// CookMode onDone bubbles up to the parent (App) which flips to Home so
-// the newly-logged cook surfaces in YOUR CIRCLE / UserProfile archive.
+// Save / schedule / cook all persist through useUserRecipes.saveRecipe.
+// Privacy rule: recipes are private by default; the schedule path flips
+// shared=true since scheduled meals are family-visible.
 
 export default function QuickCook({
   userId, profile,
@@ -29,23 +32,53 @@ export default function QuickCook({
   family = [], friends = [],
   onClose, onCooked,
 }) {
-  const [mode, setMode] = useState("choose");   // choose | custom | ai | template | cook
+  const [mode, setMode] = useState("choose");        // choose | custom | ai | template | cook
   const [activeRecipe, setActiveRecipe] = useState(null);
+  // When set, SchedulePicker renders on top of the current mode. The
+  // recipe has already been persisted to user_recipes by the time we
+  // enter this state — picking a day just writes the scheduled_meals row.
+  const [scheduling, setScheduling] = useState(null); // recipe object | null
 
-  const { saveRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipes, saveRecipe } = useUserRecipes(userId);
+  const { schedule } = useScheduledMeals(userId);
+  const { push: pushToast } = useToast();
 
-  // Template picker — search over the bundled library. Re-implements
-  // the Plan.jsx RecipePickerModal inline so it can slot into our
-  // state machine without fighting Plan's own scheduling callbacks.
+  const userName = profile?.name?.trim().split(/\s+/)[0] || null;
+  const hasFamily = family.length > 0;
+
+  // Template picker — search over both user recipes AND bundled. The
+  // three sections (CUSTOM · AI · BUNDLED) stay visually distinct so
+  // the user can tell what they're tapping even without reading the
+  // header, but the search box filters all three together.
   const [query, setQuery] = useState("");
-  const filtered = useMemo(() => {
+
+  // Split user recipes by source; already sorted newest-first by the hook.
+  const userCustom = useMemo(
+    () => userRecipes.filter(r => r.source === "custom" && r.userId === userId),
+    [userRecipes, userId],
+  );
+  const userAI = useMemo(
+    () => userRecipes.filter(r => r.source === "ai" && r.userId === userId),
+    [userRecipes, userId],
+  );
+
+  const matches = (r, q) => {
+    if (!q) return true;
+    return (r.title || "").toLowerCase().includes(q) ||
+           (r.cuisine || "").toLowerCase().includes(q) ||
+           (r.category || "").toLowerCase().includes(q);
+  };
+  const filteredUserCustom = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return RECIPES;
-    return RECIPES.filter(r =>
-      r.title.toLowerCase().includes(q) ||
-      r.cuisine.toLowerCase().includes(q) ||
-      r.category.toLowerCase().includes(q)
-    );
+    return userCustom.filter(ur => matches(ur.recipe, q));
+  }, [userCustom, query]);
+  const filteredUserAI = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return userAI.filter(ur => matches(ur.recipe, q));
+  }, [userAI, query]);
+  const filteredBundled = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return q ? RECIPES.filter(r => matches(r, q)) : RECIPES;
   }, [query]);
 
   // Enter CookMode with a given recipe, regardless of source.
@@ -59,6 +92,47 @@ export default function QuickCook({
   const backToChoose = () => {
     setActiveRecipe(null);
     setMode("choose");
+  };
+
+  // Persist a builder/draft output, handling every callsite's error
+  // expectations. `opts` carries { shared, submitForReview } from the
+  // child's toggle state.
+  const persist = async (recipe, source, opts = {}) => {
+    try {
+      return await saveRecipe(recipe, source, opts);
+    } catch (e) {
+      console.error(`[quickcook] ${source} save failed:`, e);
+      pushToast("Couldn't save your recipe", { emoji: "⚠️", kind: "warn" });
+      return null;
+    }
+  };
+
+  // SAVE action — persist, toast, close the overlay. Used by both the
+  // custom builder and the AI preview.
+  const handleSave = (source) => async (recipe, opts = {}) => {
+    const row = await persist(recipe, source, opts);
+    if (!row) return;
+    pushToast("Saved to your recipes", { emoji: "💾", kind: "info" });
+    onClose?.();
+  };
+
+  // SCHEDULE action — persist with shared=true (scheduling is a family-
+  // visible action), then open SchedulePicker on top of the current
+  // mode. The picker writes the scheduled_meals row and closes.
+  const handleSchedule = (source) => async (recipe, opts = {}) => {
+    const row = await persist(recipe, source, { ...opts, shared: true });
+    if (!row) return;
+    // Use the stamped (db-slugged) recipe so scheduled_meals.recipe_slug
+    // resolves via the user-recipe fallback in findRecipe.
+    setScheduling(row.recipe);
+  };
+
+  // COOK IT — original save + cook handoff. Preserves the "cook anyway
+  // if save fails" behavior so a transient DB error doesn't strand the
+  // user mid-session.
+  const handleSaveAndCook = (source) => async (recipe, opts = {}) => {
+    await persist(recipe, source, opts);
+    startCooking(recipe);
   };
 
   // Cook mode handoff — CookMode can end in exit OR done; we preserve
@@ -94,15 +168,34 @@ export default function QuickCook({
         <CustomRecipeBuilder
           pantry={pantry}
           onCancel={backToChoose}
-          onSaveAndCook={async (recipe) => {
-            try {
-              await saveRecipe(recipe, "custom");
-            } catch (e) {
-              console.error("custom save failed — cooking anyway", e);
-            }
-            startCooking(recipe);
-          }}
+          onSave={handleSave("custom")}
+          onSchedule={handleSchedule("custom")}
+          onSaveAndCook={handleSaveAndCook("custom")}
         />
+        {scheduling && (
+          <SchedulePicker
+            recipe={scheduling}
+            userId={userId}
+            userName={userName}
+            family={family}
+            defaultRequest={hasFamily}
+            onClose={() => setScheduling(null)}
+            onSave={async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
+              await schedule({
+                recipeSlug: scheduling.slug,
+                scheduledFor,
+                notificationSettings,
+                note,
+                cookId,
+                isRequest,
+                servings,
+              });
+              setScheduling(null);
+              pushToast("Scheduled — see the calendar tab", { emoji: "📅", kind: "info" });
+              onClose?.();
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -113,26 +206,47 @@ export default function QuickCook({
         <AIRecipe
           pantry={pantry}
           onCancel={backToChoose}
-          onSaveAndCook={async (recipe) => {
-            try {
-              await saveRecipe(recipe, "ai");
-            } catch (e) {
-              console.error("ai save failed — cooking anyway", e);
-            }
-            startCooking(recipe);
-          }}
+          onSave={handleSave("ai")}
+          onSchedule={handleSchedule("ai")}
+          onSaveAndCook={handleSaveAndCook("ai")}
         />
+        {scheduling && (
+          <SchedulePicker
+            recipe={scheduling}
+            userId={userId}
+            userName={userName}
+            family={family}
+            defaultRequest={hasFamily}
+            onClose={() => setScheduling(null)}
+            onSave={async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
+              await schedule({
+                recipeSlug: scheduling.slug,
+                scheduledFor,
+                notificationSettings,
+                note,
+                cookId,
+                isRequest,
+                servings,
+              });
+              setScheduling(null);
+              pushToast("Scheduled — see the calendar tab", { emoji: "📅", kind: "info" });
+              onClose?.();
+            }}
+          />
+        )}
       </div>
     );
   }
 
   if (mode === "template") {
+    const totalResults =
+      filteredUserCustom.length + filteredUserAI.length + filteredBundled.length;
     return (
       <div style={OVERLAY_STYLE}>
         <div style={{ padding: "24px 20px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid #1e1e1e" }}>
           <button onClick={backToChoose} style={iconBtn}>←</button>
           <div style={{ flex: 1, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
-            PICK A TEMPLATE
+            PICK A RECIPE
           </div>
           <button onClick={onClose} style={iconBtn}>✕</button>
         </div>
@@ -141,7 +255,7 @@ export default function QuickCook({
             autoFocus
             value={query}
             onChange={e => setQuery(e.target.value)}
-            placeholder="Search recipes…"
+            placeholder="Search your recipes and the library…"
             style={{
               width: "100%", padding: "12px 14px",
               background: "#1a1a1a", border: "1px solid #2a2a2a",
@@ -150,33 +264,48 @@ export default function QuickCook({
             }}
           />
         </div>
-        <div style={{ padding: "14px 20px 100px", display: "flex", flexDirection: "column", gap: 8, overflowY: "auto" }}>
-          {filtered.map(r => (
-            <button
-              key={r.slug}
-              onClick={() => startCooking(r)}
-              style={{
-                display: "flex", alignItems: "center", gap: 12,
-                padding: "12px 14px", background: "#161616",
-                border: "1px solid #2a2a2a", borderRadius: 12,
-                cursor: "pointer", textAlign: "left",
-              }}
-            >
-              <div style={{ fontSize: 26, flexShrink: 0 }}>{r.emoji}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.title}
-                </div>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.05em", marginTop: 2 }}>
-                  {r.cuisine.toUpperCase()} · {totalTimeMin(r)} MIN · {difficultyLabel(r.difficulty).toUpperCase()}
-                </div>
-              </div>
-              <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
-            </button>
-          ))}
-          {filtered.length === 0 && (
+        <div style={{ padding: "14px 20px 100px" }}>
+          {filteredUserCustom.length > 0 && (
+            <RecipeSection title="YOUR RECIPES" accent={TAG_CUSTOM}>
+              {filteredUserCustom.map(ur => (
+                <RecipeRow
+                  key={ur.id}
+                  recipe={ur.recipe}
+                  tag="CUSTOM"
+                  tagColor={TAG_CUSTOM}
+                  onClick={() => startCooking(ur.recipe)}
+                />
+              ))}
+            </RecipeSection>
+          )}
+          {filteredUserAI.length > 0 && (
+            <RecipeSection title="AI DRAFTS" accent={TAG_AI}>
+              {filteredUserAI.map(ur => (
+                <RecipeRow
+                  key={ur.id}
+                  recipe={ur.recipe}
+                  tag="AI"
+                  tagColor={TAG_AI}
+                  onClick={() => startCooking(ur.recipe)}
+                />
+              ))}
+            </RecipeSection>
+          )}
+          {filteredBundled.length > 0 && (
+            <RecipeSection title="BUNDLED TEMPLATES" accent="#7eb8d4">
+              {filteredBundled.map(r => (
+                <RecipeRow
+                  key={r.slug}
+                  recipe={r}
+                  tag={null}
+                  onClick={() => startCooking(r)}
+                />
+              ))}
+            </RecipeSection>
+          )}
+          {totalResults === 0 && (
             <div style={{ padding: 30, textAlign: "center", color: "#555", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
-              No recipes match "{query}"
+              {query ? `No recipes match "${query}"` : "No recipes yet."}
             </div>
           )}
         </div>
@@ -200,7 +329,7 @@ export default function QuickCook({
           What are you cooking?
         </h1>
         <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888", lineHeight: 1.5 }}>
-          Start from scratch, let Claude draft something from your pantry, or pick from the library.
+          Start from scratch, let Claude draft something from your pantry, or pick from your library.
         </div>
       </div>
 
@@ -222,8 +351,10 @@ export default function QuickCook({
         <BigCard
           emoji="📖"
           accent="#7eb8d4"
-          title="Pick a template"
-          blurb="Browse the bundled library — classic recipes, graded by difficulty."
+          title="Pick a recipe"
+          blurb={`${userCustom.length + userAI.length > 0
+            ? `${userCustom.length + userAI.length} saved · `
+            : ""}${RECIPES.length} bundled templates.`}
           onClick={() => setMode("template")}
         />
       </div>
@@ -257,6 +388,74 @@ function BigCard({ emoji, accent, title, blurb, onClick }) {
     </button>
   );
 }
+
+// Section wrapper used by the PICK A RECIPE list to visually separate
+// YOUR RECIPES / AI DRAFTS / BUNDLED TEMPLATES. Hidden automatically by
+// the caller when the section would be empty.
+function RecipeSection({ title, accent, children }) {
+  return (
+    <div style={{ marginTop: 16 }}>
+      <div style={{
+        fontFamily: "'DM Mono',monospace", fontSize: 10,
+        color: accent, letterSpacing: "0.12em", marginBottom: 8,
+      }}>
+        {title}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function RecipeRow({ recipe, tag, tagColor, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "12px 14px", background: "#161616",
+        border: "1px solid #2a2a2a", borderRadius: 12,
+        cursor: "pointer", textAlign: "left",
+      }}
+    >
+      <div style={{ fontSize: 26, flexShrink: 0 }}>{recipe.emoji || "🍽️"}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{
+            fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            flex: 1, minWidth: 0,
+          }}>
+            {recipe.title}
+          </div>
+          {tag && (
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+              color: tagColor, background: `${tagColor}15`,
+              border: `1px solid ${tagColor}55`,
+              padding: "2px 6px", borderRadius: 6,
+              letterSpacing: "0.1em", flexShrink: 0,
+            }}>
+              {tag}
+            </span>
+          )}
+        </div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.05em", marginTop: 2 }}>
+          {(recipe.cuisine || "").toUpperCase()} · {totalTimeMin(recipe)} MIN · {difficultyLabel(recipe.difficulty).toUpperCase()}
+        </div>
+      </div>
+      <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+    </button>
+  );
+}
+
+// Tag colors per CLAUDE.md palette. CUSTOM uses the canonical-identity
+// tan (user-authored identity); AI uses the state-axis purple (mirrors
+// the AI-recipe card accent). These avoid colliding with STORED-IN
+// (blue) and INGREDIENTS (yellow) axes.
+const TAG_CUSTOM = "#b8a878";
+const TAG_AI     = "#c7a8d4";
 
 const OVERLAY_STYLE = {
   position: "fixed", inset: 0, zIndex: 210,

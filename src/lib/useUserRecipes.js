@@ -1,33 +1,52 @@
 // Hook for user-authored recipes — custom-builder and AI-drafted.
 //
-// Reads every user_recipes row the viewer can SELECT (self + accepted
-// family, per migration 0051 RLS). Exposes:
+// Reads every user_recipes row the viewer can SELECT under migration
+// 0052's private-by-default RLS — that's the viewer's own rows, plus
+// any family recipe with shared=true, plus (for admins) anything in
+// the review queue. Exposes:
 //
-//   recipes    — array of { id, userId, slug, source, recipe, createdAt, updatedAt }
-//                where `recipe` is the full schema-matching object that
-//                CookMode / findRecipe / suggestMeals can consume.
-//   loading    — boolean
-//   error      — string | null
-//   saveRecipe(recipe, source)    — write to DB. Returns the inserted row.
-//                                   source is "custom" | "ai".
-//   deleteRecipe(id)              — remove by id (author-only via RLS).
-//   findBySlug(slug)              — local convenience lookup.
+//   recipes        — array of { id, userId, slug, source, recipe,
+//                    shared, submittedForReview, reviewStatus,
+//                    createdAt, updatedAt } where `recipe` is the
+//                    full schema-matching object that CookMode /
+//                    findRecipe / suggestMeals can consume.
+//   loading        — boolean
+//   error          — string | null
+//   saveRecipe(recipe, source, opts?) — write a new row. opts is
+//                    { shared?, submitForReview? }. submitForReview
+//                    also stamps review_status='pending'.
+//                    Returns the inserted row.
+//   setSharing(id, opts)              — UPDATE an existing row's
+//                    { shared?, submitForReview? } — used when the
+//                    user schedules a private recipe (scheduling
+//                    implies sharing) or from a future library edit
+//                    surface.
+//   deleteRecipe(id)                  — remove by id (author-only).
+//   findBySlug(slug)                  — local lookup for findRecipe().
+//   adminList()                       — refresh and return every row
+//                    currently in the review queue. Admin-only via
+//                    RLS; non-admins get an empty array back.
+//   adminDecide(id, { status })       — set review_status +
+//                    submitted_for_review=false. Admin-only via RLS.
 //
 // Realtime: subscribes to user_recipes so a family member's addition
-// shows up without a reload.
+// or an admin's approval shows up without a reload.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, safeChannel } from "./supabase";
 
 function fromDb(row) {
   return {
-    id:        row.id,
-    userId:    row.user_id,
-    slug:      row.slug,
-    source:    row.source,
-    recipe:    row.recipe || {},
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    id:                  row.id,
+    userId:              row.user_id,
+    slug:                row.slug,
+    source:              row.source,
+    recipe:              row.recipe || {},
+    shared:              row.shared === true,
+    submittedForReview:  row.submitted_for_review === true,
+    reviewStatus:        row.review_status || null,
+    createdAt:           row.created_at,
+    updatedAt:           row.updated_at,
   };
 }
 
@@ -105,20 +124,28 @@ export function useUserRecipes(userId) {
     return `${cleaned}-${n}`;
   }, [recipes, userId]);
 
-  const saveRecipe = useCallback(async (recipe, source = "custom") => {
-    if (!userId)   throw new Error("not signed in");
+  const saveRecipe = useCallback(async (recipe, source = "custom", opts = {}) => {
+    if (!userId)  throw new Error("not signed in");
     if (!recipe)  throw new Error("recipe required");
     const baseSlug = recipe.slug || recipe.title || "recipe";
     const slug = uniqueSlugFor(baseSlug);
     const stampedRecipe = { ...recipe, slug };
+    // submitForReview is offered for CUSTOM recipes only (the UI gates
+    // this) but the hook stays permissive — the DB check constraint
+    // enforces the source vocabulary and RLS takes care of visibility.
+    const submitForReview = !!opts.submitForReview;
+    const row = {
+      user_id: userId,
+      slug,
+      source,
+      recipe: stampedRecipe,
+      shared: !!opts.shared,
+      submitted_for_review: submitForReview,
+      review_status: submitForReview ? "pending" : null,
+    };
     const { data, error: err } = await supabase
       .from("user_recipes")
-      .insert({
-        user_id: userId,
-        slug,
-        source,
-        recipe: stampedRecipe,
-      })
+      .insert(row)
       .select()
       .single();
     if (err) {
@@ -128,6 +155,29 @@ export function useUserRecipes(userId) {
     return fromDb(data);
   }, [userId, uniqueSlugFor]);
 
+  // Toggle sharing / submission flags on an already-saved row. Used by
+  // the schedule flow (scheduling implies shared=true) and — later —
+  // by a library-edit surface. Scoped to the viewer's own rows via
+  // RLS; the optimistic update is safe because a rejected write just
+  // gets overwritten by the realtime UPDATE event.
+  const setSharing = useCallback(async (id, { shared, submitForReview } = {}) => {
+    const patch = {};
+    if (typeof shared === "boolean") patch.shared = shared;
+    if (typeof submitForReview === "boolean") {
+      patch.submitted_for_review = submitForReview;
+      if (submitForReview) patch.review_status = "pending";
+    }
+    if (Object.keys(patch).length === 0) return;
+    const { error: err } = await supabase
+      .from("user_recipes")
+      .update(patch)
+      .eq("id", id);
+    if (err) {
+      console.error("[user_recipes] setSharing failed:", err);
+      throw new Error(err.message || "update failed");
+    }
+  }, []);
+
   const deleteRecipe = useCallback(async (id) => {
     const { error: err } = await supabase
       .from("user_recipes")
@@ -136,6 +186,40 @@ export function useUserRecipes(userId) {
     if (err) {
       console.error("[user_recipes] delete failed:", err);
       throw new Error(err.message || "delete failed");
+    }
+  }, []);
+
+  // Admin-only queue reader. Non-admins get an empty list back — RLS
+  // filters the select, so the client doesn't need to know whether
+  // the caller is an admin.
+  const adminList = useCallback(async () => {
+    const { data, error: err } = await supabase
+      .from("user_recipes")
+      .select("*")
+      .eq("submitted_for_review", true)
+      .is("review_status", "pending")
+      .order("created_at", { ascending: false });
+    if (err) {
+      console.error("[user_recipes] adminList failed:", err);
+      throw new Error(err.message || "admin list failed");
+    }
+    return (data || []).map(fromDb);
+  }, []);
+
+  // Approve / reject a pending submission. Flipping submitted_for_review
+  // to false drops the row out of admin SELECT scope — follow-up edits
+  // would need a fresh submission from the author.
+  const adminDecide = useCallback(async (id, { status }) => {
+    if (!["approved", "rejected"].includes(status)) {
+      throw new Error(`invalid review status: ${status}`);
+    }
+    const { error: err } = await supabase
+      .from("user_recipes")
+      .update({ review_status: status, submitted_for_review: false })
+      .eq("id", id);
+    if (err) {
+      console.error("[user_recipes] adminDecide failed:", err);
+      throw new Error(err.message || "review update failed");
     }
   }, []);
 
@@ -149,5 +233,10 @@ export function useUserRecipes(userId) {
   }, [recipes]);
   const findBySlug = useCallback((slug) => recipesBySlug.get(slug) || null, [recipesBySlug]);
 
-  return { recipes, loading, error, saveRecipe, deleteRecipe, findBySlug };
+  return {
+    recipes, loading, error,
+    saveRecipe, setSharing, deleteRecipe,
+    findBySlug,
+    adminList, adminDecide,
+  };
 }
