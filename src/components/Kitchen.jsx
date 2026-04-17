@@ -893,15 +893,33 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                       {(() => {
                         const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
                         const tileEntry = item.tileId ? allBuiltIns.find(t => t.id === item.tileId) : null;
+                        // Location glyph — always rendered so the user
+                        // sees "this is going to the freezer" at a
+                        // glance without having to open the picker.
+                        const locEmoji =
+                          item.location === "fridge"  ? "🧊" :
+                          item.location === "freezer" ? "❄️" :
+                          item.location === "pantry"  ? "🥫" : null;
+                        const locLabel = (item.location || "").toUpperCase();
                         return (
                           <button
                             onClick={() => setTilingScanIdx(idx)}
                             aria-label={tileEntry ? `Change location (currently ${tileEntry.label})` : item.tileId ? "Change location" : "Set location"}
-                            title={tileEntry ? `Stored in ${tileEntry.label} — tap to change` : item.tileId ? "Tap to change location" : "Tap to set location"}
+                            title={tileEntry
+                              ? `Stored in ${tileEntry.label} (${item.location || "?"}) — tap to change`
+                              : item.location
+                                ? `Going to ${item.location} — tap to pick a shelf`
+                                : "Tap to set location"}
                             style={item.tileId ? {
                               fontFamily: "'DM Mono',monospace", fontSize: 9,
                               color: "#7eb8d4", background: "#0f1620",
                               border: "1px solid #1f3040",
+                              borderRadius: 4, padding: "2px 6px",
+                              letterSpacing: "0.08em", cursor: "pointer",
+                            } : item.location ? {
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#7eb8d4", background: "#0f1620",
+                              border: "1px dashed #1f3040",
                               borderRadius: 4, padding: "2px 6px",
                               letterSpacing: "0.08em", cursor: "pointer",
                             } : {
@@ -913,8 +931,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                             }}
                           >
                             {item.tileId
-                              ? <>→ {tileEntry ? `${tileEntry.emoji} ${tileEntry.label.toUpperCase()}` : "MY LOCATION"}</>
-                              : "+ set location"}
+                              ? <>{locEmoji && <>{locEmoji} </>}→ {tileEntry ? `${tileEntry.emoji} ${tileEntry.label.toUpperCase()}` : "MY LOCATION"}</>
+                              : locEmoji
+                                ? <>{locEmoji} {locLabel}</>
+                                : "+ set location"}
                           </button>
                         );
                       })()}
@@ -3149,6 +3169,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // and users see the expected placement without tapping.
             ...(s.tileId ? { tileId: s.tileId } : {}),
             ...(s.typeId ? { typeId: s.typeId } : {}),
+            // Location — explicit scan-confirm choice wins. User
+            // flipped strawberries to Freezer via the picker's
+            // JUST-USE shortcut? `s.location` is 'freezer' and we
+            // forward it; usePantry serializes to pantry_items.location
+            // and effectiveLocation() honors it at render time. Only
+            // the falsy case falls through to the category heuristic.
+            ...(s.location ? { location: s.location } : {}),
             // Back-link to the scan artifact that created this row —
             // either a receipts row (receipt scans) or a pantry_scans
             // row (fridge/pantry/freezer scans). At most one is set.

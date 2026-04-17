@@ -42,9 +42,37 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.9.0";
+export const CURRENT_VERSION = "0.9.1";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.9.1",
+    date:    "2026-04-17",
+    title:   "Pick fridge / pantry / freezer at scan time",
+    summary:
+      "Strawberries you're buying to freeze right away? You no longer " +
+      "have to let them land in the pantry and shuffle them over later. " +
+      "The STORED IN picker now opens with fridge / pantry / freezer " +
+      "pills at the top. Tap the one you want and a JUST USE ❄️ FREEZER " +
+      "shortcut appears — one more tap and the row commits with the new " +
+      "location, no need to pick a specific shelf. The scan-row chip " +
+      "also now shows the destination emoji (🧊/🥫/❄️) at a glance, so " +
+      "you can see every row's fate without opening anything.",
+    shipped: [
+      { kind: "ux",
+        text: "Location pills at the top of STORED IN picker. Tap FRIDGE / PANTRY / FREEZER to switch — the star, catalog, and search refilter instantly to that location's shelves.",
+        commits: [] },
+      { kind: "ux",
+        text: "JUST USE ❄️ FREEZER one-tap shortcut. Commits the location change without forcing a specific shelf pick — the heuristic router places it at render time.",
+        commits: [] },
+      { kind: "ux",
+        text: "Scan-confirm row chips now show the destination location emoji (🧊 FRIDGE / 🥫 PANTRY / ❄️ FREEZER) so you can see where every row is heading before you hit STOCK MY PANTRY.",
+        commits: [] },
+      { kind: "fix",
+        text: "addScannedItems now forwards the scan row's explicit location to the pantry_items row. Previously a manual location override got dropped on insert and the row fell through to the category-default location.",
+        commits: [] },
+    ],
+  },
   {
     version: "0.9.0",
     date:    "2026-04-17",

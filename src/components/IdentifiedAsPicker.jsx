@@ -8,20 +8,32 @@ import { COLOR, FONT, RADIUS } from "../lib/tokens";
 
 // STORED IN (tile) picker — "where does this live" chooser.
 //
-// UX shape (the "star-first" rewrite, mirroring TypePicker):
-//   1. ⭐ suggested tile pinned at top — the one-tap default.
-//   2. + CREATE NEW STORAGE AREA right below the star.
-//   3. Search input filters the full catalog (built-in tiles for
-//      the hinted location + family user tiles). Results only
-//      render when the user types.
+// UX shape (star-first + location-pills):
+//   1. 🧊 FRIDGE / 🥫 PANTRY / ❄️ FREEZER pills at the very top.
+//      The current location is highlighted. Tapping a different
+//      pill switches the active location — star re-evaluates,
+//      catalog filters, a "JUST USE ❄️ FREEZER" one-tap shortcut
+//      surfaces for users who just want to move the row without
+//      picking a specific shelf. Supports the strawberries-go-
+//      freezer case: one tap on the freezer pill, one tap on the
+//      JUST USE shortcut, done.
+//   2. ⭐ suggested tile pinned — the named-shelf default when
+//      keyword inference matches a tile IN the active location.
+//      Hidden when the suggestion's location doesn't match
+//      (avoids misleading the user after a pill switch).
+//   3. + CREATE NEW STORAGE AREA right below.
+//   4. Search input filters the active-location catalog + family
+//      user tiles. Empty state is a gentle nudge.
 //
 // Props:
 //   userId         — for creating new tiles + family-scoping user tiles
-//   locationHint   — fridge | pantry | freezer | null. Biases the
-//                    search so tiles in that location come first.
+//   locationHint   — fridge | pantry | freezer | null. Initial
+//                    active location; user can switch via pills.
 //   selectedTileId — currently picked tile id
 //   suggestedTileId— keyword / memory-inferred suggestion. Gets ⭐
-//   onPick(tileId, location) — called when user picks a tile
+//                    when its location matches active location.
+//   onPick(tileId, location) — called when user picks a tile OR
+//                    commits a location-only change (tileId=null).
 //   allowClear     — if true, render a "CLEAR · route by components"
 //                    affordance so existing items can fall back to
 //                    the heuristic classifier
@@ -52,9 +64,16 @@ export default function IdentifiedAsPicker({
   onPick,
   allowClear = false,
 }) {
-  // When no locationHint, fetch all; when hinted, still fetch all so
-  // search can find user tiles across locations.
+  // Family-scope user tiles — no location filter so search can find
+  // tiles the user owns in any location.
   const [userTiles] = useUserTiles(userId);
+
+  // Active location — the top-of-sheet pills drive this. Defaults to
+  // the hint (the caller's current location) but the user can flip
+  // it mid-session. A null hint falls through to "pantry" so we
+  // always have SOMETHING to filter on; first-time adds on an
+  // un-placed row just start there.
+  const [activeLocation, setActiveLocation] = useState(locationHint || "pantry");
 
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
@@ -64,35 +83,30 @@ export default function IdentifiedAsPicker({
   const [saving, setSaving] = useState(false);
   const [createError, setCreateError] = useState(null);
 
-  // Flat searchable catalog: family user tiles first, then built-ins
-  // for the hinted location, then built-ins for the other locations.
+  // Flat searchable catalog — filtered to the ACTIVE location. User
+  // tiles are included for that location only; switching locations
+  // reshuffles everything.
   const catalog = useMemo(() => {
-    const custom = userTiles.map(t => ({
-      source: "custom",
-      id:     t.id,
-      emoji:  t.emoji,
-      label:  t.label,
-      blurb:  t.useCount > 0 ? `YOURS · USED ${t.useCount}×` : "YOURS",
-      location: t.location,
-    }));
-    const mkBuiltIns = (loc) =>
-      (BUILTIN_BY_LOCATION[loc] || []).map(t => ({
-        source: "builtin",
+    const custom = userTiles
+      .filter(t => t.location === activeLocation)
+      .map(t => ({
+        source: "custom",
         id:     t.id,
         emoji:  t.emoji,
         label:  t.label,
-        blurb:  t.blurb,
-        location: loc,
+        blurb:  t.useCount > 0 ? `YOURS · USED ${t.useCount}×` : "YOURS",
+        location: t.location,
       }));
-
-    const primary   = locationHint ? mkBuiltIns(locationHint) : [];
-    const others    = LOCATION_META
-      .map(l => l.id)
-      .filter(id => id !== locationHint)
-      .flatMap(mkBuiltIns);
-    const allBuiltIns = locationHint ? [...primary, ...others] : [...mkBuiltIns("fridge"), ...mkBuiltIns("pantry"), ...mkBuiltIns("freezer")];
-    return [...custom, ...allBuiltIns];
-  }, [userTiles, locationHint]);
+    const builtIns = (BUILTIN_BY_LOCATION[activeLocation] || []).map(t => ({
+      source: "builtin",
+      id:     t.id,
+      emoji:  t.emoji,
+      label:  t.label,
+      blurb:  t.blurb,
+      location: activeLocation,
+    }));
+    return [...custom, ...builtIns];
+  }, [userTiles, activeLocation]);
 
   const byId = useMemo(() => {
     const m = new Map();
@@ -100,8 +114,24 @@ export default function IdentifiedAsPicker({
     return m;
   }, [catalog]);
 
-  const star = suggestedTileId ? byId.get(suggestedTileId) : null;
-  const current = selectedTileId ? byId.get(selectedTileId) : null;
+  // Star is only shown when the caller's suggestion lives in the
+  // ACTIVE location. After a pill switch (e.g. user flipped from
+  // Pantry → Freezer for strawberries), a suggestion like
+  // "Produce · pantry" is no longer relevant — hide it so the user
+  // isn't encouraged to re-commit the thing they just overrode.
+  const star = (() => {
+    if (!suggestedTileId) return null;
+    const t = byId.get(suggestedTileId);
+    return t && t.location === activeLocation ? t : null;
+  })();
+  // Current pick: show ONLY if it's in the active location (same
+  // reasoning — selecting a fridge tile then flipping to Freezer
+  // means the active intent has moved).
+  const current = (() => {
+    if (!selectedTileId) return null;
+    const t = byId.get(selectedTileId);
+    return t && t.location === activeLocation ? t : null;
+  })();
 
   const needle = search.trim().toLowerCase();
   const searchMatches = useMemo(() => {
@@ -110,6 +140,8 @@ export default function IdentifiedAsPicker({
       .filter(t => t.label.toLowerCase().includes(needle))
       .slice(0, 20);
   }, [catalog, needle]);
+
+  const activeMeta = LOCATION_META.find(l => l.id === activeLocation) || LOCATION_META[1];
 
   const handleCreate = async () => {
     if (!newLabel.trim()) return;
@@ -202,17 +234,94 @@ export default function IdentifiedAsPicker({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* ⭐ Star — the one-tap default. */}
+      {/* Location pills — one-tap storage-area switcher. Drives
+          the star / catalog / JUST-USE shortcut below. Paired with
+          the JUST-USE button, this is the "strawberries go to the
+          freezer, don't make me find a freezer tile" path. */}
+      <div>
+        <div style={{
+          fontFamily: FONT.mono, fontSize: 9, color: COLOR.muted,
+          letterSpacing: "0.12em", marginBottom: 6,
+        }}>
+          LOCATION
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          {LOCATION_META.map(l => {
+            const active = activeLocation === l.id;
+            return (
+              <button
+                key={l.id}
+                onClick={() => setActiveLocation(l.id)}
+                style={{
+                  flex: 1, padding: "10px 6px",
+                  background: active ? COLOR.goldDeep : COLOR.deep,
+                  color: active ? COLOR.gold : COLOR.ink,
+                  border: `1px solid ${active ? COLOR.gold : COLOR.border}`,
+                  borderRadius: RADIUS.md,
+                  fontFamily: FONT.mono, fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                {l.emoji} {l.label.toUpperCase()}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* JUST-USE shortcut — commit the active location without
+          picking a specific shelf. Sets tile_id=null so the heuristic
+          classifier routes at render time; the location column is
+          what pantry_items actually uses for grouping. Appears only
+          when the user has CHANGED location from the hint and hasn't
+          picked a specific tile yet — otherwise it's noise. */}
+      {activeLocation !== (locationHint || "pantry") && (
+        <button
+          onClick={() => onPick?.(null, activeLocation)}
+          style={{
+            padding: "12px 14px",
+            background: "#1e1a0e",
+            border: `1px solid ${COLOR.gold}`,
+            borderRadius: RADIUS.lg,
+            fontFamily: FONT.mono, fontSize: 12, fontWeight: 600,
+            color: COLOR.gold, letterSpacing: "0.08em",
+            cursor: "pointer", textAlign: "left",
+            display: "flex", alignItems: "center", gap: 10,
+          }}
+        >
+          <span style={{ fontSize: 20 }}>{activeMeta.emoji}</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div>JUST USE {activeMeta.label.toUpperCase()}</div>
+            <div style={{
+              fontFamily: FONT.mono, fontSize: 9, color: COLOR.muted,
+              letterSpacing: "0.06em", marginTop: 2, fontWeight: 400,
+            }}>
+              I'LL PICK A SHELF LATER
+            </div>
+          </div>
+          <span style={{ fontSize: 14, color: COLOR.gold }}>→</span>
+        </button>
+      )}
+
+      {/* ⭐ Star — one-tap default when the keyword/memory
+          suggestion lives in the active location. */}
       {star && renderTile(star, "star")}
 
-      {/* Current pick (if different from star). */}
+      {/* Current pick (if different from star and still in active
+          location). */}
       {current && (!star || current.id !== star.id) &&
         renderTile(current, "current")}
 
       {/* + CREATE NEW — right below the star. */}
       {!creating ? (
         <button
-          onClick={() => setCreating(true)}
+          onClick={() => {
+            // Pre-select the active location in the form — matches
+            // the user's just-expressed intent.
+            setNewLocation(activeLocation);
+            setCreating(true);
+          }}
           style={{
             padding: "10px 12px",
             background: "transparent", border: `1px dashed ${COLOR.goldDim}`,
@@ -345,9 +454,7 @@ export default function IdentifiedAsPicker({
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder={star
-            ? "Not that? Search for another spot…"
-            : "Search storage areas (fridge door, spice rack…)"}
+          placeholder={`Search ${activeMeta.label.toLowerCase()} shelves…`}
           style={{
             width: "100%", boxSizing: "border-box",
             padding: "10px 12px",
