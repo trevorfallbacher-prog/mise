@@ -94,10 +94,11 @@ function fromDb(row) {
   // 'green_onion'). Identity, NOT composition — user-composed
   // ingredient_ids[] stays free-form.
   if (row.canonical_id       !== undefined) item.canonicalId       = row.canonical_id || null;
-  // fill_level (migration 0043) — proportional inventory. Null when
-  // this row isn't being tracked by fill (the usual case for counted
-  // items like eggs / cans); a 0..1 numeric when tracked.
-  if (row.fill_level         !== undefined) item.fillLevel         = row.fill_level != null ? Number(row.fill_level) : null;
+  // fill_level (migration 0043) is dormant — we rolled the whole
+  // proportional-inventory concept back into plain amount+max sliders
+  // in 0.7.9. Column stays in the DB for forward compat but the
+  // client doesn't read or write it. A future migration can DROP
+  // COLUMN if it stays dead long enough.
   return item;
 }
 
@@ -145,7 +146,6 @@ function toDb(item) {
     ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
-    ...(item.fillLevel         !== undefined ? { fill_level: item.fillLevel } : {}),
   };
 }
 

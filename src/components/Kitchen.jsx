@@ -3229,52 +3229,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     {stateLabel(item.state)}
                   </span>
                 )}
-                {/* Fill-level chip — only renders when the row has a
-                    tracked fill (null is the default, counted items get
-                    no chip). Fraction label from the nearest stop so
-                    "⅓" shows instead of "33%". Color keyed to the same
-                    bar thresholds ItemCard uses so visual language is
-                    consistent. Full (1.0) is also hidden — a "FULL"
-                    chip on every tracked item turns into noise, the
-                    actionable signal is sub-FULL rows. */}
-                {(() => {
-                  if (item.fillLevel == null || item.fillLevel >= 0.99) return null;
-                  const stops = [
-                    { v: 0,    label: "EMPTY" },
-                    { v: 1/8,  label: "⅛" },
-                    { v: 1/4,  label: "¼" },
-                    { v: 1/3,  label: "⅓" },
-                    { v: 1/2,  label: "½" },
-                    { v: 2/3,  label: "⅔" },
-                    { v: 3/4,  label: "¾" },
-                  ];
-                  const closest = stops.reduce((a, b) => Math.abs(b.v - item.fillLevel) < Math.abs(a.v - item.fillLevel) ? b : a);
-                  const color = item.fillLevel <= 0.25 ? "#ef4444"
-                    : item.fillLevel <= 0.5  ? "#f59e0b"
-                    : "#7ec87e";
-                  const bg = item.fillLevel <= 0.25 ? "#1a0a0a"
-                    : item.fillLevel <= 0.5  ? "#1a1408"
-                    : "#0f1a0f";
-                  return (
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        setFillEditingId(prev => prev === item.id ? null : item.id);
-                      }}
-                      title={`Fill level: ${closest.label} — tap to adjust`}
-                      style={{
-                        fontFamily:"'DM Mono',monospace", fontSize:9,
-                        color, background:bg,
-                        border:`1px solid ${color}44`,
-                        borderRadius:4, padding:"1px 6px",
-                        letterSpacing:"0.08em", flexShrink:0,
-                        cursor:"pointer",
-                      }}
-                    >
-                      {closest.label}
-                    </button>
-                  );
-                })()}
                 {/* ⓘ button removed — row tap is the sole entry point into
                     the ItemCard now, making this icon redundant UI noise.
                     The whole row reads as tappable via cursor + hover; no
@@ -3509,22 +3463,26 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           );
         })()}
-        {/* Inline fill-level slider — expands when the user taps the
-            fill chip on this row. Live onChange commits to pantry so
-            the chip color + bar color update immediately. Escape / tap
-            outside / tap another chip closes. Kept to a single row so
-            the list doesn't reflow much. */}
-        {fillEditingId === item.id && item.fillLevel != null && (() => {
-          const sliderColor = item.fillLevel <= 0.25 ? "#ef4444"
-            : item.fillLevel <= 0.5 ? "#f59e0b"
-            : "#7ec87e";
-          const STOPS = [
-            { v: 0,    label: "EMPTY" },
-            { v: 1/4,  label: "¼" },
-            { v: 1/2,  label: "½" },
-            { v: 3/4,  label: "¾" },
-            { v: 1,    label: "FULL" },
-          ];
+        {/* Amount bar — tap to reveal an inline slider that drags the
+            row's amount from 0 to max. No separate "fill level"
+            concept; just drag to where the bag / jar / container looks
+            now. Live commits through updatePantryItem so the bar
+            color + width update as you slide. Tap the bar again to
+            close. */}
+        <button
+          onClick={e => { e.stopPropagation(); setFillEditingId(prev => prev === item.id ? null : item.id); }}
+          aria-label={`Adjust ${item.name} amount`}
+          title="Tap and slide to estimate what's left"
+          style={{ width:"100%", padding:0, background:"transparent", border:"none", cursor:"pointer" }}
+        >
+          <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
+            <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
+          </div>
+        </button>
+        {fillEditingId === item.id && (() => {
+          const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);
+          const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
+          const sliderColor = barColor(item);
           return (
             <div
               onClick={e => e.stopPropagation()}
@@ -3532,29 +3490,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             >
               <input
                 type="range"
-                min="0" max="1" step="0.01"
-                value={item.fillLevel}
-                onChange={e => updatePantryItem(item.id, { fillLevel: Number(e.target.value) })}
-                aria-label={`Fill level for ${item.name}`}
+                min="0" max={maxVal} step={step}
+                value={Number(item.amount) || 0}
+                onChange={e => updatePantryItem(item.id, { amount: Number(e.target.value) })}
+                aria-label={`Estimate ${item.name} remaining`}
                 style={{ flex:1, accentColor: sliderColor }}
               />
-              {STOPS.map(s => (
-                <button
-                  key={s.label}
-                  onClick={() => updatePantryItem(item.id, { fillLevel: s.v })}
-                  style={{
-                    padding:"3px 6px",
-                    background: Math.abs(s.v - item.fillLevel) < 0.03 ? "#1a1608" : "transparent",
-                    border: `1px solid ${Math.abs(s.v - item.fillLevel) < 0.03 ? "#f5c842" : "#2a2a2a"}`,
-                    color: Math.abs(s.v - item.fillLevel) < 0.03 ? "#f5c842" : "#888",
-                    borderRadius:4, cursor:"pointer",
-                    fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.04em",
-                    flexShrink:0,
-                  }}
-                >
-                  {s.label}
-                </button>
-              ))}
+              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#aaa", minWidth:68, textAlign:"right" }}>
+                {Number(item.amount || 0).toFixed(Number.isInteger(item.amount) ? 0 : 1)} / {maxVal.toFixed(Number.isInteger(maxVal) ? 0 : 1)}
+              </span>
               <button
                 onClick={() => setFillEditingId(null)}
                 aria-label="Close slider"
@@ -3565,9 +3509,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           );
         })()}
-        <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-          <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
-        </div>
         {/* Running-time meter — only rendered when the row carries an
             expiration date. Thinner than the amount bar so it reads as a
             secondary signal; empties as time runs out (gas-gauge mental

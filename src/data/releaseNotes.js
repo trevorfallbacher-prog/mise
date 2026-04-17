@@ -42,9 +42,61 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.7.8";
+export const CURRENT_VERSION = "0.7.9";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.7.9",
+    date:    "2026-04-17",
+    title:   "One amount, one slider — fill_level walked back",
+    summary:
+      "0.7.6–0.7.8 built a parallel fill_level concept alongside " +
+      "amount, then layered chips, sliders, and mode toggles on top. " +
+      "The right simplification (caught by you): amount already has " +
+      "a max (the row's high-water mark, tracked on every add) and " +
+      "the Kitchen amount bar already uses it. Drop fill_level; " +
+      "a single slider drives amount directly, range 0..max. Half a " +
+      "bag of chips eaten — slide the bar to where it looks, amount " +
+      "updates, everyone moves on. No separate tracking concept, no " +
+      "fractions, no ⅛/¼/⅓ chips.",
+    shipped: [
+      {
+        kind: "architecture",
+        text: "usePantry stops reading/writing pantry_items.fill_level. The 0043 column stays in the DB dormant so there's no write-time risk on mixed-version clients; a later migration can DROP COLUMN once it's been dead long enough",
+        commits: ["__pull_fill_level__"],
+      },
+      {
+        kind: "ux",
+        text: "ItemCard: FILL LEVEL card removed. QUANTITY card gains a range slider under the amount+unit input, range 0..max (high-water amount), color-keyed accent (red ≤¼, amber ≤½, green above). Drag writes amount live through onUpdate",
+        commits: ["__item_card_slider__"],
+      },
+      {
+        kind: "ux",
+        text: "Kitchen row: fill chip removed. The amount bar becomes a <button> — tap to expand an inline amount slider with a current/max readout and ✕ to close. Drag = live amount update + bar color tracks",
+        commits: ["__kitchen_row_slider__"],
+      },
+      {
+        kind: "ux",
+        text: "Cook used-items: fraction chip picker (⅛ ¼ ⅓ ½ ⅔ ¾ ALL) removed. Each ingredient card keeps its amount+unit input and gains a slider below with range 0..source.amount. Slide to estimate — you used about that much. Mode toggle gone, only one measurement at a time",
+        commits: ["__cook_used_slider__"],
+      },
+      {
+        kind: "ux",
+        text: "Cook confirm-removal: FINE-TUNE slider (was only on fraction entries) removed. Cards return to the single-row layout since every entry is now amount-mode — one source of truth. The used-items slider already lets you fine-tune before hitting REMOVE",
+        commits: ["__cook_confirm_simplify__"],
+      },
+      {
+        kind: "architecture",
+        text: "buildRemovalPlan loses the mode discriminator + fraction branch. Back to one pathway: amount-in, amount-out, unit-convertible-or-not. Save loop re-collapsed to the historical shape",
+        commits: ["__removal_plan_simplify__"],
+      },
+    ],
+    coming_soon: [
+      "Dropping pantry_items.fill_level column via migration once the dormant field has stabilized across clients",
+      "Amount slider on AddItem + Scan rows (estimate starting amount when stocking from a gift or half-used donation)",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.7.8",
     date:    "2026-04-17",
