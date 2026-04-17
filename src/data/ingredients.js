@@ -5227,6 +5227,42 @@ export function ingredientKind(id) {
 // An ingredient without an entry here has no state distinction; pantry
 // rows for it carry state=null and matching ignores state entirely.
 
+// Meat state vocabulary — shared across every meat hub (chicken, beef,
+// pork, turkey) so every canonical inheriting from those hubs gets the
+// same list. Organized into four axes per the product's meat-state
+// spec:
+//
+//   1. WHOLE / INTACT CUTS (default) — minimally altered structure.
+//      whole, steak_cut, chop, fillet, tenderloin, rack.
+//   2. CUT / REDUCED — geometry changed, composition intact.
+//      cubed, diced, chunks, strips, sliced, shaved, shredded.
+//   3. GROUND / COMMINUTED — structure destroyed.
+//      ground (coarse), minced (finer), paste (uniform).
+//   4. FORMED / RECONSTRUCTED — ground meat reshaped.
+//      patty, meatball, sausage, loaf, nuggets.
+//
+// Plus cross-cutting cooking-stage flags: raw, cooked. Legacy compound
+// states (shredded_cooked, diced_cooked) stay in the list so existing
+// pantry rows with those values continue to render + remain editable
+// in the state picker — don't remove them without a migration.
+const MEAT_STATES = [
+  // Whole / intact cuts — default band
+  "whole", "steak_cut", "chop", "fillet", "tenderloin", "rack",
+  // Cut / reduced forms — geometry only
+  "cubed", "diced", "chunks", "strips", "sliced", "shaved", "shredded",
+  // Ground / comminuted
+  "ground", "minced", "paste",
+  // Formed / reconstructed
+  "patty", "meatball", "sausage", "links", "loaf", "nuggets",
+  // Preserved / cured — structurally a separate axis but users
+  // shop for jerky as "meat in a state", not a separate canonical
+  "jerky",
+  // Cooking stage
+  "raw", "cooked",
+  // Legacy compound — retained for backward compatibility
+  "shredded_cooked", "diced_cooked",
+];
+
 export const INGREDIENT_STATES = {
   bread:         ["loaf", "slices", "crumbs", "cubes", "toasted"],
   // Covers every specific cheese AND the generic cheese hub — all cheeses
@@ -5234,10 +5270,19 @@ export const INGREDIENT_STATES = {
   // (parmesan, pecorino, mozzarella, etc.) inherit this list via their
   // parentId === "cheese_hub" link.
   cheese_hub:    ["block", "grated", "shredded", "sliced", "cubed", "crumbled"],
-  chicken:       ["raw", "cooked", "shredded_cooked", "diced_cooked", "ground"],
-  chicken_breast:["raw", "cooked", "shredded_cooked", "diced_cooked"],
-  chicken_thigh: ["raw", "cooked", "shredded_cooked", "diced_cooked"],
-  beef:          ["raw", "ground", "cooked", "shredded_cooked", "diced_cooked"],
+  // Every meat hub shares MEAT_STATES. Specific cuts (ribeye, pork_loin,
+  // turkey_breast, chicken_breast, etc.) inherit via their parentId
+  // link — no per-cut entry needed. Keeps the vocabulary consistent:
+  // a ribeye can be "steak_cut" or "sliced" without us having to
+  // enumerate every cut × state combination.
+  beef_hub:      MEAT_STATES,
+  chicken_hub:   MEAT_STATES,
+  pork_hub:      MEAT_STATES,
+  turkey_hub:    MEAT_STATES,
+  // chicken (the whole-bird canonical) sits outside the hub-inherit
+  // path — its parentId is null — so it needs its own entry. Same
+  // list; the chicken "whole" default covers the intact bird case.
+  chicken:       MEAT_STATES,
   salt:          ["fine", "coarse", "flaky"],
   kosher_salt:   ["coarse", "fine"],
   onion:         ["whole", "diced", "sliced", "minced"],
@@ -5259,15 +5304,29 @@ export const STATE_LABELS = {
   head: "head",       cloves: "cloves",    paste: "paste",      roasted: "roasted",
   juiced: "juiced",   zested: "zested",
   crushed: "crushed", mashed: "mashed",
+  // Meat state labels — new taxonomy. Display text stays lowercase
+  // to match the rest of the vocabulary; the UI uppercases at render.
+  steak_cut: "steak cut", chop: "chop",       fillet: "fillet",
+  tenderloin: "tenderloin", rack: "rack",
+  chunks: "chunks",     strips: "strips",   shaved: "shaved",
+  patty: "patty",       meatball: "meatball", sausage: "sausage",
+  links: "links",       nuggets: "nuggets",  jerky: "jerky",
+  // "loaf" already defined above (reused for meatloaf)
 };
 
 export const DEFAULT_STATE_FOR = {
   bread: "loaf",
   cheese_hub: "block",
-  chicken: "raw",
-  chicken_breast: "raw",
-  chicken_thigh: "raw",
-  beef: "raw",
+  // Every meat hub defaults to "whole" — the intact, minimally-altered
+  // form. A ribeye scanned from a receipt is "whole" until the user
+  // tells us otherwise (sliced, cubed, ground, patty, etc.). "raw"
+  // used to be the default but that conflated cooking stage with
+  // form; cooking stage is a separate axis the user can flip later.
+  beef_hub: "whole",
+  chicken_hub: "whole",
+  pork_hub: "whole",
+  turkey_hub: "whole",
+  chicken: "whole",
   salt: "fine",
   kosher_salt: "coarse",
   onion: "whole",
@@ -5337,7 +5396,24 @@ const STATE_SCAN_CODES = [
   { pattern: /\bcrushed\b/i,                     state: "crushed"  },
   { pattern: /\bjuiced?\b/i,                     state: "juiced"   },
   { pattern: /\bzested?\b/i,                     state: "zested"   },
-  // meat
+  // meat — ordered most-specific first so compound patterns
+  // ("MEATBALL") win over general ones ("BALL"/"LOAF") where
+  // overlap is possible.
+  { pattern: /\bmeatball(?:s)?\b|\bmtbl\b/i,     state: "meatball" },
+  { pattern: /\bmeatloaf\b|\bmtlf\b/i,           state: "loaf"     },
+  { pattern: /\bnuggets?\b|\bnggt\b/i,           state: "nuggets"  },
+  { pattern: /\bpatt(?:y|ies)\b|\bptty\b/i,      state: "patty"    },
+  { pattern: /\blinks?\b/i,                      state: "links"    },
+  { pattern: /\bsausages?\b|\bssg\b/i,           state: "sausage"  },
+  { pattern: /\bjerky\b|\bjrky\b/i,              state: "jerky"    },
+  { pattern: /\btenderloin\b|\btndrln\b|\btndr\b/i, state: "tenderloin" },
+  { pattern: /\bfil(?:l)?ets?\b|\bfil\b/i,       state: "fillet"   },
+  { pattern: /\bsteak(?:s)?\b|\bstk\b/i,         state: "steak_cut" },
+  { pattern: /\brack\b/i,                        state: "rack"     },
+  { pattern: /\bchops?\b|\bchp\b/i,              state: "chop"     },
+  { pattern: /\bshaved\b|\bshvd\b/i,             state: "shaved"   },
+  { pattern: /\bstrips?\b|\bstrp\b/i,            state: "strips"   },
+  { pattern: /\bchunks?\b|\bchnk\b/i,            state: "chunks"   },
   { pattern: /\bgrnd\b|\bground\b/i,             state: "ground"   },
   { pattern: /\bckd\b|\bcooked?\b/i,             state: "cooked"   },
   { pattern: /\braw\b|\bfresh\b/i,               state: "raw"      },
