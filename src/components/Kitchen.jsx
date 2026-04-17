@@ -183,7 +183,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   // INGREDIENTS registry. Without this, scanning "PEPPERONI" after
   // approving pepperoni wouldn't auto-pair because fuzzyMatchIngredient
   // only iterates bundled.
-  const { dbMap } = useIngredientInfo();
+  const { dbMap, refreshDb } = useIngredientInfo();
 
   // Family's user templates for scan-side matching (chunk 17b). When
   // the scanner returns a raw name that matches a template, we use
@@ -1378,6 +1378,9 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                 .upsert({ ingredient_id: primaryId, info: stub }, { onConflict: "ingredient_id" })
                 .then(({ error }) => {
                   if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+                  // Refresh dbMap so the next scan's autoStar can
+                  // see this new approval as a synthetic canonical.
+                  else refreshDb?.();
                 });
             }
             setLinkingScanIdx(null);
@@ -1659,6 +1662,9 @@ function formatAgo(d) {
 }
 
 function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
+  // Pulled for admin-approve writes so the session's dbMap updates
+  // immediately after an admin mints a new canonical here.
+  const { refreshDb } = useIngredientInfo();
   const [amount, setAmount] = useState("");
 
   // Tile-context boost: when the modal opens from a specific tile, we
@@ -2639,6 +2645,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               .upsert({ ingredient_id: nextId, info: stub }, { onConflict: "ingredient_id" })
               .then(({ error }) => {
                 if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+                else refreshDb?.();
               });
           }
         }}

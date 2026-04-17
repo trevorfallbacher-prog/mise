@@ -63,6 +63,7 @@ const IngredientInfoContext = createContext({
   dbMap: {},
   pendingMap: {},
   refreshPending: async () => {},
+  refreshDb: async () => {},
   loading: true,
 });
 
@@ -89,6 +90,28 @@ export function IngredientInfoProvider({ children }) {
     setPendingMap(map);
   }, []);
 
+  // Pulled out as a useCallback so admin-side writes (approveCustom,
+  // approvePending, renameBundled, etc.) can call refreshDb() after
+  // an upsert and the running session picks up the new approval
+  // without a full page reload. Before this, dbMap was loaded once
+  // in the effect body and any mid-session approval was invisible
+  // until the user hard-refreshed.
+  const fetchDb = useCallback(async () => {
+    const { data, error } = await supabase
+      .from("ingredient_info")
+      .select("ingredient_id, info");
+    if (error) {
+      console.warn("[ingredient_info] fetch failed (cache/JS fallback still works):", error.message);
+      return;
+    }
+    const map = {};
+    for (const row of data || []) {
+      map[row.ingredient_id] = row.info || {};
+    }
+    setDbMap(map);
+    writeCache(map);
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -97,27 +120,12 @@ export function IngredientInfoProvider({ children }) {
       // successful run.
       await seedIngredientInfoOnce(supabase);
 
-      const [infoRes] = await Promise.all([
-        supabase.from("ingredient_info").select("ingredient_id, info"),
-        fetchPending(),
-      ]);
+      await Promise.all([fetchDb(), fetchPending()]);
       if (!alive) return;
-
-      if (infoRes.error) {
-        console.warn("[ingredient_info] fetch failed (cache/JS fallback still works):", infoRes.error.message);
-        setLoading(false);
-        return;
-      }
-      const map = {};
-      for (const row of infoRes.data || []) {
-        map[row.ingredient_id] = row.info || {};
-      }
-      setDbMap(map);
-      writeCache(map);
       setLoading(false);
     })();
     return () => { alive = false; };
-  }, [fetchPending]);
+  }, [fetchDb, fetchPending]);
 
   const getInfo = useCallback(
     (ingredientId) => (ingredientId ? dbMap[ingredientId] || null : null),
@@ -139,9 +147,10 @@ export function IngredientInfoProvider({ children }) {
       dbMap,
       pendingMap,
       refreshPending: fetchPending,
+      refreshDb: fetchDb,
       loading,
     }),
-    [getInfo, getPendingInfo, dbMap, pendingMap, fetchPending, loading]
+    [getInfo, getPendingInfo, dbMap, pendingMap, fetchPending, fetchDb, loading]
   );
 
   return (

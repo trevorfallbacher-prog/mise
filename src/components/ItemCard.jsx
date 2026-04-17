@@ -244,7 +244,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
   // "UMAMI · FAT · SWEET · SALT" — the whole flavor footprint of
   // the composite product. Single-tag items skip this line since
   // the deep-dive already shows the same info.
-  const { getInfo: getDbInfo, getPendingInfo } = useIngredientInfo();
+  const { getInfo: getDbInfo, getPendingInfo, refreshDb } = useIngredientInfo();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
     const intensityRank = { mild: 1, moderate: 2, intense: 3 };
@@ -1416,6 +1416,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                   .upsert({ ingredient_id: slug, info: stub }, { onConflict: "ingredient_id" })
                   .then(({ error }) => {
                     if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+                    else refreshDb?.();
                   });
               }
               setCanonicalPickerOpen(false);

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { INGREDIENTS } from "../data/ingredients";
-import { slugifyIngredientName } from "../lib/useIngredientInfo";
+import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 
 // AdminPanel — elevated-permissions inspector, scoped to profiles
 // where role = 'admin' (see migration 0042). Mounted from Settings
@@ -304,6 +304,10 @@ function PendingEnrichmentsList({ viewerId: _viewerId }) {
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(null); // row id
   const [busy, setBusy] = useState(null); // row id currently being approved/rejected
+  // Admin-write side effect: refresh dbMap after every promote so the
+  // running session's auto-link pool picks up the new canonical
+  // without a full page reload.
+  const { refreshDb } = useIngredientInfo();
 
   async function reload() {
     const { data, error: err } = await supabase
@@ -379,6 +383,7 @@ function PendingEnrichmentsList({ viewerId: _viewerId }) {
       });
 
       await reload();
+      await refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Approve failed: ${e.message || e}`);
@@ -521,6 +526,10 @@ function CanonicalsList({ viewerId }) {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(null);    // canonical_id mid-op
   const [version, setVersion] = useState(0); // cheap refresh trigger
+  // Refresh the session-level dbMap after every approve/reject/rename
+  // so the scan-time auto-star-link and the LinkIngredient picker
+  // pick up the admin's changes without a page reload.
+  const { refreshDb } = useIngredientInfo();
 
   async function reload() {
     const [{ data: pantryRows, error: pantryErr }, { data: infoRows, error: infoErr }] = await Promise.all([
@@ -643,7 +652,7 @@ function CanonicalsList({ viewerId }) {
         .from("ingredient_info")
         .upsert({ ingredient_id: row.id, info: nextInfo }, { onConflict: "ingredient_id" });
       if (upErr) throw upErr;
-      setVersion(v => v + 1);
+      setVersion(v => v + 1); refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Rename failed: ${e.message || e}`);
@@ -692,7 +701,7 @@ function CanonicalsList({ viewerId }) {
         .update({ canonical_id: newSlug })
         .eq("canonical_id", row.id);
       if (upErr) throw upErr;
-      setVersion(v => v + 1);
+      setVersion(v => v + 1); refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Rename failed: ${e.message || e}`);
@@ -719,7 +728,7 @@ function CanonicalsList({ viewerId }) {
         .from("ingredient_info")
         .upsert({ ingredient_id: row.id, info: stub }, { onConflict: "ingredient_id" });
       if (upErr) throw upErr;
-      setVersion(v => v + 1);
+      setVersion(v => v + 1); refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Approve failed: ${e.message || e}`);
@@ -754,7 +763,7 @@ function CanonicalsList({ viewerId }) {
         .eq("ingredient_id", row.id);
       // 404 on delete is fine — no stub existed.
       if (delErr && delErr.code !== "PGRST116") throw delErr;
-      setVersion(v => v + 1);
+      setVersion(v => v + 1); refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Reject failed: ${e.message || e}`);
