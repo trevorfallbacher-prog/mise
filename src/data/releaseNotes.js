@@ -42,9 +42,49 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.8.1";
+export const CURRENT_VERSION = "0.8.2";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.8.2",
+    date:    "2026-04-17",
+    title:   "Keepsake pantry rows — Bella's Gummy Bear stays forever",
+    summary:
+      "Some things in the pantry aren't food. Bella's Gummy Bear — the " +
+      "one my daughter saved for me — is an inventory row because that's " +
+      "where we scanned it, but it shouldn't be tappable-to-delete, and " +
+      "it shouldn't get consumed on the next cook that claims a gummy " +
+      "bear. Added a `protected` flag per row: delete policy blocks " +
+      "DELETE on protected rows at the DB, the Kitchen ✕ swaps to a " +
+      "🔒 badge, and the cook decrement path skips protected rows so " +
+      "an innocent recipe never zeroes out a keepsake. Protection is " +
+      "set via a one-line SQL bootstrap — no client UI for toggling " +
+      "the flag yet (deliberate: keepsakes are rare, and requiring DB " +
+      "access to mark one keeps the surface area tight).",
+    shipped: [
+      {
+        kind: "feature",
+        text: "pantry_items.protected column (0044). Default false on every row — no existing item changes behavior. Delete policy rebuilt to require `protected = false` before a DELETE can land, so even a buggy client can't remove a protected row. Update policy unchanged: name, amount, emoji, location, etc. are still editable",
+        commits: ["__protected_row__"],
+      },
+      {
+        kind: "ux",
+        text: "Kitchen tile hides the ✕ on protected rows and shows a small 🔒 in its place. Tapping the tile still opens ItemCard for viewing; only the destructive control is swapped out. The delete-confirm sheet never appears for protected rows because its entry point is gone",
+        commits: ["__protected_row__"],
+      },
+      {
+        kind: "safety",
+        text: "CookComplete skips protected rows entirely in the decrement loop. If a recipe would have zeroed out Bella's Gummy Bear (or any other keepsake), the row stays untouched — no delete, no amount reduction. Belt-and-suspenders with the DB policy",
+        commits: ["__protected_row__"],
+      },
+    ],
+    coming_soon: [
+      "Tap-to-protect UI on ItemCard so the flag isn't DB-only (deferred until we know it's needed more than once a year)",
+      "Admin panel surface for viewing / un-protecting rows",
+      "Family-delete for receipts",
+      "Expiration cancel-to-null (still blocked on a repro)",
+    ],
+  },
   {
     version: "0.8.1",
     date:    "2026-04-17",

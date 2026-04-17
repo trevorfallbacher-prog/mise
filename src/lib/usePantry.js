@@ -94,6 +94,11 @@ function fromDb(row) {
   // 'green_onion'). Identity, NOT composition — user-composed
   // ingredient_ids[] stays free-form.
   if (row.canonical_id       !== undefined) item.canonicalId       = row.canonical_id || null;
+  // protected (migration 0044) — sentimental / keepsake rows that
+  // shouldn't be ✕-deletable. DB enforces via the delete policy;
+  // this mapping just lets the UI know so it can hide the delete
+  // control.
+  if (row.protected          !== undefined) item.protected         = !!row.protected;
   // fill_level (migration 0043) is dormant — we rolled the whole
   // proportional-inventory concept back into plain amount+max sliders
   // in 0.7.9. Column stays in the DB for forward compat but the
@@ -146,6 +151,7 @@ function toDb(item) {
     ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
+    ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
   };
 }
 

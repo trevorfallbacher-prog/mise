@@ -3409,15 +3409,25 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               )}
             </div>
           </div>
-          <button
-            onClick={e => { e.stopPropagation(); setDeleteCandidate(item); }}
-            aria-label={`Remove ${item.name}`}
-            style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
-            onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
-            onMouseOut={e => e.currentTarget.style.color = "#333"}
-          >
-            ✕
-          </button>
+          {item.protected ? (
+            <span
+              aria-label="Protected — cannot be deleted"
+              title="Protected keepsake — tap to edit, but the ✕ is disabled on purpose"
+              style={{ color:"#e2c77a", fontSize:14, padding:4, flexShrink:0, cursor:"default" }}
+            >
+              🔒
+            </span>
+          ) : (
+            <button
+              onClick={e => { e.stopPropagation(); setDeleteCandidate(item); }}
+              aria-label={`Remove ${item.name}`}
+              style={{ background:"none", border:"none", color:"#333", fontSize:16, cursor:"pointer", padding:4, flexShrink:0 }}
+              onMouseOver={e => e.currentTarget.style.color = "#ef4444"}
+              onMouseOut={e => e.currentTarget.style.color = "#333"}
+            >
+              ✕
+            </button>
+          )}
         </div>
         {/* Inline location-move picker — expands under the main row when
             the user taps the MOVE chip. Shows the two OTHER locations

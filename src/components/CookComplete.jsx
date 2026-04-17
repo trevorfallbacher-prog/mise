@@ -304,6 +304,12 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
           if (!entry.convertible) continue;
           const row = byId.get(entry.pantryRowId);
           if (!row) continue;
+          // Protected keepsake rows (migration 0044) never get deleted
+          // or decremented by a cook. The DB delete policy would block
+          // the DELETE anyway, but clamping client-side keeps the
+          // optimistic state honest — no flicker, no ghost row, no
+          // accidental "I cooked with Bella's gummy bear" math.
+          if (row.protected) continue;
           if (entry.newAmount <= 0) {
             byId.delete(row.id);
           } else {
