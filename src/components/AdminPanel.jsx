@@ -952,7 +952,8 @@ function RecipeSubmissionsList({ viewerId }) {
       setRows([]);
     }
   };
-  useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Load once on mount; admins re-open the panel when they want fresh data.
+  useEffect(() => { reload(); }, []);
 
   const decide = async (row, status) => {
     setBusy(row.id);
