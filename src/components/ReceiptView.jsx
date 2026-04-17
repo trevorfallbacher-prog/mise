@@ -32,6 +32,11 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
   const [editingField, setEditingField] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Inline "arm then confirm" pattern for destructive delete — swap
+  // out window.confirm so the delete flow stays inside the sheet
+  // with the actual receipt context visible, rather than ripping the
+  // user over to an OS modal that feels bolted on.
+  const [armingDelete, setArmingDelete] = useState(false);
   // Which artifact kind is being rendered — drives row filtering + copy.
   const kind = scanId ? "pantry_scan" : "receipt";
   const artifactId = receiptId || scanId;
@@ -71,11 +76,6 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
   // an RLS error surfaced via alert.
   const deleteArtifact = async () => {
     if (!artifactId || deleting) return;
-    const n = relatedItems.length;
-    const msg = n > 0
-      ? `Delete this ${kind === "pantry_scan" ? "shelf scan" : "receipt"}? The ${n} pantry item${n === 1 ? "" : "s"} that came from it will stay — only the scan record and its photo are removed.`
-      : `Delete this ${kind === "pantry_scan" ? "shelf scan" : "receipt"}?`;
-    if (!window.confirm(msg)) return;
     setDeleting(true);
     const table = kind === "pantry_scan" ? "pantry_scans" : "receipts";
     const { error } = await supabase.from(table).delete().eq("id", artifactId);
@@ -359,25 +359,93 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
           </div>
         )}
 
-        {/* Destructive action — a muted row at the bottom so it takes a
-            second tap to confirm and doesn't sit next to the close ✕
-            where mis-taps would hurt. Only renders once the artifact has
+        {/* Destructive action — arm-then-confirm inline, not a browser
+            popup. First tap reveals a red-tinted panel listing exactly
+            what gets removed; second tap commits. Cancel button dismisses
+            the armed state cleanly. Only renders once the artifact has
             loaded (nothing to delete otherwise). */}
         {receipt && (
           <div style={{ marginTop: 22, paddingTop: 14, borderTop: "1px solid #1f1f1f" }}>
-            <button
-              onClick={deleteArtifact}
-              disabled={deleting}
-              style={{
-                width: "100%", padding: "10px 12px",
-                background: "transparent", border: "1px solid #3a1a1a",
-                color: deleting ? "#555" : "#b04545",
-                fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.12em",
-                borderRadius: 8, cursor: deleting ? "default" : "pointer",
-              }}
-            >
-              {deleting ? "DELETING…" : `🗑  DELETE ${kind === "pantry_scan" ? "SHELF SCAN" : "RECEIPT"}`}
-            </button>
+            {!armingDelete ? (
+              <button
+                onClick={() => setArmingDelete(true)}
+                disabled={deleting}
+                style={{
+                  width: "100%", padding: "10px 12px",
+                  background: "transparent", border: "1px solid #3a1a1a",
+                  color: deleting ? "#555" : "#b04545",
+                  fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.12em",
+                  borderRadius: 8, cursor: deleting ? "default" : "pointer",
+                }}
+              >
+                {deleting ? "DELETING…" : `🗑  DELETE ${kind === "pantry_scan" ? "SHELF SCAN" : "RECEIPT"}`}
+              </button>
+            ) : (() => {
+              const label = kind === "pantry_scan" ? "shelf scan" : "receipt";
+              const n = relatedItems.length;
+              return (
+                <div style={{
+                  padding: "14px 14px 12px",
+                  background: "#1a0a0a", border: "1px solid #3a1a1a",
+                  borderRadius: 10,
+                }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#d98a8a", letterSpacing: "0.14em",
+                    marginBottom: 6,
+                  }}>
+                    DELETE {kind === "pantry_scan" ? "SHELF SCAN" : "RECEIPT"}?
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                    color: "#c4a8a8", lineHeight: 1.5, marginBottom: 12,
+                  }}>
+                    {n > 0 ? (
+                      <>
+                        The {label} row and its photo will be removed.
+                        The <b style={{ color: "#d98a8a" }}>{n} pantry item{n === 1 ? "" : "s"}</b> that
+                        came from it will stay in your kitchen — you won't lose any food.
+                      </>
+                    ) : (
+                      <>The {label} row and its photo will be removed. Can't be undone.</>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={() => setArmingDelete(false)}
+                      disabled={deleting}
+                      style={{
+                        flex: 1, padding: "10px 12px",
+                        background: "transparent",
+                        border: "1px solid #2a2a2a",
+                        color: "#888",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        letterSpacing: "0.12em",
+                        borderRadius: 8, cursor: "pointer",
+                      }}
+                    >
+                      CANCEL
+                    </button>
+                    <button
+                      onClick={deleteArtifact}
+                      disabled={deleting}
+                      style={{
+                        flex: 2, padding: "10px 12px",
+                        background: deleting ? "#3a1a1a" : "#5a1818",
+                        border: "none",
+                        color: "#fff",
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        fontWeight: 700, letterSpacing: "0.12em",
+                        borderRadius: 8,
+                        cursor: deleting ? "default" : "pointer",
+                      }}
+                    >
+                      {deleting ? "DELETING…" : "YES, DELETE"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
