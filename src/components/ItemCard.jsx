@@ -392,230 +392,95 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                   {item.name}
                 </h2>
               )}
-              {/* CANONICAL — tan badge. Color reserved across the app
-                  so users visually identify this field at a glance —
-                  orange = FOOD CATEGORY, blue = STORED IN, tan =
-                  CANONICAL. Empty state stays colored ("+ SET CANONICAL"
-                  in tan) rather than greying out, so you can see what
-                  you're setting from the preview before tapping. */}
-              {onUpdate && (
-                <div
-                  style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 11,
-                    color: "#b8a878",
-                    letterSpacing: "0.06em", marginTop: 4,
-                    display: "flex", alignItems: "center", gap: 6,
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <span style={{ color: "#b8a878" }}>CANONICAL:</span>
-                  {currentCanonical ? (
-                    <>
+              {/* CANONICAL — tan badge. Reserved color across the app
+                  for the canonical-identity axis. When canonicalId is
+                  set but the registry doesn't know about it (user-
+                  created canonical pending enrichment), fall back to
+                  a slug → "Title Case" display with a ✨ emoji so the
+                  link still reads as a link, not as "+ SET CANONICAL"
+                  (which would make it look like the save failed). */}
+              {onUpdate && (() => {
+                const customDisplayName = !currentCanonical && item.canonicalId
+                  ? item.canonicalId.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+                  : null;
+                const linked = currentCanonical || customDisplayName;
+                return (
+                  <div
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      color: "#b8a878",
+                      letterSpacing: "0.06em", marginTop: 4,
+                      display: "flex", alignItems: "center", gap: 6,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <span style={{ color: "#b8a878" }}>CANONICAL:</span>
+                    {linked ? (
+                      <>
+                        <span
+                          onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 6,
+                            cursor: "pointer",
+                            borderBottom: "1px dashed #b8a87844",
+                            paddingBottom: 1,
+                          }}
+                        >
+                          <span style={{ fontSize: 13 }}>
+                            {currentCanonical?.emoji || "✨"}
+                          </span>
+                          <span style={{
+                            color: "#d4c9ac", fontFamily: "'Fraunces',serif",
+                            fontSize: 14, fontStyle: "italic", fontWeight: 400,
+                          }}>
+                            {currentCanonical?.name || customDisplayName}
+                          </span>
+                          {!currentCanonical && (
+                            <span style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 8,
+                              color: "#8a7f6e", letterSpacing: "0.1em",
+                              marginLeft: 2,
+                            }}>
+                              · PENDING
+                            </span>
+                          )}
+                        </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onUpdate({ canonicalId: null });
+                          }}
+                          aria-label="Unlink canonical"
+                          style={{
+                            background: "transparent",
+                            border: "1px solid #3a2a2a",
+                            color: "#d98a8a", cursor: "pointer",
+                            borderRadius: 6,
+                            padding: "1px 7px",
+                            fontFamily: "'DM Mono',monospace", fontSize: 10,
+                            letterSpacing: "0.06em",
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          ✕ UNLINK
+                        </button>
+                      </>
+                    ) : (
                       <span
                         onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
                         style={{
-                          display: "flex", alignItems: "center", gap: 6,
-                          cursor: "pointer",
+                          color: "#b8a878",
                           borderBottom: "1px dashed #b8a87844",
-                          paddingBottom: 1,
+                          cursor: "pointer",
                         }}
                       >
-                        <span style={{ fontSize: 13 }}>{currentCanonical.emoji || "🏷️"}</span>
-                        <span style={{
-                          color: "#d4c9ac", fontFamily: "'Fraunces',serif",
-                          fontSize: 14, fontStyle: "italic", fontWeight: 400,
-                        }}>
-                          {currentCanonical.name}
-                        </span>
+                        + SET CANONICAL
                       </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onUpdate({ canonicalId: null });
-                        }}
-                        aria-label="Unlink canonical"
-                        style={{
-                          background: "transparent",
-                          border: "1px solid #3a2a2a",
-                          color: "#d98a8a", cursor: "pointer",
-                          borderRadius: 6,
-                          padding: "1px 7px",
-                          fontFamily: "'DM Mono',monospace", fontSize: 10,
-                          letterSpacing: "0.06em",
-                          lineHeight: 1.4,
-                        }}
-                      >
-                        ✕ UNLINK
-                      </button>
-                    </>
-                  ) : (
-                    <span
-                      onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
-                      style={{
-                        color: "#b8a878",
-                        borderBottom: "1px dashed #b8a87844",
-                        cursor: "pointer",
-                      }}
-                    >
-                      + SET CANONICAL
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Inline canonical picker — text search across the full
-                  registry. When the user's query doesn't match any
-                  bundled canonical, a dashed-tan "+ CREATE <query>"
-                  row appears inline so new canonicals are discovered
-                  by typing, not by hunting for a create button. */}
-              {canonicalPickerOpen && onUpdate && (() => {
-                const q = canonicalSearch.trim().toLowerCase();
-                const matches = q
-                  ? INGREDIENTS.filter(i =>
-                      i.name.toLowerCase().includes(q) ||
-                      (i.shortName && i.shortName.toLowerCase().includes(q)) ||
-                      i.id.includes(q.replace(/\s+/g, "_"))
-                    ).slice(0, 30)
-                  : INGREDIENTS.slice(0, 12);
-                const qTrim = canonicalSearch.trim();
-                const exactInRegistry = qTrim && matches.some(m =>
-                  m.name.toLowerCase() === q ||
-                  m.id === slugifyIngredientName(qTrim)
-                );
-                const showCreate = qTrim.length >= 2 && !exactInRegistry;
-                const createNew = () => {
-                  const slug = slugifyIngredientName(canonicalSearch);
-                  if (!slug) return;
-                  onUpdate({ canonicalId: slug });
-                  setCanonicalPickerOpen(false);
-                  setCanonicalSearch("");
-                };
-                return (
-                  <div
-                    onClick={(e) => e.stopPropagation()}
-                    style={{
-                      marginTop: 8,
-                      padding: 10,
-                      background: "#0a0a0a",
-                      border: "1px solid #3a2f10",
-                      borderRadius: 10,
-                    }}
-                  >
-                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                      <input
-                        autoFocus
-                        value={canonicalSearch}
-                        onChange={(e) => setCanonicalSearch(e.target.value)}
-                        placeholder="Search canonicals (avocado, garlic, nori…)"
-                        style={{
-                          flex: 1,
-                          padding: "7px 10px",
-                          background: "#0a0a0a", border: "1px solid #242424",
-                          borderRadius: 8,
-                          fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                          color: "#f0ece4", outline: "none",
-                        }}
-                      />
-                      <button
-                        onClick={() => { setCanonicalPickerOpen(false); setCanonicalSearch(""); }}
-                        style={{
-                          background: "transparent", border: "1px solid #2a2a2a",
-                          color: "#888", cursor: "pointer",
-                          borderRadius: 8, padding: "4px 10px",
-                          fontFamily: "'DM Mono',monospace", fontSize: 10,
-                          letterSpacing: "0.08em",
-                        }}
-                      >
-                        CLOSE
-                      </button>
-                    </div>
-                    {matches.length === 0 && !showCreate ? (
-                      <div style={{
-                        padding: "12px 6px", textAlign: "center",
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#555", letterSpacing: "0.08em",
-                      }}>
-                        NO MATCHES
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 260, overflowY: "auto" }}>
-                        {showCreate && (
-                          <button
-                            onClick={createNew}
-                            style={{
-                              display: "flex", alignItems: "center", gap: 8,
-                              padding: "8px 10px", textAlign: "left",
-                              background: "#1a1508",
-                              border: "1px dashed #b8a878",
-                              borderRadius: 8, cursor: "pointer",
-                            }}
-                          >
-                            <span style={{ fontSize: 16 }}>✨</span>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{
-                                fontFamily: "'DM Mono',monospace", fontSize: 11,
-                                color: "#b8a878", letterSpacing: "0.08em",
-                              }}>
-                                + CREATE “{qTrim}”
-                              </div>
-                              <div style={{
-                                fontFamily: "'DM Mono',monospace", fontSize: 9,
-                                color: "#6e6458", letterSpacing: "0.06em", marginTop: 1,
-                              }}>
-                                NEW CANONICAL — ENRICH LATER
-                              </div>
-                            </div>
-                          </button>
-                        )}
-                        {matches.map(ing => {
-                          const isCurrent = currentCanonical?.id === ing.id;
-                          return (
-                            <button
-                              key={ing.id}
-                              onClick={() => {
-                                onUpdate({ canonicalId: ing.id });
-                                setCanonicalPickerOpen(false);
-                                setCanonicalSearch("");
-                              }}
-                              style={{
-                                display: "flex", alignItems: "center", gap: 8,
-                                padding: "6px 10px", textAlign: "left",
-                                background: isCurrent ? "#1a1608" : "transparent",
-                                border: `1px solid ${isCurrent ? "#f5c842" : "#1e1e1e"}`,
-                                borderRadius: 8, cursor: "pointer",
-                              }}
-                            >
-                              <span style={{ fontSize: 16 }}>{ing.emoji || "🏷️"}</span>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{
-                                  fontFamily: "'Fraunces',serif", fontSize: 13,
-                                  fontStyle: "italic",
-                                  color: isCurrent ? "#f5c842" : "#d4c9ac",
-                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                                }}>
-                                  {ing.name}
-                                </div>
-                                <div style={{
-                                  fontFamily: "'DM Mono',monospace", fontSize: 9,
-                                  color: "#555", letterSpacing: "0.06em", marginTop: 1,
-                                }}>
-                                  {ing.id}
-                                  {ing.category && ` · ${ing.category.toUpperCase()}`}
-                                </div>
-                              </div>
-                              {isCurrent && (
-                                <span style={{ fontSize: 10, color: "#f5c842", fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>
-                                  ✓
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
                     )}
                   </div>
                 );
               })()}
+
               {/* FOOD CATEGORY — orange badge. Reserved color across
                   the app for the WWEIA "what kind of thing is this"
                   axis. Empty state stays in orange ("+ SET CATEGORY")
@@ -825,74 +690,6 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
             </div>
           </div>
 
-          {/* State picker — expands inline when the STATE chip is tapped.
-              Grid of options pulled from statesForIngredient(). Tap to
-              commit; tap the current state again to clear. */}
-          {editingField === "state" && (() => {
-            const states = statesForIngredient(canonical) || [];
-            return (
-              <div style={{
-                padding: "10px 12px", marginBottom: 12,
-                background: "#0a0a0a", border: "1px solid #1f3040",
-                borderRadius: 10,
-              }}>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.1em", marginBottom: 8 }}>
-                  PICK A STATE
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
-                  {states.map(s => {
-                    const active = item.state === s;
-                    return (
-                      <button
-                        key={s}
-                        onClick={() => commit({ state: active ? null : s })}
-                        style={{
-                          padding: "8px 6px",
-                          background: active ? "#0f1620" : "#141414",
-                          color: active ? "#7eb8d4" : "#ccc",
-                          border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
-                          borderRadius: 8,
-                          fontFamily: "'DM Mono',monospace", fontSize: 10,
-                          letterSpacing: "0.05em", cursor: "pointer",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {stateLabel(s)}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <button
-                    onClick={() => setEditingField(null)}
-                    style={{
-                      flex: 1, padding: "8px",
-                      background: "transparent", border: "1px solid #2a2a2a",
-                      color: "#888", borderRadius: 6,
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      cursor: "pointer",
-                    }}
-                  >
-                    CANCEL
-                  </button>
-                  {item.state && (
-                    <button
-                      onClick={() => commit({ state: null })}
-                      style={{
-                        flex: 1, padding: "8px",
-                        background: "transparent", border: "1px solid #3a1a1a",
-                        color: "#ef4444", borderRadius: 6,
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        cursor: "pointer",
-                      }}
-                    >
-                      CLEAR STATE
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -1509,6 +1306,229 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               setTilePickerOpen(false);
             }}
           />
+        </ModalSheet>
+      )}
+
+      {/* STATE picker — was an inline grid that pushed the quantity
+          row down every time the user tapped STATE. Stacked sheet now;
+          same write path (commit({state})) so clearing + re-picking
+          stays atomic. */}
+      {editingField === "state" && (() => {
+        const states = statesForIngredient(canonical) || [];
+        if (states.length === 0) return null;
+        return (
+          <ModalSheet
+            onClose={() => setEditingField(null)}
+            zIndex={Z.picker}
+            label="STATE"
+            maxHeight="60vh"
+          >
+            <h2 style={{
+              fontFamily: "'Fraunces',serif", fontSize: 22,
+              fontStyle: "italic", color: "#f0ece4",
+              fontWeight: 400, margin: "2px 0 10px",
+            }}>
+              What form is it in?
+            </h2>
+            <p style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+              color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+            }}>
+              Pick the physical state of {item.name}. Tap the current
+              state to clear it.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+              {states.map(s => {
+                const active = item.state === s;
+                return (
+                  <button
+                    key={s}
+                    onClick={() => commit({ state: active ? null : s })}
+                    style={{
+                      padding: "12px 8px",
+                      background: active ? "#0f1620" : "#141414",
+                      color: active ? "#7eb8d4" : "#ccc",
+                      border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                      borderRadius: 10,
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      letterSpacing: "0.05em", cursor: "pointer",
+                      textTransform: "uppercase",
+                    }}
+                  >
+                    {stateLabel(s)}
+                  </button>
+                );
+              })}
+            </div>
+            {item.state && (
+              <button
+                onClick={() => commit({ state: null })}
+                style={{
+                  width: "100%", padding: "12px", marginTop: 14,
+                  background: "transparent", border: "1px solid #3a1a1a",
+                  color: "#ef4444", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                CLEAR STATE
+              </button>
+            )}
+          </ModalSheet>
+        );
+      })()}
+
+      {/* CANONICAL picker — stacked modal over the ItemCard. Was an
+          inline expander under the CANONICAL line; shifting the card's
+          layout every time the user tapped the line killed eye-tracking
+          on the other fields, so it moved into a sheet that stacks on
+          top without displacing anything below. */}
+      {canonicalPickerOpen && onUpdate && (
+        <ModalSheet
+          onClose={() => { setCanonicalPickerOpen(false); setCanonicalSearch(""); }}
+          zIndex={Z.picker}
+          label="CANONICAL"
+          maxHeight="85vh"
+        >
+          {(() => {
+            const q = canonicalSearch.trim().toLowerCase();
+            const matches = q
+              ? INGREDIENTS.filter(i =>
+                  i.name.toLowerCase().includes(q) ||
+                  (i.shortName && i.shortName.toLowerCase().includes(q)) ||
+                  i.id.includes(q.replace(/\s+/g, "_"))
+                ).slice(0, 60)
+              : INGREDIENTS.slice(0, 24);
+            const qTrim = canonicalSearch.trim();
+            const exactInRegistry = qTrim && matches.some(m =>
+              m.name.toLowerCase() === q ||
+              m.id === slugifyIngredientName(qTrim)
+            );
+            const showCreate = qTrim.length >= 2 && !exactInRegistry;
+            const createNew = () => {
+              const slug = slugifyIngredientName(canonicalSearch);
+              if (!slug) return;
+              onUpdate({ canonicalId: slug });
+              setCanonicalPickerOpen(false);
+              setCanonicalSearch("");
+            };
+            return (
+              <>
+                <h2 style={{
+                  fontFamily: "'Fraunces',serif", fontSize: 22,
+                  fontStyle: "italic", color: "#f0ece4",
+                  fontWeight: 400, margin: "2px 0 10px",
+                }}>
+                  What's the canonical?
+                </h2>
+                <p style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+                }}>
+                  Pick the final-resting identity of {item.name}. Or
+                  type a name that's not in the list to create your own.
+                </p>
+                <input
+                  autoFocus
+                  value={canonicalSearch}
+                  onChange={(e) => setCanonicalSearch(e.target.value)}
+                  placeholder="Search canonicals (avocado, garlic, nori…)"
+                  style={{
+                    width: "100%", boxSizing: "border-box",
+                    padding: "10px 12px", marginBottom: 10,
+                    background: "#0f0f0f", border: "1px solid #2a2a2a",
+                    borderRadius: 10,
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                    color: "#f0ece4", outline: "none",
+                  }}
+                />
+                {matches.length === 0 && !showCreate ? (
+                  <div style={{
+                    padding: "24px 6px", textAlign: "center",
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#555", letterSpacing: "0.08em",
+                  }}>
+                    NO MATCHES
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {showCreate && (
+                      <button
+                        onClick={createNew}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "10px 12px", textAlign: "left",
+                          background: "#1a1508",
+                          border: "1px dashed #b8a878",
+                          borderRadius: 10, cursor: "pointer",
+                        }}
+                      >
+                        <span style={{ fontSize: 18 }}>✨</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 12,
+                            color: "#b8a878", letterSpacing: "0.08em",
+                          }}>
+                            + CREATE “{qTrim}”
+                          </div>
+                          <div style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#6e6458", letterSpacing: "0.06em", marginTop: 2,
+                          }}>
+                            NEW CANONICAL — ENRICH LATER
+                          </div>
+                        </div>
+                      </button>
+                    )}
+                    {matches.map(ing => {
+                      const isCurrent = currentCanonical?.id === ing.id;
+                      return (
+                        <button
+                          key={ing.id}
+                          onClick={() => {
+                            onUpdate({ canonicalId: ing.id });
+                            setCanonicalPickerOpen(false);
+                            setCanonicalSearch("");
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "10px 12px", textAlign: "left",
+                            background: isCurrent ? "#1a1608" : "#0f0f0f",
+                            border: `1px solid ${isCurrent ? "#f5c842" : "#1e1e1e"}`,
+                            borderRadius: 10, cursor: "pointer",
+                          }}
+                        >
+                          <span style={{ fontSize: 18 }}>{ing.emoji || "🏷️"}</span>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontFamily: "'Fraunces',serif", fontSize: 14,
+                              fontStyle: "italic",
+                              color: isCurrent ? "#f5c842" : "#d4c9ac",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {ing.name}
+                            </div>
+                            <div style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#555", letterSpacing: "0.06em", marginTop: 2,
+                            }}>
+                              {ing.id}
+                              {ing.category && ` · ${ing.category.toUpperCase()}`}
+                            </div>
+                          </div>
+                          {isCurrent && (
+                            <span style={{ fontSize: 11, color: "#f5c842", fontFamily: "'DM Mono',monospace", letterSpacing: "0.08em" }}>
+                              ✓
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </ModalSheet>
       )}
 
