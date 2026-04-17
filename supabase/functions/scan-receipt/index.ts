@@ -230,7 +230,12 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2000,
+        // 4000 tokens — the prompt now asks for rawText + name per item
+        // (roughly double the per-item payload), so a full-length
+        // grocery receipt (25-40 items) needs more headroom. Old cap
+        // was 2000, which truncated mid-JSON on longer receipts and
+        // surfaced as "couldn't parse model output as JSON" → 502.
+        max_tokens: 4000,
         messages: [
           {
             role: "user",
