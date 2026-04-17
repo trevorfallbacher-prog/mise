@@ -1525,6 +1525,10 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
   // linkingItem path isn't the right fit here since the item doesn't
   // exist yet.
   const [customComponentsOpen, setCustomComponentsOpen] = useState(false);
+  // Single-pick CANONICAL sheet for the AddItemModal. Separate from
+  // customComponentsOpen because the CANONICAL axis is one-of (identity)
+  // and the components axis is many-of (composition).
+  const [customCanonicalOpen, setCustomCanonicalOpen] = useState(false);
 
   // Family-shared user templates, newest-first. Empty until the user
   // (or any family member) saves their first custom item; grows as
@@ -1957,7 +1961,66 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                 )}
               </div>
 
-              {/* INGREDIENT tap line — mirrors ItemCard's identity
+              {/* CANONICAL tap line — tan (reserved for the identity
+                  axis). Taps open LinkIngredient in single mode so the
+                  user picks one canonical. "+ CREATE <query>" inside
+                  the sheet lets them mint a brand-new slug when the
+                  registry has nothing close. Live-preview under the
+                  name input already shows the DERIVED canonical when
+                  the user hasn't explicitly picked one; tapping this
+                  line LOCKS the identity to whatever they pick. */}
+              <div
+                onClick={() => setCustomCanonicalOpen(true)}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#b8a878",
+                  letterSpacing: "0.08em", marginTop: 3,
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 6,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ color: "#b8a878" }}>CANONICAL:</span>
+                {(() => {
+                  // Display resolution order:
+                  //  1. Explicit pick (customCanonicalId) — always wins.
+                  //  2. Name-derived canonical (preview).
+                  //  3. Category-default canonical (preview).
+                  // Previews render dimmer so "explicit pick" reads as
+                  // the more-committed state.
+                  const explicit = customCanonicalId;
+                  const derivedPreview = explicit
+                    ? null
+                    : (inferCanonicalFromName(customName.trim()) || canonicalIdForType(customTypeId));
+                  const id = explicit || derivedPreview;
+                  if (!id) {
+                    return (
+                      <span style={{ color: "#b8a878", borderBottom: "1px dashed #b8a87844" }}>
+                        + SET CANONICAL
+                      </span>
+                    );
+                  }
+                  const canon = findIngredient(id);
+                  const name = canon?.name || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                  const emoji = canon?.emoji || "✨";
+                  return (
+                    <>
+                      <span style={{ fontSize: 12 }}>{emoji}</span>
+                      <span style={{
+                        color: explicit ? "#b8a878" : "#6a5f48",
+                        borderBottom: `1px dashed ${explicit ? "#b8a87844" : "#3a2f1044"}`,
+                      }}>
+                        {name.toUpperCase()}
+                      </span>
+                      {!explicit && (
+                        <span style={{ color: "#555", fontSize: 9, fontStyle: "italic" }}>· AUTO</span>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* INGREDIENTS tap line — mirrors ItemCard's identity
                   stack. Taps open LinkIngredient (same picker pantry
                   rows use) so the composition tags can be set before
                   the item saves. Shows the list of tags currently on
@@ -2456,6 +2519,27 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
           setCustomComponentsOpen(false);
         }}
         onClose={() => setCustomComponentsOpen(false)}
+      />
+    )}
+
+    {/* CANONICAL picker — single-select sibling of the components
+        sheet. Seeds from the currently-picked customCanonicalId so
+        re-opening shows the current identity; "+ CREATE <query>"
+        inside LinkIngredient single mode commits + closes on tap. */}
+    {customCanonicalOpen && (
+      <LinkIngredient
+        item={{
+          name: customName.trim() || "(new custom item)",
+          emoji: "🥫",
+          ingredientIds: customCanonicalId ? [customCanonicalId] : [],
+        }}
+        mode="single"
+        onLink={(ids) => {
+          // Empty array = CLEAR CANONICAL. Otherwise single id.
+          setCustomCanonicalId(ids[0] || null);
+          setCustomCanonicalOpen(false);
+        }}
+        onClose={() => setCustomCanonicalOpen(false)}
       />
     )}
     </>
