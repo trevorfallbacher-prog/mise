@@ -5338,31 +5338,36 @@ export const DEFAULT_STATE_FOR = {
   potato: "whole",
 };
 
-// Food-type → state-vocab hub mapping. Fallback when the canonical
-// itself has no state vocabulary (e.g. a user-created "pepperoni"
-// has no parentId pointing at a bundled hub, so statesForIngredient
-// comes up empty — but we KNOW it's pork because the user set the
-// food category, and pork has a state vocabulary). statesForItem
-// uses this to give pepperoni the same pork-cut/form vocab every
-// bundled pork canonical inherits.
+// Food-type → state-vocab hub mapping. Food category IS the source
+// of state vocabulary — the specific canonical doesn't get to
+// override. Burrata, mozzarella, and parmesan all share the cheese
+// state vocab because they're all wweia_cheese. Ribeye, ground beef,
+// and brisket all share MEAT_STATES because they're all wweia_beef.
 //
-// Only covers axes where we have a genuine state vocabulary; food
-// types without one (produce, pantry staples) stay unmapped so the
-// state field continues to not render.
+// This keeps the state picker from being over-fitted to the
+// canonical ("burrata comes in balls"? weird). The user's mental
+// model is "I have a chunk of cheese in my fridge; what shape is
+// it?" — a question that belongs to the category, not the specific
+// cheese.
+//
+// Food types without a state vocabulary (produce, pantry staples,
+// canned goods) stay unmapped so the STATE field doesn't render at
+// all on those items.
 const FOOD_TYPE_STATE_HUB = {
-  // proteins — map every meat food type to the shared MEAT_STATES
-  wweia_beef:    "beef_hub",
-  wweia_pork:    "pork_hub",
-  wweia_poultry: "chicken_hub",
-  wweia_lamb:    "beef_hub",      // no lamb_hub yet; beef_hub has
-                                   // the closest shape (whole cuts,
-                                   // ground, etc.). Replace when a
-                                   // lamb_hub ships.
-  wweia_hot_dogs: "pork_hub",     // hot dogs are a sausage form —
-                                   // lives in pork for now
-  // dairy → cheese hub for any cheese-like type, but only for types
-  // explicitly tagged cheese. We don't fold milk/yogurt/butter here
-  // because they have their own states (or none) already.
+  // proteins — every meat food type to the shared MEAT_STATES
+  wweia_beef:     "beef_hub",
+  wweia_pork:     "pork_hub",
+  wweia_poultry:  "chicken_hub",
+  wweia_lamb:     "beef_hub",     // no lamb_hub yet; beef_hub has
+                                   // the closest shape. Replace when
+                                   // a lamb_hub ships.
+  wweia_hot_dogs: "pork_hub",
+  wweia_sausages: "pork_hub",
+  // dairy — cheese has a rich state vocabulary (block, grated,
+  // shredded, sliced, cubed, crumbled) regardless of specific cheese.
+  wweia_cheese:   "cheese_hub",
+  // grains — bread has its own vocab (loaf, slices, crumbs, ...).
+  wweia_bread:    "bread",
 };
 
 // Does this ingredient id have a meaningful state vocabulary? Walks the
@@ -5378,34 +5383,41 @@ export function statesForIngredient(ingredientOrId) {
   return null;
 }
 
-// Item-level state lookup. Prefers the canonical's own vocab (via
-// statesForIngredient + parent chain), falls back to the food-type's
-// hub vocab when the canonical has none — which is how user-created
-// canonicals like "pepperoni" still get a pork state picker. Callers
-// that hold a pantry item / scan row should use this over
-// statesForIngredient directly.
+// Item-level state lookup. FOOD CATEGORY is the primary source of
+// state vocabulary — the specific canonical doesn't drive it. The
+// user's mental model: "it's cheese, what shape is it?" Not "it's
+// burrata, what shape is it?". That means:
 //
-// Shape expected: item has canonicalId / ingredientId (resolved to a
-// registry ingredient) AND typeId (the food category pick).
+//   1. item.typeId → FOOD_TYPE_STATE_HUB → state vocab (WINS)
+//   2. canonical's own states (legacy / typeId-less rows only)
+//
+// Rationale (user-stated): canonical-level state is "too drilled
+// down." Burrata and parmesan are both wweia_cheese; both use the
+// same state vocab (block/grated/shredded/sliced/cubed/crumbled).
+// A ribeye, a brisket, and a pork chop are all MEAT_STATES. The
+// canonical-first approach over-fit the state vocabulary to the
+// specific ingredient; category-first keeps it consistent.
 export function statesForItem(item) {
   if (!item) return null;
-  const canonical = findIngredient(item.canonicalId || item.ingredientId);
-  const fromCanon = statesForIngredient(canonical || item.canonicalId || item.ingredientId);
-  if (fromCanon && fromCanon.length > 0) return fromCanon;
+  // typeId wins — food category determines state.
   const hubId = item.typeId ? FOOD_TYPE_STATE_HUB[item.typeId] : null;
   if (hubId && INGREDIENT_STATES[hubId]) return INGREDIENT_STATES[hubId];
-  return null;
+  // Legacy fallback for items without a typeId (pre-typeId data,
+  // manual entries that skipped category picking). Uses the
+  // canonical's own vocab via the parent chain.
+  const canonical = findIngredient(item.canonicalId || item.ingredientId);
+  return statesForIngredient(canonical || item.canonicalId || item.ingredientId);
 }
 
-// Default-state counterpart to statesForItem. Same fallback chain.
+// Default-state counterpart to statesForItem. Same priority:
+// category wins, canonical fallback. Every meat category defaults
+// to "whole"; cheese to "block"; bread to "loaf".
 export function defaultStateForItem(item) {
   if (!item) return null;
-  const canonical = findIngredient(item.canonicalId || item.ingredientId);
-  const fromCanon = defaultStateFor(canonical || item.canonicalId || item.ingredientId);
-  if (fromCanon) return fromCanon;
   const hubId = item.typeId ? FOOD_TYPE_STATE_HUB[item.typeId] : null;
   if (hubId && DEFAULT_STATE_FOR[hubId]) return DEFAULT_STATE_FOR[hubId];
-  return null;
+  const canonical = findIngredient(item.canonicalId || item.ingredientId);
+  return defaultStateFor(canonical || item.canonicalId || item.ingredientId);
 }
 
 export function defaultStateFor(ingredientOrId) {
