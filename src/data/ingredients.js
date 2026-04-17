@@ -5338,6 +5338,33 @@ export const DEFAULT_STATE_FOR = {
   potato: "whole",
 };
 
+// Food-type → state-vocab hub mapping. Fallback when the canonical
+// itself has no state vocabulary (e.g. a user-created "pepperoni"
+// has no parentId pointing at a bundled hub, so statesForIngredient
+// comes up empty — but we KNOW it's pork because the user set the
+// food category, and pork has a state vocabulary). statesForItem
+// uses this to give pepperoni the same pork-cut/form vocab every
+// bundled pork canonical inherits.
+//
+// Only covers axes where we have a genuine state vocabulary; food
+// types without one (produce, pantry staples) stay unmapped so the
+// state field continues to not render.
+const FOOD_TYPE_STATE_HUB = {
+  // proteins — map every meat food type to the shared MEAT_STATES
+  wweia_beef:    "beef_hub",
+  wweia_pork:    "pork_hub",
+  wweia_poultry: "chicken_hub",
+  wweia_lamb:    "beef_hub",      // no lamb_hub yet; beef_hub has
+                                   // the closest shape (whole cuts,
+                                   // ground, etc.). Replace when a
+                                   // lamb_hub ships.
+  wweia_hot_dogs: "pork_hub",     // hot dogs are a sausage form —
+                                   // lives in pork for now
+  // dairy → cheese hub for any cheese-like type, but only for types
+  // explicitly tagged cheese. We don't fold milk/yogurt/butter here
+  // because they have their own states (or none) already.
+};
+
 // Does this ingredient id have a meaningful state vocabulary? Walks the
 // parent chain so a specific cheese (parmesan) inherits from cheese_hub
 // without needing its own entry.
@@ -5348,6 +5375,36 @@ export function statesForIngredient(ingredientOrId) {
   const ing = typeof ingredientOrId === "object" ? ingredientOrId : findIngredient(id);
   const parentId = ing?.parentId;
   if (parentId && INGREDIENT_STATES[parentId]) return INGREDIENT_STATES[parentId];
+  return null;
+}
+
+// Item-level state lookup. Prefers the canonical's own vocab (via
+// statesForIngredient + parent chain), falls back to the food-type's
+// hub vocab when the canonical has none — which is how user-created
+// canonicals like "pepperoni" still get a pork state picker. Callers
+// that hold a pantry item / scan row should use this over
+// statesForIngredient directly.
+//
+// Shape expected: item has canonicalId / ingredientId (resolved to a
+// registry ingredient) AND typeId (the food category pick).
+export function statesForItem(item) {
+  if (!item) return null;
+  const canonical = findIngredient(item.canonicalId || item.ingredientId);
+  const fromCanon = statesForIngredient(canonical || item.canonicalId || item.ingredientId);
+  if (fromCanon && fromCanon.length > 0) return fromCanon;
+  const hubId = item.typeId ? FOOD_TYPE_STATE_HUB[item.typeId] : null;
+  if (hubId && INGREDIENT_STATES[hubId]) return INGREDIENT_STATES[hubId];
+  return null;
+}
+
+// Default-state counterpart to statesForItem. Same fallback chain.
+export function defaultStateForItem(item) {
+  if (!item) return null;
+  const canonical = findIngredient(item.canonicalId || item.ingredientId);
+  const fromCanon = defaultStateFor(canonical || item.canonicalId || item.ingredientId);
+  if (fromCanon) return fromCanon;
+  const hubId = item.typeId ? FOOD_TYPE_STATE_HUB[item.typeId] : null;
+  if (hubId && DEFAULT_STATE_FOR[hubId]) return DEFAULT_STATE_FOR[hubId];
   return null;
 }
 

@@ -5,7 +5,7 @@ import {
   membersOfHub, standaloneIngredients,
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
-  stateLabel, statesForIngredient, detectStateFromText,
+  stateLabel, statesForIngredient, statesForItem, detectStateFromText,
   inferCanonicalFromName, fuzzyMatchIngredient,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
@@ -1173,8 +1173,12 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                           detected from the receipt label (SHRD → shredded).
                           "—" is the explicit "no state" option. */}
                       {(() => {
-                        const canonForState = findIngredient(item.ingredientId);
-                        const states = statesForIngredient(canonForState);
+                        // statesForItem falls back to food-category
+                        // hub (pork → pork_hub, beef → beef_hub) when
+                        // the canonical itself has no vocab — so a
+                        // user-created pepperoni on a PORK-category
+                        // row still gets the meat state picker.
+                        const states = statesForItem(item);
                         if (!states || states.length === 0) return null;
                         return (
                           <select
@@ -2396,8 +2400,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               const derived = customCanonicalId
                 || inferCanonicalFromName(customName.trim())
                 || canonicalIdForType(customTypeId);
-              const canon = findIngredient(derived);
-              const states = canon ? (statesForIngredient(canon) || []) : [];
+              // Synthesize a tiny item so statesForItem can fall back
+              // to the food-category hub when the derived canonical
+              // has no states of its own (e.g. brand-new pork slug).
+              const states = statesForItem({
+                canonicalId: derived,
+                ingredientId: derived,
+                typeId: customTypeId,
+              }) || [];
               return (
                 <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10, marginBottom: 14 }}>
                   {states.length === 0 ? (

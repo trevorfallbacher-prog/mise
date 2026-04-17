@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, unitLabel, inferCanonicalFromName } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -565,10 +565,15 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                   Never reorder. */}
 
               {/* STATE — muted purple (matches the AddItemModal +
-                  scan-row chip). Tappable when the canonical has a
-                  state vocabulary (bread: loaf/slices/crumbs, etc.). */}
+                  scan-row chip). Tappable when the canonical OR the
+                  food category has a state vocabulary (bread:
+                  loaf/slices/crumbs; pork: whole/sliced/ground/...).
+                  statesForItem falls back to typeId when the canonical
+                  itself is user-created (no parent hub link) — that's
+                  how "pepperoni" with food category=pork still shows
+                  the pork cut/form state picker. */}
               {(() => {
-                const states = statesForIngredient(canonical);
+                const states = statesForItem(item);
                 if (!states || states.length === 0) return null;
                 const label = stateText || "SET STATE";
                 return (
@@ -1303,7 +1308,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
           same write path (commit({state})) so clearing + re-picking
           stays atomic. */}
       {editingField === "state" && (() => {
-        const states = statesForIngredient(canonical) || [];
+        const states = statesForItem(item) || [];
         if (states.length === 0) return null;
         return (
           <ModalSheet
