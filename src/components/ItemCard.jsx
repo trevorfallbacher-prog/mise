@@ -1187,7 +1187,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
               }}>
                 <div style={{ flex: 1, height: 1, background: "#242424" }} />
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7eb8d4", letterSpacing: "0.15em" }}>
-                  INGREDIENT
+                  INFORMATION
                 </div>
                 <div style={{ flex: 1, height: 1, background: "#242424" }} />
                 {onEditTags && (
