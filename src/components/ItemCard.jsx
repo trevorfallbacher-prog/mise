@@ -16,8 +16,8 @@ import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
-import { useToast } from "../lib/toast";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
+import AddItemOutcome from "./AddItemOutcome";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -336,37 +336,56 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
 
   const readOnly = !onUpdate;
   const startEdit = (field) => { if (!readOnly) setEditingField(field); };
-  // Toast hook for surfacing moves. "Moved to Fridge → Dairy & Eggs"
-  // style confirmation so the user knows where their item ended up
-  // after a location change instead of wondering if it disappeared.
-  const toast = useToast();
+
+  // Stage-and-confirm flow for location moves. Moves are destructive
+  // to the user's mental model ("where did my ribeye go?") so we
+  // stop treating a tap on a location pill as a commit. Instead it
+  // STAGES the target location; a full-screen 'Move to X?' confirm
+  // overlay asks the user to tap UPDATE before anything persists.
+  //
+  // outcome state shape:
+  //   null                       — no overlay
+  //   { kind: "move_confirm", target } — pending location
+  //   { kind: "move_success", target, tile } — after commit
+  //
+  // Other field edits (quantity, expiration, canonical, state,
+  // tile) continue to auto-commit inline — they're less
+  // destructive and the user sees the change happen in place.
+  const [outcome, setOutcome] = useState(null);
+
   const commit = (patch) => {
-    // Detect a location move BEFORE firing onUpdate (which mutates
-    // the row). Only fire the toast when the location actually
-    // changed — tapping the same location is a no-op visually, so
-    // don't spam the user with "moved to same place".
     const prevLocation = item.location || null;
     const nextLocation = patch && Object.prototype.hasOwnProperty.call(patch, "location")
       ? patch.location
       : undefined;
     const locationChanged = nextLocation !== undefined && nextLocation !== prevLocation;
+    // Location-change path: stage it, don't commit yet. The confirm
+    // overlay is what actually fires onUpdate on the user's tap of
+    // UPDATE. Other fields in the same patch (if any) get deferred
+    // to the confirm handler so partial-commits can't sneak through.
+    if (locationChanged) {
+      setEditingField(null);
+      setOutcome({ kind: "move_confirm", patch, target: nextLocation });
+      return;
+    }
+    // Non-location edits commit immediately as before.
     onUpdate?.(patch);
     setEditingField(null);
-    if (locationChanged) {
-      const locLabel = LOCATIONS.find(l => l.id === nextLocation)?.label || nextLocation || "somewhere";
-      const locEmoji = LOCATIONS.find(l => l.id === nextLocation)?.emoji || "📦";
-      toast.push(
-        `Moved to ${locLabel} — find it under ${itemName(item)}'s tile`,
-        { emoji: locEmoji, kind: "success", ttl: 4500 },
-      );
-    }
   };
 
-  // Small helper for the toast copy — prefer the canonical name, fall
-  // back to the user's typed name, fall back to a neutral word.
-  const itemName = (it) => {
-    return (it?.name || "").trim() || "this item";
+  // Commit the pending move once the user confirms. Fires the real
+  // onUpdate, then swaps the overlay to the success screen so the
+  // user sees WHERE their item landed before anything closes.
+  const confirmMove = () => {
+    if (!outcome || outcome.kind !== "move_confirm") return;
+    onUpdate?.(outcome.patch);
+    setOutcome({
+      kind: "move_success",
+      target: outcome.target,
+    });
   };
+
+
 
   const prov = provenanceLine(item);
   const exp = daysUntil(item.expiresAt);
@@ -1647,6 +1666,54 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
           />
         </ModalSheet>
       )}
+
+      {/* Location-move confirm + success overlays. Per user spec:
+          moves shouldn't just commit automatically — the user taps
+          the target location, sees a full-screen 'Move to X?'
+          confirmation with context, and explicitly confirms via
+          UPDATE. After the real write lands, the overlay swaps to
+          the success screen with the destination so they know
+          exactly where their item went. */}
+      {outcome && outcome.kind === "move_confirm" && (() => {
+        const target = outcome.target;
+        const targetLabel = LOCATIONS.find(l => l.id === target)?.label || target;
+        const targetEmoji = LOCATIONS.find(l => l.id === target)?.emoji || "📦";
+        const fromLabel = LOCATIONS.find(l => l.id === item.location)?.label || "unset";
+        return (
+          <AddItemOutcome
+            kind="confirm"
+            title={`Move ${item.name} to ${targetLabel}?`}
+            body={`Currently in ${fromLabel}. Moving updates where it lives in your kitchen — recipes and restock alerts follow the move.`}
+            destination={`${targetEmoji} ${targetLabel.toUpperCase()}`}
+            primary={{
+              label: "UPDATE",
+              tone: "confirm",
+              onClick: confirmMove,
+            }}
+            secondary={{
+              label: "CANCEL",
+              onClick: () => setOutcome(null),
+            }}
+          />
+        );
+      })()}
+      {outcome && outcome.kind === "move_success" && (() => {
+        const targetLabel = LOCATIONS.find(l => l.id === outcome.target)?.label || outcome.target;
+        const targetEmoji = LOCATIONS.find(l => l.id === outcome.target)?.emoji || "📦";
+        return (
+          <AddItemOutcome
+            kind="success"
+            title={`${item.name} is in the ${targetLabel}`}
+            body="Find it in that tab — we re-routed it to the right tile for you based on its category."
+            destination={`${targetEmoji} ${targetLabel.toUpperCase()}`}
+            primary={{
+              label: "DONE",
+              tone: "confirm",
+              onClick: () => setOutcome(null),
+            }}
+          />
+        );
+      })()}
     </>
   );
 }
