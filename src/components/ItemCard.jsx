@@ -573,7 +573,7 @@ export default function ItemCard({ item, pantry = [], userId, onUpdate, onOpenPr
                 const hidden  = overflowing ? tags.length - TAGS_VISIBLE : 0;
                 return (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span>INGREDIENT:</span>
+                    <span>INGREDIENTS:</span>
                     {tags.length === 0 && onEditTags && (
                       <span style={{ color: "#555", fontStyle: "italic" }}>
                         nothing yet

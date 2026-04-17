@@ -1926,7 +1926,7 @@ function AddItemModal({ target, tileContext, userId, onClose, onAdd }) {
                   flexWrap: "wrap",
                 }}
               >
-                <span style={{ color: "#f5c842" }}>INGREDIENT:</span>
+                <span style={{ color: "#f5c842" }}>INGREDIENTS:</span>
                 {customComponents.length === 0 ? (
                   <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
                     + ADD
