@@ -54,6 +54,7 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import {
   findScanCorrections,
   rememberScanCorrection,
@@ -2378,7 +2379,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   flexWrap: "wrap",
                 }}
               >
-                <span style={{ color: "#b8a878" }}>CANONICAL:</span>
+                <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
                 {(() => {
                   const explicit = customCanonicalId;
                   const derivedPreview = explicit
@@ -2423,7 +2424,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#e07a3a" }}>CATEGORY:</span>
+                <span style={{ color: "#e07a3a" }}>{LABEL_KICKER("category")}:</span>
                 {customTypeId ? (
                   <>
                     <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
@@ -2449,7 +2450,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
+                <span style={{ color: "#7eb8d4" }}>{LABEL_KICKER("storedIn")}:</span>
                 {customTileId ? (() => {
                   const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
                   const found = allBuiltIns.find(t => t.id === customTileId);
@@ -2479,7 +2480,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   display: "flex", alignItems: "center", gap: 6,
                 }}
               >
-                <span style={{ color: "#c7a8d4" }}>STATE:</span>
+                <span style={{ color: "#c7a8d4" }}>{LABEL_KICKER("state")}:</span>
                 {customState ? (
                   <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
                     {customState.toUpperCase()}
@@ -2503,7 +2504,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   flexWrap: "wrap",
                 }}
               >
-                <span style={{ color: "#f5c842" }}>INGREDIENTS:</span>
+                <span style={{ color: "#f5c842" }}>{LABEL_KICKER("ingredients")}:</span>
                 {customComponents.length === 0 ? (
                   <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
                     + ADD
@@ -2892,20 +2893,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
         the backdrop covers the whole viewport including the nav. */}
     {outcome && outcome.kind === "warning" && (() => {
       const fields = [];
-      if (!hasName)      fields.push({ emoji: "📝", label: "ITEM NAME",
-        body: "Type what you call it — the big italic line at the top. 'Sizzle EVO' is fine; we'll remember it." });
-      if (!hasAmount)    fields.push({ emoji: "🔢", label: "QUANTITY",
-        body: "How much of it? The number part of 2 lb / 1 gallon / 18 count." });
-      if (!hasUnit)      fields.push({ emoji: "📏", label: "UNIT",
-        body: "Gallon, stick, lb, count — the way the item is sold. Needed so amounts add up correctly when you restock." });
-      if (!hasCanonical) fields.push({ emoji: "✨", label: "CANONICAL",
-        body: "The internal \"what is this thing\" name. Pork Loin, Ribeye, 2% Milk. We use it to match recipes and track substitutions. Pick one or type a new one — we'll remember it." });
-      if (!hasCategory)  fields.push({ emoji: "🧩", label: "CATEGORY",
-        body: "The USDA bucket — Pork, Cheese, Bread. Category drives your STATE options (sliced / ground / whole / …) and the default tile placement. Required." });
-      if (!hasTile)      fields.push({ emoji: "🗂️", label: "STORED IN",
-        body: "Which tile inside your fridge / pantry / freezer — Dairy, Meat & Poultry, Oils & Fats, etc. You can make your own if none fit." });
-      if (!hasLocation)  fields.push({ emoji: "📍", label: "LOCATION",
-        body: "Fridge, pantry, or freezer. Which tab the item lives under. Required so we don't lose it." });
+      if (!hasName)      fields.push({ emoji: "📝", label: LABEL_KICKER("name"),      body: LABELS.name.help });
+      if (!hasAmount)    fields.push({ emoji: "🔢", label: LABEL_KICKER("quantity"),  body: LABELS.quantity.help });
+      if (!hasUnit)      fields.push({ emoji: "📏", label: LABEL_KICKER("unit"),      body: LABELS.unit.help });
+      if (!hasCanonical) fields.push({ emoji: "✨", label: LABEL_KICKER("canonical"), body: LABELS.canonical.help });
+      if (!hasCategory)  fields.push({ emoji: "🧩", label: LABEL_KICKER("category"),  body: LABELS.category.help });
+      if (!hasTile)      fields.push({ emoji: "🗂️", label: LABEL_KICKER("storedIn"),  body: LABELS.storedIn.help });
+      if (!hasLocation)  fields.push({ emoji: "📍", label: LABEL_KICKER("location"),  body: LABELS.location.help });
       return (
         <AddItemOutcome
           kind="warning"
@@ -2940,18 +2934,16 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     })()}
     {outcome && outcome.kind === "exit_warning" && (() => {
       const fields = [];
-      if (!hasName)      fields.push({ emoji: "📝", label: "ITEM NAME",
-        body: "We need something to call it on the card." });
-      if (!hasCanonical) fields.push({ emoji: "✨", label: "CANONICAL",
-        body: "Without a canonical the item won't match recipes or substitutions. You'll have to re-link it every time a recipe calls for it." });
-      if (!hasCategory)  fields.push({ emoji: "🧩", label: "CATEGORY",
-        body: "Without a category we can't show the right STATE options (sliced / ground / whole / …). The item can't tell us if it's a pork loin or a block of cheese." });
-      if (!hasTile)      fields.push({ emoji: "🗂️", label: "STORED IN",
-        body: "Without a tile assignment the item lands in Miscellaneous and can be hard to find." });
-      if (!hasLocation)  fields.push({ emoji: "📍", label: "LOCATION",
-        body: "Without a location the item has no tab to live in. You won't see it in Fridge, Pantry, or Freezer." });
-      if (!hasAmount || !hasUnit) fields.push({ emoji: "🔢", label: "QUANTITY + UNIT",
-        body: "Without these we can't track restocking or tell you when you're running low." });
+      if (!hasName)      fields.push({ emoji: "📝", label: LABEL_KICKER("name"),      body: LABELS.name.help });
+      if (!hasCanonical) fields.push({ emoji: "✨", label: LABEL_KICKER("canonical"), body: LABELS.canonical.help });
+      if (!hasCategory)  fields.push({ emoji: "🧩", label: LABEL_KICKER("category"),  body: LABELS.category.help });
+      if (!hasTile)      fields.push({ emoji: "🗂️", label: LABEL_KICKER("storedIn"),  body: LABELS.storedIn.help });
+      if (!hasLocation)  fields.push({ emoji: "📍", label: LABEL_KICKER("location"),  body: LABELS.location.help });
+      if (!hasAmount || !hasUnit) fields.push({
+        emoji: "🔢",
+        label: `${LABEL_KICKER("quantity")} + ${LABEL_KICKER("unit")}`,
+        body: "Without these we can't track restocking or tell you when you're running low.",
+      });
       return (
         <AddItemOutcome
           kind="exit_warning"

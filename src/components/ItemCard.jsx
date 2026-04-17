@@ -17,6 +17,7 @@ import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
 import { useToast } from "../lib/toast";
+import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -446,7 +447,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                       flexWrap: "wrap",
                     }}
                   >
-                    <span style={{ color: "#b8a878" }}>CANONICAL:</span>
+                    <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
                     {linked ? (
                       <>
                         <span
@@ -529,7 +530,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#e07a3a" }}>CATEGORY:</span>
+                  <span style={{ color: "#e07a3a" }}>{LABEL_KICKER("category")}:</span>
                   {currentType ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentType.emoji}</span>
@@ -565,7 +566,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                     display: "flex", alignItems: "center", gap: 6,
                   }}
                 >
-                  <span style={{ color: "#7eb8d4" }}>STORED IN:</span>
+                  <span style={{ color: "#7eb8d4" }}>{LABEL_KICKER("storedIn")}:</span>
                   {currentTile ? (
                     <>
                       <span style={{ fontSize: 12 }}>{currentTile.emoji}</span>
@@ -618,7 +619,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                       cursor: readOnly ? "default" : "pointer",
                     }}
                   >
-                    STATE: <span style={{
+                    {LABEL_KICKER("state")}: <span style={{
                       color: stateText ? "#c7a8d4" : "#888",
                       borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
                     }}>{label}</span>
@@ -635,7 +636,7 @@ export default function ItemCard({ item, pantry = [], userId, isAdmin = false, o
                 const hidden  = overflowing ? tags.length - TAGS_VISIBLE : 0;
                 return (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em", marginTop: 3, lineHeight: 1.5, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                    <span>INGREDIENTS:</span>
+                    <span>{LABEL_KICKER("ingredients")}:</span>
                     {tags.length === 0 && onEditTags && (
                       <span style={{ color: "#555", fontStyle: "italic" }}>
                         nothing yet
