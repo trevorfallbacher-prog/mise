@@ -553,19 +553,26 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         }
         return patched;
       };
-      // Auto-link on strong match. After the correction overlay has
-      // had its say, any row still missing a canonicalId gets a
-      // fuzzy lookup against BOTH the bundled registry AND the
-      // admin-approved synthetics (ingredient_info rows whose id
-      // isn't in bundled). Threshold 70 matches the module author's
-      // own "suggested: 70+" guidance above fuzzyMatchIngredient.
-      // That covers the full substring-contains band (80-100) and
-      // the stronger token-overlap hits (70-79) — e.g. "GROUND BEEF"
-      // → ground_beef scores around 80, "CKN BRST" → chicken_breast
-      // lands at 70 via token overlap. Stays above the weak-overlap
-      // noise floor (<70) so we don't mis-pair "pickles" → "pickled
-      // herring" on one shared token.
+      // Auto-link on strong AND unambiguous match. Two gates:
+      //
+      //   1. Top score ≥ AUTO_LINK_SCORE — the match has to be
+      //      meaningful at all. 70 covers the substring band plus
+      //      strong token-overlap hits.
+      //
+      //   2. Top score must beat the runner-up by AUTO_LINK_GAP —
+      //      if multiple canonicals tie at 80+ (e.g. "BREAST"
+      //      matches turkey_breast, chicken_breast, pork_breast at
+      //      identical scores because it's a substring of all of
+      //      them), the needle is AMBIGUOUS and we do NOT auto-
+      //      link. The user picks deliberately. Only exact-match
+      //      (100) ties get a pass since those are rare and
+      //      legitimate cross-type collisions are vanishingly few.
+      //
+      // This is why "MILK" → milk auto-links (milk=100, others
+      // much lower) but "BREAST" doesn't (3 canonicals all score
+      // 82, gap is 0).
       const AUTO_LINK_SCORE = 70;
+      const AUTO_LINK_GAP   = 12;
       const approvedSynthetics = [];
       for (const [slug, info] of Object.entries(dbMap || {})) {
         if (!slug || findIngredient(slug)) continue;
@@ -600,20 +607,28 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         if (row.canonicalId || row.ingredientId) return row;
         const needle = (row.name || "").trim();
         if (!needle) return row;
-        // Pool of bundled fuzzy + admin-approved synthetics.
-        const bundled = fuzzyMatchIngredient(needle, 1);
-        let bestBundled = bundled[0] || null;
-        let bestSynth = null;
+        // Pool of bundled fuzzy + admin-approved synthetics — pull
+        // the top TWO from the bundled side so we can measure the
+        // score gap against the runner-up and skip auto-link when
+        // multiple canonicals tie (the "BREAST" ambiguity case).
+        const bundled = fuzzyMatchIngredient(needle, 5);
+        const synthScored = [];
         for (const canon of approvedSynthetics) {
           const score = scoreSyntheticForAuto(needle, canon);
-          if (score > 0 && (!bestSynth || score > bestSynth.score)) {
-            bestSynth = { ingredient: canon, score };
-          }
+          if (score > 0) synthScored.push({ ingredient: canon, score });
         }
-        const top = (bestSynth && (!bestBundled || bestSynth.score > bestBundled.score))
-          ? bestSynth
-          : bestBundled;
+        // Merged, descending by score — top[0] is best, top[1] is
+        // runner-up for the gap check.
+        const merged = [...bundled, ...synthScored].sort((a, b) => b.score - a.score);
+        const top = merged[0];
+        const runnerUp = merged[1];
         if (!top || top.score < AUTO_LINK_SCORE) return row;
+        // Exact-match free pass: a 100-score hit that another
+        // canonical happens to match at 100 too is effectively a
+        // duplicate entry in the registry, not real ambiguity. All
+        // other cases require clear separation from the runner-up.
+        const gap = runnerUp ? top.score - runnerUp.score : top.score;
+        if (top.score < 100 && gap < AUTO_LINK_GAP) return row;
         const canon = top.ingredient;
         return {
           ...row,
