@@ -74,9 +74,13 @@ export const RELEASE_NOTES = [
         text: "Recovery query in 0045's docstring — re-links any existing pantry_scans row where image_path is null but a matching file exists in the 'scans' bucket. Non-destructive: only sets image_path where there's a real object, leaves scans that genuinely had no upload untouched",
         commits: ["__pantry_scans_update__"],
       },
+      {
+        kind: "safety",
+        text: "Scan upload path now surfaces failures via toast instead of console.warn-and-forget. Storage upload errors, image_path update errors, AND zero-rows-affected (the exact silent-fail trap that lost Bella's photo) all push a visible warning so the next missing image gets noticed inside of a second, not months",
+        commits: ["__scan_upload_toasts__"],
+      },
     ],
     coming_soon: [
-      "Toast / warning when a scan upload fails so we never silently swallow another image-loss bug",
       "Tap-to-protect UI for keepsake pantry rows",
       "Family-delete for receipts",
     ],

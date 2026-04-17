@@ -2845,16 +2845,33 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           .from("scans")
           .upload(path, blob, { contentType: mediaType, upsert: true });
         if (upErr) {
+          // Most common cause: the 'scans' Storage bucket hasn't been
+          // created in the dashboard yet, or 0030's write policy hasn't
+          // been applied. Surface loudly — Bella's Gummy Bear was lost
+          // this way before anyone noticed it was happening.
           console.warn("[scans storage] upload failed:", upErr.message);
+          pushToast(`Scan photo didn't save: ${upErr.message}`, { emoji: "📷", kind: "warn", ttl: 7000 });
         } else {
-          const { error: pathErr } = await supabase
+          // .select() lets us count returned rows so an RLS-silently-
+          // rejected UPDATE doesn't look like success. Pre-0045 on
+          // pantry_scans, this was the exact trap: no error thrown,
+          // zero rows updated, image_path stayed null forever.
+          const { data: updated, error: pathErr } = await supabase
             .from(batchTable)
             .update({ image_path: path })
-            .eq("id", batchId);
-          if (pathErr) console.warn(`[${batchTable}] image_path update failed:`, pathErr.message);
+            .eq("id", batchId)
+            .select("id");
+          if (pathErr) {
+            console.warn(`[${batchTable}] image_path update failed:`, pathErr.message);
+            pushToast(`Scan saved but photo link failed: ${pathErr.message}`, { emoji: "⚠️", kind: "warn", ttl: 7000 });
+          } else if (!updated || updated.length === 0) {
+            console.warn(`[${batchTable}] image_path update affected 0 rows — RLS policy missing?`);
+            pushToast("Scan saved but photo didn't link. Apply migration 0045.", { emoji: "⚠️", kind: "warn", ttl: 8000 });
+          }
         }
       } catch (e) {
         console.warn("[scans] image upload exception:", e?.message || e);
+        pushToast(`Scan photo error: ${e?.message || e}`, { emoji: "📷", kind: "warn", ttl: 7000 });
       }
     }
 
