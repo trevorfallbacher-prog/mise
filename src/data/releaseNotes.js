@@ -42,9 +42,39 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.3";
+export const CURRENT_VERSION = "0.12.4";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.4",
+    date:    "2026-04-18",
+    title:   "Typical packaging on canonical creation",
+    summary:
+      "When you add a brand-new canonical (Spam, your favorite " +
+      "hot sauce, that obscure regional noodle) the create flow now " +
+      "offers an optional 'typical packaging' step. Pick a category, " +
+      "adjust the suggested sizes, mark one as typical, and save. " +
+      "The next person to add that same canonical gets your sizes " +
+      "as tappable chips in Add Item — no more 'what does 1 can " +
+      "actually mean?' for future you. Fully skippable if you don't " +
+      "know or don't care.",
+    shipped: [
+      { kind: "feature",
+        text: "Packaging step in LinkIngredient's '+ CREATE' flow — category + size editor + typical marker.",
+        commits: [] },
+      { kind: "architecture",
+        text: "Sizes save into pending_ingredient_info.info.packaging so admin review can promote them to the authoritative ingredient_info row.",
+        commits: [] },
+      { kind: "ux",
+        text: "SKIP button preserves the old fast-path for anyone who just wants to tag an ingredient and move on.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Scan-merge reserve bump — 3 identical SKUs on one receipt collapse into one row with reserve_count +2.",
+      "blendOf linkage in the create flow — 'this is made of pork' so Spam shows up for pork recipes.",
+      "Tap-a-segment to 'open the next can' on pantry rows.",
+    ],
+  },
   {
     version: "0.12.3",
     date:    "2026-04-18",

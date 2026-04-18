@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { findIngredient, fuzzyMatchIngredient } from "../data/ingredients";
 import { BLEND_PRESETS } from "../data/blendPresets";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
+import { suggestedPackaging, DEFAULT_PACKAGING_BY_CATEGORY } from "../data/defaultPackaging";
+import { supabase } from "../lib/supabase";
 
 // Turn an admin-approved ingredient_info slug ("pepperoni") into a
 // synthetic canonical object so the picker can surface it alongside
@@ -202,6 +204,14 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
 
   // Create a brand-new canonical from the user's typed query. The slug
   // becomes the canonicalId; later enrichment (pending_ingredient_info)
+  // New-canonical creation state. When non-null, a packaging-picker
+  // overlay renders in place of the suggestion list so the user can
+  // attach typical package sizes at creation time — useful for canned /
+  // dried / dairy products where every future add benefits from the
+  // sizes. Skippable for ingredients where packaging doesn't matter
+  // (fresh produce by weight, loose spices, etc.).
+  const [creating, setCreating] = useState(null); // { name, id } | null
+
   // fills in metadata. findIngredient() will miss on this id until then,
   // so we attach a synthetic canonical object to the selection so the UI
   // chip renders with the user's name right away.
@@ -210,21 +220,53 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
     if (name.length < 2) return;
     const id = slugifyIngredientName(name);
     if (!id) return;
-    if (singleMode) {
-      // Single-axis pick: creating a new canonical commits straight away
-      // so the user isn't stranded staring at a sheet with no DONE button.
-      onLink([id]);
-      return;
+    // Route through the packaging step first. User can tap SKIP to
+    // commit immediately (legacy behavior) or pick sizes to stash as
+    // a pending_ingredient_info row that admin review will promote.
+    setCreating({ name, id });
+  };
+
+  // Called by the packaging step when the user commits (with or
+  // without a packaging block). Performs the original commit that
+  // createNewFromQuery used to do directly.
+  const finalizeCreate = (maybePackaging) => {
+    if (!creating) return;
+    const { id, name } = creating;
+    if (maybePackaging) {
+      // Stash as pending_ingredient_info so admin review will promote
+      // the packaging data into the authoritative ingredient_info row.
+      // Fire-and-forget — a transient failure shouldn't block adding
+      // the item to pantry. The in-app canonical binding works regardless.
+      (async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return;
+          await supabase.from("pending_ingredient_info").upsert({
+            user_id: user.id,
+            slug: id,
+            source_name: name,
+            info: { packaging: maybePackaging },
+            status: "pending",
+          }, { onConflict: "user_id,slug" });
+        } catch (e) {
+          console.error("[linkIngredient] packaging save failed:", e);
+        }
+      })();
     }
-    setSelected(prev => {
-      if (prev.some(s => s.id === id)) return prev;
-      const existing = findIngredient(id);
-      return [...prev, {
-        id,
-        canonical: existing || { id, name, emoji: "✨", category: "user" },
-      }];
-    });
-    setSearch("");
+    if (singleMode) {
+      onLink([id]);
+    } else {
+      setSelected(prev => {
+        if (prev.some(s => s.id === id)) return prev;
+        const existing = findIngredient(id);
+        return [...prev, {
+          id,
+          canonical: existing || { id, name, emoji: "✨", category: "user" },
+        }];
+      });
+      setSearch("");
+    }
+    setCreating(null);
   };
 
   // Surface a preset whenever the item name / search matches a blend
@@ -349,6 +391,15 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
             ? "Pick one canonical. Tap a match to commit, or type to search / create."
             : "Tap to add ingredients to this row. Multi-tag for composed items — burritos, pizzas, shredded blends."}
         </p>
+
+        {creating && (
+          <PackagingStep
+            name={creating.name}
+            slug={creating.id}
+            onCommit={finalizeCreate}
+            onCancel={() => setCreating(null)}
+          />
+        )}
 
         {/* SELECTED — the accumulator. Shown at the very top so the
             user always sees what's on deck before committing. Hidden
@@ -663,6 +714,236 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// PackagingStep — compact inline form shown in LinkIngredient right
+// after the user taps + CREATE on a brand-new canonical. Captures the
+// typical package sizes (Spam → 12oz can, rice → 5lb bag) so the next
+// person who adds this canonical sees the chips instead of typing
+// amount+unit by hand.
+//
+// Output (maybePackaging handed back via onCommit) is the packaging
+// block shape that ingredient_info consumes:
+//   { sizes: [{ amount, unit, label }, …], defaultIndex }
+//
+// Commits either with or without a packaging block — SKIP commits
+// null and the canonical goes in as-is (original createNewFromQuery
+// behavior). SAVE commits the block and the caller stashes it in
+// pending_ingredient_info for admin review.
+function PackagingStep({ name, slug, onCommit, onCancel }) {
+  const CATEGORIES = Object.keys(DEFAULT_PACKAGING_BY_CATEGORY);
+  const [category, setCategory] = useState("canned"); // safest default — most common add
+  const [sizes, setSizes]       = useState(() => suggestedPackaging("canned").sizes);
+  const [typicalIdx, setTypicalIdx] = useState(() => suggestedPackaging("canned").defaultIndex);
+
+  // Re-seed sizes when the user picks a new category — keeps the
+  // flow fast if they realize they miscategorized.
+  const pickCategory = (cat) => {
+    setCategory(cat);
+    const sug = suggestedPackaging(cat);
+    setSizes(sug.sizes);
+    setTypicalIdx(sug.defaultIndex);
+  };
+
+  const updateSize = (i, patch) => {
+    setSizes(prev => prev.map((s, idx) => idx === i ? { ...s, ...patch } : s));
+  };
+  const removeSize = (i) => {
+    setSizes(prev => prev.filter((_, idx) => idx !== i));
+    // Clamp the typical pointer if we removed the typical row.
+    setTypicalIdx(prev => prev >= i ? Math.max(0, prev - 1) : prev);
+  };
+  const addSize = () => {
+    setSizes(prev => [...prev, { amount: 1, unit: "oz", label: "custom" }]);
+  };
+
+  const handleSkip = () => onCommit(null);
+  const handleSave = () => {
+    const cleaned = sizes
+      .filter(s => Number(s.amount) > 0 && String(s.unit || "").trim())
+      .map(s => ({
+        amount: Number(s.amount),
+        unit: String(s.unit).trim(),
+        label: String(s.label || "").trim() || null,
+      }));
+    if (cleaned.length === 0) return onCommit(null);
+    const safeTypical = Math.min(Math.max(0, typicalIdx), cleaned.length - 1);
+    onCommit({ sizes: cleaned, defaultIndex: safeTypical });
+  };
+
+  return (
+    <div style={{
+      marginBottom: 14, padding: "14px 14px 12px",
+      background: "#0f0f0f", border: "1px solid #2a2a2a", borderRadius: 12,
+    }}>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em", marginBottom: 6 }}>
+        TYPICAL PACKAGING FOR "{name}"
+      </div>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, marginBottom: 12 }}>
+        Pick the sizes this usually comes in. Next person to add "{name}" sees these as taps instead of typing. Skip if you're not sure — you can always come back later.
+      </div>
+
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
+        CATEGORY
+      </div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 12 }}>
+        {CATEGORIES.map(cat => (
+          <button
+            key={cat}
+            onClick={() => pickCategory(cat)}
+            style={{
+              padding: "4px 10px",
+              background: category === cat ? "#1a1608" : "transparent",
+              border: `1px solid ${category === cat ? "#f5c842" : "#2a2a2a"}`,
+              color: category === cat ? "#f5c842" : "#888",
+              borderRadius: 14,
+              fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.05em",
+              cursor: "pointer",
+            }}
+          >
+            {cat.toUpperCase()}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
+        SIZES · tap "typical" to mark the default
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
+        {sizes.map((s, i) => {
+          const isTypical = i === typicalIdx;
+          return (
+            <div key={i} style={{
+              display: "flex", gap: 6, alignItems: "center",
+              padding: "6px 8px",
+              background: "#141414",
+              border: `1px solid ${isTypical ? "#3a2f10" : "#222"}`,
+              borderRadius: 8,
+            }}>
+              <input
+                type="number" inputMode="decimal" min="0" step="any"
+                value={s.amount}
+                onChange={e => updateSize(i, { amount: e.target.value })}
+                style={{
+                  width: 58, padding: "4px 6px",
+                  background: "#0a0a0a", border: "1px solid #2a2a2a",
+                  color: "#f0ece4", borderRadius: 6,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                }}
+              />
+              <input
+                value={s.unit || ""}
+                onChange={e => updateSize(i, { unit: e.target.value })}
+                placeholder="unit"
+                style={{
+                  width: 66, padding: "4px 6px",
+                  background: "#0a0a0a", border: "1px solid #2a2a2a",
+                  color: "#f0ece4", borderRadius: 6,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
+                }}
+              />
+              <input
+                value={s.label || ""}
+                onChange={e => updateSize(i, { label: e.target.value })}
+                placeholder="label (optional)"
+                style={{
+                  flex: 1, minWidth: 0, padding: "4px 6px",
+                  background: "#0a0a0a", border: "1px solid #2a2a2a",
+                  color: "#aaa", borderRadius: 6,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 11, outline: "none",
+                }}
+              />
+              <button
+                onClick={() => setTypicalIdx(i)}
+                title="Mark typical"
+                style={{
+                  padding: "4px 7px",
+                  background: isTypical ? "#f5c842" : "transparent",
+                  border: `1px solid ${isTypical ? "#f5c842" : "#2a2a2a"}`,
+                  color: isTypical ? "#111" : "#666",
+                  borderRadius: 6,
+                  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {isTypical ? "★" : "☆"}
+              </button>
+              <button
+                onClick={() => removeSize(i)}
+                disabled={sizes.length <= 1}
+                aria-label="remove"
+                style={{
+                  padding: "4px 7px",
+                  background: "transparent",
+                  border: "1px solid #2a2a2a",
+                  color: sizes.length <= 1 ? "#333" : "#888",
+                  borderRadius: 6,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  cursor: sizes.length <= 1 ? "not-allowed" : "pointer",
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        onClick={addSize}
+        style={{
+          padding: "6px 10px", marginBottom: 12,
+          background: "transparent", border: "1px dashed #3a3a3a",
+          color: "#888", borderRadius: 8,
+          fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.06em",
+          cursor: "pointer",
+        }}
+      >
+        + ADD SIZE
+      </button>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button
+          onClick={onCancel}
+          style={{
+            padding: "10px 14px",
+            background: "transparent", border: "1px solid #2a2a2a",
+            color: "#888", borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+            cursor: "pointer",
+          }}
+        >
+          ✕ CANCEL
+        </button>
+        <button
+          onClick={handleSkip}
+          style={{
+            flex: 1,
+            padding: "10px 14px",
+            background: "#1a1a1a", border: "1px solid #2a2a2a",
+            color: "#aaa", borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+            cursor: "pointer",
+          }}
+        >
+          SKIP
+        </button>
+        <button
+          onClick={handleSave}
+          style={{
+            flex: 1,
+            padding: "10px 14px",
+            background: "#f5c842", border: "none",
+            color: "#111", borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
+            cursor: "pointer",
+          }}
+        >
+          SAVE & USE
+        </button>
       </div>
     </div>
   );
