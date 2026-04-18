@@ -42,9 +42,48 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.0";
+export const CURRENT_VERSION = "0.12.1";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.1",
+    date:    "2026-04-18",
+    title:   "Push notifications — mise reaches you even when closed",
+    summary:
+      "Until now, browser-level notifications only fired when the " +
+      "mise tab was already open in the background. Close the tab " +
+      "and nothing reached you; open it on a different device and " +
+      "you missed the ping. This release adds proper Web Push: " +
+      "family pantry edits, scheduled meals, cook-log reviews, and " +
+      "badge earns arrive as OS notifications regardless of whether " +
+      "mise is open, closed, or on another device entirely. Opt in " +
+      "from Settings → Notifications on this device. Private per " +
+      "device, not per family — each browser / phone subscribes " +
+      "independently and can be turned off without affecting your " +
+      "other devices.",
+    shipped: [
+      { kind: "feature",
+        text: "Web Push enablement in Settings — one tap to subscribe, one tap to stop. No startup prompt; opt-in only.",
+        commits: [] },
+      { kind: "feature",
+        text: "Every existing notification source (pantry edits, scheduled meals, cook logs, cook reviews, receipts, pantry scans, badges) now reaches subscribed devices.",
+        commits: [] },
+      { kind: "ux",
+        text: "Tapping a push when mise is open focuses the tab and routes to the deep-link (the receipt, the cook, the profile). When mise is closed, a new tab opens directly on the target.",
+        commits: [] },
+      { kind: "architecture",
+        text: "New send-push Supabase Edge Function signs pushes with VAPID and prunes dead endpoints (404/410) automatically.",
+        commits: [] },
+      { kind: "safety",
+        text: "push_subscriptions rows are private per-user — family members never see each other's device list.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Per-kind mutes (only push cook reviews, mute the rest).",
+      "Quiet hours so the family calendar doesn't wake you at 2am.",
+      "Badge count on the app icon for at-a-glance unread.",
+    ],
+  },
   {
     version: "0.12.0",
     date:    "2026-04-18",

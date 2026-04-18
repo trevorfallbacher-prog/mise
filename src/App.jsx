@@ -277,6 +277,50 @@ function AuthedApp({ user, profile, upsertProfile }) {
     }
   }, []);
 
+  // Service-worker registration for Web Push. Registering doesn't
+  // prompt or do anything visible — it just makes the SW available
+  // so Settings → Enable can subscribe when the user opts in. Kept
+  // idempotent because registering the same script twice is a no-op
+  // per spec; React's Strict Mode double-invoke during dev is fine.
+  //
+  // The SW also dispatches `notification-tap` postMessages when a
+  // user taps a push while mise is open — we route those through
+  // openNotificationTarget so the deep-link behavior matches what
+  // the bell panel does for the same rows.
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(err => {
+      console.error("[sw] registration failed:", err);
+    });
+    const onMessage = (event) => {
+      const msg = event.data;
+      if (!msg || msg.kind !== "notification-tap") return;
+      const { target_kind, target_id } = msg.payload || {};
+      if (target_kind && target_id) {
+        openNotificationTarget(target_kind, target_id);
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+    };
+  }, [openNotificationTarget]);
+
+  // Deep-link via URL query — used when the user taps a push and no
+  // mise tab was open, so the SW opens a new window with
+  // ?target_kind=…&target_id=…. Consume the params on first load,
+  // route, then clear the URL so a refresh doesn't re-trigger.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const targetKind = params.get("target_kind");
+    const targetId   = params.get("target_id");
+    if (targetKind && targetId) {
+      openNotificationTarget(targetKind, targetId);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [openNotificationTarget]);
+
   return (
     <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
       <button
@@ -411,6 +455,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
 
       {settingsOpen && (
         <Settings
+          userId={user.id}
           profile={profile}
           relationships={relationships}
           upsertProfile={upsertProfile}

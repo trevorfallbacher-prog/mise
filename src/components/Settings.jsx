@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { signOut } from "../lib/useAuth";
+import { useWebPush } from "../lib/useWebPush";
 
 // Panel header used at the top of each section in Settings.
 function SectionHeader({ label }) {
@@ -105,7 +106,7 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin }) {
+export default function Settings({ userId, profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin }) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
@@ -339,6 +340,14 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
           </>
         )}
 
+        {/* Push notifications — device-scoped. Each browser + user pair
+            subscribes independently; a user signed into the same
+            account on laptop + phone ends up with two rows in
+            push_subscriptions and gets pushes on both. Opt-in only,
+            never prompted at app startup — aggressive prompts train
+            users to Block. */}
+        <PushNotificationsSection userId={userId} />
+
         {/* About — release notes entry. Always available so users can
             re-read past notes; also the recovery valve for the silent
             first-paint heuristic in useWhatsNew (new accounts get the
@@ -384,5 +393,92 @@ export default function Settings({ profile, relationships, upsertProfile, onClos
         </button>
       </div>
     </div>
+  );
+}
+
+// Per-device push enablement. Renders one of four states:
+//   * "not-supported" — browser lacks the APIs (older Safari / non-PWA iOS)
+//   * "blocked"       — user denied permission at some point
+//   * "off"           — supported + allowed, but no active subscription
+//   * "on"            — subscription exists in push_subscriptions
+function PushNotificationsSection({ userId }) {
+  const { supported, permission, enabled, busy, error, enable, disable } = useWebPush(userId);
+
+  if (!supported) {
+    return (
+      <>
+        <SectionHeader label="NOTIFICATIONS" />
+        <div style={{
+          padding: "12px 14px", marginBottom: 14,
+          background: "#141414", border: "1px solid #252525",
+          borderRadius: 12,
+          fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#777", lineHeight: 1.5,
+        }}>
+          This browser can't receive push notifications. On iOS, add
+          mise to your home screen (Share → Add to Home Screen) — the
+          Safari PWA supports push.
+        </div>
+      </>
+    );
+  }
+
+  const blocked = permission === "denied";
+
+  return (
+    <>
+      <SectionHeader label="NOTIFICATIONS" />
+      <div style={{
+        padding: "14px 16px", marginBottom: 14,
+        background: enabled ? "#0f1a0f" : "#141414",
+        border: `1px solid ${enabled ? "#1e3a1e" : "#252525"}`,
+        borderRadius: 12,
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700,
+              color: enabled ? "#7ec87e" : "#888",
+              letterSpacing: "0.1em", marginBottom: 4,
+            }}>
+              ON THIS DEVICE · {enabled ? "ON" : blocked ? "BLOCKED" : "OFF"}
+            </div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb", lineHeight: 1.5 }}>
+              {enabled
+                ? "Family pantry edits, cook-log reviews, scheduled meals, and badge earns will reach you even when mise is closed."
+                : blocked
+                  ? "You blocked notifications for this site. Unblock in your browser's site settings (🔒 in the address bar) to enable here."
+                  : "Get pinged when your family adds something, schedules a meal, or finishes a cook — even when mise is closed."}
+            </div>
+          </div>
+          <button
+            onClick={enabled ? disable : enable}
+            disabled={busy || blocked}
+            style={{
+              padding: "10px 14px", flexShrink: 0,
+              background: enabled ? "#1a1a1a" : "#f5c842",
+              color: enabled ? "#bbb" : "#111",
+              border: `1px solid ${enabled ? "#2a2a2a" : "#f5c842"}`,
+              borderRadius: 10,
+              fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700,
+              letterSpacing: "0.08em",
+              cursor: (busy || blocked) ? "not-allowed" : "pointer",
+              opacity: (busy || blocked) ? 0.5 : 1,
+            }}
+          >
+            {busy ? "…" : enabled ? "TURN OFF" : "ENABLE"}
+          </button>
+        </div>
+        {error && (
+          <div style={{
+            marginTop: 10, padding: "8px 10px",
+            background: "#2a1515", border: "1px solid #3a1e1e",
+            color: "#d77777", borderRadius: 8,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+          }}>
+            {error}
+          </div>
+        )}
+      </div>
+    </>
   );
 }
