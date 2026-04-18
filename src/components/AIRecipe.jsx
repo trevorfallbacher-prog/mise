@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { generateRecipe } from "../lib/generateRecipe";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
+import { findIngredient } from "../data/ingredients";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
-//   setup   — pick cuisine / time / notes, tap DRAFT to call the edge fn
+//   setup   — meal prompt + star ingredients + timing/course + nuance chips,
+//             tap DRAFT to call the edge fn
 //   loading — skeleton while the edge function is running
 //   preview — show the generated recipe; four actions below
 //
@@ -41,6 +43,47 @@ const DIFFICULTY_CHIPS = [
   { id: "advanced", label: "Advanced"},
 ];
 
+// When is the user eating this? A breakfast dish and a dinner entrée
+// draft very differently; telling Claude the intended meal time keeps
+// it from suggesting pancakes for dinner unless asked.
+const MEAL_TIMING_CHIPS = [
+  { id: "any",       label: "Any time" },
+  { id: "breakfast", label: "Breakfast" },
+  { id: "lunch",     label: "Lunch" },
+  { id: "dinner",    label: "Dinner" },
+];
+
+// Course type. Mains carry the meal, sides support it, desserts sit
+// on their own track. Same dish title can read very differently
+// depending on which of these Claude is aiming for.
+const COURSE_CHIPS = [
+  { id: "any",     label: "Any course" },
+  { id: "main",    label: "Main" },
+  { id: "side",    label: "Side" },
+  { id: "dessert", label: "Dessert" },
+];
+
+// Canonical ids that count as "protein" for the STAR INGREDIENTS
+// picker when the pantry row's category isn't in the meat/poultry/
+// seafood set. Keeps eggs / tofu / beans from being filtered out.
+const PLANT_PROTEIN_SLUGS = new Set([
+  "eggs", "egg_whites", "tofu", "tempeh", "beans", "lentils",
+  "chickpeas", "black_beans", "kidney_beans", "pinto_beans",
+  "white_beans", "edamame", "peanut_butter",
+]);
+const PROTEIN_CATEGORIES = new Set(["meat", "poultry", "seafood"]);
+
+// Is a pantry row "proteiny enough" to show up in the STAR picker?
+// Shows meat/poultry/seafood from the canonical registry + a hand-
+// picked set of plant / egg / dairy proteins.
+function isProteinRow(row) {
+  const canon = row?.ingredientId ? findIngredient(row.ingredientId) : null;
+  if (canon && PROTEIN_CATEGORIES.has(canon.category)) return true;
+  const slug = row?.ingredientId || row?.canonicalId;
+  if (slug && PLANT_PROTEIN_SLUGS.has(slug)) return true;
+  return false;
+}
+
 export default function AIRecipe({
   pantry = [],
   profile,          // viewer's profile row (dietary, level, skill_levels, …)
@@ -62,11 +105,38 @@ export default function AIRecipe({
   // the other two stay tappable / disabled appropriately.
   const [busy,   setBusy]   = useState(null);         // null | "save" | "schedule" | "cook"
 
-  // Prefs
+  // Prefs. mealPrompt is the hero input — renamed from "notes" to
+  // signal that the user is DIRECTING an AI, not scribbling a
+  // secondary note. Lives at the top of the setup screen.
+  const [mealPrompt, setMealPrompt] = useState("");
+  const [mealTiming, setMealTiming] = useState("any");
+  const [course,     setCourse]     = useState("any");
+  const [starIngredientIds, setStarIngredientIds] = useState([]);
   const [cuisine,    setCuisine]    = useState("any");
   const [time,       setTime]       = useState("medium");
   const [difficulty, setDifficulty] = useState("medium");
-  const [notes,      setNotes]      = useState("");
+
+  // Protein picker source — collapse the pantry to one chip per
+  // canonical (5 cans of tuna = one TUNA chip, not five). Filter to
+  // proteiny rows via isProteinRow. Empty when the pantry has no
+  // proteins; we hide the Section in that case.
+  const proteinOptions = useMemo(() => {
+    const byCanonical = new Map();
+    for (const row of pantry) {
+      if (!isProteinRow(row)) continue;
+      const slug = row.ingredientId || row.canonicalId;
+      if (!slug) continue;
+      if (!byCanonical.has(slug)) {
+        const canon = findIngredient(slug);
+        byCanonical.set(slug, {
+          id: slug,
+          label: canon?.shortName || canon?.name || row.name || slug,
+          emoji: row.emoji || canon?.emoji || "🍖",
+        });
+      }
+    }
+    return [...byCanonical.values()];
+  }, [pantry]);
 
   const pantryCount = pantry.length;
 
@@ -86,10 +156,21 @@ export default function AIRecipe({
         ingredientInfo,
         cookLogs,
         mode: isRegen ? "lean" : "rich",
+        // Lift user-picked proteins to the top of the ranked list
+        // so Claude sees them as the anchor even when other pantry
+        // items are closer to expiration. Ranking still respects
+        // the 40-item cap.
+        starIngredientIds,
       });
       const payload = {
         pantry: built.pantry,
-        prefs: { cuisine, time, difficulty, notes: notes.trim() || undefined },
+        prefs: {
+          cuisine, time, difficulty,
+          mealPrompt: mealPrompt.trim() || undefined,
+          mealTiming: mealTiming === "any" ? undefined : mealTiming,
+          course: course === "any" ? undefined : course,
+          starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
+        },
         avoidTitles: previousTitles,
         context: built.context,
       };
@@ -330,13 +411,106 @@ export default function AIRecipe({
       {header}
       <div style={{ padding: "12px 20px 40px" }}>
         <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 30, fontWeight: 300, fontStyle: "italic", color: "#f0ece4", letterSpacing: "-0.02em", margin: 0 }}>
-          Draft from your pantry
+          What are we making?
         </h1>
         <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888", lineHeight: 1.5 }}>
           {pantryCount === 0
-            ? "Your pantry is empty — Claude will lean on staples."
-            : `Claude will look at ${pantryCount} pantry ${pantryCount === 1 ? "item" : "items"} and your preferences.`}
+            ? "Your pantry is empty — I'll lean on staples."
+            : `I'll look at ${pantryCount} pantry ${pantryCount === 1 ? "item" : "items"} and shape the recipe around what you tell me below.`}
         </div>
+
+        {/* MEAL PROMPT — hero input, top of the screen. The user is
+            directing an AI that's looking into their kitchen; this is
+            where they tell it what they're in the mood for. Styled
+            with the AI accent gradient border so it reads as the
+            primary input, not a footnote. */}
+        <div style={{
+          marginTop: 24, padding: "14px 14px 10px",
+          background: "linear-gradient(135deg, #1e1a28 0%, #1a1818 100%)",
+          border: "1px solid #c7a8d455",
+          borderRadius: 14,
+        }}>
+          <div style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 10,
+            color: "#c7a8d4", letterSpacing: "0.12em", marginBottom: 8,
+            display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span>✨</span> MEAL PROMPT
+          </div>
+          <textarea
+            value={mealPrompt}
+            onChange={e => setMealPrompt(e.target.value)}
+            placeholder={'e.g. "Italian lasagna, Sunday-dinner energy"  ·  "Light breakfast with the eggs"  ·  "Dessert that uses the ricotta before it goes"'}
+            rows={3}
+            style={{
+              width: "100%", padding: "6px 0",
+              background: "transparent", border: "none",
+              color: "#f0ece4",
+              fontFamily: "'DM Sans',sans-serif", fontSize: 14, lineHeight: 1.5,
+              outline: "none", boxSizing: "border-box", resize: "vertical",
+            }}
+          />
+          <div style={{
+            marginTop: 6,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#777",
+            fontStyle: "italic",
+          }}>
+            Tell me what you're in the mood for — I'll pull from your kitchen.
+          </div>
+        </div>
+
+        {/* STAR INGREDIENTS — only surfaces when the pantry has
+            proteins. Multi-select: the user's explicit "use these"
+            signal. Beats the expiring-soon heuristic in the pantry
+            ranking. */}
+        {proteinOptions.length > 0 && (
+          <Section label="BUILD AROUND THESE PROTEINS">
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {proteinOptions.map(o => {
+                const active = starIngredientIds.includes(o.id);
+                return (
+                  <button
+                    key={o.id}
+                    onClick={() => setStarIngredientIds(prev => (
+                      active ? prev.filter(id => id !== o.id) : [...prev, o.id]
+                    ))}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "7px 12px",
+                      background: active ? "#1e1a0e" : "#161616",
+                      border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                      color: active ? "#f5c842" : "#888",
+                      borderRadius: 20,
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                      cursor: "pointer", transition: "all 0.2s",
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{o.emoji}</span>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+          </Section>
+        )}
+
+        <Section label="MEAL TIMING">
+          <ChipRow
+            value={mealTiming}
+            onChange={setMealTiming}
+            options={MEAL_TIMING_CHIPS}
+            color="#f5c842"
+          />
+        </Section>
+
+        <Section label="COURSE">
+          <ChipRow
+            value={course}
+            onChange={setCourse}
+            options={COURSE_CHIPS}
+            color="#e07a3a"
+          />
+        </Section>
 
         <Section label="CUISINE">
           <ChipRow
@@ -362,22 +536,6 @@ export default function AIRecipe({
             onChange={setDifficulty}
             options={DIFFICULTY_CHIPS}
             color="#f5c842"
-          />
-        </Section>
-
-        <Section label="NOTES (OPTIONAL)">
-          <textarea
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            placeholder="e.g. spicy please, no nuts, make it feel like a weeknight."
-            rows={3}
-            style={{
-              width: "100%", padding: "10px 12px",
-              background: "#0f0f0f", border: "1px solid #2a2a2a",
-              borderRadius: 10, color: "#f0ece4",
-              fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-              outline: "none", boxSizing: "border-box", resize: "vertical",
-            }}
           />
         </Section>
 

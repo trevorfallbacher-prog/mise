@@ -61,6 +61,11 @@ type PantryItem = {
   location?: string | null;
   daysToExpiry?: number | null;
   kind?: string | null;
+  // Stamped true by aiContext when the user explicitly picked this
+  // canonical in the STAR INGREDIENTS chip row. The prompt treats
+  // starred rows as the anchor the recipe must be built around,
+  // overriding the expiring-soon default.
+  star?: boolean;
   enrichment?: {
     flavorProfile?: string | null;
     pairs?: string[];
@@ -72,7 +77,21 @@ type Prefs = {
   cuisine?: string;
   difficulty?: string;
   time?: string;
-  notes?: string;
+  // Hero input from the AIRecipe setup screen. Renamed from `notes`
+  // to signal the user is actively directing the AI. Accept both
+  // names for one release cycle — stale clients that still send
+  // `notes` don't break.
+  mealPrompt?: string;
+  notes?: string;          // deprecated alias
+  // When is the user eating this? Shapes whether Claude drafts
+  // breakfast vs dinner vs lunch vs "any time."
+  mealTiming?: string;
+  // Course role — main / side / dessert / any. A main reads very
+  // differently from a dessert even with the same cuisine.
+  course?: string;
+  // Canonical ids the user explicitly chose to build around. Must
+  // appear in the recipe as primary components, not garnishes.
+  starIngredientIds?: string[];
 };
 
 type RichContext = {
@@ -103,6 +122,7 @@ function buildPrompt(
         .map((p) => {
           const amount = p.amount != null ? `${p.amount}${p.unit || ""}` : "";
           const facts = [
+            p.star ? "★ STARRED BY USER" : "",
             amount,
             p.canonicalId ? `id:${p.canonicalId}` : "",
             p.category || "",
@@ -125,11 +145,35 @@ function buildPrompt(
         })
         .join("\n");
 
+  // Hero input — Meal Prompt (new field) with legacy `notes` as
+  // fallback so stale clients that haven't been bumped still route
+  // their string through. Remove the alias next release.
+  const mealPrompt = prefs.mealPrompt || prefs.notes || "";
+
+  // Resolve star slugs into their pantry display names so the prompt
+  // can reference them by name, not opaque canonical ids.
+  const starPantryNames = Array.isArray(prefs.starIngredientIds) && prefs.starIngredientIds.length
+    ? prefs.starIngredientIds
+        .map((slug) => {
+          const match = pantry.find((p) => p.canonicalId === slug);
+          return match?.name || slug;
+        })
+    : [];
+
   const prefLines = [
+    mealPrompt ? `- meal prompt (user's ask): ${mealPrompt}` : "",
+    starPantryNames.length
+      ? `- star ingredients (BUILD AROUND THESE, not garnish): ${starPantryNames.join(", ")}`
+      : "",
+    prefs.mealTiming && prefs.mealTiming !== "any"
+      ? `- meal timing: ${prefs.mealTiming} (draft a ${prefs.mealTiming} dish)`
+      : "",
+    prefs.course && prefs.course !== "any"
+      ? `- course: ${prefs.course} (the recipe should function as a ${prefs.course})`
+      : "",
     prefs.cuisine && prefs.cuisine !== "any" ? `- cuisine: ${prefs.cuisine}` : "",
     prefs.difficulty ? `- difficulty preference: ${prefs.difficulty}` : "",
     prefs.time ? `- time preference: ${prefs.time}` : "",
-    prefs.notes ? `- user notes: ${prefs.notes}` : "",
   ].filter(Boolean).join("\n") || "(none — use your judgment)";
 
   // Profile + cook-history blocks — only present on first-draft calls.
@@ -151,20 +195,31 @@ function buildPrompt(
 
   return `You are drafting a single recipe for a home cook.
 
-The user's notes in USER PREFERENCES — especially any protein or
-dish they explicitly ask for ("make me shrimp pad thai", "something
-with lamb", "a curry") — are the TOP priority. When the user calls
-out a specific ingredient or dish, reach for it even if it isn't in
-their pantry; they'll source what's missing. The pantry is your
-default palette, not a hard constraint. If the user asked for
-shrimp and there's no shrimp in the pantry, write a shrimp recipe
-anyway and call out the non-pantry items plainly in the ingredients
-list.
+PRECEDENCE (hard → soft). Earlier beats later when they conflict:
+  1. Dietary / allergy constraints from the profile block.
+  2. STAR INGREDIENTS in USER PREFERENCES — if the user listed any,
+     the recipe MUST feature EVERY one as a primary component, not
+     as a garnish or afterthought. Don't substitute them away.
+     Pantry rows marked "★ STARRED BY USER" are the same list.
+  3. The MEAL PROMPT text — the user's direct ask ("Italian lasagna,
+     Sunday dinner energy"). When it calls out a protein or dish,
+     reach for it even if it isn't in their pantry; they'll source
+     what's missing. The pantry is your default palette, not a hard
+     constraint. If the user asks for shrimp and there's no shrimp,
+     write a shrimp recipe anyway and call out the non-pantry items
+     plainly.
+  4. MEAL TIMING — if set, the recipe MUST fit that meal (breakfast
+     = breakfast dishes, dinner = dinner dishes). Don't draft
+     pancakes for dinner unless the Meal Prompt explicitly asks.
+  5. COURSE — if set, the recipe MUST function as that course
+     (main / side / dessert). A dinner main is not a side salad.
+  6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
+     constraints above.
 
-When the user has NOT asked for something specific, lean on the
-pantry as your primary source of ingredients and prioritize items
-that are expiring soon to reduce waste. A handful of assumed staples
-(salt, pepper, oil, water) is always fine.
+When nothing higher-priority is specified, lean on the pantry as
+your primary source and prioritize items that are expiring soon to
+reduce waste. A handful of assumed staples (salt, pepper, oil,
+water) is always fine.
 
 Lean toward creative, non-obvious combinations. When the user asks
 for a draft from their pantry, boring defaults (generic pasta, plain
