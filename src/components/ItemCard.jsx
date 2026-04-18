@@ -1722,10 +1722,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           changes that haven't been applied yet. Sticks to the bottom
           of the viewport above the tab bar so it's always reachable
           while the user scrolls through the card. DISCARD is the
-          escape hatch; UPDATE commits everything in one write. */}
+          escape hatch; UPDATE commits everything in one write.
+          z-index picked to sit strictly between Z.card (the
+          ItemCard itself) and Z.picker (LinkIngredient and other
+          sub-pickers that open on top). Any sub-picker should cover
+          this footer so its own content isn't clipped — previous
+          zIndex: 350 let the footer bleed through a LinkIngredient
+          sheet and hide its + CREATE row. */}
       {hasPending && (
         <div style={{
-          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: 350,
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: Z.card + 1,
           maxWidth: 480, margin: "0 auto",
           padding: "10px 14px 14px",
           background: "linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.97) 30%)",

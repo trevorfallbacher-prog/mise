@@ -42,9 +42,27 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.7";
+export const CURRENT_VERSION = "0.12.8";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.8",
+    date:    "2026-04-18",
+    title:   "Fix — canonical picker wasn't usable with pending edits",
+    summary:
+      "When editing an ItemCard with at least one pending change, " +
+      "opening the canonical picker got half of its sheet covered " +
+      "by the floating UPDATE bar — the + CREATE row at the bottom " +
+      "of the list was hidden so you couldn't commit a new canonical " +
+      "from that context. Z-index regression; fixed.",
+    shipped: [
+      { kind: "fix",
+        text: "ItemCard's UPDATE · N CHANGE footer no longer clips the LinkIngredient sheet when it opens over an editing card.",
+        commits: [] },
+    ],
+    coming_soon: [
+    ],
+  },
   {
     version: "0.12.7",
     date:    "2026-04-18",
