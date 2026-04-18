@@ -149,11 +149,22 @@ function buildPrompt(
     : "";
   const nonce = crypto.randomUUID();
 
-  return `You are drafting a single recipe for a home cook. Use the
-pantry below as your primary source of ingredients — lean on what's
-actually on hand. A handful of assumed staples (salt, pepper, oil,
-water) is fine; don't invent uncommon ingredients that aren't in the
-pantry.
+  return `You are drafting a single recipe for a home cook.
+
+The user's notes in USER PREFERENCES — especially any protein or
+dish they explicitly ask for ("make me shrimp pad thai", "something
+with lamb", "a curry") — are the TOP priority. When the user calls
+out a specific ingredient or dish, reach for it even if it isn't in
+their pantry; they'll source what's missing. The pantry is your
+default palette, not a hard constraint. If the user asked for
+shrimp and there's no shrimp in the pantry, write a shrimp recipe
+anyway and call out the non-pantry items plainly in the ingredients
+list.
+
+When the user has NOT asked for something specific, lean on the
+pantry as your primary source of ingredients and prioritize items
+that are expiring soon to reduce waste. A handful of assumed staples
+(salt, pepper, oil, water) is always fine.
 
 Lean toward creative, non-obvious combinations. When the user asks
 for a draft from their pantry, boring defaults (generic pasta, plain
@@ -217,30 +228,47 @@ exact shape. Every field is REQUIRED unless marked optional.
                  provided, keep it to one sentence about the pantry fit."
 }
 
-Rules:
-  - ALWAYS produce at least 4 steps and 4 ingredients, even for simple
-    recipes. Short steps are fine; zero steps is not.
-  - EVERY pantry item you use must appear as an ingredient with the
-    matching "ingredientId" when the pantry item carried a canonicalId.
-    Leave "ingredientId" null for staples you assumed (salt, pepper, oil).
-  - Keep total time reasonable — prep + cook ≤ 90 min unless the user
-    asked for a long recipe.
-  - Keep the slug short, lowercase, hyphenated. No trailing hyphens.
-  - If the pantry can't plausibly yield a coherent dish, still return a
-    recipe that uses staples + 1-2 pantry items, but note the assumed
-    staples in the ingredients list.
-  - Respect dietary constraints in the PROFILE block if present. If the
-    user is vegetarian/vegan, do not propose meat or fish even if the
-    pantry contains it (their family may have added it).
-  - If pantry items show "EXPIRED" or "expires in Nd" where N is small,
-    STRONGLY prefer recipes that use them — reducing waste is a first-
-    class goal.
-  - Respect the skill level implied by profile.level and topSkills. A
-    "beginner" shouldn't get a five-step braise; an "advanced" cook is
-    bored by scrambled eggs.
-  - The aiRationale field is how the user finds out WHY you picked
-    this dish. Make it specific and grounded in what you saw in the
-    context. Don't pad with generic food-writing prose.
+Rules (in priority order — higher rules beat lower ones on conflict):
+
+  1. USER NOTES WIN. If the user asked for a specific protein, dish,
+     or cuisine in their notes, honor it even if nothing in the pantry
+     supports it. Non-pantry ingredients are fine in that case — just
+     list them plainly. Do NOT redirect to a pantry-fitting dish when
+     the user has a clear ask.
+
+  2. Respect dietary constraints in the PROFILE block if present. If
+     the user is vegetarian/vegan, do not propose meat or fish even
+     if the pantry contains it (their family may have added it) AND
+     even if the user's notes mention one. Dietary beats notes — call
+     out the conflict in the aiRationale.
+
+  3. When the user has NOT asked for something specific, prefer
+     recipes that use pantry items marked "EXPIRED" or "expires in Nd"
+     where N is small. Reducing waste is the default goal.
+
+  4. EVERY pantry item you use must appear as an ingredient with the
+     matching "ingredientId" when the pantry item carried a
+     canonicalId. Leave "ingredientId" null for staples you assumed
+     (salt, pepper, oil) and for any non-pantry ingredients you
+     added because the user asked for them.
+
+  5. ALWAYS produce at least 4 steps and 4 ingredients.
+
+  6. Keep total time reasonable — prep + cook ≤ 90 min unless the user
+     asked for a long recipe.
+
+  7. Keep the slug short, lowercase, hyphenated. No trailing hyphens.
+
+  8. Respect the skill level implied by profile.level and topSkills. A
+     "beginner" shouldn't get a five-step braise; an "advanced" cook
+     is bored by scrambled eggs.
+
+  9. The aiRationale field is how the user finds out WHY you picked
+     this dish. Make it specific and grounded in what you saw in the
+     context. If you honored an explicit user ask OVER the expiring
+     items, say so ("You asked for shrimp, so I skipped the cream
+     that's about to turn — save it for a pasta tomorrow"). Don't
+     pad with generic food-writing prose.
 
 Return the JSON object and nothing else.`;
 }
