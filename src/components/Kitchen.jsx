@@ -3323,16 +3323,36 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Kitchen tab and setting deepLink = { kind, id }. We open the
   // matching ReceiptView modal and tell App to clear the pointer so
   // re-rendering doesn't re-open the modal if the user dismisses it.
+  // Scope check for provenance opens. A receipt is only openable if
+  // the OWNER is the viewer or in family_ids. Used both by the
+  // ItemCard onOpenProvenance callback and the deepLink effect below
+  // so a stale notification for an ex-family receipt can't reach
+  // ReceiptView at all.
+  const canOpenProvenance = (ownerId) => (
+    !ownerId || ownerId === userId || familyIds.includes(ownerId)
+  );
   useEffect(() => {
     if (!deepLink) return;
+    // Resolve the deep link against the current pantry — a receipt /
+    // scan deep link is in scope iff the viewer currently owns at
+    // least one pantry row pointing at it (which by construction
+    // means the artifact's owner is the viewer or in family). Any
+    // other deep link (stale notification, ex-family receipt id)
+    // gets silently consumed with no modal.
     if (deepLink.kind === "receipt" && deepLink.id) {
-      setOpenReceiptId({ receiptId: deepLink.id });
+      const ownerHit = pantry.find(p => p.sourceReceiptId === deepLink.id);
+      if (ownerHit && canOpenProvenance(ownerHit.ownerId)) {
+        setOpenReceiptId({ receiptId: deepLink.id });
+      }
       onDeepLinkConsumed?.();
     } else if (deepLink.kind === "pantry_scan" && deepLink.id) {
-      setOpenReceiptId({ scanId: deepLink.id });
+      const ownerHit = pantry.find(p => p.sourceScanId === deepLink.id);
+      if (ownerHit && canOpenProvenance(ownerHit.ownerId)) {
+        setOpenReceiptId({ scanId: deepLink.id });
+      }
       onDeepLinkConsumed?.();
     }
-  }, [deepLink, onDeepLinkConsumed]);
+  }, [deepLink, onDeepLinkConsumed, pantry, userId, familyIds]);
   // Convert-state modal. Set to a pantry item to open; null to close.
   // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
   // user picks a target state + enters how much it yielded, we decrement
@@ -5406,6 +5426,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             pantry={pantry}
             userId={userId}
             isAdmin={isAdmin}
+            familyIds={familyIds}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
             onDuplicate={() => {
               addStackInstance(setPantry, { key: fresh.id, items: [fresh] });
@@ -5423,6 +5444,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             }}
             onEditTags={() => setLinkingItem(fresh)}
             onOpenProvenance={(link) => {
+              // Gate on ownership first — never route to ReceiptView
+              // for an artifact the viewer can't access. The link
+              // descriptor carries ownerId (stamped by ItemCard's
+              // provenance renderer) so we can validate without
+              // another round-trip. Silent drop on out-of-scope;
+              // no toast, no card, no flash.
+              if (!canOpenProvenance(link?.ownerId)) return;
               // kind: 'receipt' and 'scan' both route through ReceiptView
               // (it handles both artifact kinds based on which prop is
               // passed). 'cook' will route to a cook-log detail view
@@ -5530,34 +5558,39 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                   } else if (addedShort) {
                     provText = `ADDED · ${addedShort}`;
                   }
+                  // Out-of-scope provenance (stale cached row for an
+                  // ex-family-member's artifact) drops the tappable
+                  // chip — same rule as ItemCard's chevron.
+                  const ownerInScope = canOpenProvenance(inst.ownerId);
+                  const linkActive = !!(provLink && ownerInScope);
                   return (
                     <div key={`drill-${inst.id}`} style={{ display:"flex", flexDirection:"column", gap:4 }}>
                       {renderItemCard(inst)}
                       {provText && (
                         <button
                           onClick={() => {
-                            if (!provLink) return;
+                            if (!linkActive) return;
                             if (provLink.kind === "receipt") setOpenReceiptId({ receiptId: provLink.id });
                             else if (provLink.kind === "scan") setOpenReceiptId({ scanId: provLink.id });
                           }}
-                          disabled={!provLink}
+                          disabled={!linkActive}
                           style={{
                             alignSelf:"flex-start",
                             display:"inline-flex", alignItems:"center", gap:6,
                             padding:"3px 10px",
-                            background: provLink ? "#0f1620" : "#0f0f0f",
-                            border: `1px solid ${provLink ? "#1f3040" : "#1a1a1a"}`,
+                            background: linkActive ? "#0f1620" : "#0f0f0f",
+                            border: `1px solid ${linkActive ? "#1f3040" : "#1a1a1a"}`,
                             borderRadius: 12,
                             fontFamily:"'DM Mono',monospace", fontSize: 9,
-                            color: provLink ? "#7eb8d4" : "#555",
+                            color: linkActive ? "#7eb8d4" : "#555",
                             letterSpacing:"0.08em",
-                            cursor: provLink ? "pointer" : "default",
+                            cursor: linkActive ? "pointer" : "default",
                             marginLeft: 6,
                           }}
                         >
                           {provIcon && <span style={{ fontSize: 11 }}>{provIcon}</span>}
                           {provText}
-                          {provLink && <span style={{ color:"#7eb8d4aa" }}>→</span>}
+                          {linkActive && <span style={{ color:"#7eb8d4aa" }}>→</span>}
                         </button>
                       )}
                     </div>

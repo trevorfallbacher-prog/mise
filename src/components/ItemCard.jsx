@@ -132,7 +132,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -1201,11 +1201,22 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               cook log) when there's a linkTo. Rendered as a button element
               when tappable so keyboard users get focus + Enter for free. */}
           {prov && (() => {
-            const canOpen = !!(prov.linkTo && onOpenProvenance);
+            // Tappable provenance chevron is gated on the VIEWER being
+            // allowed to open the linked artifact. The check: is the
+            // item's owner the viewer, in the viewer's family, or
+            // unknown (legacy rows pre-ownerId). An out-of-scope owner
+            // means we render the text but NO chevron and NO onClick —
+            // the receipt must never enter the viewer's view of the
+            // app, not even as a flashing "not yours" card.
+            const ownerId = item?.ownerId;
+            const ownerInScope = !ownerId
+              || ownerId === userId
+              || familyIds.includes(ownerId);
+            const canOpen = !!(prov.linkTo && onOpenProvenance && ownerInScope);
             const As = canOpen ? "button" : "div";
             return (
               <As
-                onClick={canOpen ? () => onOpenProvenance(prov.linkTo) : undefined}
+                onClick={canOpen ? () => onOpenProvenance({ ...prov.linkTo, ownerId }) : undefined}
                 style={{
                   width: "100%", boxSizing: "border-box",
                   padding: "10px 12px", marginBottom: 14,

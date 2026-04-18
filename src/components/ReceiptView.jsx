@@ -63,14 +63,15 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Access denied → bail after a short beat. The sheet flashes a
-  // minimal "Not your receipt" message and dismisses itself — we
-  // don't want a non-owner viewer staring at someone else's grocery
-  // totals, store, or line items even briefly.
+  // Access denied → close immediately. No card, no flash. The
+  // receipt must never enter the viewer's view of the app, not even
+  // as a dismissing placeholder. Upstream gates (ItemCard chevron +
+  // Kitchen onOpenProvenance) should already prevent reaching this,
+  // but as last-resort insurance we close without rendering anything.
   useEffect(() => {
     if (!accessDenied) return undefined;
-    const t = setTimeout(() => onClose?.(), 900);
-    return () => clearTimeout(t);
+    onClose?.();
+    return undefined;
   }, [accessDenied, onClose]);
 
   // Is the viewer the owner of this artifact? Gates every WRITE path
@@ -342,6 +343,15 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
     ? `$${(receipt.total_cents / 100).toFixed(2)}`
     : null;
 
+  // Render nothing at all when access is denied — the effect above
+  // has already fired onClose, we just need to keep the DOM empty
+  // for the tick before the parent unmounts us. Also suppress the
+  // shell during the initial load when we don't yet know if the
+  // viewer is allowed: rendering the drag-handle + ✕ over a blank
+  // sheet would still be a visible flash.
+  if (accessDenied) return null;
+  if (loading && !receipt) return null;
+
   return (
     <div style={{
       position: "fixed", inset: 0, background: "#000000dd", zIndex: 318,
@@ -373,18 +383,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
           ✕
         </button>
 
-        {accessDenied && (
-          <div style={{ padding: "24px 12px", textAlign: "center" }}>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f59e0b", letterSpacing: "0.12em", marginBottom: 8 }}>
-              NOT YOURS TO VIEW
-            </div>
-            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#aaa" }}>
-              This receipt belongs to someone outside your household.
-            </div>
-          </div>
-        )}
-
-        {!accessDenied && (() => {
+        {(() => {
           const isPantryScan = kind === "pantry_scan";
           const headerEmoji = isPantryScan
             ? (receipt?.kind === "fridge" ? "🧊"
