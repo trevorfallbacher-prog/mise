@@ -114,6 +114,10 @@ function fromDb(row) {
   if (row.package_amount !== undefined) item.packageAmount = row.package_amount != null ? Number(row.package_amount) : null;
   if (row.package_unit   !== undefined) item.packageUnit   = row.package_unit || null;
   if (row.reserve_count  !== undefined) item.reserveCount  = Number(row.reserve_count || 0);
+  // Receipt-line dedupe position (migration 0057). Set on rows born
+  // from a receipt scan — the flattened post-fan-out index. Unused
+  // for manual / cook / conversion / pantry-scan entries.
+  if (row.receipt_line_index !== undefined) item.receiptLineIndex = row.receipt_line_index != null ? Number(row.receipt_line_index) : null;
   // fill_level (migration 0043) is dormant — we rolled the whole
   // proportional-inventory concept back into plain amount+max sliders
   // in 0.7.9. Column stays in the DB for forward compat but the
@@ -178,6 +182,7 @@ function toDb(item) {
     ...(item.packageAmount !== undefined ? { package_amount: item.packageAmount } : {}),
     ...(item.packageUnit   !== undefined ? { package_unit: item.packageUnit || null } : {}),
     ...(item.reserveCount  !== undefined ? { reserve_count: Math.max(0, Number(item.reserveCount) || 0) } : {}),
+    ...(item.receiptLineIndex !== undefined ? { receipt_line_index: item.receiptLineIndex == null ? null : Number(item.receiptLineIndex) } : {}),
   };
 }
 

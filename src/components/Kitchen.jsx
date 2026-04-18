@@ -12,7 +12,7 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { compressImage } from "../lib/compressImage";
-import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice, groupByIdentity, isDiscreteInstance, isStackLow, isStackCritical } from "../lib/pantryFormat";
+import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice, groupByIdentity, isDiscreteInstance, isStackLow, isStackCritical, DISCRETE_COUNT_UNITS } from "../lib/pantryFormat";
 import { addInstance as addStackInstance, removeInstance as removeStackInstance, sortedInstances } from "../lib/useStackEdits";
 import { CONFIDENCE_STYLES, SCAN_MODES, confidenceStyle } from "../lib/scanModes";
 import { useToast } from "../lib/toast";
@@ -3390,7 +3390,18 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   const effectiveLocation = (item) =>
     item.location || defaultLocationForCategory(item.category);
 
-  const lowItems = pantry.filter(isLow);
+  // Low-stock surface — now stack-aware. Each entry is the HEAD row
+  // of a bucket that passes isStackLow (discrete stacks compare
+  // instance count, fractional stacks sum amounts), with the full
+  // bucket attached via _bucket for the restock math. Rendering the
+  // banner chips and addLowStockToList both iterate this list as
+  // one-per-identity rather than one-per-row, so a 5-can tuna stack
+  // contributes one entry, not five.
+  const lowItems = useMemo(() => {
+    return groupByIdentity(pantry)
+      .filter(isStackLow)
+      .map(b => ({ ...b.items[0], _bucket: b }));
+  }, [pantry]);
 
   // Current tab's tile set + classifier. Null when the tab has no tiles
   // wired yet (freezer) — the render path falls back to a flat list.
@@ -3721,9 +3732,43 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     let unitMismatchCount = 0;
     const mergedNames = [];  // for a second toast when short
 
+    // Fan out discrete-count lines with amount > 1 into N instance
+    // rows BEFORE the merge loop. This makes "2 CANS TUNA" (one OCR
+    // line with amount=2) behave identically to two separate lines —
+    // both paths land as 2 siblings the render layer stacks. Keeps
+    // the downstream merge gate simple (isDiscreteInstance only fires
+    // at amount === 1).
+    //
+    // Every FANNED row also gets a sequential receipt_line_index —
+    // the position in the flattened post-expansion output. Migration
+    // 0057's partial unique index keys off (user_id, receipt_id,
+    // line_index) so a re-scanned receipt collides on the second
+    // insert attempt and the client shows an "already imported"
+    // toast instead of double-stacking.
+    const fannedItems = [];
+    let receiptLineCursor = 0;
+    for (const s of (items || [])) {
+      const isDiscrete = s && DISCRETE_COUNT_UNITS.has(s.unit);
+      const qty = Math.max(1, Math.floor(Number(s.amount) || 1));
+      if (isDiscrete && qty > 1) {
+        for (let k = 0; k < qty; k++) {
+          fannedItems.push({
+            ...s,
+            amount: 1,
+            receiptLineIndex: isReceiptScan ? receiptLineCursor++ : undefined,
+          });
+        }
+      } else {
+        fannedItems.push({
+          ...s,
+          receiptLineIndex: isReceiptScan ? receiptLineCursor++ : undefined,
+        });
+      }
+    }
+
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
-      items.forEach(s => {
+      fannedItems.forEach(s => {
         // Default expiration for this scanned item = purchased_at +
         // estimateExpirationDays(storage, location). Returns null when the
         // ingredient has no structured storage info — in which case we leave
@@ -3929,6 +3974,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // Both feed ItemCard's provenance deep-link.
             ...(receiptId ? { sourceReceiptId: receiptId } : {}),
             ...(scanId    ? { sourceScanId: scanId       } : {}),
+            // Dedupe position (migration 0057). Only the receipt-scan
+            // path stamps this; pantry-scans + manual + cook rows
+            // sail past the partial unique index with NULL.
+            ...(receiptId && typeof s.receiptLineIndex === "number"
+              ? { receiptLineIndex: s.receiptLineIndex }
+              : {}),
           });
         }
       });
@@ -3975,23 +4026,40 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     setShowDeduction(false);
   };
 
-  // Push low-stock items onto the shopping list, preserving ingredientId so
-  // recipes still match; de-dupe by ingredientId when possible, else by name.
+  // Push low-stock items onto the shopping list. Stack-aware: for a
+  // discrete stack (5 cans, threshold 8 → low), target the threshold
+  // count so the shopping entry says "need 3 more." For a fractional
+  // stack (or a single row), fall back to "restock to max" using
+  // summed amount across the bucket. Preserves ingredientId so
+  // recipes still match; de-dupes by ingredientId when possible.
   const addLowStockToList = () => {
     setShoppingList(prev => {
       const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
       const toAdd = lowItems
         .filter(l => !existing.has(l.ingredientId || l.name.toLowerCase()))
-        .map(l => ({
-          id: crypto.randomUUID(),
-          ingredientId: l.ingredientId || null,
-          name: l.name,
-          emoji: l.emoji,
-          amount: Math.max(l.max - l.amount, 1),
-          unit: l.unit,
-          category: l.category,
-          source: "low-stock",
-        }));
+        .map(l => {
+          const bucket = l._bucket;
+          const items = bucket?.items || [l];
+          const isDiscrete = DISCRETE_COUNT_UNITS.has(l.unit);
+          let amount;
+          if (isDiscrete) {
+            const target = Math.max(1, Math.ceil(Number(l.lowThreshold) || 1));
+            amount = Math.max(target - items.length, 1);
+          } else {
+            const stacked = items.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+            amount = Math.max(Number(l.max) - stacked, 1);
+          }
+          return {
+            id: crypto.randomUUID(),
+            ingredientId: l.ingredientId || null,
+            name: l.name,
+            emoji: l.emoji,
+            amount,
+            unit: l.unit,
+            category: l.category,
+            source: "low-stock",
+          };
+        });
       return [...prev, ...toAdd];
     });
     setAlertDismissed(true);
@@ -5431,7 +5499,69 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 INSTANCES · FIFO BY EXPIRATION
               </div>
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {ordered.map(inst => renderItemCard(inst))}
+                {ordered.map(inst => {
+                  // Per-instance provenance chip. Each sibling carries
+                  // its own source_receipt_id / source_scan_id /
+                  // source_cook_log_id, so the drilldown can show
+                  // "🧾 Apr 17" on one can and "🛒 Apr 22" on the next
+                  // without requiring a second tap into ItemCard.
+                  let provIcon = null;
+                  let provText = null;
+                  let provLink = null;
+                  const addedShort = inst.purchasedAt
+                    ? new Date(inst.purchasedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+                    : null;
+                  if (inst.sourceCookLogId) {
+                    provIcon = "🍝";
+                    provText = `COOKED · ${addedShort || ""}`.trim();
+                    provLink = { kind: "cook", id: inst.sourceCookLogId };
+                  } else if (inst.sourceKind === "receipt_scan" && inst.sourceReceiptId) {
+                    provIcon = "🧾";
+                    provText = `RECEIPT · ${addedShort || ""}`.trim();
+                    provLink = { kind: "receipt", id: inst.sourceReceiptId };
+                  } else if (inst.sourceKind === "pantry_scan" && inst.sourceScanId) {
+                    provIcon = "📱";
+                    provText = `PANTRY SCAN · ${addedShort || ""}`.trim();
+                    provLink = { kind: "scan", id: inst.sourceScanId };
+                  } else if (inst.sourceKind === "manual") {
+                    provIcon = "✏️";
+                    provText = `MANUAL · ${addedShort || ""}`.trim();
+                  } else if (addedShort) {
+                    provText = `ADDED · ${addedShort}`;
+                  }
+                  return (
+                    <div key={`drill-${inst.id}`} style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {renderItemCard(inst)}
+                      {provText && (
+                        <button
+                          onClick={() => {
+                            if (!provLink) return;
+                            if (provLink.kind === "receipt") setOpenReceiptId({ receiptId: provLink.id });
+                            else if (provLink.kind === "scan") setOpenReceiptId({ scanId: provLink.id });
+                          }}
+                          disabled={!provLink}
+                          style={{
+                            alignSelf:"flex-start",
+                            display:"inline-flex", alignItems:"center", gap:6,
+                            padding:"3px 10px",
+                            background: provLink ? "#0f1620" : "#0f0f0f",
+                            border: `1px solid ${provLink ? "#1f3040" : "#1a1a1a"}`,
+                            borderRadius: 12,
+                            fontFamily:"'DM Mono',monospace", fontSize: 9,
+                            color: provLink ? "#7eb8d4" : "#555",
+                            letterSpacing:"0.08em",
+                            cursor: provLink ? "pointer" : "default",
+                            marginLeft: 6,
+                          }}
+                        >
+                          {provIcon && <span style={{ fontSize: 11 }}>{provIcon}</span>}
+                          {provText}
+                          {provLink && <span style={{ color:"#7eb8d4aa" }}>→</span>}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </ModalSheet>
