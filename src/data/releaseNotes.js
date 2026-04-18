@@ -42,9 +42,32 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.4";
+export const CURRENT_VERSION = "0.12.5";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.5",
+    date:    "2026-04-18",
+    title:   "Admin auto-approve now carries packaging through",
+    summary:
+      "When an admin creates a new canonical with packaging (0.12.4 " +
+      "flow), the admin auto-approve path was writing a minimal " +
+      "{_meta} stub to the live ingredient_info table, silently " +
+      "clobbering the packaging block that had landed in " +
+      "pending_ingredient_info seconds earlier. Net result: Spam " +
+      "looked APPROVED on the ItemCard but the next Add Item flow " +
+      "showed no PACKAGE SIZE chips. Fixed by plumbing the packaging " +
+      "through onLink so the stub merges it inline on the same write.",
+    shipped: [
+      { kind: "fix",
+        text: "Admin-created canonicals with packaging now land in ingredient_info with sizes on the first write — no manual SQL patch needed.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Scan-merge reserve bump — 3 identical SKUs → one row, reserve_count +2.",
+      "blendOf linkage in the create flow — 'this is made of pork' so Spam shows up for pork recipes.",
+    ],
+  },
   {
     version: "0.12.4",
     date:    "2026-04-18",

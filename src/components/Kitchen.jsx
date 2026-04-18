@@ -2988,24 +2988,31 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
           ingredientIds: customCanonicalId ? [customCanonicalId] : [],
         }}
         mode="single"
-        onLink={(ids) => {
+        onLink={(ids, extra) => {
           // Empty array = CLEAR CANONICAL. Otherwise single id.
           const nextId = ids[0] || null;
           setCustomCanonicalId(nextId);
           setCustomCanonicalOpen(false);
           // Admin auto-approve on user-created slug — skip PENDING.
+          // When the create flow's packaging step produced sizes
+          // (extra.packaging), fold them into the stub so the live
+          // ingredient_info row has packaging on first write. Without
+          // this, the pending_ingredient_info row that LinkIngredient
+          // also wrote would sit stale while the admin stub claimed
+          // the canonical id with no packaging.
           if (isAdmin && nextId && !findIngredient(nextId)) {
-            const stub = {
+            const info = {
               _meta: {
                 reviewed: true,
                 reviewed_by: userId || null,
                 reviewed_at: new Date().toISOString(),
                 source: "admin_additem_create",
               },
+              ...(extra?.packaging ? { packaging: extra.packaging } : {}),
             };
             supabase
               .from("ingredient_info")
-              .upsert({ ingredient_id: nextId, info: stub }, { onConflict: "ingredient_id" })
+              .upsert({ ingredient_id: nextId, info }, { onConflict: "ingredient_id" })
               .then(({ error }) => {
                 if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
                 else refreshDb?.();

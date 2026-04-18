@@ -237,6 +237,14 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
       // the packaging data into the authoritative ingredient_info row.
       // Fire-and-forget — a transient failure shouldn't block adding
       // the item to pantry. The in-app canonical binding works regardless.
+      //
+      // For admin callers, onLink below ALSO receives the packaging
+      // as a second arg so their auto-approve path can write it
+      // straight to ingredient_info — otherwise the admin's
+      // '{_meta}' stub would clobber the pending row we just wrote
+      // (auto-approve goes to the same canonical id via a different
+      // table, and ingredient_info wins because it's the live read
+      // source).
       (async () => {
         try {
           const { data: { user } } = await supabase.auth.getUser();
@@ -253,8 +261,12 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
         }
       })();
     }
+    // Hand the packaging to the caller's onLink so admin auto-approve
+    // paths can fold it into their ingredient_info stub on the same
+    // transaction — non-admin callers simply ignore the second arg.
+    const extra = maybePackaging ? { packaging: maybePackaging } : undefined;
     if (singleMode) {
-      onLink([id]);
+      onLink([id], extra);
     } else {
       setSelected(prev => {
         if (prev.some(s => s.id === id)) return prev;
