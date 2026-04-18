@@ -345,6 +345,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
+  // Flips true when the user picks "+ custom…" in the unit dropdown.
+  // Replaces the <select> with a free-text <input> so they can type a
+  // unit that isn't in the canonical's ladder ("pack", "wheel",
+  // etc). Cleared when editingField closes.
+  const [customUnitOpen, setCustomUnitOpen] = useState(false);
+  useEffect(() => { if (editingField !== "qty") setCustomUnitOpen(false); }, [editingField]);
 
   if (!itemProp) return null;
 
@@ -763,7 +769,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 cursor: readOnly ? "default" : "pointer",
               }}
             >
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>
+                QUANTITY
+                {editingField === "qty" && (
+                  <span style={{ color: "#7eb8d4", marginLeft: 6 }}>· TAP UNIT TO CHANGE</span>
+                )}
+              </div>
               {editingField === "qty" ? (() => {
                 const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
                 const hasCurrent = units.some(u => u.id === item.unit);
@@ -861,21 +872,84 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                           fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
                         }}
                       />
-                      <select
-                        defaultValue={item.unit}
-                        onChange={e => commit({ unit: e.target.value })}
-                        style={{
-                          padding: "3px 2px",
-                          background: "#0a0a0a", border: "1px solid #f5c842",
-                          color: "#f5c842", borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 10, outline: "none",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {opts.map(u => (
-                          <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
-                        ))}
-                      </select>
+                      {customUnitOpen ? (
+                        // Free-text unit input — escape hatch for
+                        // units not in the canonical's ladder (a "pack"
+                        // of Costco chicken breasts, a "wheel" of
+                        // Brie, etc.). Writes verbatim so downstream
+                        // renderers display whatever the user typed.
+                        <input
+                          type="text"
+                          autoFocus
+                          defaultValue={item.unit || ""}
+                          placeholder="type unit…"
+                          onBlur={e => {
+                            const v = e.target.value.trim();
+                            if (v) commit({ unit: v });
+                            setCustomUnitOpen(false);
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") {
+                              const v = e.target.value.trim();
+                              if (v) commit({ unit: v });
+                              setCustomUnitOpen(false);
+                            }
+                            if (e.key === "Escape") setCustomUnitOpen(false);
+                          }}
+                          style={{
+                            width: 96, padding: "4px 8px",
+                            background: "#0a0a0a", border: "1px solid #f5c842",
+                            color: "#f5c842", borderRadius: 6,
+                            fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+                          }}
+                        />
+                      ) : (
+                        // Wrapped select so we can overlay a visible
+                        // chevron — iOS Safari hides the native arrow
+                        // by default, leaving the control reading as a
+                        // static text chip instead of a tappable
+                        // dropdown. The wrapper is positioned; the
+                        // select is sized to include room for the
+                        // overlay.
+                        <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                          <select
+                            defaultValue={item.unit}
+                            onChange={e => {
+                              if (e.target.value === "__custom") {
+                                setCustomUnitOpen(true);
+                                return;
+                              }
+                              commit({ unit: e.target.value });
+                            }}
+                            style={{
+                              padding: "4px 22px 4px 10px",
+                              background: "#0a0a0a", border: "1px solid #f5c842",
+                              color: "#f5c842", borderRadius: 6,
+                              fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+                              cursor: "pointer",
+                              appearance: "none",
+                              WebkitAppearance: "none",
+                              MozAppearance: "none",
+                            }}
+                          >
+                            {opts.map(u => (
+                              <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
+                            ))}
+                            <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
+                          </select>
+                          <span
+                            aria-hidden
+                            style={{
+                              position: "absolute", right: 8, top: "50%",
+                              transform: "translateY(-50%)",
+                              fontFamily: "'DM Mono',monospace", fontSize: 10,
+                              color: "#f5c842", pointerEvents: "none",
+                            }}
+                          >
+                            ▾
+                          </span>
+                        </span>
+                      )}
                     </div>
                     {/* Slide-to-estimate. Half a bag of chips is eaten,
                         nobody's weighing what's left — drag to what
