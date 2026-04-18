@@ -974,7 +974,10 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         placeholder="set size"
                         onChange={e => {
                           const v = e.target.value;
-                          if (v === "") { commit({ max: null }); return; }
+                          // 0 (not null) = undeclared. DB column is
+                          // NOT NULL default 1; sending null would
+                          // be rejected.
+                          if (v === "") { commit({ max: 0 }); return; }
                           const n = parseFloat(v);
                           if (Number.isFinite(n) && n >= 0) commit({ max: n });
                         }}

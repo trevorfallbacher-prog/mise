@@ -177,9 +177,9 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
         emoji: snapshot.emoji || "🥫",
         amount: amt,
         unit: snapshot.unit || "count",
-        // Packaging not defined — slider stays hidden until user
-        // declares a container size.
-        max: null,
+        // Packaging undeclared — slider stays hidden until user
+        // sets a size. 0 because the DB column is NOT NULL.
+        max: 0,
         low_threshold: Math.max(amt * 0.25, 0.25),
         category: snapshot.category || "pantry",
         price_cents: snapshot.priceCents ?? null,

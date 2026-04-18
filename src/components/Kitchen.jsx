@@ -2057,12 +2057,15 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       unit: customUnit.trim(),
       // `max` = the container's full size. Set ONLY when the user
       // explicitly declared a package in the PACKAGE SIZE input or
-      // via a packaging chip. Empty = null (slider stays hidden).
-      // This is also the signal that powers SEALED vs OPENED on
-      // ItemCard: amount === max → sealed, amount < max → opened.
+      // via a packaging chip. 0 = "not declared" (slider stays
+      // hidden; hasPackage checks max > 0 everywhere). We send 0
+      // instead of null because the DB column is NOT NULL default
+      // 1 — null would get rejected, default would fire and lie.
+      // Also powers SEALED vs OPENED: amount === max → sealed,
+      // amount < max → opened.
       max: (() => {
         const n = parseFloat(packageSize);
-        return Number.isFinite(n) && n > 0 ? n : null;
+        return Number.isFinite(n) && n > 0 ? n : 0;
       })(),
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
@@ -4031,9 +4034,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             amount: s.amount,
             unit: s.unit,
             // Packaging intentionally undefined — scans don't ask
-            // about container size. Slider stays hidden until the
-            // user defines one explicitly.
-            max: null,
+            // about container size. 0 = slider stays hidden
+            // (hasPackage check fails); DB column is NOT NULL so
+            // we can't send literal null.
+            max: 0,
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: scanPriceCents,
@@ -4194,8 +4198,9 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         emoji: sItem.emoji || "🥫",
         amount: sItem.amount,
         unit: sItem.unit,
-        // Packaging undefined until user declares it.
-        max: null,
+        // 0 = packaging undeclared (slider hidden). See
+        // addScannedItems comment for why not null.
+        max: 0,
         category: sItem.category || "pantry",
         lowThreshold: Math.max(sItem.amount * 0.25, 0.25),
       }];
