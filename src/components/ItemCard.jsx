@@ -132,7 +132,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onDelete, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -1009,6 +1009,48 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               )}
             </div>
           </div>
+
+          {/* + 1 PACKAGE — duplicate this row in place. The grid then
+              renders the pair as a stacked card (×2 + fan). Hidden
+              when no onDuplicate handler is wired (read-only embeds). */}
+          {onDuplicate && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 12px", marginBottom: 12,
+              background: "#0f0f0f", border: "1px solid #1e1e1e",
+              borderRadius: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842", letterSpacing: "0.08em",
+                }}>
+                  STACKING
+                </div>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#888", marginTop: 2,
+                }}>
+                  Add another identical {item.name} as its own row
+                </div>
+              </div>
+              <button
+                onClick={() => onDuplicate()}
+                aria-label={`Duplicate ${item.name}`}
+                style={{
+                  padding: "8px 12px",
+                  background: "#1a1608",
+                  border: "1px solid #f5c84244",
+                  borderRadius: 8,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  color: "#f5c842", letterSpacing: "0.06em",
+                  cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                + 1 PACKAGE
+              </button>
+            </div>
+          )}
 
           {/* Item-level enrichment CTA — always visible so the user has
               an explicit, unambiguous "enrich THIS item" affordance

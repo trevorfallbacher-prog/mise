@@ -5333,6 +5333,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             userId={userId}
             isAdmin={isAdmin}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
+            onDuplicate={() => {
+              addStackInstance(setPantry, { key: fresh.id, items: [fresh] });
+              pushToast(`Added 1 ${fresh.name}`, { emoji: fresh.emoji || "🛒", kind: "success", ttl: 2800 });
+            }}
             onDelete={() => {
               // Hand off to the existing deleteCandidate confirmation
               // modal — that's the one surface that shows name + amount
