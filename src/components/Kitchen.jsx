@@ -5168,8 +5168,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
 
           {/* Search + items list. Hidden on the tile-grid view (drilledTile
               === null and the tab has tiles); shown once the user drills
-              into a tile, and on tabs without a tile set (freezer). */}
-          {!(currentTiles && drilledTile === null) && (
+              into a tile, and on tabs without a tile set (freezer).
+              Also requires a tab to actually be selected — otherwise the
+              "Search your ${storageTab}…" / "Nothing in your ${storageTab}"
+              copy interpolates `null` into the placeholder. */}
+          {storageTab && !(currentTiles && drilledTile === null) && (
             <>
               {/* Search — matches item names, category, and hub names,
                   scoped to the current tab/tile. */}
