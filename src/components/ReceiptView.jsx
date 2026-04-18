@@ -145,7 +145,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
         purchased_at: new Date().toISOString(),
         // Source provenance — pointer back to THIS artifact so the row
         // shows up under its "Items from this scan" list on next open.
-        source_kind: kind === "pantry_scan" ? "pantry_scan" : "receipt",
+        source_kind: kind === "pantry_scan" ? "pantry_scan" : "receipt_scan",
         [fkCol]: artifactId,
         // Identity/composition — carry forward everything the snapshot
         // knew so merge heuristics don't re-collide with other rows.
