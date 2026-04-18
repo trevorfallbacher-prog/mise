@@ -3414,11 +3414,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     return () => clearTimeout(t);
   }, [spendPulse]);
 
-  // Fridge / Pantry / Freezer tab. Default to fridge — the tab users hit
-  // most often. `drilledTile` holds the fridge-tile id the user has tapped
-  // into (null = tile grid view; string = tile detail view). Switching
-  // tabs always resets the drill-down.
-  const [storageTab, setStorageTabRaw] = useState("fridge");
+  // Fridge / Pantry / Freezer tab. Defaults to NULL (nothing
+  // pre-selected) so the landing view isn't secretly filtered to
+  // the fridge — users were reading the fridge tiles as their whole
+  // kitchen and missing items that lived elsewhere. `drilledTile`
+  // holds the tile id the user has tapped into (null = tile grid
+  // view; string = tile detail view). Switching tabs always resets
+  // the drill-down.
+  const [storageTab, setStorageTabRaw] = useState(null);
   const [drilledTile, setDrilledTile] = useState(null);
   // Global-search state for the tile-grid view. Scoped ACROSS all three
   // storage tabs so a user looking for "tortillas" finds them whether they
@@ -4908,9 +4911,98 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               ➕ CreateMenu overlay. Kitchen is now inventory +
               maintenance only; creation flows live in one place. */}
 
-          {/* Fridge / Pantry / Freezer tab strip. Default is Fridge — the
-              tab most users open by reflex. Selecting a tab resets any
-              active tile drill-down (handled in setStorageTab). */}
+          {/* Kitchen-wide search — lives ABOVE the location tabs so
+              it's the first thing users reach for when they can't find
+              something, and because it already searches every location
+              regardless of which tab is active. Hidden once the user
+              drills into a specific tile (that view carries its own
+              filter context). */}
+          {drilledTile === null && (
+            <div style={{ padding:"14px 20px 0" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"#0a0a0a", border:"1px solid #242424", borderRadius:12 }}>
+                <span style={{ fontSize:14, color:"#666" }}>🔍</span>
+                <input
+                  type="text"
+                  value={tileSearch}
+                  onChange={e => setTileSearch(e.target.value)}
+                  placeholder="Search your whole kitchen…"
+                  style={{ flex:1, background:"transparent", border:"none", outline:"none", color:"#f0ece4", fontFamily:"'DM Sans',sans-serif", fontSize:14 }}
+                />
+                {tileSearch && (
+                  <button
+                    onClick={() => setTileSearch("")}
+                    aria-label="Clear search"
+                    style={{ background:"transparent", border:"none", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:14, cursor:"pointer" }}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Search results — cross-kitchen, grouped by location. When
+              a query is active these REPLACE the location tabs + tile
+              grid so the user focuses on matches. */}
+          {trimmedSearch && (
+            <div style={{ padding:"14px 20px 0" }}>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {searchResults.length === 0 ? (
+                  <div style={{ padding:"32px 12px", textAlign:"center", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, fontStyle:"italic" }}>
+                    Nothing in your kitchen matches “{tileSearch}”.
+                  </div>
+                ) : (
+                  ["fridge", "pantry", "freezer"].map(loc => {
+                    const rowsAtLoc = searchResults.filter(r => r.location === loc);
+                    if (rowsAtLoc.length === 0) return null;
+                    return (
+                      <div key={loc}>
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.15em", margin:"10px 4px 6px" }}>
+                          {loc.toUpperCase()}  ·  {rowsAtLoc.length}
+                        </div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                          {rowsAtLoc.map(({ item, tile }) => (
+                            <button
+                              key={item.id}
+                              onClick={() => setOpenItem(item)}
+                              style={{
+                                display:"flex", alignItems:"center", gap:10,
+                                padding:"10px 12px",
+                                background:"#141414",
+                                border:"1px solid #242424",
+                                borderRadius:10,
+                                cursor:"pointer", textAlign:"left",
+                              }}
+                            >
+                              <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji || "🫙"}</span>
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                                  {item.name}
+                                </div>
+                                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", marginTop:2, letterSpacing:"0.05em" }}>
+                                  {tile ? `${loc.toUpperCase()} · ${tile.label.toUpperCase()}` : loc.toUpperCase()}
+                                </div>
+                              </div>
+                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", flexShrink:0 }}>
+                                {item.amount} {item.unit}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Fridge / Pantry / Freezer tab strip. Nothing is pre-
+              selected so users read the landing page as "pick a
+              location" rather than "here's the fridge." Selecting a
+              tab resets any active tile drill-down (handled in
+              setStorageTab). */}
+          {!trimmedSearch && (
           <div style={{ padding:"18px 20px 0" }}>
             <div style={{ display:"flex", gap:6, background:"#0b0b0b", border:"1px solid #1e1e1e", borderRadius:12, padding:4 }}>
               {[
@@ -4947,104 +5039,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               })}
             </div>
           </div>
+          )}
 
           {/* Tile grid — any tab that has a tile set (fridge, pantry), no
-              drill-down active. Tapping a tile enters a drill-down view
-              of items in that tile. Empty tiles render greyed-out but
-              remain tappable — the drill-down's empty state surfaces
-              an "Add your first" affordance. */}
-          {currentTiles && drilledTile === null && (
+              drill-down active, no search active. Tapping a tile enters
+              a drill-down view of items in that tile. Empty tiles
+              render greyed-out but remain tappable — the drill-down's
+              empty state surfaces an "Add your first" affordance. */}
+          {!trimmedSearch && currentTiles && drilledTile === null && (
             <div style={{ padding:"14px 20px 0" }}>
-              {/* Sticky tile-grid search. Kept above the grid so it stays
-                  reachable while the tiles are visible; hitting the ✕ or
-                  clearing the text brings the grid back. Typing anything
-                  collapses the grid and shows a flat results list below. */}
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, padding:"10px 14px", background:"#0a0a0a", border:"1px solid #242424", borderRadius:12 }}>
-                <span style={{ fontSize:14, color:"#666" }}>🔍</span>
-                <input
-                  type="text"
-                  value={tileSearch}
-                  onChange={e => setTileSearch(e.target.value)}
-                  placeholder="Search your whole kitchen…"
-                  style={{ flex:1, background:"transparent", border:"none", outline:"none", color:"#f0ece4", fontFamily:"'DM Sans',sans-serif", fontSize:14 }}
-                />
-                {tileSearch && (
-                  <button
-                    onClick={() => setTileSearch("")}
-                    aria-label="Clear search"
-                    style={{ background:"transparent", border:"none", color:"#666", fontFamily:"'DM Mono',monospace", fontSize:14, cursor:"pointer" }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-            {trimmedSearch ? (
-              // Cross-tile results view. Grouped by STORAGE tab so the user
-              // reads them the way they'd walk the kitchen: fridge items
-              // together, pantry items together, freezer last. Each row's
-              // origin tag tells them where they'd tap to get there the
-              // normal way.
-              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-                {searchResults.length === 0 ? (
-                  <div style={{ padding:"32px 12px", textAlign:"center", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, fontStyle:"italic" }}>
-                    Nothing in your kitchen matches “{tileSearch}”.
-                  </div>
-                ) : (
-                  ["fridge", "pantry", "freezer"].map(loc => {
-                    const rowsAtLoc = searchResults.filter(r => r.location === loc);
-                    if (rowsAtLoc.length === 0) return null;
-                    return (
-                      <div key={loc}>
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.15em", margin:"10px 4px 6px" }}>
-                          {loc.toUpperCase()}  ·  {rowsAtLoc.length}
-                        </div>
-                        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                          {rowsAtLoc.map(({ item, tile }) => (
-                            <button
-                              key={item.id}
-                              onClick={() => {
-                                // Tap a search result → open the full
-                                // ItemCard directly. Editing from here
-                                // is the only way out when an item has
-                                // drifted into a location it can't be
-                                // navigated to (e.g. location=fridge
-                                // with a pantry-side tileId). Clearing
-                                // the search + collapsing the sheet is
-                                // deferred to the card's onClose so
-                                // users can jump back to the list if
-                                // they cancel.
-                                setOpenItem(item);
-                              }}
-                              style={{
-                                display:"flex", alignItems:"center", gap:10,
-                                padding:"10px 12px",
-                                background:"#141414",
-                                border:"1px solid #242424",
-                                borderRadius:10,
-                                cursor:"pointer", textAlign:"left",
-                              }}
-                            >
-                              <span style={{ fontSize:22, flexShrink:0 }}>{item.emoji || "🫙"}</span>
-                              <div style={{ flex:1, minWidth:0 }}>
-                                <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                                  {item.name}
-                                </div>
-                                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", marginTop:2, letterSpacing:"0.05em" }}>
-                                  {tile ? `${loc.toUpperCase()} · ${tile.label.toUpperCase()}` : loc.toUpperCase()}
-                                </div>
-                              </div>
-                              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", flexShrink:0 }}>
-                                {item.amount} {item.unit}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            ) : (
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 {currentTiles.map(tile => {
                   const count = tileCounts[tile.id] || 0;
@@ -5106,7 +5109,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                   );
                 })}
               </div>
-            )}
             </div>
           )}
 
