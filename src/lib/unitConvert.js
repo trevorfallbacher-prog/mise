@@ -67,6 +67,58 @@ export function decrementRow(row, used, ingredient) {
   return Math.max(0, Number(next.toFixed(4)));
 }
 
+// Consume `used` across an array of pantry rows (an identity stack — N
+// sibling instances sharing canonical + state + composition). Rows are
+// drawn FIFO in the order supplied by the caller (CookComplete sorts
+// earliest expires first so the next-to-spoil instance is always
+// cracked before a fresher sibling). Returns one entry per row
+// touched:
+//
+//   [{ row, newAmount, consumedAmount, unit, unsatisfied }]
+//
+// * newAmount is in row.unit. 0 = delete the row.
+// * consumedAmount is also in row.unit — what the caller would tell
+//   the user ("2 cans drawn from Apr 20 batch").
+// * unsatisfied is the remainder in `used.unit` when the rows ran out
+//   before fully satisfying demand. 0 when everything was consumed.
+//
+// Keeps `decrementRow` as the single-row primitive; this is the
+// multi-row orchestrator built on top of `convert`.
+export function planInstanceDecrement(rows, used, ingredient) {
+  const out = [];
+  if (!Array.isArray(rows) || rows.length === 0 || !used || !ingredient) {
+    return { entries: out, unsatisfied: Number(used?.amount) || 0 };
+  }
+  let remainingBase = Number(used.amount) * (ingredient.units?.find(u => u.id === used.unit)?.toBase ?? NaN);
+  if (!Number.isFinite(remainingBase)) {
+    // Unit isn't in the ingredient's ladder — caller should fall back
+    // to a single-row un-convertible entry, same as decrementRow's
+    // null return.
+    return { entries: out, unsatisfied: Number(used.amount) };
+  }
+  for (const row of rows) {
+    if (remainingBase <= 0) break;
+    const rowFactor = ingredient.units?.find(u => u.id === row.unit)?.toBase;
+    if (!rowFactor) continue;
+    const rowBase = Number(row.amount) * rowFactor;
+    if (!Number.isFinite(rowBase) || rowBase <= 0) continue;
+    const consumeBase = Math.min(rowBase, remainingBase);
+    const consumedInUnit = Number((consumeBase / rowFactor).toFixed(4));
+    const newAmount = Math.max(0, Number(((rowBase - consumeBase) / rowFactor).toFixed(4)));
+    out.push({
+      row,
+      newAmount,
+      consumedAmount: consumedInUnit,
+      unit: row.unit,
+    });
+    remainingBase -= consumeBase;
+  }
+  const unsatisfiedBase = Math.max(0, remainingBase);
+  const usedFactor = ingredient.units?.find(u => u.id === used.unit)?.toBase ?? 1;
+  const unsatisfied = Number((unsatisfiedBase / usedFactor).toFixed(4));
+  return { entries: out, unsatisfied };
+}
+
 // Human-readable "2 cloves" / "½ cup" / "60 g" string for a qty + ingredient.
 // Falls back gracefully if the unit isn't in the ingredient's ladder.
 // Used by the confirm-removal summary and the leftover-row display.

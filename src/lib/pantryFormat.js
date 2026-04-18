@@ -51,6 +51,26 @@ export function formatPrice(cents) {
     : "";
 }
 
+// Discrete-count unit ids. An `amount === 1` row in one of these
+// units represents ONE physical package (a can, a box, a bottle) —
+// scanning / checking off / adding 50 of them should yield 50 rows
+// the render layer stacks, NOT one row with amount=50. Fractional
+// units (g, tbsp, ml, cup, lb, etc.) stay on the aggregate path so
+// "200 g butter" remains one row.
+export const DISCRETE_COUNT_UNITS = new Set([
+  "count", "can", "box", "each", "bottle", "bag", "jar",
+  "pack", "package", "piece", "slice", "loaf", "wedge",
+  "block", "ball", "wheel", "carton", "container", "tub",
+  "fillet", "head", "leaf", "clove",
+]);
+
+// A single discrete package — the call site should NOT merge this
+// into any existing row; let groupByIdentity stack it at render.
+export function isDiscreteInstance(item) {
+  if (!item || Number(item.amount) !== 1) return false;
+  return DISCRETE_COUNT_UNITS.has(item.unit);
+}
+
 // Stable identity key for grouping pantry rows into "stacks" (multiple
 // physical instances of the same logical item — e.g. 5 cans of tuna).
 // The fields mirror sameIdentity() in Kitchen.jsx: custom name, state,
@@ -64,6 +84,43 @@ export function identityKey(item) {
     : "";
   const canon = item?.canonicalId || item?.ingredientId || "";
   return [name, canon, state, ids].join("|");
+}
+
+// Aggregate amount across an identity bucket. Returns the sum of all
+// `amount` fields; meaningful when instances share a unit (or a
+// canonical ingredient's unit ladder, which the caller can convert
+// through separately). Defaults to 0 for empty buckets.
+export function stackAmount(bucket) {
+  const items = Array.isArray(bucket?.items) ? bucket.items : [];
+  return items.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+}
+
+// Low / critical signals for an identity stack. Discrete-count units
+// compare INSTANCE COUNT (5 cans left vs a restock threshold of 3),
+// which matches how a cook thinks about canned goods. Fractional
+// units (grams, tbsp) fall back to the per-row lowThreshold against
+// summed amount — "half a cup of flour left" still reads the same
+// whether it lives in 1 or 3 rows.
+export function isStackLow(bucket) {
+  const items = Array.isArray(bucket?.items) ? bucket.items : [];
+  if (items.length === 0) return false;
+  const head = items[0];
+  const threshold = Number(head.lowThreshold) || 0;
+  if (DISCRETE_COUNT_UNITS.has(head.unit)) {
+    return items.length <= Math.max(1, Math.ceil(threshold || 1));
+  }
+  return stackAmount(bucket) <= threshold;
+}
+
+export function isStackCritical(bucket) {
+  const items = Array.isArray(bucket?.items) ? bucket.items : [];
+  if (items.length === 0) return true;
+  const head = items[0];
+  const threshold = Number(head.lowThreshold) || 0;
+  if (DISCRETE_COUNT_UNITS.has(head.unit)) {
+    return items.length <= Math.max(1, Math.ceil(threshold * 0.5));
+  }
+  return stackAmount(bucket) <= threshold * 0.5;
 }
 
 // Group pantry rows into identity buckets preserving original order.

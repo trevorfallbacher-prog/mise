@@ -12,7 +12,7 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { compressImage } from "../lib/compressImage";
-import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice, groupByIdentity } from "../lib/pantryFormat";
+import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice, groupByIdentity, isDiscreteInstance, isStackLow, isStackCritical } from "../lib/pantryFormat";
 import { addInstance as addStackInstance, removeInstance as removeStackInstance, sortedInstances } from "../lib/useStackEdits";
 import { CONFIDENCE_STYLES, SCAN_MODES, confidenceStyle } from "../lib/scanModes";
 import { useToast } from "../lib/toast";
@@ -3781,16 +3781,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // 50 rows (one per physical can) that the render layer groups
         // into a stacked card. Only merge fractional/mass/volume scans
         // (grams, tbsp, ml, etc.) where aggregation reads more
-        // naturally than 50 "1 g butter" rows.
-        const discreteCountUnits = new Set([
-          "count", "can", "box", "each", "bottle", "bag", "jar",
-          "pack", "package", "piece", "slice", "loaf", "wedge",
-          "block", "ball", "wheel", "carton", "container", "tub",
-          "fillet", "head", "leaf", "clove",
-        ]);
-        const isDiscreteInstance = s.amount === 1 && discreteCountUnits.has(s.unit);
+        // naturally than 50 "1 g butter" rows. Shared definition in
+        // pantryFormat so check-off + scan + manual add all agree on
+        // what counts as "a physical package."
         let ex = null;
-        if (!isDiscreteInstance) {
+        if (!isDiscreteInstance(s)) {
           if (s.ingredientId) {
             ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
           }
@@ -4003,13 +3998,17 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   };
 
   // "Got it" on a shopping list item → move to pantry and remove from list.
-  // Matches an existing pantry row by ingredientId when available (so the new
-  // "2 tbsp butter" merges into an existing "1.5 sticks" row), else by name.
+  // Fractional items (2 tbsp butter) still merge into the open row —
+  // the user wants aggregate grams, not a second butter "instance." A
+  // single discrete package (1 can, 1 box) skips the merge so
+  // groupByIdentity stacks it as its own physical instance at render.
   const checkOffShoppingItem = sItem => {
     setPantry(prev => {
-      const ex = sItem.ingredientId
-        ? prev.find(p => p.ingredientId === sItem.ingredientId)
-        : prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
+      const ex = isDiscreteInstance(sItem)
+        ? null
+        : sItem.ingredientId
+          ? prev.find(p => p.ingredientId === sItem.ingredientId)
+          : prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
       if (ex) {
         // If units match we can do a direct sum; if not, just keep the existing
         // amount (the user can reconcile in the UI).
@@ -4510,8 +4509,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     const canon = findIngredient(top.ingredientId);
     const canonicalLabel = canon?.shortName && canon.parentId ? canon.shortName : canon?.name;
     const showCanonical = canonicalLabel && canonicalLabel.toLowerCase() !== (top.name || "").toLowerCase();
-    const anyLow = items.some(isLow);
-    const anyCritical = items.some(isCritical);
+    // Stack-aware low detection: discrete-count stacks compare INSTANCE
+    // COUNT against the threshold (5 cans vs a restock-at-3 rule);
+    // fractional stacks sum amounts and compare against the head row's
+    // lowThreshold. Legacy per-row `isLow` only read individual
+    // amounts, so a stack of 1-can instances never signaled low even
+    // when the user was down to the last can.
+    const anyLow = isStackLow(bucket);
+    const anyCritical = isStackCritical(bucket);
     const earliestExpiry = items.reduce((min, p) => {
       if (!p.expiresAt) return min;
       const d = p.expiresAt instanceof Date ? p.expiresAt : new Date(p.expiresAt);
