@@ -517,33 +517,26 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           if (!validIds.includes(base.unit)) base.unit = inferred.defaultUnit;
         }
         // Apply template override LAST — after canonical + unit
-        // inference so we cleanly overwrite with the user's blessed
-        // identity. The _templateId marker persists through scan
-        // confirm so addScannedItems can bump use_count after
-        // committing the pantry_items INSERT.
+        // inference. Per the item-first architecture (CLAUDE.md identity
+        // stack) a template may only inherit ROUTING (emoji, category,
+        // storage tile/location, food type, default unit). Identity
+        // fields — name and ingredientIds (composition) — belong to the
+        // scan itself; auto-applying a saved blend would collapse a
+        // single-canonical "8oz Mozzarella" line into a prior
+        // multi-canonical "Italian cheese" row. The _templateId marker
+        // persists so addScannedItems can bump use_count after commit.
         if (templateMatch) {
-          base.name = templateMatch.name;  // preserve user's brand casing
           if (templateMatch.emoji)    base.emoji    = templateMatch.emoji;
           if (templateMatch.category) base.category = templateMatch.category;
           if (templateMatch.tileId)   base.tileId   = templateMatch.tileId;
           if (templateMatch.defaultLocation) {
             base.location = templateMatch.defaultLocation;
           }
-          if (Array.isArray(templateMatch.ingredientIds)
-              && templateMatch.ingredientIds.length > 0) {
-            base.ingredientIds = [...templateMatch.ingredientIds];
-            base.ingredientId = templateMatch.ingredientIds[0];
-            // Composed template -> scanned item will be kind='meal'
-            // when it lands in pantry_items (kindForTagCount rule)
-            base.kind = templateMatch.ingredientIds.length >= 2 ? "meal" : "ingredient";
-          }
           if (templateMatch.defaultUnit && (!base.unit || base.unit === "count")) {
             base.unit = templateMatch.defaultUnit;
           }
-          base._templateId = templateMatch.id;
-          // Template propagates type_id too — user already picked it
-          // before, inherit on every subsequent scan.
           if (templateMatch.typeId) base.typeId = templateMatch.typeId;
+          base._templateId = templateMatch.id;
         }
 
         // IDENTIFIED AS + STORED IN auto-inference (chunk 18h). For
@@ -582,17 +575,16 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         const key = normalizeScanText(row.scanRaw?.raw_name || row.name);
         const c = key ? corrections.get(key) : null;
         if (!c) return row;
+        // Per the item-first architecture: a scan correction may route
+        // (emoji, typeId) and remap a SINGLE canonical tag (canonicalId),
+        // but must not auto-apply name or multi-canonical composition.
+        // Identity — name and ingredientIds — belongs to the scan itself.
         const patched = { ...row, learnedCorrectionId: c.id };
-        if (c.correctedName) patched.name = c.correctedName;
         if (c.emoji) patched.emoji = c.emoji;
         if (c.typeId) patched.typeId = c.typeId;
         if (c.canonicalId) {
           patched.canonicalId = c.canonicalId;
           patched.ingredientId = c.canonicalId;
-        }
-        if (Array.isArray(c.ingredientIds) && c.ingredientIds.length > 0) {
-          patched.ingredientIds = c.ingredientIds;
-          patched.ingredientId = c.ingredientIds[0];
         }
         return patched;
       };
@@ -3763,13 +3755,18 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         //      vs scan's "Pepper Jack"), merge into it. The existing
         //      ingredientId-backfill below then upgrades that free-text
         //      row to canonical. Preserves the user's custom name.
+        // Every match path must pass sameIdentity — a single-canonical
+        // scan (e.g. [mozzarella]) and a multi-canonical blend row
+        // (e.g. [mozz, parm, asiago, fontina]) are DIFFERENT items in
+        // the item-first architecture, even if names happen to coincide
+        // via a template or correction.
         let ex = null;
         if (s.ingredientId) {
           ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
         }
         if (!ex) {
           const scanLow = (s.name || "").toLowerCase();
-          ex = next.find(p => (p.name || "").toLowerCase() === scanLow);
+          ex = next.find(p => (p.name || "").toLowerCase() === scanLow && sameIdentity(p, s));
         }
         if (!ex && s.ingredientId) {
           const scanCanon = findIngredient(s.ingredientId);
@@ -3778,7 +3775,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             ex = next.find(p => {
               if (p.ingredientId) return false;
               const n = (p.name || "").toLowerCase();
-              return n && (n.includes(needle) || needle.includes(n));
+              if (!n || (!n.includes(needle) && !needle.includes(n))) return false;
+              return sameIdentity(p, s);
             });
           }
         }
