@@ -177,8 +177,9 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
         emoji: snapshot.emoji || "🥫",
         amount: amt,
         unit: snapshot.unit || "count",
-        // Start full — the restored package size matches amount.
-        max: Math.max(amt, 1),
+        // Packaging not defined — slider stays hidden until user
+        // declares a container size.
+        max: null,
         low_threshold: Math.max(amt * 0.25, 0.25),
         category: snapshot.category || "pantry",
         price_cents: snapshot.priceCents ?? null,

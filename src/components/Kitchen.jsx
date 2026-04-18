@@ -97,7 +97,15 @@ const ADD_CATEGORIES = [
   { id:"frozen",  label:"🧊 Frozen"  },
 ];
 
-const pct  = item => Math.min((item.amount / item.max) * 100, 100);
+// Fill percent for the tile gauge. Only meaningful when the row has
+// a declared package size (max > 0); returns null otherwise so the
+// caller can hide the gauge instead of fabricating a full bar.
+const pct = item => {
+  const max = Number(item.max);
+  if (!(max > 0)) return null;
+  return Math.min((Number(item.amount) || 0) / max * 100, 100);
+};
+const hasPackage = item => Number(item.max) > 0;
 const isLow      = item => item.amount <= item.lowThreshold;
 const isCritical = item => item.amount <= item.lowThreshold * 0.5;
 const barColor   = item => isCritical(item) ? "#ef4444" : isLow(item) ? "#f59e0b" : "#4ade80";
@@ -1705,6 +1713,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // typing amount+unit from scratch.
   const { refreshDb, dbMap } = useIngredientInfo();
   const [amount, setAmount] = useState("");
+  // Optional "full package size" the user declares at add-time.
+  // Empty string = undeclared (max stays null on save, slider hidden).
+  // Any positive number = max gets stamped and slider becomes the
+  // consumption gauge on ItemCard. Separate from amount so the user
+  // can say "I have 9 cups out of an 18-cup bag" even when they
+  // haven't opened the bag yet (amount == max = SEALED; amount < max
+  // = OPENED). Keeping it a string here so the input can be blank.
+  const [packageSize, setPackageSize] = useState("");
 
   // Tile-context boost: when the modal opens from a specific tile, we
   // prefer suggestions that classify into that tile. The filter is a
@@ -2039,11 +2055,15 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       emoji: primaryComp?.canonical?.emoji || "🥫",
       amount: amt,
       unit: customUnit.trim(),
-      // `max` = the container's full size. At creation we mirror
-      // `amount` so the slider reads 100% (full container), dropping
-      // as the user consumes. Future: derive from the canonical's
-      // packaging catalog when available.
-      max: Math.max(amt, 1),
+      // `max` = the container's full size. Set ONLY when the user
+      // explicitly declared a package in the PACKAGE SIZE input or
+      // via a packaging chip. Empty = null (slider stays hidden).
+      // This is also the signal that powers SEALED vs OPENED on
+      // ItemCard: amount === max → sealed, amount < max → opened.
+      max: (() => {
+        const n = parseFloat(packageSize);
+        return Number.isFinite(n) && n > 0 ? n : null;
+      })(),
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
       // User's STORED IN (tile) placement — seeded from tileContext
@@ -2750,11 +2770,43 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     }}
                   />
                 </div>
-                {/* Reserves stepper (migration 0054). "+N" sealed
-                    packages beyond the open one above. When N > 0 the
-                    save path snapshots amount/unit as the package size
-                    so the pantry can render reserves + pop them as
-                    the open unit depletes. */}
+
+                {/* PACKAGE SIZE — optional "full container" declaration.
+                    Drives the ItemCard slider and the SEALED vs OPENED
+                    signal (amount == max → sealed; amount < max →
+                    opened). Blank = undeclared. */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
+                }}>
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: packageSize ? "#f5c842" : "#555",
+                    letterSpacing: "0.1em", flexShrink: 0,
+                  }}>
+                    FULL PKG
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0" step="any"
+                    value={packageSize}
+                    onChange={e => setPackageSize(e.target.value)}
+                    placeholder="optional"
+                    style={{
+                      flex: 1, minWidth: 0,
+                      background: "transparent", border: "none", outline: "none",
+                      fontFamily: "'DM Mono',monospace", fontSize: 12,
+                      color: packageSize ? "#f5c842" : "#888",
+                      padding: 0,
+                    }}
+                  />
+                </div>
+
+                {/* Instance-count stepper. "+N" sibling rows this save
+                    creates, so the render layer stacks a 50-can Costco
+                    run into one card. See migration 0057's fan-out
+                    for the receipt-scan equivalent. */}
                 <div style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
@@ -3978,8 +4030,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             emoji: s.emoji,
             amount: s.amount,
             unit: s.unit,
-            // Start full — the package bought IS the full container.
-            max: Math.max(s.amount, 1),
+            // Packaging intentionally undefined — scans don't ask
+            // about container size. Slider stays hidden until the
+            // user defines one explicitly.
+            max: null,
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: scanPriceCents,
@@ -4140,8 +4194,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         emoji: sItem.emoji || "🥫",
         amount: sItem.amount,
         unit: sItem.unit,
-        // Start full — container size == what the user just bought.
-        max: Math.max(sItem.amount, 1),
+        // Packaging undefined until user declares it.
+        max: null,
         category: sItem.category || "pantry",
         lowThreshold: Math.max(sItem.amount * 0.25, 0.25),
       }];
@@ -4532,15 +4586,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 </div>
               );
             }
+            // No package declared → hide the gauge. Can't display a
+            // fill percent against an undefined container size.
+            const fill = pct(item);
+            if (fill == null) return null;
             return (
               <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-                <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
+                <div style={{ height:"100%", borderRadius:2, width:`${fill}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
               </div>
             );
           })()}
         </button>
-        {fillEditingId === item.id && (() => {
-          const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);
+        {fillEditingId === item.id && hasPackage(item) && (() => {
+          const maxVal = Number(item.max);
           const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
           const sliderColor = barColor(item);
           return (

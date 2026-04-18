@@ -779,16 +779,15 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
                 const hasCurrent = units.some(u => u.id === item.unit);
                 const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
-                // Slider range: 0..max (max is the high-water amount
-                // this row has ever held — tracked automatically in
-                // usePantry on adds/restocks). Drag = estimate what's
-                // left after a half-bag-of-chips scenario. Step sized
-                // against max so the slider feels precise on both
-                // small-max items (3 eggs) and large-max items (5 lbs
-                // flour). Color keyed to the same thresholds the
-                // amount-bar already uses for visual consistency.
-                const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);
-                const ratio = Math.min(1, (Number(item.amount) || 0) / maxVal);
+                // Slider only makes sense when a container size has
+                // been declared (item.max > 0). Without an explicit
+                // package, "full" is undefined — the slider would be
+                // lying. Gate the render on hasPackage so the tile
+                // collapses cleanly to just amount + unit when the
+                // user hasn't declared a package yet.
+                const hasPackage = Number(item.max) > 0;
+                const maxVal = hasPackage ? Number(item.max) : 0;
+                const ratio = hasPackage ? Math.min(1, (Number(item.amount) || 0) / maxVal) : 0;
                 const sliderColor = ratio <= 0.25 ? "#ef4444"
                   : ratio <= 0.5 ? "#f59e0b"
                   : "#7ec87e";
@@ -951,18 +950,63 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         </span>
                       )}
                     </div>
-                    {/* Slide-to-estimate. Half a bag of chips is eaten,
-                        nobody's weighing what's left — drag to what
-                        looks right. Writes live through onUpdate so the
-                        number input + bar color update as you drag. */}
-                    <input
-                      type="range"
-                      min="0" max={maxVal} step={step}
-                      value={Number(item.amount) || 0}
-                      onChange={e => commit({ amount: Number(e.target.value) })}
-                      aria-label={`Estimate ${item.name} remaining`}
-                      style={{ width: "100%", accentColor: sliderColor }}
-                    />
+                    {/* Package-size input — explicit user-settable
+                        "full container" size. Without this the
+                        slider has no reference for 100%. Leaving
+                        the field blank keeps max null (slider
+                        stays hidden). Typing a number commits it
+                        live; the slider then appears below. Chip
+                        tap above also fills this (chip commits
+                        both amount and max together). */}
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      marginTop: 2, paddingTop: 6,
+                      borderTop: "1px dashed #222",
+                    }}>
+                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", flexShrink: 0 }}>
+                        FULL PKG
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0" step="any"
+                        value={hasPackage ? item.max : ""}
+                        placeholder="set size"
+                        onChange={e => {
+                          const v = e.target.value;
+                          if (v === "") { commit({ max: null }); return; }
+                          const n = parseFloat(v);
+                          if (Number.isFinite(n) && n >= 0) commit({ max: n });
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                          width: 64, padding: "3px 6px",
+                          background: "#0a0a0a",
+                          border: `1px solid ${hasPackage ? "#f5c842" : "#2a2a2a"}`,
+                          color: hasPackage ? "#f5c842" : "#888",
+                          borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                        }}
+                      />
+                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#888" }}>
+                        {item.unit || ""} {hasPackage ? "· full" : "· tells the slider what 100% means"}
+                      </span>
+                    </div>
+
+                    {/* Slide-to-estimate. Only renders when a
+                        package is defined. Half a bag of chips is
+                        eaten, nobody's weighing what's left — drag
+                        to what looks right. */}
+                    {hasPackage && (
+                      <input
+                        type="range"
+                        min="0" max={maxVal} step={step}
+                        value={Number(item.amount) || 0}
+                        onChange={e => commit({ amount: Number(e.target.value) })}
+                        aria-label={`Estimate ${item.name} remaining`}
+                        style={{ width: "100%", accentColor: sliderColor }}
+                      />
+                    )}
                   </div>
                 );
               })() : (
