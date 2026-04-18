@@ -4470,6 +4470,28 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           );
         })()}
+        {/* + 1 PACKAGE — single-item "start stacking" affordance. Tapping
+            duplicates the row; next render groupByIdentity collapses
+            the pair into a StackedItemCard with ×2 + fan. stopPropagation
+            so the click doesn't also open the ItemCard modal. */}
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ display:"flex", alignItems:"center", gap:8, paddingTop:8, marginTop:8, borderTop:"1px solid #1e1e1e" }}
+        >
+          <button
+            onClick={() => {
+              addStackInstance(setPantry, { key: item.id, items: [item] });
+              pushToast(`Added 1 ${item.name}`, { emoji: item.emoji || "🛒", kind: "success", ttl: 2800 });
+            }}
+            aria-label={`Duplicate ${item.name} — start stacking`}
+            style={{ padding:"5px 10px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+          >
+            + 1 PACKAGE
+          </button>
+          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
+            START STACKING
+          </span>
+        </div>
       </div>
     );
   };
