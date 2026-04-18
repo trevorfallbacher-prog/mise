@@ -5392,7 +5392,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         const ordered = sortedInstances(bucket, "fifo");
         const top = ordered[0] || bucket.items[0];
         return (
-          <ModalSheet onClose={() => setStackDrilldown(null)} label={`${top.emoji || ""} ${top.name} · ${ordered.length}`}>
+          <ModalSheet
+            onClose={() => setStackDrilldown(null)}
+            label={`${top.emoji || ""} ${top.name} · ${ordered.length}`}
+            zIndex={Z.sheet}
+          >
             <div style={{ padding:"12px 16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
               <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                 <button
