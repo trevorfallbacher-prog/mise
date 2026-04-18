@@ -3,22 +3,35 @@ import { supabase } from "./supabase";
 import { seedIngredientInfoOnce } from "./seedIngredientInfo";
 
 // Does this `info` object carry actual enrichment, or is it a ghost
-// stub left by admin auto-approve? Migration 0056 flagged legacy
-// stubs with `_meta.stub = true`; current-version auto-approve paths
-// skip the upsert entirely when there's no real data to write. Either
-// way, an ingredient_info row should count as "approved + enriched"
-// ONLY when it has at least one top-level key beyond `_meta`.
+// stub left by admin auto-approve? Three categories of keys live in
+// the info JSONB:
+//
+//   1. Provenance (`_meta`) — who/when. Never counts.
+//   2. Routing (`packaging`, `parentId`) — fills specific UI chips
+//      (package sizes, hub grouping) but leaves the INGREDIENT
+//      description panel empty. A row with ONLY routing keys is
+//      effectively a stub from the user's perspective — the
+//      INGREDIENT panel reads blank, pairings don't render,
+//      substitutions are missing. So routing-only rows count as
+//      stubs too.
+//   3. Real enrichment (`description`, `flavorProfile`, `pairs`,
+//      `substitutions`, `nutrition`, `storage`, etc.) — the stuff
+//      that actually populates the ingredient detail view. Any one
+//      of these flips the row to "enriched".
 //
 // Used to drive:
 //   * ItemCard's four-state metadata badge (none / stub / pending / enriched)
 //   * EnrichmentButton visibility — button shows on both "none" and "stub"
-//   * Package chip row resolution — chips only read from non-stub rows
-//   * Hub grouping's parentId fallback — only trusts non-stub rows
+//   * Package chip row resolution — reads `packaging` directly, so
+//     stubs-with-packaging still surface chips (the chip UI only
+//     needs routing data, not enrichment).
+const ROUTING_KEYS = new Set(["_meta", "packaging", "parentId", "display_name", "emoji", "category"]);
+
 export function isMeaningfullyEnriched(info) {
   if (!info || typeof info !== "object") return false;
   if (info?._meta?.stub === true) return false;
   for (const k of Object.keys(info)) {
-    if (k !== "_meta") return true;
+    if (!ROUTING_KEYS.has(k)) return true;
   }
   return false;
 }

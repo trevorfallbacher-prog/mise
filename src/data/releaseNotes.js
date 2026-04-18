@@ -42,9 +42,28 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.13.0";
+export const CURRENT_VERSION = "0.13.1";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.13.1",
+    date:    "2026-04-18",
+    title:   "Routing-only canonicals no longer count as \"enriched\"",
+    summary:
+      "Follow-up to v0.13.0. Gemelli and friends were still showing " +
+      "\"METADATA ✓ ENRICHED\" despite a blank INGREDIENT panel — the " +
+      "row had packaging + parentId (routing data) but no description " +
+      "or pairings, so the badge lied. Tightened isMeaningfullyEnriched " +
+      "to ignore routing-only keys. Now the badge stays at \"NEEDS " +
+      "ENRICHMENT\" until real descriptive content lands, and the " +
+      "enrichment button stays available so users can fill it in.",
+    shipped: [
+      { kind: "fix",
+        text: "isMeaningfullyEnriched now excludes packaging, parentId, display_name, emoji, and category from the \"counts as enrichment\" check. Rows with only routing data correctly show as stubs.",
+        commits: [] },
+    ],
+    coming_soon: [],
+  },
   {
     version: "0.13.0",
     date:    "2026-04-18",
