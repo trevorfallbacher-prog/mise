@@ -12,7 +12,8 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { compressImage } from "../lib/compressImage";
-import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice } from "../lib/pantryFormat";
+import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice, groupByIdentity } from "../lib/pantryFormat";
+import { addInstance as addStackInstance, removeInstance as removeStackInstance, sortedInstances } from "../lib/useStackEdits";
 import { CONFIDENCE_STYLES, SCAN_MODES, confidenceStyle } from "../lib/scanModes";
 import { useToast } from "../lib/toast";
 import { FRIDGE_TILES, tileIdForItem as fridgeTileIdForItem } from "../lib/fridgeTiles";
@@ -1766,7 +1767,12 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // the row into package mode on save so the pantry can render
   // per-unit gauges and the cook-decrement can pop reserves instead
   // of deleting the row when the open unit hits zero.
-  const [reserveCount, setReserveCount] = useState(0);
+  // How many physical packages the user is adding. Each one becomes
+  // its own pantry_items row (so `Costco trip of 50 tuna` = 50 rows
+  // the render layer stacks into one card). Supersedes `reserveCount`
+  // from migration 0054 — instead of 1 open + N sealed, we now insert
+  // N independent rows that share identity.
+  const [instanceCount, setInstanceCount] = useState(1);
   // Flipped to true on a save attempt that hit missing fields — lights
   // up the per-field validation reminder panel. Stays latched so the
   // user can actually see which field is red while they fix it;
@@ -2058,20 +2064,21 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       // undefined-as-unset.
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
-      // Packaging + reserves (migration 0054). When the user
-      // specified sealed reserves, snapshot the current amount/unit
-      // as the package size so the pantry treats the row as
-      // package-mode: one open unit + N sealed reserves. Each
-      // reserve pops into the open slot when the open unit hits
-      // zero during cook decrementing.
-      ...(reserveCount > 0 ? {
-        packageAmount: amt,
-        packageUnit: customUnit.trim() || null,
-        reserveCount,
-      } : {}),
     };
 
-    onAdd(item);
+    // Per-instance add: insert N independent rows sharing identity so
+    // the render layer can stack them (×N badge + fan). Each row gets
+    // its own uuid; composition (if multi-tag) is written per-row
+    // below so every instance carries the same blend structure.
+    const count = Math.max(1, Math.floor(Number(instanceCount) || 1));
+    const instanceIds = [];
+    for (let i = 0; i < count; i++) {
+      const freshId = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`;
+      instanceIds.push(freshId);
+      onAdd({ ...item, id: freshId });
+    }
     setSaveAttempted(false);
     // Full-screen success. User taps DONE to dismiss → onClose fires.
     // Gives them a beat to absorb "yes, it saved, here's where it
@@ -2097,8 +2104,12 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     // Write the structured components tree after onAdd has kicked the
     // parent pantry_items INSERT. setComponentsForParent retries on
     // FK-violation so the race with the parent INSERT is self-healing.
+    // Fan out to every instance so each stacked row carries the same
+    // composition — 5 frozen pizzas = 5 rows, each linked to the full
+    // blend.
     if (compIds.length >= 2) {
-      await setComponentsForParent(item.id, componentsFromIngredientIds(compIds));
+      const tree = componentsFromIngredientIds(compIds);
+      await Promise.all(instanceIds.map(iid => setComponentsForParent(iid, tree)));
     }
 
     // Auto-save a user template. Strict per-family dedup: if a family
@@ -2748,30 +2759,30 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 }}>
                   <span style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: reserveCount > 0 ? "#f5c842" : "#555",
+                    color: instanceCount > 1 ? "#f5c842" : "#555",
                     letterSpacing: "0.1em",
                   }}>
-                    + {reserveCount} SEALED
+                    {instanceCount > 1 ? `×${instanceCount} PACKAGES` : "1 PACKAGE"}
                   </span>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button
-                      onClick={() => setReserveCount(n => Math.max(0, n - 1))}
-                      disabled={reserveCount === 0}
-                      aria-label="decrement reserves"
+                      onClick={() => setInstanceCount(n => Math.max(1, n - 1))}
+                      disabled={instanceCount <= 1}
+                      aria-label="decrement packages"
                       style={{
                         width: 22, height: 22,
                         background: "transparent",
                         border: "1px solid #2a2a2a",
-                        color: reserveCount === 0 ? "#333" : "#888",
-                        borderRadius: 4, cursor: reserveCount === 0 ? "not-allowed" : "pointer",
+                        color: instanceCount <= 1 ? "#333" : "#888",
+                        borderRadius: 4, cursor: instanceCount <= 1 ? "not-allowed" : "pointer",
                         fontFamily: "'DM Mono',monospace", fontSize: 12,
                         display: "flex", alignItems: "center", justifyContent: "center",
                         lineHeight: 1, padding: 0,
                       }}
                     >−</button>
                     <button
-                      onClick={() => setReserveCount(n => n + 1)}
-                      aria-label="increment reserves"
+                      onClick={() => setInstanceCount(n => n + 1)}
+                      aria-label="increment packages"
                       style={{
                         width: 22, height: 22,
                         background: "transparent",
@@ -3292,6 +3303,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   //     (add-item flow, hub drill-down) where there's no specific row yet.
   const [openItem, setOpenItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
+  // Stack drill-down — set to a bucket ({key, items}) to open, null to
+  // close. Opened by tapping a StackedItemCard; shows each physical
+  // instance as its own ItemCard-ish row so the user can edit per-can
+  // expiration / price / provenance.
+  const [stackDrilldown, setStackDrilldown] = useState(null);
   // Receipt-view modal. Set to a receipt uuid to open; null to close.
   // Driven by ItemCard's provenance line (onOpenProvenance callback)
   // and by a bell notification tap (deepLink prop, routed from App).
@@ -3760,24 +3776,39 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // (e.g. [mozz, parm, asiago, fontina]) are DIFFERENT items in
         // the item-first architecture, even if names happen to coincide
         // via a template or correction.
+        //
+        // Discrete-count gate — scanning 50 cans of tuna should produce
+        // 50 rows (one per physical can) that the render layer groups
+        // into a stacked card. Only merge fractional/mass/volume scans
+        // (grams, tbsp, ml, etc.) where aggregation reads more
+        // naturally than 50 "1 g butter" rows.
+        const discreteCountUnits = new Set([
+          "count", "can", "box", "each", "bottle", "bag", "jar",
+          "pack", "package", "piece", "slice", "loaf", "wedge",
+          "block", "ball", "wheel", "carton", "container", "tub",
+          "fillet", "head", "leaf", "clove",
+        ]);
+        const isDiscreteInstance = s.amount === 1 && discreteCountUnits.has(s.unit);
         let ex = null;
-        if (s.ingredientId) {
-          ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
-        }
-        if (!ex) {
-          const scanLow = (s.name || "").toLowerCase();
-          ex = next.find(p => (p.name || "").toLowerCase() === scanLow && sameIdentity(p, s));
-        }
-        if (!ex && s.ingredientId) {
-          const scanCanon = findIngredient(s.ingredientId);
-          const needle = (scanCanon?.shortName || scanCanon?.name || "").toLowerCase().trim();
-          if (needle.length >= 3) {
-            ex = next.find(p => {
-              if (p.ingredientId) return false;
-              const n = (p.name || "").toLowerCase();
-              if (!n || (!n.includes(needle) && !needle.includes(n))) return false;
-              return sameIdentity(p, s);
-            });
+        if (!isDiscreteInstance) {
+          if (s.ingredientId) {
+            ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
+          }
+          if (!ex) {
+            const scanLow = (s.name || "").toLowerCase();
+            ex = next.find(p => (p.name || "").toLowerCase() === scanLow && sameIdentity(p, s));
+          }
+          if (!ex && s.ingredientId) {
+            const scanCanon = findIngredient(s.ingredientId);
+            const needle = (scanCanon?.shortName || scanCanon?.name || "").toLowerCase().trim();
+            if (needle.length >= 3) {
+              ex = next.find(p => {
+                if (p.ingredientId) return false;
+                const n = (p.name || "").toLowerCase();
+                if (!n || (!n.includes(needle) && !needle.includes(n))) return false;
+                return sameIdentity(p, s);
+              });
+            }
           }
         }
         if (ex) {
@@ -4443,6 +4474,133 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     );
   };
 
+  // Render a stack card — multiple pantry rows sharing identity
+  // (canonical + state + composition + name). The stack is a FIRST-
+  // CLASS edit surface: inline + / − buttons add / remove one physical
+  // instance, tap opens the per-instance drill-down modal, ✕ deletes
+  // the LIFO top. The visual is a "card fan" — two offset cards behind
+  // the main one — so the stack reads as more than one thing without
+  // the count badge doing all the work.
+  const renderStackCard = bucket => {
+    const items = bucket.items;
+    const top = items[0];
+    const n = items.length;
+    const canon = findIngredient(top.ingredientId);
+    const canonicalLabel = canon?.shortName && canon.parentId ? canon.shortName : canon?.name;
+    const showCanonical = canonicalLabel && canonicalLabel.toLowerCase() !== (top.name || "").toLowerCase();
+    const anyLow = items.some(isLow);
+    const anyCritical = items.some(isCritical);
+    const earliestExpiry = items.reduce((min, p) => {
+      if (!p.expiresAt) return min;
+      const d = p.expiresAt instanceof Date ? p.expiresAt : new Date(p.expiresAt);
+      if (Number.isNaN(d.getTime())) return min;
+      return min == null || d < min ? d : min;
+    }, null);
+    const earliestDays = earliestExpiry ? Math.ceil((earliestExpiry.getTime() - Date.now()) / 86400000) : null;
+    const totalPriceCents = items.reduce((s, p) => s + (typeof p.priceCents === "number" ? p.priceCents : 0), 0);
+    const openDrilldown = () => setStackDrilldown(bucket);
+    return (
+      <div key={bucket.key} style={{ position:"relative", marginBottom:4 }}>
+        {/* Fan layers — two offset cards peek from behind to signal depth. */}
+        <div aria-hidden style={{ position:"absolute", inset:0, transform:"translate(4px,4px)", background:"#0f0f0f", border:"1px solid #1a1a1a", borderRadius:14, pointerEvents:"none" }} />
+        <div aria-hidden style={{ position:"absolute", inset:0, transform:"translate(2px,2px)", background:"#121212", border:"1px solid #1c1c1c", borderRadius:14, pointerEvents:"none" }} />
+        <div
+          onClick={openDrilldown}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrilldown(); } }}
+          style={{ position:"relative", background:"#141414", border:`1px solid ${anyCritical?"#ef444422":anyLow?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor:"pointer" }}
+        >
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+            <span style={{ fontSize:26, flexShrink:0 }}>{top.emoji}</span>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>
+                    {top.name}
+                    {showCanonical && (
+                      <span style={{ color:"#666", fontWeight:400 }}> · {canonicalLabel}</span>
+                    )}
+                  </span>
+                  {top.state && (
+                    <span
+                      title={`State: ${stateLabel(top.state)}`}
+                      style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", background:"#0f1620", border:"1px solid #1f3040", borderRadius:4, padding:"1px 6px", letterSpacing:"0.08em", flexShrink:0, textTransform:"uppercase" }}
+                    >
+                      {stateLabel(top.state)}
+                    </span>
+                  )}
+                </span>
+                <span
+                  title={`${n} identical items stacked`}
+                  style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:6, padding:"2px 8px", letterSpacing:"0.06em", flexShrink:0 }}
+                >
+                  ×{n}
+                </span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2, flexWrap:"wrap" }}>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{(top.category || "").toUpperCase()}</span>
+                {totalPriceCents > 0 && (
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }} title="Summed last-paid price across the stack">
+                    {formatPrice(totalPriceCents)}
+                  </span>
+                )}
+                {anyLow && (
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: anyCritical?"#ef4444":"#f59e0b", background: anyCritical?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
+                    {anyCritical?"ALMOST OUT":"RUNNING LOW"}
+                  </span>
+                )}
+                {earliestDays != null && (
+                  <span
+                    style={{ background:`${expirationColor(earliestDays)}22`, color:expirationColor(earliestDays), fontFamily:"'DM Mono',monospace", fontSize:9, padding:"1px 6px", borderRadius:4 }}
+                    title="Earliest expiration in the stack"
+                  >
+                    ⏳ {formatDaysUntil(earliestDays)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          {/* Stack-level controls. Stop propagation so the buttons don't
+              trigger the drilldown. */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ display:"flex", alignItems:"center", gap:8, paddingTop:8, borderTop:"1px solid #1e1e1e" }}
+          >
+            <button
+              onClick={() => {
+                removeStackInstance(setPantry, bucket, "lifo");
+                pushToast(`Removed 1 ${top.name}`, { emoji: top.emoji || "🗑", kind: "info", ttl: 2800 });
+              }}
+              aria-label={`Remove one ${top.name} from the stack`}
+              style={{ padding:"6px 12px", background:"#1a1a1a", border:"1px solid #333", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#aaa", letterSpacing:"0.06em", cursor:"pointer" }}
+            >
+              − 1 PACKAGE
+            </button>
+            <button
+              onClick={() => {
+                addStackInstance(setPantry, bucket);
+                pushToast(`Added 1 ${top.name}`, { emoji: top.emoji || "🛒", kind: "success", ttl: 2800 });
+              }}
+              aria-label={`Add one ${top.name} to the stack`}
+              style={{ padding:"6px 12px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+            >
+              + 1 PACKAGE
+            </button>
+            <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
+              TAP TO EDIT EACH
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Dispatch: single-instance → renderItemCard, multi-instance → renderStackCard.
+  const renderBucket = bucket => (bucket.items.length > 1
+    ? renderStackCard(bucket)
+    : renderItemCard(bucket.items[0]));
+
   // Render a hub group card: tap to expand and show its items. The summary row
   // shows combined weight (in the hub's aggregateUnit) + summed last-paid
   // prices so the user can see "I have 14 oz of cheese worth $28" at a glance.
@@ -4478,7 +4636,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         </button>
         {expanded && (
           <div style={{ display:"flex", flexDirection:"column", gap:8, borderTop:"1px solid #1e1e1e", paddingTop:10 }}>
-            {items.map(renderItemCard)}
+            {groupByIdentity(items).map(renderBucket)}
           </div>
         )}
       </div>
@@ -4943,9 +5101,22 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     Nothing matches "{search}".
                   </div>
                 )}
-                {grouped.map(g =>
-                  g.type === "hub" ? renderHubCard(g) : renderItemCard(g.item)
-                )}
+                {(() => {
+                  // Hubs come first, then loose items (per the grouped
+                  // builder above). Bucketize the loose items by
+                  // identity so 5 cans of tuna render as one stack
+                  // card with ×5 instead of 5 individual cards.
+                  const hubs = grouped.filter(g => g.type === "hub");
+                  const looseBuckets = groupByIdentity(
+                    grouped.filter(g => g.type === "item").map(g => g.item)
+                  );
+                  return (
+                    <>
+                      {hubs.map(renderHubCard)}
+                      {looseBuckets.map(renderBucket)}
+                    </>
+                  );
+                })()}
                 {/* Inline "+ Add X" CTA at the bottom of a populated tile
                     drill-down. Users in the Condiments tile who want to add
                     another condiment get a button that's exactly that — not
@@ -5164,6 +5335,71 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             }}
             onClose={() => setOpenItem(null)}
           />
+        );
+      })()}
+      {stackDrilldown && (() => {
+        // Re-compute the bucket from the live pantry so add/remove
+        // edits inside the drilldown update the list without a close
+        // + reopen. If every instance was deleted, close the modal.
+        const fresh = groupByIdentity(
+          pantry.filter(p => {
+            // Match the bucket's identity key — simplest: reuse the
+            // stored rows' ids set, fall back to re-grouping on the
+            // fresh pantry and picking the bucket with the same key.
+            return stackDrilldown.items.some(i => i.id === p.id);
+          })
+        );
+        let bucket = fresh[0];
+        if (!bucket) {
+          // All instances deleted elsewhere — close and bail.
+          setStackDrilldown(null);
+          return null;
+        }
+        // Widen the bucket: any OTHER rows that share identity
+        // (e.g. the user just tapped + PACKAGE and we want the new
+        // row in the list) should show up here too. Walk the full
+        // pantry, collect identity-matches via groupByIdentity on a
+        // synthetic seed.
+        const allBuckets = groupByIdentity(pantry);
+        const match = allBuckets.find(b => b.key === stackDrilldown.key);
+        if (match) bucket = match;
+        const ordered = sortedInstances(bucket, "fifo");
+        const top = ordered[0] || bucket.items[0];
+        return (
+          <ModalSheet onClose={() => setStackDrilldown(null)} label={`${top.emoji || ""} ${top.name} · ${ordered.length}`}>
+            <div style={{ padding:"12px 16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <button
+                  onClick={() => {
+                    removeStackInstance(setPantry, bucket, "lifo");
+                    pushToast(`Removed 1 ${top.name}`, { emoji: top.emoji || "🗑", kind: "info", ttl: 2800 });
+                  }}
+                  disabled={ordered.length === 0}
+                  style={{ padding:"8px 14px", background:"#1a1a1a", border:"1px solid #333", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#aaa", letterSpacing:"0.06em", cursor: ordered.length === 0 ? "not-allowed" : "pointer", opacity: ordered.length === 0 ? 0.4 : 1 }}
+                >
+                  − 1 PACKAGE
+                </button>
+                <button
+                  onClick={() => {
+                    addStackInstance(setPantry, bucket);
+                    pushToast(`Added 1 ${top.name}`, { emoji: top.emoji || "🛒", kind: "success", ttl: 2800 });
+                  }}
+                  style={{ padding:"8px 14px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+                >
+                  + 1 PACKAGE
+                </button>
+                <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.06em" }}>
+                  ×{ordered.length}
+                </span>
+              </div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", letterSpacing:"0.12em" }}>
+                INSTANCES · FIFO BY EXPIRATION
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {ordered.map(inst => renderItemCard(inst))}
+              </div>
+            </div>
+          </ModalSheet>
         );
       })()}
       {cardIng && (

@@ -50,3 +50,41 @@ export function formatPrice(cents) {
     ? `$${(cents / 100).toFixed(2)}`
     : "";
 }
+
+// Stable identity key for grouping pantry rows into "stacks" (multiple
+// physical instances of the same logical item — e.g. 5 cans of tuna).
+// The fields mirror sameIdentity() in Kitchen.jsx: custom name, state,
+// and ingredientIds composition. Rows that collide on this key belong on
+// the same StackedItemCard.
+export function identityKey(item) {
+  const name = (item?.name || "").toLowerCase().trim();
+  const state = item?.state || "";
+  const ids = Array.isArray(item?.ingredientIds)
+    ? item.ingredientIds.filter(Boolean).slice().sort().join(",")
+    : "";
+  const canon = item?.canonicalId || item?.ingredientId || "";
+  return [name, canon, state, ids].join("|");
+}
+
+// Group pantry rows into identity buckets preserving original order.
+// Returns Array<{ key, items: Array<row> }>. A bucket with one row is
+// still a bucket — the caller decides whether to render as a single
+// ItemCard (length 1) or a StackedItemCard (length > 1).
+export function groupByIdentity(items) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const buckets = new Map();
+  const out = [];
+  for (const item of items) {
+    if (!item) continue;
+    const k = identityKey(item);
+    const existing = buckets.get(k);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      const bucket = { key: k, items: [item] };
+      buckets.set(k, bucket);
+      out.push(bucket);
+    }
+  }
+  return out;
+}
