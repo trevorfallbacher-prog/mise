@@ -515,14 +515,75 @@ export default function CookMode({
           <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, letterSpacing:"-0.02em" }}>{step.title}</h2>
         </div>
       </div>
+
+      {/* FOR THIS STEP — ingredient measurements the cook needs RIGHT NOW.
+          When a step carries a structured `uses` array, render just those
+          rows with amount+item. When it doesn't (legacy bundled recipes
+          pre-retrofit, or AI drafts from an older prompt), fall back to
+          the full recipe.ingredients list so measurements are always
+          one glance away during cooking. The `heat` and `doneCue`
+          fields, when present, render alongside — "medium heat" and
+          "nutty smell, sand-colored paste" are the signals that
+          actually drive the cook. */}
+      {(() => {
+        const usesList = Array.isArray(step.uses) && step.uses.length > 0
+          ? step.uses
+          : (recipe.ingredients || []);
+        if (!usesList.length && !step.heat && !step.doneCue) return null;
+        const isFallback = !(Array.isArray(step.uses) && step.uses.length > 0);
+        return (
+          <div style={{ marginTop:16, padding:"14px 16px", background:"#14110a", border:"1px solid #2f2818", borderRadius:12 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:10 }}>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", flex:1 }}>
+                {isFallback ? "INGREDIENTS" : "FOR THIS STEP"}
+              </div>
+              {step.heat && (
+                <span style={{
+                  fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700,
+                  letterSpacing:"0.08em",
+                  color:"#ef8a3a", background:"#2a1608",
+                  border:"1px solid #3a2010",
+                  padding:"2px 7px", borderRadius:6,
+                }}>
+                  🔥 {String(step.heat).toUpperCase()} HEAT
+                </span>
+              )}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              {usesList.map((ing, i) => (
+                <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#e8dfc8", lineHeight:1.5 }}>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878", minWidth:68, flexShrink:0 }}>
+                    {ing.amount || "—"}
+                  </span>
+                  <span style={{ flex:1 }}>
+                    {ing.item || ing.ingredientId || "ingredient"}
+                    {ing.state ? <span style={{ color:"#c7a8d4", fontSize:12 }}> · {ing.state}</span> : null}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {step.doneCue && (
+              <div style={{ marginTop:10, padding:"8px 10px", background:"#0f180f", border:"1px solid #1a2e1a", borderRadius:8, display:"flex", gap:8 }}>
+                <span style={{ fontSize:12, flexShrink:0 }}>✓</span>
+                <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#9ec29e", lineHeight:1.45, fontStyle:"italic" }}>
+                  Ready when: {step.doneCue}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       <div style={{ marginTop:20, padding:"20px", background:"#141414", border:"1px solid #252525", borderRadius:14 }}>
         <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>{step.instruction}</p>
         {step.timer && <Timer seconds={step.timer} />}
       </div>
-      <div style={{ marginTop:12, padding:"14px 16px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, display:"flex", gap:10 }}>
-        <span style={{ fontSize:14, flexShrink:0 }}>💡</span>
-        <p style={{ fontSize:13, color:"#7ec87e", lineHeight:1.5, fontStyle:"italic" }}>{step.tip}</p>
-      </div>
+      {step.tip && (
+        <div style={{ marginTop:12, padding:"14px 16px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, display:"flex", gap:10 }}>
+          <span style={{ fontSize:14, flexShrink:0 }}>💡</span>
+          <p style={{ fontSize:13, color:"#7ec87e", lineHeight:1.5, fontStyle:"italic" }}>{step.tip}</p>
+        </div>
+      )}
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
         <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
         {activeStep < steps.length-1 ? (
