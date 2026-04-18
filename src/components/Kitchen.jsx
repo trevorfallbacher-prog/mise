@@ -110,6 +110,46 @@ const isLow      = item => item.amount <= item.lowThreshold;
 const isCritical = item => item.amount <= item.lowThreshold * 0.5;
 const barColor   = item => isCritical(item) ? "#ef4444" : isLow(item) ? "#f59e0b" : "#4ade80";
 
+// Scan-merge identity gate — two rows share an "identity" when their
+// user-visible identity axes agree. Used when deciding whether a
+// freshly scanned item should fold into an existing pantry row or
+// stand as its own row. Without this gate, "sushi nori" (just nori)
+// and "wasabi nori" (nori + wasabi) collapse because they share the
+// primary `ingredientId`, losing the second one's composition.
+//
+// Per CLAUDE.md identity hierarchy, the axes that distinguish an item
+// are: CUSTOM NAME → CANONICAL → STATE → INGREDIENTS composition.
+// The caller has already confirmed the CANONICAL matches, so this
+// helper only checks the other three.
+//
+// Returns true when the rows are safe to merge.
+function sameIdentity(a, b) {
+  // Name — if both sides have a non-empty custom name and they
+  // disagree, treat as different identities. An empty-name row
+  // (free-text waiting to be enriched) matches anything with the
+  // same canonical, so the name-backfill path still works.
+  const an = (a.name || "").toLowerCase().trim();
+  const bn = (b.name || "").toLowerCase().trim();
+  if (an && bn && an !== bn) return false;
+
+  // State — loaf vs slices vs crumbs are physically different and
+  // shouldn't merge. One side missing state is fine (pre-migration
+  // rows, or scans that didn't capture it).
+  if (a.state && b.state && a.state !== b.state) return false;
+
+  // Composition — if either side carries a multi-tag ingredientIds
+  // array, both must carry the same set. Plain-canonical rows
+  // (length ≤ 1) are the common case and fall through unchanged.
+  const aIds = Array.isArray(a.ingredientIds) ? a.ingredientIds.filter(Boolean) : [];
+  const bIds = Array.isArray(b.ingredientIds) ? b.ingredientIds.filter(Boolean) : [];
+  if (aIds.length > 1 || bIds.length > 1) {
+    if (aIds.length !== bIds.length) return false;
+    const aSet = new Set(aIds);
+    for (const id of bIds) if (!aSet.has(id)) return false;
+  }
+  return true;
+}
+
 // ── Expiration meter helpers (Phase 5a) ────────────────────────────────────
 // The pantry shows a second, thinner bar underneath the amount bar — a
 // running-time meter that fills from the day of purchase down to expiration.
@@ -3500,7 +3540,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // three levels of fuzziness so user-renamed rows don't get
         // orphaned by a subsequent scan:
         //
-        //   1. Exact ingredientId match — the normal case.
+        //   1. Exact ingredientId match — gated by identity. Per
+        //      CLAUDE.md the identity stack is CUSTOM NAME + CANONICAL
+        //      + STATE + INGREDIENTS composition; matching only on
+        //      CANONICAL would collapse "sushi nori" (nori) into
+        //      "wasabi nori" (nori + wasabi) since they share the
+        //      primary ingredient tag. The gate keeps genuine
+        //      variants separate.
         //   2. Case-insensitive exact name match — handles scans that
         //      duplicate an un-linked free-text row.
         //   3. Fuzzy name match — when the scan has a canonical AND
@@ -3511,7 +3557,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         //      row to canonical. Preserves the user's custom name.
         let ex = null;
         if (s.ingredientId) {
-          ex = next.find(p => p.ingredientId === s.ingredientId);
+          ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
         }
         if (!ex) {
           const scanLow = (s.name || "").toLowerCase();
