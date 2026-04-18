@@ -14,7 +14,7 @@
 
 // Bump this when seed data changes so existing users get the update.
 // The seeder gates on a localStorage key tied to this version.
-export const SEED_VERSION = 8;
+export const SEED_VERSION = 9;
 
 export const SEED_INGREDIENT_INFO = [
   {
@@ -454,5 +454,432 @@ export const SEED_INGREDIENT_INFO = [
       },
       skillDev: { skills: ["seasoning", "heat"], difficulty: "easy", proFromScratch: true, fromScratchRecipeId: null },
     },
+  },
+
+  // ── Packaging seeds (v0.12.2) ─────────────────────────────────────
+  //
+  // Per-canonical packaging metadata lets the AddItemModal show chip
+  // rows of typical sizes instead of forcing the user to type amounts
+  // by hand. Each entry is intentionally minimal — just packaging —
+  // because these canonicals weren't previously seeded. The upsert
+  // in src/lib/seedIngredientInfo.js uses onConflict: 'ingredient_id',
+  // so re-running this seed on an already-seeded row REPLACES the
+  // row; keeping these entries minimal means they don't need to carry
+  // every other enrichment field we haven't written yet. If any of
+  // these canonicals gains richer enrichment later, MERGE into the
+  // existing entry rather than creating a duplicate.
+  //
+  // Shape:
+  //   packaging: {
+  //     sizes: [{ amount, unit, label }, …],
+  //     defaultIndex: <index of the "typical" size>
+  //   }
+  // Amounts use the canonical's primary unit where possible so the
+  // AddItemModal snapshot maps cleanly onto the pantry row's unit.
+
+  // Canned goods — the whole aisle is a narrow set of standard sizes.
+  {
+    ingredient_id: "canned_tomatoes",
+    info: { packaging: {
+      sizes: [
+        { amount: 14.5, unit: "oz", label: "standard" },
+        { amount: 28,   unit: "oz", label: "large" },
+        { amount: 6,    unit: "oz", label: "mini" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "tomato_paste",
+    info: { packaging: {
+      sizes: [
+        { amount: 6,  unit: "oz", label: "can" },
+        { amount: 4.5,unit: "oz", label: "tube" },
+        { amount: 18, unit: "oz", label: "jar" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "chickpeas",
+    info: { packaging: {
+      sizes: [
+        { amount: 15.5, unit: "oz", label: "can" },
+        { amount: 29,   unit: "oz", label: "large can" },
+        { amount: 16,   unit: "oz", label: "dry bag" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "black_beans",
+    info: { packaging: {
+      sizes: [
+        { amount: 15, unit: "oz", label: "can" },
+        { amount: 29, unit: "oz", label: "large can" },
+        { amount: 16, unit: "oz", label: "dry bag" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "cannellini_beans",
+    info: { packaging: {
+      sizes: [
+        { amount: 15, unit: "oz", label: "can" },
+        { amount: 29, unit: "oz", label: "large can" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "kidney_beans",
+    info: { packaging: {
+      sizes: [
+        { amount: 15, unit: "oz", label: "can" },
+        { amount: 29, unit: "oz", label: "large can" },
+        { amount: 16, unit: "oz", label: "dry bag" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "pinto_beans",
+    info: { packaging: {
+      sizes: [
+        { amount: 15, unit: "oz", label: "can" },
+        { amount: 29, unit: "oz", label: "large can" },
+        { amount: 16, unit: "oz", label: "dry bag" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "tuna",
+    info: { packaging: {
+      sizes: [
+        { amount: 5,  unit: "oz", label: "single can" },
+        { amount: 12, unit: "oz", label: "family can" },
+        { amount: 2.6,unit: "oz", label: "pouch" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+
+  // Oils / vinegars / condiments — bottle + jar country.
+  {
+    ingredient_id: "olive_oil",
+    info: { packaging: {
+      sizes: [
+        { amount: 17,  unit: "fl_oz", label: "standard (500ml)" },
+        { amount: 8.4, unit: "fl_oz", label: "small (250ml)" },
+        { amount: 33.8,unit: "fl_oz", label: "1 liter" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "balsamic",
+    info: { packaging: {
+      sizes: [
+        { amount: 8.5,  unit: "fl_oz", label: "standard (250ml)" },
+        { amount: 17,   unit: "fl_oz", label: "500ml" },
+        { amount: 5,    unit: "fl_oz", label: "traditional (aged)" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "vinegar",
+    info: { packaging: {
+      sizes: [
+        { amount: 16, unit: "fl_oz", label: "pint" },
+        { amount: 32, unit: "fl_oz", label: "quart" },
+        { amount: 8,  unit: "fl_oz", label: "small" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "peanut_butter",
+    info: { packaging: {
+      sizes: [
+        { amount: 16, unit: "oz", label: "standard jar" },
+        { amount: 28, unit: "oz", label: "large jar" },
+        { amount: 40, unit: "oz", label: "value" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "honey",
+    info: { packaging: {
+      sizes: [
+        { amount: 12, unit: "oz", label: "standard bear" },
+        { amount: 24, unit: "oz", label: "large" },
+        { amount: 16, unit: "oz", label: "jar" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "maple_syrup",
+    info: { packaging: {
+      sizes: [
+        { amount: 8,  unit: "fl_oz", label: "small" },
+        { amount: 12.5, unit: "fl_oz", label: "standard" },
+        { amount: 32, unit: "fl_oz", label: "quart jug" },
+      ],
+      defaultIndex: 1,
+    }},
+  },
+  {
+    ingredient_id: "ketchup",
+    info: { packaging: {
+      sizes: [
+        { amount: 20, unit: "oz", label: "squeeze bottle" },
+        { amount: 38, unit: "oz", label: "family size" },
+        { amount: 14, unit: "oz", label: "small" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "mayo",
+    info: { packaging: {
+      sizes: [
+        { amount: 30, unit: "oz", label: "standard jar" },
+        { amount: 15, unit: "oz", label: "small jar" },
+        { amount: 48, unit: "oz", label: "value" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "mustard",
+    info: { packaging: {
+      sizes: [
+        { amount: 12, unit: "oz", label: "squeeze" },
+        { amount: 8,  unit: "oz", label: "jar" },
+        { amount: 20, unit: "oz", label: "family" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "soy_sauce",
+    info: { packaging: {
+      sizes: [
+        { amount: 10, unit: "fl_oz", label: "standard" },
+        { amount: 15, unit: "fl_oz", label: "large" },
+        { amount: 5,  unit: "fl_oz", label: "small" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "hot_sauce",
+    info: { packaging: {
+      sizes: [
+        { amount: 5,  unit: "fl_oz", label: "standard" },
+        { amount: 12, unit: "fl_oz", label: "large" },
+        { amount: 3,  unit: "fl_oz", label: "mini" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "sriracha",
+    info: { packaging: {
+      sizes: [
+        { amount: 17, unit: "fl_oz", label: "iconic rooster" },
+        { amount: 28, unit: "fl_oz", label: "large" },
+        { amount: 9,  unit: "fl_oz", label: "small" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+
+  // Dry pantry staples — box / bag world.
+  {
+    ingredient_id: "rice",
+    info: { packaging: {
+      sizes: [
+        { amount: 5,  unit: "lb", label: "standard bag" },
+        { amount: 2,  unit: "lb", label: "small bag" },
+        { amount: 20, unit: "lb", label: "bulk" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "spaghetti",
+    info: { packaging: {
+      sizes: [
+        { amount: 16, unit: "oz", label: "1 lb box" },
+        { amount: 24, unit: "oz", label: "family box" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "penne",
+    info: { packaging: {
+      sizes: [
+        { amount: 16, unit: "oz", label: "1 lb box" },
+        { amount: 24, unit: "oz", label: "family box" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "flour",
+    info: { packaging: {
+      sizes: [
+        { amount: 5,  unit: "lb", label: "standard bag" },
+        { amount: 2,  unit: "lb", label: "small bag" },
+        { amount: 10, unit: "lb", label: "bulk" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "sugar",
+    info: { packaging: {
+      sizes: [
+        { amount: 4, unit: "lb", label: "standard bag" },
+        { amount: 2, unit: "lb", label: "small" },
+        { amount: 10, unit: "lb", label: "bulk" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "oats",
+    info: { packaging: {
+      sizes: [
+        { amount: 18, unit: "oz", label: "standard canister" },
+        { amount: 42, unit: "oz", label: "large" },
+        { amount: 64, unit: "oz", label: "family" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "quinoa",
+    info: { packaging: {
+      sizes: [
+        { amount: 16, unit: "oz", label: "1 lb bag" },
+        { amount: 32, unit: "oz", label: "2 lb bag" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "lentils",
+    info: { packaging: {
+      sizes: [
+        { amount: 16, unit: "oz", label: "1 lb bag" },
+        { amount: 32, unit: "oz", label: "2 lb bag" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+
+  // Dairy — gallon / quart / brick standards.
+  {
+    ingredient_id: "milk",
+    info: { packaging: {
+      sizes: [
+        { amount: 1,   unit: "gallon",      label: "gallon" },
+        { amount: 1,   unit: "half_gallon", label: "half-gallon" },
+        { amount: 1,   unit: "quart",       label: "quart" },
+        { amount: 1,   unit: "pint",        label: "pint" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "heavy_cream",
+    info: { packaging: {
+      sizes: [
+        { amount: 1, unit: "pint",  label: "pint" },
+        { amount: 1, unit: "quart", label: "quart" },
+        { amount: 1, unit: "cup",   label: "cup" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "butter",
+    info: { packaging: {
+      sizes: [
+        { amount: 4, unit: "stick", label: "1 lb box (4 sticks)" },
+        { amount: 2, unit: "stick", label: "half lb (2 sticks)" },
+        { amount: 1, unit: "stick", label: "single stick" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+
+  // Proteins — tray / pack world.
+  {
+    ingredient_id: "bacon",
+    info: { packaging: {
+      sizes: [
+        { amount: 12, unit: "oz", label: "standard pack" },
+        { amount: 16, unit: "oz", label: "1 lb" },
+        { amount: 24, unit: "oz", label: "family" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "hot_dog",
+    info: { packaging: {
+      sizes: [
+        { amount: 8,  unit: "count", label: "8-pack" },
+        { amount: 10, unit: "count", label: "10-pack" },
+        { amount: 16, unit: "count", label: "value pack" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+  {
+    ingredient_id: "ground_beef",
+    info: { packaging: {
+      sizes: [
+        { amount: 1, unit: "lb", label: "1 lb tray" },
+        { amount: 2, unit: "lb", label: "2 lb family" },
+        { amount: 3, unit: "lb", label: "3 lb value" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+
+  // Eggs — the only "count" canonical where cartons are everything.
+  {
+    ingredient_id: "eggs",
+    info: { packaging: {
+      sizes: [
+        { amount: 1, unit: "dozen", label: "dozen" },
+        { amount: 18, unit: "count", label: "18-count" },
+        { amount: 6, unit: "count", label: "half-dozen" },
+      ],
+      defaultIndex: 0,
+    }},
+  },
+
+  // Bread — loaf standard.
+  {
+    ingredient_id: "bread",
+    info: { packaging: {
+      sizes: [
+        { amount: 20, unit: "oz", label: "standard loaf" },
+        { amount: 24, unit: "oz", label: "bakery loaf" },
+        { amount: 12, unit: "oz", label: "small loaf" },
+      ],
+      defaultIndex: 0,
+    }},
   },
 ];

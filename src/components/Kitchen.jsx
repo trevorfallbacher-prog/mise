@@ -1714,8 +1714,12 @@ function formatAgo(d) {
 
 function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
   // Pulled for admin-approve writes so the session's dbMap updates
-  // immediately after an admin mints a new canonical here.
-  const { refreshDb } = useIngredientInfo();
+  // immediately after an admin mints a new canonical here. dbMap
+  // also feeds the packaging-chip row below the quantity field —
+  // when the picked canonical carries a packaging block in its
+  // ingredient_info, we let the user tap a typical size instead of
+  // typing amount+unit from scratch.
+  const { refreshDb, dbMap } = useIngredientInfo();
   const [amount, setAmount] = useState("");
 
   // Tile-context boost: when the modal opens from a specific tile, we
@@ -2604,6 +2608,62 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                       )}
                     </div>
                   )}
+                </div>
+              );
+            })()}
+
+            {/* Packaging chips — only render when the chosen canonical
+                carries `packaging.sizes` in its ingredient_info.
+                Tapping a chip pre-fills amount + unit with the
+                typical package size so the user doesn't have to
+                re-type what "1 can of black beans" means. The chip
+                also primes `max` so the gauge represents one
+                package, matching how the reserves stepper expects
+                package-mode rows to be shaped. */}
+            {(() => {
+              const primaryId = (customComponents[0]?.canonical?.id) || null;
+              const pkg = primaryId ? dbMap?.[primaryId]?.packaging : null;
+              const sizes = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
+              if (sizes.length === 0) return null;
+              const selectedIdx = sizes.findIndex(
+                s => String(s.amount) === String(amount) && (s.unit || "") === (customUnit || "")
+              );
+              return (
+                <div style={{
+                  padding: "10px 12px", marginBottom: 10,
+                  background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
+                }}>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
+                    PACKAGE SIZE
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {sizes.map((s, i) => {
+                      const active = i === selectedIdx;
+                      return (
+                        <button
+                          key={`${s.amount}-${s.unit}-${i}`}
+                          onClick={() => {
+                            setAmount(String(s.amount));
+                            setCustomUnit(s.unit || "");
+                          }}
+                          style={{
+                            padding: "6px 10px",
+                            background: active ? "#1a1608" : "transparent",
+                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                            color: active ? "#f5c842" : "#bbb",
+                            borderRadius: 16,
+                            fontFamily: "'DM Mono',monospace", fontSize: 10,
+                            letterSpacing: "0.04em",
+                            cursor: "pointer",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {s.amount} {s.unit}
+                          {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })()}

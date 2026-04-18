@@ -42,9 +42,41 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.1";
+export const CURRENT_VERSION = "0.12.2";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.2",
+    date:    "2026-04-18",
+    title:   "One-tap package sizes — no more typing \"12 oz\" every time",
+    summary:
+      "Added typical packaging sizes to 32 common canned, dried, " +
+      "and dairy canonicals — Spam (coming via user-create), tuna, " +
+      "beans, rice, pasta, flour, olive oil, milk, eggs, bread, and " +
+      "more. When you pick one of these in Add Item, a PACKAGE SIZE " +
+      "chip row now shows the typical can / bag / carton sizes for " +
+      "that ingredient. Tap the chip and amount + unit prefill " +
+      "automatically — pair it with the SEALED stepper from 0.12.0 " +
+      "and you've gone from 'type 12 oz, type oz, type reserves' to " +
+      "three taps total for \"5 cans of black beans.\"",
+    shipped: [
+      { kind: "feature",
+        text: "PACKAGE SIZE chip row in Add Item — typical sizes for canned goods, dried staples, dairy, and more.",
+        commits: [] },
+      { kind: "architecture",
+        text: "32 bundled canonicals now carry packaging metadata via ingredient_info.packaging.",
+        commits: [] },
+      { kind: "ux",
+        text: "SEED_VERSION bumped to 9 so existing users get the new packaging rows on next app open.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Typical-packaging step on canonical creation — when you add a brand-new canonical (like Spam), pick its sizes on the spot and the next person to scan it gets them for free.",
+      "Segmented gauge — visual \"5 sealed blocks + 1 open half-full\" under each pantry row.",
+      "Scan-merge reserve bump — 3 identical SKUs on one receipt collapse into one row with reserve_count +2.",
+      "blendOf linkage — Spam → pork so the AI considers it for pork recipes.",
+    ],
+  },
   {
     version: "0.12.1",
     date:    "2026-04-18",
