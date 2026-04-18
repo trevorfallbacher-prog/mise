@@ -209,7 +209,18 @@ exact shape. Every field is REQUIRED unless marked optional.
       "instruction": "<1-3 sentences>",
       "icon":        "🔪",
       "timer":       <seconds or null>,
-      "tip":         "<optional one-line tip or null>"
+      "tip":         "<optional one-line tip or null>",
+      "uses": [
+        {
+          "amount":       "<display string matching the amount used AT THIS STEP>",
+          "item":         "<display text, e.g. 'butter'>",
+          "ingredientId": "<canonical id from pantry if applicable, else null>",
+          "state":        "<optional physical form: 'minced', 'sliced', 'grated'>"
+        },
+        ...
+      ],
+      "heat":    "<optional: 'low' | 'medium-low' | 'medium' | 'medium-high' | 'high' | 'off'>",
+      "doneCue": "<optional short qualitative ready-signal: 'nutty smell, color of wet sand'>"
     },
     ...
   ],
@@ -253,6 +264,22 @@ Rules (in priority order — higher rules beat lower ones on conflict):
      added because the user asked for them.
 
   5. ALWAYS produce at least 4 steps and 4 ingredients.
+
+  5a. EVERY step must carry a `uses` array listing the ingredients
+     consumed AT that step with the amount used at that step. If an
+     ingredient spans multiple steps (eggs split between batter and
+     wash), it legitimately appears in more than one step with
+     partial amounts that sum to the top-level ingredients[] amount.
+     If a step is purely action-only (plate, rest, serve), `uses`
+     may be an empty array.
+
+  5b. Add `heat` whenever a step involves a burner/oven/grill — it
+     helps the cook dial in the stove without rereading the prose.
+     Omit for prep steps.
+
+  5c. Add `doneCue` whenever the step has a qualitative readiness
+     signal ("onions translucent, not brown"; "pasta has 1 minute
+     less than package says"). Skip for trivial steps.
 
   6. Keep total time reasonable — prep + cook ≤ 90 min unless the user
      asked for a long recipe.
@@ -442,7 +469,11 @@ Deno.serve(async (req) => {
     serves:     clampInt(recipe.serves, 1, 12, 2),
     tools:      Array.isArray(recipe.tools) ? recipe.tools : [],
     ingredients: recipe.ingredients,
-    steps:      recipe.steps,
+    // Backfill step shape so CookMode never has to defend against a
+    // step that skipped `uses`, `heat`, or `doneCue`. If the model
+    // dropped `uses` entirely, default to an empty array (CookMode
+    // falls back to the top-level ingredients list for rendering).
+    steps:      normalizeSteps(recipe.steps),
     tags:       Array.isArray(recipe.tags) ? recipe.tags : [],
     // Narrative "why this dish" string for the preview banner.
     // Truncated defensively so a verbose model doesn't eat the
@@ -467,4 +498,37 @@ function clampInt(v: unknown, lo: number, hi: number, fallback: number): number 
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+// Ensure every step carries the fields CookMode reads without
+// blowing up on a model that skipped one. `uses` defaults to an
+// empty array (triggers CookMode's fallback to the top-level
+// ingredients list); `heat` and `doneCue` default to null.
+function normalizeSteps(steps: unknown): unknown[] {
+  if (!Array.isArray(steps)) return [];
+  return steps.map((s, i) => {
+    const step = (s && typeof s === "object") ? s as Record<string, unknown> : {};
+    const uses = Array.isArray(step.uses)
+      ? (step.uses as unknown[]).map((u) => {
+          const row = (u && typeof u === "object") ? u as Record<string, unknown> : {};
+          return {
+            amount:       typeof row.amount === "string" ? row.amount : null,
+            item:         typeof row.item   === "string" ? row.item   : null,
+            ingredientId: typeof row.ingredientId === "string" ? row.ingredientId : null,
+            state:        typeof row.state  === "string" ? row.state  : null,
+          };
+        })
+      : [];
+    return {
+      id:          typeof step.id          === "string" ? step.id          : `step${i + 1}`,
+      title:       typeof step.title       === "string" ? step.title       : `Step ${i + 1}`,
+      instruction: typeof step.instruction === "string" ? step.instruction : "",
+      icon:        typeof step.icon        === "string" ? step.icon        : "👨‍🍳",
+      timer:       typeof step.timer       === "number" ? step.timer       : null,
+      tip:         typeof step.tip         === "string" ? step.tip         : null,
+      uses,
+      heat:        typeof step.heat        === "string" ? step.heat        : null,
+      doneCue:     typeof step.doneCue     === "string" ? step.doneCue     : null,
+    };
+  });
 }

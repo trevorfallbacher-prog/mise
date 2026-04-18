@@ -21,9 +21,24 @@
 //                "diced", "minced", …). Scopes pantry matching — a
 //                recipe asking for crumbs won't match a loaf row even
 //                for the same id. Omit for state-agnostic recipes.
-//   steps:      [{ id, title, instruction, icon, animation?, timer?, tip }]
+//   steps:      [{ id, title, instruction, icon, animation?, timer?, tip,
+//                  uses?, heat?, doneCue? }]
 //               animation: one of "boil","stir","brown","bloom","toss","plate" (or null)
 //               timer: seconds (or null)
+//               uses:  [{ amount, item, ingredientId?, state? }] — the
+//                      measurements the cook needs RIGHT NOW at this step.
+//                      CookMode renders a FOR THIS STEP tile above the
+//                      instruction with these rows. Optional: when absent,
+//                      CookMode falls back to rendering the full top-level
+//                      ingredients list so legacy recipes still show
+//                      measurements during the cook.
+//               heat:  "low" | "medium" | "high" | "medium-low" | "off" —
+//                      burner setting. Surfaced as a badge in the step
+//                      tile so the cook knows without rereading the prose.
+//               doneCue: short qualitative "it's ready when…" signal
+//                      ("nutty smell, color of wet sand"; "no longer
+//                      sticks to the pan"). The signal every real recipe
+//                      book has that AI drafts routinely miss.
 //   prepNotifications: [{ id, leadTime, text, defaultOn }]
 //               leadTime format: "T-2h", "T-30m", "T-1d"
 //   tags:       string[]
