@@ -42,9 +42,33 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.6";
+export const CURRENT_VERSION = "0.12.7";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.7",
+    date:    "2026-04-18",
+    title:   "Cascade autofill — pick a canonical, get location + tile for free",
+    summary:
+      "Picking a canonical used to fill the name and category but " +
+      "stop there. You still had to tap STORED IN and pick the tile " +
+      "manually. Now the cascade keeps going: category implies a " +
+      "default location (pantry / fridge / freezer), location + the " +
+      "canonical's identity implies a tile (Meat & Poultry, Grains, " +
+      "etc.). Anything you've already chosen stays put — the cascade " +
+      "only fills empty fields, never clobbers a deliberate pick.",
+    shipped: [
+      { kind: "ux",
+        text: "fillFromCanonical now also sets location + tile via the existing classifiers — one canonical tap, four fields populated.",
+        commits: [] },
+      { kind: "safety",
+        text: "Cascade gates on empty state at each step — if you've already set STORED IN to Freezer Meals on a box of penne, picking canonical 'penne' won't overwrite that.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Cascade from state selection (cubed / diced / sliced) back up to likely pantry placement — cubed Spam → pork tile more readily than whole Spam.",
+    ],
+  },
   {
     version: "0.12.6",
     date:    "2026-04-18",

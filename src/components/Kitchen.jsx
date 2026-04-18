@@ -1844,9 +1844,39 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   const fillFromCanonical = (ing) => {
     if (!ing) return;
     setCustomName(ing.name || "");
-    setCustomCategory(ing.category || "pantry");
+    const category = ing.category || "pantry";
+    setCustomCategory(category);
     if (ing.defaultUnit) setCustomUnit(ing.defaultUnit);
     setCustomComponents([{ id: ing.id, canonical: ing }]);
+
+    // Cascade: category → location → tile. Only fills when the user
+    // hasn't already made an explicit pick — we never clobber a
+    // conscious choice (e.g., "I know penne is pantry category but
+    // this box lives in the freezer"). Each step gates on the
+    // previous so picking a canonical propagates as far as the
+    // classifier knows, then stops.
+    setCustomLocation(prev => {
+      if (prev) return prev;
+      const loc = defaultLocationForCategory(category);
+      // Derive the tile id from the classifier that matches the
+      // chosen location. We do this inside the setter so the loc
+      // var is in scope for the tile cascade below without an
+      // extra state read race.
+      setCustomTileId(prevTile => {
+        if (prevTile) return prevTile;
+        const classify = loc === "fridge"  ? fridgeTileIdForItem
+                       : loc === "freezer" ? freezerTileIdForItem
+                       :                      pantryTileIdForItem;
+        const fakeItem = { ingredientId: ing.id, ingredientIds: [ing.id], category };
+        try {
+          const tileId = classify(fakeItem, { findIngredient, hubForIngredient });
+          return tileId || prevTile;
+        } catch {
+          return prevTile;
+        }
+      });
+      return loc;
+    });
   };
 
   const fillFromTemplate = (tpl) => {
