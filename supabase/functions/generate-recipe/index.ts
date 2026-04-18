@@ -265,19 +265,19 @@ Rules (in priority order — higher rules beat lower ones on conflict):
 
   5. ALWAYS produce at least 4 steps and 4 ingredients.
 
-  5a. EVERY step must carry a `uses` array listing the ingredients
+  5a. EVERY step must carry a "uses" array listing the ingredients
      consumed AT that step with the amount used at that step. If an
      ingredient spans multiple steps (eggs split between batter and
      wash), it legitimately appears in more than one step with
      partial amounts that sum to the top-level ingredients[] amount.
-     If a step is purely action-only (plate, rest, serve), `uses`
+     If a step is purely action-only (plate, rest, serve), "uses"
      may be an empty array.
 
-  5b. Add `heat` whenever a step involves a burner/oven/grill — it
+  5b. Add "heat" whenever a step involves a burner/oven/grill — it
      helps the cook dial in the stove without rereading the prose.
      Omit for prep steps.
 
-  5c. Add `doneCue` whenever the step has a qualitative readiness
+  5c. Add "doneCue" whenever the step has a qualitative readiness
      signal ("onions translucent, not brown"; "pasta has 1 minute
      less than package says"). Skip for trivial steps.
 
