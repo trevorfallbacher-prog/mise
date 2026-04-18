@@ -132,7 +132,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onDelete, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -1300,6 +1300,33 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             </>
           );
         })()}
+
+        {/* Delete from kitchen — subtle red-outlined button at the very
+            bottom of the card so it's easy to find but doesn't compete
+            with primary actions. Protected rows (keepsakes flagged via
+            migration 0044) hide the button entirely; the DB delete
+            policy would reject anyway, but not rendering at all is
+            clearer than tapping and getting nothing. Actual
+            confirmation lives in Kitchen's deleteCandidate modal so
+            the user sees name + amount + location before committing. */}
+        {onDelete && !item?.protected && (
+          <div style={{ marginTop: 28, paddingTop: 18, borderTop: "1px dashed #222" }}>
+            <button
+              onClick={onDelete}
+              style={{
+                width: "100%", padding: "12px",
+                background: "transparent",
+                border: "1px solid #3a1a1a",
+                color: "#d77777", borderRadius: 10,
+                fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+                letterSpacing: "0.1em",
+                cursor: "pointer",
+              }}
+            >
+              🗑  REMOVE FROM KITCHEN
+            </button>
+          </div>
+        )}
 
       </ModalSheet>
 

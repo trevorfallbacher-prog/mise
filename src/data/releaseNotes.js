@@ -42,9 +42,30 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.5";
+export const CURRENT_VERSION = "0.12.6";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.6",
+    date:    "2026-04-18",
+    title:   "Remove from kitchen — now obvious",
+    summary:
+      "The ✕ on a Kitchen tile was the only delete surface, and it " +
+      "was small and easy to miss. Added a clear REMOVE FROM KITCHEN " +
+      "button at the bottom of the full ItemCard detail view so once " +
+      "you've opened a row, the delete path is right there. Routes " +
+      "through the same confirm modal as the tile ✕ so nothing " +
+      "accidentally nukes.",
+    shipped: [
+      { kind: "ux",
+        text: "REMOVE FROM KITCHEN button on every ItemCard (hidden for protected / keepsake rows, matching DB policy).",
+        commits: [] },
+    ],
+    coming_soon: [
+      "DELETE button on AdminPanel → CANONICALS (the existing REJECT action is a full delete but the label reads like disapproval — clearer wording + confirmation copy would help).",
+      "Scan-merge reserve bump — 3 identical SKUs → one row with reserve_count +2.",
+    ],
+  },
   {
     version: "0.12.5",
     date:    "2026-04-18",

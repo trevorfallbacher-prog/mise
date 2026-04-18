@@ -5067,6 +5067,16 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             userId={userId}
             isAdmin={isAdmin}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
+            onDelete={() => {
+              // Hand off to the existing deleteCandidate confirmation
+              // modal — that's the one surface that shows name + amount
+              // + location in the confirm copy, so users don't
+              // accidentally nuke the wrong row. It lives at the
+              // Kitchen level because the Kitchen tile's ✕ also
+              // triggers it; keeping one confirmation UI beats two.
+              setOpenItem(null);
+              setDeleteCandidate(fresh);
+            }}
             onEditTags={() => setLinkingItem(fresh)}
             onOpenProvenance={(link) => {
               // kind: 'receipt' and 'scan' both route through ReceiptView
