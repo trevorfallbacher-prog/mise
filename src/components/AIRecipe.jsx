@@ -15,7 +15,7 @@ import { totalTimeMin, difficultyLabel } from "../data/recipes";
 //                and opens SchedulePicker
 //   COOK IT    — onSaveAndCook(recipe) → persist + enter CookMode
 //
-// The parent (QuickCook) owns the shared/private semantics. This
+// The parent (CreateMenu) owns the shared/private semantics. This
 // component just emits events.
 
 const CUISINE_CHIPS = [

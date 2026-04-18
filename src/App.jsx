@@ -3,7 +3,7 @@ import Onboarding from "./components/Onboarding";
 import Home from "./components/Home";
 import Courses from "./components/Courses";
 import Plan from "./components/Plan";
-import QuickCook from "./components/QuickCook";
+import CreateMenu from "./components/CreateMenu";
 import Kitchen from "./components/Kitchen";
 import SignIn from "./components/SignIn";
 import Settings from "./components/Settings";
@@ -179,9 +179,16 @@ function AuthedApp({ user, profile, upsertProfile }) {
   const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [notifsOpen, setNotifsOpen]       = useState(false);
-  // Quick Cook chooser overlay. Opened by the floating ➕ in the tab
-  // bar; renders on top of whatever tab is currently active.
-  const [quickCookOpen, setQuickCookOpen] = useState(false);
+  // Create menu overlay. Opened by the floating ➕ in the tab bar;
+  // renders on top of whatever tab is currently active. Hosts every
+  // creation flow: cooking (custom / AI / template recipe) AND
+  // pantry ingress (scan / manual add).
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  // Pantry-action intent dispatched by CreateMenu's ADD TO PANTRY
+  // branch. Kitchen consumes this in an effect and flips its
+  // already-mounted Scanner / AddItemModal into the open state that
+  // matches. 'scan' | 'add' | null.
+  const [pendingPantryAction, setPendingPantryAction] = useState(null);
   // Admin-panel open state. Only reachable via Settings → ADMIN entry,
   // which is itself gated on profile.role === 'admin' (0042).
   const [adminOpen, setAdminOpen]         = useState(false);
@@ -450,6 +457,8 @@ function AuthedApp({ user, profile, upsertProfile }) {
             setView={setPantryView}
             deepLink={deepLink}
             onDeepLinkConsumed={() => setDeepLink(null)}
+            pendingPantryAction={pendingPantryAction}
+            onPendingActionConsumed={() => setPendingPantryAction(null)}
           />
         )}
       </div>
@@ -530,9 +539,10 @@ function AuthedApp({ user, profile, upsertProfile }) {
       )}
 
       {/* Bottom tab bar — four regular tabs (HOME · COURSES · CALENDAR ·
-          KITCHEN) with a floating ➕ Quick Cook button slotted between
-          tabs 2 and 3. The ➕ isn't a tab — tapping it opens QuickCook
-          as a full-screen overlay on top of whichever tab is active. */}
+          KITCHEN) with a floating ➕ button slotted between tabs 2 and
+          3. The ➕ isn't a tab — tapping it opens CreateMenu as a full-
+          screen overlay, the universal creation hub for cooking and
+          pantry ingress. */}
       <div style={{ position:"fixed", bottom:0, left:0, right:0, maxWidth:480, margin:"0 auto", background:"#0f0f0f", borderTop:"1px solid #1e1e1e", display:"flex", padding:"12px 0 20px" }}>
         {NAV.slice(0, 2).map(({ id, emoji, label }) => (
           <button key={id} onClick={() => setTab(id)} style={{ flex:1, background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, opacity: tab===id ? 1 : 0.35, transition:"opacity 0.2s" }}>
@@ -547,9 +557,9 @@ function AuthedApp({ user, profile, upsertProfile }) {
             labels on either side don't collide with it. */}
         <div style={{ flex:1, display:"flex", justifyContent:"center", alignItems:"flex-start" }}>
           <button
-            onClick={() => setQuickCookOpen(true)}
-            title="Quick Cook"
-            aria-label="Quick Cook"
+            onClick={() => setCreateMenuOpen(true)}
+            title="Create"
+            aria-label="Create"
             style={{
               width:56, height:56, borderRadius:28,
               background:"#f5c842", color:"#111",
@@ -574,13 +584,15 @@ function AuthedApp({ user, profile, upsertProfile }) {
         ))}
       </div>
 
-      {/* Quick Cook overlay — the three-branch chooser (custom / AI /
-          template) launched by the floating ➕ above. Returns via
-          onClose. onCooked fires after CookMode's done-flow so we can
-          land the user on their own profile archive where the freshly
-          logged cook surfaces. */}
-      {quickCookOpen && (
-        <QuickCook
+      {/* CreateMenu overlay — the universal creation hub launched by
+          the floating ➕ above. Hosts the four-branch chooser (custom /
+          AI / template recipe / add to pantry). Cook branches land in
+          CookMode; ADD TO PANTRY dispatches back to Kitchen via
+          onRequestPantryAction. Returns via onClose. onCooked fires
+          after CookMode's done-flow so we can land the user on their
+          own profile archive where the freshly logged cook surfaces. */}
+      {createMenuOpen && (
+        <CreateMenu
           userId={user.id}
           profile={profile}
           familyKey={familyKey}
@@ -588,13 +600,21 @@ function AuthedApp({ user, profile, upsertProfile }) {
           setPantry={setPantry}
           shoppingList={shoppingList}
           setShoppingList={setShoppingList}
-          onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); setQuickCookOpen(false); }}
+          onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); setCreateMenuOpen(false); }}
           family={relationships.family}
           friends={relationships.friends}
-          onClose={() => setQuickCookOpen(false)}
+          onClose={() => setCreateMenuOpen(false)}
           onCooked={() => {
-            setQuickCookOpen(false);
+            setCreateMenuOpen(false);
             setProfileUserId(user.id);
+          }}
+          onRequestPantryAction={(kind) => {
+            // Route the intent back to Kitchen: flip to the pantry
+            // tab, stash the action so Kitchen's effect can open the
+            // matching flow, then dismiss CreateMenu.
+            setPendingPantryAction(kind);
+            setTab("pantry");
+            setCreateMenuOpen(false);
           }}
         />
       )}

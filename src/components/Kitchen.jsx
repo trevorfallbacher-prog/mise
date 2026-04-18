@@ -97,15 +97,6 @@ const ADD_CATEGORIES = [
   { id:"frozen",  label:"🧊 Frozen"  },
 ];
 
-const DEDUCTION_EXAMPLE = {
-  dish: "Brown Butter Pasta", emoji: "🍝",
-  deductions: [
-    { name:"Unsalted Butter", used:0.5, unit:"sticks" },
-    { name:"Parmesan",        used:0.25,unit:"cup" },
-    { name:"Spaghetti",       used:8,   unit:"oz" },
-  ]
-};
-
 const pct  = item => Math.min((item.amount / item.max) * 100, 100);
 const isLow      = item => item.amount <= item.lowThreshold;
 const isCritical = item => item.amount <= item.lowThreshold * 0.5;
@@ -3264,7 +3255,7 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed }) {
+export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed, pendingPantryAction, onPendingActionConsumed }) {
   const [scanning, setScanning] = useState(false);
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
@@ -3285,7 +3276,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   });
-  const [showDeduction, setShowDeduction] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [addingTo, setAddingTo] = useState(null); // "pantry" | "shopping" | null
   // When the add modal is opened from inside a tile drill-down, this carries
@@ -3378,6 +3368,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       onDeepLinkConsumed?.();
     }
   }, [deepLink, onDeepLinkConsumed, pantry, userId, familyIds]);
+
+  // Consume a pendingPantryAction dispatched by CreateMenu's ADD TO
+  // PANTRY branch. App.jsx flips the tab to "pantry" before setting
+  // the flag, so by the time this effect runs we're already the
+  // active tab. Flip the corresponding modal state open, then clear
+  // the flag so a re-open doesn't double-fire.
+  useEffect(() => {
+    if (!pendingPantryAction) return;
+    if (pendingPantryAction === "scan") setScanning(true);
+    else if (pendingPantryAction === "add") setAddingTo("pantry");
+    onPendingActionConsumed?.();
+  }, [pendingPantryAction, onPendingActionConsumed]);
+
   // Convert-state modal. Set to a pantry item to open; null to close.
   // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
   // user picks a target state + enters how much it yielded, we decrement
@@ -4060,15 +4063,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     }
 
     setScanning(false);
-  };
-
-  const confirmDeduction = () => {
-    setPantry(prev => prev.map(item => {
-      const d = DEDUCTION_EXAMPLE.deductions.find(d => d.name === item.name);
-      if (!d) return item;
-      return { ...item, amount: Math.max(0, item.amount - d.used) };
-    }));
-    setShowDeduction(false);
   };
 
   // Push low-stock items onto the shopping list. Stack-aware: for a
@@ -4910,38 +4904,9 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           )}
 
-          {/* Scan CTA — opens the unified scanner. The user picks fridge,
-              pantry, or receipt at the top of that flow. */}
-          <div onClick={()=>setScanning(true)} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
-            <div style={{ fontSize:36, display:"flex", gap:2 }}>
-              <span>🥬</span><span>🥫</span><span>🧾</span>
-            </div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan something</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Fridge, pantry shelf, or grocery receipt</div>
-            </div>
-            <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
-          </div>
-
-          {/* Manual add CTA */}
-          <div onClick={() => setAddingTo("pantry")} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ fontSize:24 }}>➕</div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Add an ingredient</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Manually track what you have</div>
-            </div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842" }}>ADD →</div>
-          </div>
-
-          {/* Deduction CTA */}
-          <div onClick={()=>setShowDeduction(true)} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ fontSize:28 }}>🍝</div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Just finished cooking?</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Log it and we'll deduct ingredients</div>
-            </div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>TRY IT →</div>
-          </div>
+          {/* Scan / manual-add / deduction CTAs moved to the floating
+              ➕ CreateMenu overlay. Kitchen is now inventory +
+              maintenance only; creation flows live in one place. */}
 
           {/* Fridge / Pantry / Freezer tab strip. Default is Fridge — the
               tab most users open by reflex. Selecting a tab resets any
@@ -5390,29 +5355,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         />
       )}
 
-      {/* Deduction modal */}
-      {showDeduction && (
-        <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:150, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}>
-          <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"28px 24px 48px" }}>
-            <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 24px" }} />
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:8 }}>PANTRY DEDUCTION</div>
-            <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:6 }}>You just cooked {DEDUCTION_EXAMPLE.dish}</h3>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>Deduct these from your kitchen?</p>
-            <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:20 }}>
-              {DEDUCTION_EXAMPLE.deductions.map((d,i) => (
-                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:"#1a1a1a", borderRadius:10 }}>
-                  <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>{d.name}</span>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#e07a3a" }}>− {d.used} {d.unit}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ display:"flex", gap:10 }}>
-              <button onClick={()=>setShowDeduction(false)} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer" }}>SKIP</button>
-              <button onClick={confirmDeduction} style={{ flex:2, padding:"14px", background:"#e07a3a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>YES, DEDUCT →</button>
-            </div>
-          </div>
-        </div>
-      )}
       {openReceiptId && (
         <ReceiptView
           receiptId={openReceiptId.receiptId}
