@@ -4257,9 +4257,61 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           title="Tap and slide to estimate what's left"
           style={{ width:"100%", padding:0, background:"transparent", border:"none", cursor:"pointer" }}
         >
-          <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-            <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
-          </div>
+          {(() => {
+            // Segmented gauge for package-mode rows (migration 0054).
+            // Each segment is one physical unit: all reserve_count
+            // sealed packages render full, plus one open segment
+            // partially filled by amount / packageAmount. Gives the
+            // user an at-a-glance "I have 5 cans, last one half-full"
+            // visual instead of a single averaged bar.
+            //
+            // Liquid-mode rows (packageAmount === null) fall back to
+            // the original single bar — unchanged behavior.
+            const pkgAmt = Number(item.packageAmount);
+            const hasPkg = Number.isFinite(pkgAmt) && pkgAmt > 0;
+            const reserves = Math.max(0, Number(item.reserveCount) || 0);
+            if (hasPkg && reserves > 0) {
+              const openRatio = Math.max(0, Math.min(1, (Number(item.amount) || 0) / pkgAmt));
+              const segments = reserves + 1;
+              // Tiny visual margin between segments so each reads as a
+              // discrete unit rather than one continuous bar. The
+              // flex layout keeps everything scale-aware for any
+              // reserve count, even big ones (20 cans of rice).
+              return (
+                <div style={{ display:"flex", gap:2, height:4 }}>
+                  {Array.from({ length: segments }).map((_, i) => {
+                    const isOpen = i === segments - 1;
+                    const fill = isOpen ? openRatio * 100 : 100;
+                    const segColor = isOpen ? barColor(item) : "#4ade80";
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          flex: 1,
+                          background: "#1e1e1e",
+                          borderRadius: 2,
+                          overflow: "hidden",
+                        }}
+                      >
+                        <div style={{
+                          height: "100%",
+                          width: `${fill}%`,
+                          background: segColor,
+                          boxShadow: `0 0 6px ${segColor}66`,
+                          transition: "width 0.6s ease",
+                        }} />
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            }
+            return (
+              <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
+                <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
+              </div>
+            );
+          })()}
         </button>
         {fillEditingId === item.id && (() => {
           const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);

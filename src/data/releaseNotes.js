@@ -42,9 +42,36 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.2";
+export const CURRENT_VERSION = "0.12.3";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.3",
+    date:    "2026-04-18",
+    title:   "Segmented gauge — see your stash at a glance",
+    summary:
+      "The pantry gauge used to be a single bar whether you had " +
+      "one can or ten. With reserves tracking, that stopped " +
+      "telling the full story: a 12-oz open can half-full next to " +
+      "4 sealed reserves should LOOK different from a 12-oz can " +
+      "with no reserves. Now it does. Package-mode rows render one " +
+      "segment per physical unit — sealed packages full green, the " +
+      "open one colored by remaining ratio. One glance tells you " +
+      "how many total and which one you're working through.",
+    shipped: [
+      { kind: "ux",
+        text: "Segmented per-package gauge on pantry rows when reserves are present — one block per can/jar/bag/carton.",
+        commits: [] },
+      { kind: "ux",
+        text: "Liquid-mode rows (no packaging) keep the original single bar — zero regression for olive oil, flour by weight, and anything else that doesn't think in discrete packages.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Tap-a-segment to 'open the next can' — explicit consumption action for when you want to skip partial accounting.",
+      "Canonical creation flow with packaging — add brand-new canonicals like Spam with typical sizes in one shot.",
+      "Scan-merge reserve bump — 3 identical SKUs on one receipt collapse into one row with reserve_count +2.",
+    ],
+  },
   {
     version: "0.12.2",
     date:    "2026-04-18",
