@@ -796,17 +796,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   <div
                     style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
                     onClick={e => e.stopPropagation()}
-                    // When focus leaves the entire edit area (not just
-                    // one sub-input), commit-close the editor. Using
-                    // relatedTarget + contains keeps the editor open
-                    // while you're still moving between the number
-                    // input, the unit select, and the slider — which
-                    // used to slam shut on every inter-element blur
-                    // because the number input's onBlur closed the
-                    // editor directly.
+                    // Keep the editor open across inter-element focus
+                    // moves (number input → unit select → slider →
+                    // package size input). Native <select> on iOS +
+                    // desktop briefly moves focus OFF the subtree
+                    // when its dropdown pops, so a synchronous blur
+                    // check was slamming the editor shut before the
+                    // onChange had a chance to fire. Defer the close
+                    // to the next tick and re-check activeElement
+                    // after the browser settles — if focus landed
+                    // back inside the editor (or inside the child
+                    // <select>'s own dropdown) we leave it open.
                     onBlur={e => {
-                      if (e.currentTarget.contains(e.relatedTarget)) return;
-                      setEditingField(null);
+                      const root = e.currentTarget;
+                      setTimeout(() => {
+                        if (!root || !document.body.contains(root)) return;
+                        if (root.contains(document.activeElement)) return;
+                        setEditingField(null);
+                      }, 150);
                     }}
                   >
                     {/* Packaging chip row for edit-mode — same typical
