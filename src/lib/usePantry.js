@@ -99,6 +99,14 @@ function fromDb(row) {
   // this mapping just lets the UI know so it can hide the delete
   // control.
   if (row.protected          !== undefined) item.protected         = !!row.protected;
+  // Packaging + reserves (migration 0054). package_amount is the size
+  // of ONE sealed unit; reserve_count is the number of SEALED units
+  // on hand (the currently-open one lives in amount/unit). Null
+  // package_amount means the row is in legacy "liquid mode" where
+  // amount/max is the whole story.
+  if (row.package_amount !== undefined) item.packageAmount = row.package_amount != null ? Number(row.package_amount) : null;
+  if (row.package_unit   !== undefined) item.packageUnit   = row.package_unit || null;
+  if (row.reserve_count  !== undefined) item.reserveCount  = Number(row.reserve_count || 0);
   // fill_level (migration 0043) is dormant — we rolled the whole
   // proportional-inventory concept back into plain amount+max sliders
   // in 0.7.9. Column stays in the DB for forward compat but the
@@ -152,6 +160,12 @@ function toDb(item) {
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
+    // Packaging + reserves (migration 0054). Passthrough only when the
+    // caller set them — older code paths that don't know about
+    // packaging keep writing the exact payload they always did.
+    ...(item.packageAmount !== undefined ? { package_amount: item.packageAmount } : {}),
+    ...(item.packageUnit   !== undefined ? { package_unit: item.packageUnit || null } : {}),
+    ...(item.reserveCount  !== undefined ? { reserve_count: Math.max(0, Number(item.reserveCount) || 0) } : {}),
   };
 }
 

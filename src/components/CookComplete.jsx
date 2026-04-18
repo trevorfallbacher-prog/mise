@@ -311,7 +311,21 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
           // accidental "I cooked with Bella's gummy bear" math.
           if (row.protected) continue;
           if (entry.newAmount <= 0) {
-            byId.delete(row.id);
+            // Package-mode rows (migration 0054) hold a two-tier
+            // quantity: the open unit in `amount`, plus `reserveCount`
+            // sealed units in the cupboard. When the open unit hits
+            // zero we don't delete the row — we pop the next sealed
+            // unit into the open slot. Only delete when we're truly
+            // out of EVERYTHING (no reserves either).
+            if (row.packageAmount != null && row.reserveCount > 0) {
+              byId.set(row.id, {
+                ...row,
+                reserveCount: row.reserveCount - 1,
+                amount: Number(row.packageAmount),
+              });
+            } else {
+              byId.delete(row.id);
+            }
           } else {
             byId.set(row.id, { ...row, amount: entry.newAmount });
           }

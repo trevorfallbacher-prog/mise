@@ -855,8 +855,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   </div>
                 );
               })() : (
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4", marginTop: 2 }}>
-                  {Number(item.amount || 0).toFixed(Number.isInteger(item.amount) ? 0 : 2)} {canonical ? unitLabel(canonical, item.unit) : (item.unit || "")}
+                <div style={{ marginTop: 2 }}>
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4" }}>
+                    {Number(item.amount || 0).toFixed(Number.isInteger(item.amount) ? 0 : 2)} {canonical ? unitLabel(canonical, item.unit) : (item.unit || "")}
+                  </div>
+                  {/* Reserves chip (migration 0054). When this row is
+                      in package-mode and has one or more sealed units
+                      in the cupboard, surface them under the open-unit
+                      amount so the user sees their real stash at a
+                      glance without opening the card. */}
+                  {item.reserveCount > 0 && (
+                    <div style={{
+                      marginTop: 3,
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#f5c842", letterSpacing: "0.08em",
+                    }}>
+                      + {item.reserveCount} SEALED
+                    </div>
+                  )}
                 </div>
               )}
             </div>

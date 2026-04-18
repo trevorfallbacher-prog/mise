@@ -1764,6 +1764,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
+  // packages the user has beyond the one they're treating as "open"
+  // (the amount field). Stays zero for liquid-mode rows; >0 flips
+  // the row into package mode on save so the pantry can render
+  // per-unit gauges and the cook-decrement can pop reserves instead
+  // of deleting the row when the open unit hits zero.
+  const [reserveCount, setReserveCount] = useState(0);
   // Flipped to true on a save attempt that hit missing fields — lights
   // up the per-field validation reminder panel. Stays latched so the
   // user can actually see which field is red while they fix it;
@@ -2012,6 +2019,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       // undefined-as-unset.
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
+      // Packaging + reserves (migration 0054). When the user
+      // specified sealed reserves, snapshot the current amount/unit
+      // as the package size so the pantry treats the row as
+      // package-mode: one open unit + N sealed reserves. Each
+      // reserve pops into the open slot when the open unit hits
+      // zero during cook decrementing.
+      ...(reserveCount > 0 ? {
+        packageAmount: amt,
+        packageUnit: customUnit.trim() || null,
+        reserveCount,
+      } : {}),
     };
 
     onAdd(item);
@@ -2623,6 +2641,54 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                       padding: 0, minWidth: 0,
                     }}
                   />
+                </div>
+                {/* Reserves stepper (migration 0054). "+N" sealed
+                    packages beyond the open one above. When N > 0 the
+                    save path snapshots amount/unit as the package size
+                    so the pantry can render reserves + pop them as
+                    the open unit depletes. */}
+                <div style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
+                }}>
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: reserveCount > 0 ? "#f5c842" : "#555",
+                    letterSpacing: "0.1em",
+                  }}>
+                    + {reserveCount} SEALED
+                  </span>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button
+                      onClick={() => setReserveCount(n => Math.max(0, n - 1))}
+                      disabled={reserveCount === 0}
+                      aria-label="decrement reserves"
+                      style={{
+                        width: 22, height: 22,
+                        background: "transparent",
+                        border: "1px solid #2a2a2a",
+                        color: reserveCount === 0 ? "#333" : "#888",
+                        borderRadius: 4, cursor: reserveCount === 0 ? "not-allowed" : "pointer",
+                        fontFamily: "'DM Mono',monospace", fontSize: 12,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        lineHeight: 1, padding: 0,
+                      }}
+                    >−</button>
+                    <button
+                      onClick={() => setReserveCount(n => n + 1)}
+                      aria-label="increment reserves"
+                      style={{
+                        width: 22, height: 22,
+                        background: "transparent",
+                        border: "1px solid #2a2a2a",
+                        color: "#888",
+                        borderRadius: 4, cursor: "pointer",
+                        fontFamily: "'DM Mono',monospace", fontSize: 12,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        lineHeight: 1, padding: 0,
+                      }}
+                    >+</button>
+                  </div>
                 </div>
               </div>
 

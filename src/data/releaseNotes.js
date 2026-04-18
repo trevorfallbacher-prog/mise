@@ -42,9 +42,44 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.11.2";
+export const CURRENT_VERSION = "0.12.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.0",
+    date:    "2026-04-18",
+    title:   "Sealed reserves — track every can + package in the cupboard",
+    summary:
+      "Adding six cans of Spam used to force a weird guess: is " +
+      "\"amount\" one can? total ounces? The gauge was built for " +
+      "olive oil in a bottle, not discrete packages in a cupboard. " +
+      "This release adds a two-tier model. The amount field is " +
+      "now the CURRENTLY-OPEN package; a tiny + / − stepper next " +
+      "to it tracks SEALED reserves waiting behind it. Cook " +
+      "through the open can and the pantry pops the next reserve " +
+      "automatically instead of deleting the row. Works for every " +
+      "canned good and most dried staples — rice, pasta, canned " +
+      "tomato, beans, the whole cupboard.",
+    shipped: [
+      { kind: "feature",
+        text: "Sealed-reserve stepper on the Add Item modal — enter one open package + how many more are sealed in the cupboard.",
+        commits: [] },
+      { kind: "feature",
+        text: "ItemCard shows your reserves under the open-unit amount (\"12 oz / 4 sealed\").",
+        commits: [] },
+      { kind: "ux",
+        text: "Cooking through an open package now pops the next sealed reserve automatically — the row survives, the gauge resets to a full package.",
+        commits: [] },
+      { kind: "architecture",
+        text: "Migration 0054 adds package_amount, package_unit, and reserve_count columns to pantry_items. Rows without package data behave exactly as before.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Canonical-level packaging sizes — when someone creates a new canonical (Spam, canned tuna), future users pick from the typical package sizes instead of re-entering.",
+      "Segmented gauge — a block-per-package visual so you can see \"5 sealed + 1 open half-full\" at a glance.",
+      "Auto-restock on last-reserve-popped — shopping-list integration that recognises \"I just opened my last can of X.\"",
+    ],
+  },
   {
     version: "0.11.2",
     date:    "2026-04-17",
