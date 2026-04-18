@@ -3039,6 +3039,11 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 source: "admin_additem_create",
               },
               ...(extra?.packaging ? { packaging: extra.packaging } : {}),
+              // parentId pointer to one of the bundled HUBS so the
+              // Kitchen tile grouper can wrap this canonical's pantry
+              // rows under that hub. Set during canonical-create via
+              // the WRAPS UNDER GROUP picker in PackagingStep.
+              ...(extra?.parentId ? { parentId: extra.parentId } : {}),
             };
             supabase
               .from("ingredient_info")
@@ -3220,6 +3225,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // creation and hides the PENDING badge. Same signal Scanner reads.
   const { profile } = useProfile(userId);
   const isAdmin = profile?.role === "admin";
+  // dbMap exposes ingredient_info for every approved canonical. The
+  // hub-grouper consults it as a third fallback so user-created
+  // canonicals (gemelli, my_special_pasta) wrap into the right hub
+  // when their info row carries a parentId pointer.
+  const { dbMap: kitchenDbMap } = useIngredientInfo();
   // Search replaces the old category filter pills — one input searches item
   // names, hub names, and categories.
   const [search, setSearch] = useState("");
@@ -3441,12 +3451,25 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       // and ingredient_ids=[] used to fall into the loose pile
       // because ingredientId was null — but the user clearly
       // identified it as cavatappi, so we should group it under
-      // Pasta with its siblings. This preserves the current behavior
-      // for ingredient_ids-tagged rows (the fallback never fires
-      // when ingredientId already yields a hub).
-      const ing = findIngredient(item.ingredientId)
-               || findIngredient(item.canonicalId);
-      const hub = hubForIngredient(ing);
+      // Pasta with its siblings.
+      //
+      // Third fallback: dbMap[canonicalId]?.parentId. User-created
+      // canonicals (gemelli, my_special_pasta, etc.) aren't in the
+      // bundled INGREDIENTS library so findIngredient returns null
+      // even via canonicalId. The PackagingStep's PARENT GROUP picker
+      // stores parentId in ingredient_info.info.parentId — read it
+      // here so user-created canonicals also wrap into their hub.
+      let ing = findIngredient(item.ingredientId)
+             || findIngredient(item.canonicalId);
+      let hub = hubForIngredient(ing);
+      if (!hub) {
+        const customParentId = item.canonicalId
+          ? kitchenDbMap?.[item.canonicalId]?.parentId
+          : null;
+        if (customParentId) {
+          hub = findHub(customParentId);
+        }
+      }
       if (hub) {
         if (!groups.has(hub.id)) groups.set(hub.id, { hub, items: [] });
         groups.get(hub.id).items.push(item);

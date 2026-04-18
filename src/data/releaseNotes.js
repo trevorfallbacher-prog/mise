@@ -42,9 +42,39 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.9";
+export const CURRENT_VERSION = "0.12.10";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.10",
+    date:    "2026-04-18",
+    title:   "User-created canonicals can now wrap into hubs",
+    summary:
+      "Added Gemelli, gave it a category, and it still didn't group " +
+      "with your other Pasta? That's because gemelli isn't bundled " +
+      "in the canonical library, so the hub-grouper had no parentId " +
+      "to read. Fixed: canonicals you create now carry their own " +
+      "parentId pointer to one of the 13 bundled hubs (Pasta, Beans, " +
+      "Rice, Chicken, etc), the PackagingStep auto-suggests it from " +
+      "the name (gemelli → Pasta, sardines → Seafood), and the " +
+      "Kitchen tile grouper reads it as a third fallback so your " +
+      "user-created rows wrap alongside the bundled members.",
+    shipped: [
+      { kind: "feature",
+        text: "WRAPS UNDER GROUP picker in the canonical creation flow — pre-suggests a hub from the name, lets you confirm or override.",
+        commits: [] },
+      { kind: "feature",
+        text: "Hub grouper now reads parentId from ingredient_info as a third fallback — user-created canonicals group correctly when their info row carries the pointer.",
+        commits: [] },
+      { kind: "feature",
+        text: "Admin auto-approve folds parentId into the ingredient_info stub so the hub grouping works on the very first add (no pending-review delay).",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Patch existing user canonicals with a parentId via the AdminPanel CANONICALS tab (you can SQL-patch in the meantime).",
+      "Scan-merge reserve bump — 3 identical SKUs → one row, reserve_count +2.",
+    ],
+  },
   {
     version: "0.12.9",
     date:    "2026-04-18",

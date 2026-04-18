@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { findIngredient, fuzzyMatchIngredient } from "../data/ingredients";
+import { findIngredient, fuzzyMatchIngredient, HUBS } from "../data/ingredients";
 import { BLEND_PRESETS } from "../data/blendPresets";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { suggestedPackaging, DEFAULT_PACKAGING_BY_CATEGORY } from "../data/defaultPackaging";
@@ -232,28 +232,42 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
   const finalizeCreate = (maybePackaging) => {
     if (!creating) return;
     const { id, name } = creating;
-    if (maybePackaging) {
+    // The PackagingStep now hands back an object that may contain
+    // either packaging sizes, a parentId hub pointer, or both. Older
+    // callers got only sizes — this code keeps that contract by
+    // splitting the bundle here so each downstream consumer (the
+    // pending_ingredient_info insert, the admin auto-approve onLink
+    // arg) gets what it expects.
+    const packaging = maybePackaging?.sizes ? {
+      sizes: maybePackaging.sizes,
+      defaultIndex: maybePackaging.defaultIndex,
+    } : null;
+    const parentId = maybePackaging?.parentId || null;
+    const hasAnyPayload = !!packaging || !!parentId;
+    if (hasAnyPayload) {
       // Stash as pending_ingredient_info so admin review will promote
-      // the packaging data into the authoritative ingredient_info row.
+      // packaging + parentId into the authoritative ingredient_info row.
       // Fire-and-forget — a transient failure shouldn't block adding
       // the item to pantry. The in-app canonical binding works regardless.
       //
-      // For admin callers, onLink below ALSO receives the packaging
-      // as a second arg so their auto-approve path can write it
-      // straight to ingredient_info — otherwise the admin's
-      // '{_meta}' stub would clobber the pending row we just wrote
-      // (auto-approve goes to the same canonical id via a different
-      // table, and ingredient_info wins because it's the live read
-      // source).
+      // For admin callers, onLink below ALSO receives the data as a
+      // second arg so their auto-approve path can write it straight
+      // to ingredient_info — otherwise the admin's '{_meta}' stub
+      // would clobber the pending row we just wrote (auto-approve
+      // goes to the same canonical id via a different table, and
+      // ingredient_info wins because it's the live read source).
       (async () => {
         try {
           const { data: { user } } = await supabase.auth.getUser();
           if (!user) return;
+          const info = {};
+          if (packaging) info.packaging = packaging;
+          if (parentId) info.parentId = parentId;
           await supabase.from("pending_ingredient_info").upsert({
             user_id: user.id,
             slug: id,
             source_name: name,
-            info: { packaging: maybePackaging },
+            info,
             status: "pending",
           }, { onConflict: "user_id,slug" });
         } catch (e) {
@@ -261,10 +275,14 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
         }
       })();
     }
-    // Hand the packaging to the caller's onLink so admin auto-approve
-    // paths can fold it into their ingredient_info stub on the same
-    // transaction — non-admin callers simply ignore the second arg.
-    const extra = maybePackaging ? { packaging: maybePackaging } : undefined;
+    // Hand the bundle to the caller's onLink so admin auto-approve
+    // paths can fold both packaging + parentId into their
+    // ingredient_info stub on the same transaction — non-admin
+    // callers simply ignore the second arg.
+    const extra = hasAnyPayload ? {
+      ...(packaging ? { packaging } : {}),
+      ...(parentId ? { parentId } : {}),
+    } : undefined;
     if (singleMode) {
       onLink([id], extra);
     } else {
@@ -750,6 +768,13 @@ function PackagingStep({ name, slug, onCommit, onCancel }) {
   const [category, setCategory] = useState("canned"); // safest default — most common add
   const [sizes, setSizes]       = useState(() => suggestedPackaging("canned").sizes);
   const [typicalIdx, setTypicalIdx] = useState(() => suggestedPackaging("canned").defaultIndex);
+  // PARENT GROUP — optional pointer to one of the 13 bundled hubs
+  // (pasta_hub, bean_hub, etc). When set, the Kitchen tile grouper
+  // wraps this canonical's pantry rows under that hub alongside the
+  // bundled members. Inferred lazily from the canonical's name on
+  // first render so common cases (gemelli → pasta_hub) auto-suggest
+  // without user input.
+  const [parentId, setParentId] = useState(() => inferHubFromName(name));
 
   // Re-seed sizes when the user picks a new category — keeps the
   // flow fast if they realize they miscategorized.
@@ -781,9 +806,19 @@ function PackagingStep({ name, slug, onCommit, onCancel }) {
         unit: String(s.unit).trim(),
         label: String(s.label || "").trim() || null,
       }));
-    if (cleaned.length === 0) return onCommit(null);
-    const safeTypical = Math.min(Math.max(0, typicalIdx), cleaned.length - 1);
-    onCommit({ sizes: cleaned, defaultIndex: safeTypical });
+    // Always commit something when there's a parent group OR sizes.
+    // A user who only picks a parent (no sizes) still wants the
+    // grouping to apply, so we ship the parentId even if sizes
+    // ended up empty.
+    if (cleaned.length === 0 && !parentId) return onCommit(null);
+    const safeTypical = Math.min(Math.max(0, typicalIdx), Math.max(0, cleaned.length - 1));
+    const out = {};
+    if (cleaned.length > 0) {
+      out.sizes = cleaned;
+      out.defaultIndex = safeTypical;
+    }
+    if (parentId) out.parentId = parentId;
+    onCommit(out);
   };
 
   return (
@@ -796,6 +831,48 @@ function PackagingStep({ name, slug, onCommit, onCancel }) {
       </div>
       <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, marginBottom: 12 }}>
         Pick the sizes this usually comes in. Next person to add "{name}" sees these as taps instead of typing. Skip if you're not sure — you can always come back later.
+      </div>
+
+      {/* Parent group — optional pointer to a bundled hub. When set,
+          the Kitchen tile view groups this canonical's pantry rows
+          under that hub (Pasta, Beans, Rice, etc) alongside the
+          bundled members. Pre-seeded by name inference so common
+          cases auto-suggest. Tap "—" to clear. */}
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
+        WRAPS UNDER GROUP {parentId ? <span style={{ color: "#7ec87e" }}>· auto-suggested</span> : <span>· optional</span>}
+      </div>
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 12 }}>
+        <button
+          onClick={() => setParentId(null)}
+          style={{
+            padding: "4px 10px",
+            background: !parentId ? "#1a1608" : "transparent",
+            border: `1px solid ${!parentId ? "#f5c842" : "#2a2a2a"}`,
+            color: !parentId ? "#f5c842" : "#666",
+            borderRadius: 14,
+            fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.05em",
+            cursor: "pointer",
+          }}
+        >
+          —
+        </button>
+        {HUBS.map(h => (
+          <button
+            key={h.id}
+            onClick={() => setParentId(h.id)}
+            style={{
+              padding: "4px 10px",
+              background: parentId === h.id ? "#1a1608" : "transparent",
+              border: `1px solid ${parentId === h.id ? "#f5c842" : "#2a2a2a"}`,
+              color: parentId === h.id ? "#f5c842" : "#888",
+              borderRadius: 14,
+              fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.05em",
+              cursor: "pointer",
+            }}
+          >
+            {h.emoji} {h.name.toUpperCase()}
+          </button>
+        ))}
       </div>
 
       <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
@@ -959,4 +1036,50 @@ function PackagingStep({ name, slug, onCommit, onCancel }) {
       </div>
     </div>
   );
+}
+
+// Cheap name-based hub inference. Maps obvious shape/product names to
+// the bundled hub they belong under so the PackagingStep can pre-
+// suggest a parent without making the user pick from 13 options.
+// Conservative — when none match, returns null and the user can
+// still pick manually or leave it ungrouped.
+function inferHubFromName(rawName) {
+  const n = String(rawName || "").toLowerCase();
+  if (!n) return null;
+  // Pasta shapes — long tail. Most are user-encountered specialty
+  // brands (gemelli, fusilli, rigatoni). Includes the literal
+  // "pasta" / "noodle" hint for catch-all SKUs.
+  const PASTA_HINTS = [
+    "pasta", "noodle", "spaghetti", "linguine", "fettuccine", "penne",
+    "rigatoni", "ziti", "macaroni", "fusilli", "rotini", "gemelli",
+    "cavatappi", "orecchiette", "bucatini", "cavatelli", "campanelle",
+    "conchiglie", "farfalle", "lasagna", "tortellini", "ravioli",
+    "gnocchi", "ramen", "udon", "soba", "rice noodle",
+  ];
+  if (PASTA_HINTS.some(h => n.includes(h))) return "pasta_hub";
+  // Beans + legumes
+  if (/\b(beans?|chickpeas?|lentils?|garbanzo|cannellini|kidney|pinto|black beans?|navy beans?)\b/.test(n)) return "bean_hub";
+  // Rice family
+  if (/\b(rice|jasmine|basmati|arborio|risotto)\b/.test(n)) return "rice_hub";
+  // Bread family
+  if (/\b(bread|loaf|baguette|ciabatta|sourdough|pita|focaccia)\b/.test(n)) return "bread_hub";
+  // Cheese family — broad; specific cheeses (cheddar, mozz) are bundled.
+  if (/\b(cheese|cheddar|mozzarella|parmesan|pecorino|gruy|brie|gouda|feta|comte|emmental|burrata)\b/.test(n)) return "cheese_hub";
+  // Chicken
+  if (/\b(chicken|hen|capon|cornish)\b/.test(n)) return "chicken_hub";
+  // Beef
+  if (/\b(beef|steak|brisket|chuck|sirloin|ribeye|filet|ground beef|hamburger)\b/.test(n)) return "beef_hub";
+  // Pork
+  if (/\b(pork|bacon|ham|sausage|prosciutto|guanciale|pancetta|chorizo|salami|spam)\b/.test(n)) return "pork_hub";
+  // Turkey
+  if (/\b(turkey)\b/.test(n)) return "turkey_hub";
+  // Seafood
+  if (/\b(fish|salmon|tuna|cod|halibut|shrimp|scallop|crab|lobster|sardine|anchov)\b/.test(n)) return "seafood_hub";
+  // Milk
+  if (/\b(milk|buttermilk|cream)\b/.test(n)) return "milk_hub";
+  // Yogurt
+  if (/\b(yogurt|yoghurt|greek)\b/.test(n)) return "yogurt_hub";
+  // Flour
+  if (/\b(flour|meal|semolina)\b/.test(n)) return "flour_hub";
+  return null;
 }
