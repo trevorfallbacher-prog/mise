@@ -5014,7 +5014,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 return (
                   <button
                     key={t.id}
-                    onClick={() => setStorageTab(t.id)}
+                    // Toggle behavior — tapping the ACTIVE tab closes
+                    // it (null state). Makes the "no tab selected"
+                    // landing reachable after exploring, not just on
+                    // first load.
+                    onClick={() => setStorageTab(active ? null : t.id)}
+                    aria-pressed={active}
+                    title={active ? `Close ${t.label}` : `Open ${t.label}`}
                     style={{
                       flex: 1,
                       padding: "10px 8px",
@@ -5039,6 +5045,20 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               })}
             </div>
           </div>
+          )}
+
+          {/* Empty state — no search, no tab selected. Not a silent
+              blank space; cue the user that a location tab is needed
+              to see their stocked items (search is the other
+              navigator, right above). */}
+          {!trimmedSearch && !storageTab && !drilledTile && (
+            <div style={{ padding:"28px 24px 12px", textAlign:"center" }}>
+              <div style={{ fontSize: 30, opacity: 0.6, marginBottom: 6 }}>🧊 🥫 ❄️</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", lineHeight:1.55 }}>
+                Tap a location above to see what's stocked — or search
+                across your whole kitchen up top.
+              </div>
+            </div>
           )}
 
           {/* Tile grid — any tab that has a tile set (fridge, pantry), no
