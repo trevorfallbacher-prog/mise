@@ -1837,29 +1837,20 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // display name, slots the canonical as the single component (so
   // the save path records it as a tagged ingredient with a valid
   // ingredient_id), and inherits the emoji + category + default unit.
-  // Amount stays whatever the user had typed — they still need to
-  // enter count even when the identity is resolved.
-  const fillFromCanonical = (ing) => {
+  // Routing cascade fired when a canonical is picked — sets
+  // category and, if the user hasn't already made explicit choices,
+  // stored-in and tile. Keeping this separate from fillFromCanonical
+  // means the LinkIngredient picker (where the user is confirming
+  // identity only, not overwriting their custom name / unit / blend
+  // composition) can still cascade to routing without touching
+  // identity fields.
+  const cascadeFromCanonical = (ing) => {
     if (!ing) return;
-    setCustomName(ing.name || "");
     const category = ing.category || "pantry";
     setCustomCategory(category);
-    if (ing.defaultUnit) setCustomUnit(ing.defaultUnit);
-    setCustomComponents([{ id: ing.id, canonical: ing }]);
-
-    // Cascade: category → location → tile. Only fills when the user
-    // hasn't already made an explicit pick — we never clobber a
-    // conscious choice (e.g., "I know penne is pantry category but
-    // this box lives in the freezer"). Each step gates on the
-    // previous so picking a canonical propagates as far as the
-    // classifier knows, then stops.
     setCustomLocation(prev => {
       if (prev) return prev;
       const loc = defaultLocationForCategory(category);
-      // Derive the tile id from the classifier that matches the
-      // chosen location. We do this inside the setter so the loc
-      // var is in scope for the tile cascade below without an
-      // extra state read race.
       setCustomTileId(prevTile => {
         if (prevTile) return prevTile;
         const classify = loc === "fridge"  ? fridgeTileIdForItem
@@ -1875,6 +1866,22 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       });
       return loc;
     });
+  };
+
+  // Amount stays whatever the user had typed — they still need to
+  // enter count even when the identity is resolved.
+  const fillFromCanonical = (ing) => {
+    if (!ing) return;
+    setCustomName(ing.name || "");
+    if (ing.defaultUnit) setCustomUnit(ing.defaultUnit);
+    setCustomComponents([{ id: ing.id, canonical: ing }]);
+    // Cascade: category → location → tile. Only fills when the user
+    // hasn't already made an explicit pick — we never clobber a
+    // conscious choice (e.g., "I know penne is pantry category but
+    // this box lives in the freezer"). Each step gates on the
+    // previous so picking a canonical propagates as far as the
+    // classifier knows, then stops.
+    cascadeFromCanonical(ing);
   };
 
   const fillFromTemplate = (tpl) => {
@@ -3039,6 +3046,24 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
           const nextId = ids[0] || null;
           setCustomCanonicalId(nextId);
           setCustomCanonicalOpen(false);
+          // Routing cascade — picking a canonical like `mozzarella`
+          // implies a category (dairy) and a default stored-in tile
+          // (cheese / fridge). Mirrors what the TypePicker already
+          // does for category picks. User-created canonicals aren't
+          // in the registry (findIngredient returns null); for those
+          // we fall back to the hub declared via `extra.parentId`
+          // from the create flow — the hub's category + default tile
+          // then flow through the same classifier. No-op when we
+          // can't resolve either (rare; only when a user creates a
+          // canonical without picking a parent hub).
+          if (nextId) {
+            let canon = findIngredient(nextId);
+            if (!canon && extra?.parentId) {
+              const hub = findIngredient(extra.parentId);
+              if (hub) canon = { id: nextId, category: hub.category, parentId: hub.id };
+            }
+            if (canon) cascadeFromCanonical(canon);
+          }
           // Admin auto-approve on user-created slug.
           //
           // Old behavior (pre-v0.13): ALWAYS wrote a bare {_meta}
