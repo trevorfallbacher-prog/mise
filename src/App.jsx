@@ -445,6 +445,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             setPantry={setPantry}
             shoppingList={shoppingList}
             setShoppingList={setShoppingList}
+            familyIds={familyIds}
             view={pantryView}
             setView={setPantryView}
             deepLink={deepLink}

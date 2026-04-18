@@ -3239,7 +3239,7 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView, deepLink, onDeepLinkConsumed }) {
+export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed }) {
   const [scanning, setScanning] = useState(false);
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
@@ -5374,6 +5374,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           scanId={openReceiptId.scanId}
           pantry={pantry}
           userId={userId}
+          familyIds={familyIds}
           onOpenItem={(item) => setOpenItem(item)}
           onClose={() => setOpenReceiptId(null)}
         />
