@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
+import { Z } from "../lib/tokens";
 
 // ReceiptView — modal that opens when the user taps the provenance line
 // on an ItemCard. Renders one of two scan-artifact kinds:
@@ -356,7 +357,11 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
 
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "#000000dd", zIndex: 318,
+      // Z.picker (340) sits ABOVE Z.card (320) where ItemCard
+      // renders. Tapping a provenance link on an open ItemCard
+      // must pop ReceiptView on top — previously stuck behind at
+      // zIndex 318, forcing the user to close the ItemCard first.
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: Z.picker,
       display: "flex", alignItems: "flex-end",
       maxWidth: 480, margin: "0 auto",
     }}>
