@@ -20,28 +20,35 @@ export function defaultLocationForCategory(category) {
 // conditional spread in toDb skips the field entirely, so UPDATEs only
 // touch columns that exist server-side.
 function fromDb(row) {
-  // Multi-canonical tagging (migration 0033). `ingredient_ids` is the
-  // authoritative array; singular `ingredient_id` stays around as the
-  // "primary / display" tag and as a back-compat for pre-0033 rows.
-  // Read priority: the array if non-empty, else fall back to the
-  // single id wrapped in an array so the UI only ever deals with one
-  // shape. Empty array = truly un-tagged (free-text row).
-  const rawArr = Array.isArray(row.ingredient_ids) ? row.ingredient_ids.filter(Boolean) : null;
+  // Composition axis — renamed from ingredient_ids → components in
+  // migration 0056. During the rename window (pre- vs. post-migration
+  // clients), the DB row might still carry the old column; the
+  // coalesce below reads from either source. Empty array = no
+  // composition info (canonical_id alone carries identity).
+  const rawArr = Array.isArray(row.components)
+    ? row.components.filter(Boolean)
+    : (Array.isArray(row.ingredient_ids) ? row.ingredient_ids.filter(Boolean) : null);
   const singleId = row.ingredient_id || null;
-  const ingredientIds = rawArr && rawArr.length
+  const components = rawArr && rawArr.length
     ? rawArr
     : (singleId ? [singleId] : []);
-  const primaryId = ingredientIds[0] || null;
+  const primaryId = components[0] || null;
 
   const item = {
     id: row.id,
     // Legacy scalar — kept as the "primary" tag for components that
     // still read ingredientId directly (every existing call site).
     ingredientId: primaryId,
-    // New plural — source of truth for the recipe matcher + ItemCard
-    // tabbed deep-dive + dietary filter. Always an array (possibly
-    // empty), never null, so consumers can iterate without guards.
-    ingredientIds,
+    // Composition array (migration 0056: renamed from ingredient_ids).
+    // Source of truth for multi-ingredient items. Always an array
+    // (possibly empty), never null, so consumers can iterate without
+    // guards. `ingredientIds` kept as a deprecated alias below for
+    // the transition window.
+    components,
+    // Deprecated alias — kept so legacy readers don't break mid-ship.
+    // Scheduled for removal once every call site migrates to
+    // `components`. Behaves identically.
+    ingredientIds: components,
     name: row.name,
     emoji: row.emoji,
     amount: Number(row.amount),
@@ -117,23 +124,28 @@ function fromDb(row) {
 
 function toDb(item) {
   // Multi-canonical tagging. If the caller explicitly set ingredientIds
-  // (the new plural), that's the source of truth — send it to the
-  // ingredient_ids array AND mirror the first element into the
-  // legacy ingredient_id scalar so any lingering SQL / RLS that keys
-  // on the scalar still works.
+  // Composition write path (migration 0056: components is the new
+  // column; ingredient_ids stays as an alias until v0.14 drops it).
+  //
+  // Callers can set `components` (canonical, v0.13+) or
+  // `ingredientIds` (legacy alias). Either becomes the source of truth;
+  // mirror the first element into the `ingredient_id` scalar so any
+  // lingering SQL / RLS keyed on the scalar still resolves.
   //
   // If the caller only set ingredientId (singular), we do NOT synthesize
-  // an array on the wire — pre-0033 DBs don't have the ingredient_ids
-  // column and sending an unknown column 400s the whole UPDATE. Callers
-  // that want array semantics opt in explicitly by setting
-  // ingredientIds.
-  const hasArray = Array.isArray(item.ingredientIds);
-  const primaryId = hasArray && item.ingredientIds.length
-    ? (item.ingredientIds[0] || null)
+  // an array on the wire — pre-0033 DBs don't have the components /
+  // ingredient_ids column and sending an unknown column 400s the
+  // whole UPDATE. Callers that want array semantics opt in explicitly.
+  const arr = Array.isArray(item.components)
+    ? item.components
+    : (Array.isArray(item.ingredientIds) ? item.ingredientIds : null);
+  const hasArray = Array.isArray(arr);
+  const primaryId = hasArray && arr.length
+    ? (arr[0] || null)
     : (item.ingredientId || null);
   return {
     ingredient_id: primaryId,
-    ...(hasArray ? { ingredient_ids: item.ingredientIds.filter(Boolean) } : {}),
+    ...(hasArray ? { components: arr.filter(Boolean) } : {}),
     name: item.name,
     emoji: item.emoji,
     amount: item.amount,

@@ -4,7 +4,7 @@ import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, s
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
-import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { useIngredientInfo, slugifyIngredientName, isMeaningfullyEnriched } from "../lib/useIngredientInfo";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
 import { FRIDGE_TILES } from "../lib/fridgeTiles";
@@ -1042,11 +1042,27 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             // approve — look up by canonicalId OR the fallback slug
             // so items that pre-date the canonical-stamp fix still
             // read their enrichment.
-            const hasApprovedInfo = !!getDbInfo(slug);
+            // Four-state metadata machine (v0.13.0). Replaces the
+            // old binary approved/pending/none that treated every
+            // _meta-only stub as "fully approved" — which hid the
+            // enrichment button and made the row look complete
+            // despite carrying zero real data.
+            //
+            //   "enriched" — info has real fields beyond _meta, no stub flag
+            //   "pending"  — pending_ingredient_info row exists
+            //   "stub"     — info exists but is just _meta (or _meta.stub=true)
+            //   "none"     — no info row at all
+            //
+            // Both "stub" and "none" keep the EnrichmentButton visible
+            // so the user can fill in a ghost-approved canonical.
+            const dbInfo = getDbInfo(slug);
+            const hasReal = isMeaningfullyEnriched(dbInfo);
             const hasPending = !!getPendingInfo(slug);
-            const state = hasApprovedInfo
-              ? "approved"
-              : hasPending ? "pending" : "none";
+            const state = hasReal
+              ? "enriched"
+              : hasPending ? "pending"
+              : dbInfo ? "stub"
+              : "none";
             return (
               <div style={{
                 display: "flex", alignItems: "center", gap: 10,
@@ -1060,34 +1076,37 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: state === "approved" ? "#7ec87e"
+                    color: state === "enriched" ? "#7ec87e"
                          : state === "pending"  ? "#f5c842"
+                         : state === "stub"     ? "#f59e0b"
                          : "#888",
                     letterSpacing: "0.08em",
                   }}>
-                    {state === "approved" ? "ITEM METADATA ✓ APPROVED"
-                     : state === "pending" ? "ITEM METADATA ✨ PENDING"
-                     : "NO ITEM METADATA YET"}
+                    {state === "enriched" ? "METADATA ✓ ENRICHED"
+                     : state === "pending"  ? "METADATA ✨ PENDING"
+                     : state === "stub"     ? "METADATA · NEEDS ENRICHMENT"
+                     : "NO METADATA YET"}
                   </div>
                   <div style={{
                     fontFamily: "'DM Sans',sans-serif", fontSize: 11,
                     color: "#666", fontStyle: "italic", marginTop: 2,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
-                    {state === "approved"
+                    {state === "enriched"
                       ? `Enriched — locked in`
                       : state === "pending"
                         ? `Awaiting admin review`
-                        : `Enrich ${itemIdentityName}`}
+                        : state === "stub"
+                          ? `Stub only — fill in to enable packaging + grouping`
+                          : `Enrich ${itemIdentityName}`}
                   </div>
                 </div>
-                {/* Enrichment is a one-shot per canonical. Once the
-                    admin approves, the JSON is the source of truth
-                    forever — re-firing the AI burns credits and can
-                    regenerate worse output. Button hides on approved
-                    and on pending (pending already has a draft
-                    awaiting review; re-generating would clobber it). */}
-                {state === "none" && (
+                {/* Enrichment is a one-shot per canonical. We show the
+                    button when there's NO info yet ("none") AND when
+                    the row is a stub (exists but empty). Hide on
+                    "pending" (already drafted, avoid clobbering) and
+                    "enriched" (done; re-firing wastes credits). */}
+                {(state === "none" || state === "stub") && (
                   item.canonicalId ? (
                     <EnrichmentButton canonicalId={item.canonicalId} compact />
                   ) : (
@@ -1551,28 +1570,23 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             const createNew = () => {
               const slug = slugifyIngredientName(canonicalSearch);
               if (!slug) return;
-              commit({ canonicalId: slug });
-              // Admin auto-approve — skip the PENDING state entirely
-              // by upserting the ingredient_info stub the same way
-              // AdminPanel.approveCustom writes it. Non-admins fall
-              // through to the normal pending-review path.
-              if (isAdmin && !findIngredient(slug)) {
-                const stub = {
-                  _meta: {
-                    reviewed: true,
-                    reviewed_by: userId || null,
-                    reviewed_at: new Date().toISOString(),
-                    source: "admin_itemcard_create",
-                  },
-                };
-                supabase
-                  .from("ingredient_info")
-                  .upsert({ ingredient_id: slug, info: stub }, { onConflict: "ingredient_id" })
-                  .then(({ error }) => {
-                    if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
-                    else refreshDb?.();
-                  });
-              }
+              // Mirror canonical into components when empty (v0.13.0).
+              // See the search-picker button above for rationale.
+              const existing = Array.isArray(item.components)
+                ? item.components.filter(Boolean)
+                : [];
+              const patch = { canonicalId: slug };
+              if (existing.length === 0) patch.components = [slug];
+              commit(patch);
+              // v0.13.0: we used to write a bare {_meta} stub to
+              // ingredient_info here so admins didn't see PENDING on
+              // their own creations. That produced ghost-approved
+              // rows downstream — the enrichment button hid, package
+              // chips never rendered, hub grouping broke. No more
+              // stubs. The pantry row's canonical_id stamp alone is
+              // enough identity; the enrichment button stays visible
+              // so the user can opt into filling the canonical's
+              // info later.
               setCanonicalPickerOpen(false);
               setCanonicalSearch("");
             };
@@ -1650,7 +1664,22 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         <button
                           key={ing.id}
                           onClick={() => {
-                            commit({ canonicalId: ing.id });
+                            // Canonical-to-components mirror (v0.13.0).
+                            // When the row has no composition tagged
+                            // (the common "single-ingredient product"
+                            // case), stamp the canonical into
+                            // components too so the hub grouper +
+                            // recipe matcher can both read from
+                            // components without a second lookup.
+                            // Multi-ingredient rows (user explicitly
+                            // tagged) keep their existing composition
+                            // untouched.
+                            const existing = Array.isArray(item.components)
+                              ? item.components.filter(Boolean)
+                              : [];
+                            const patch = { canonicalId: ing.id };
+                            if (existing.length === 0) patch.components = [ing.id];
+                            commit(patch);
                             setCanonicalPickerOpen(false);
                             setCanonicalSearch("");
                           }}

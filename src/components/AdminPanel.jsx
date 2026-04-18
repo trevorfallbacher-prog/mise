@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS } from "../data/ingredients";
+import { INGREDIENTS, HUBS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
@@ -526,6 +526,7 @@ function CanonicalsList({ viewerId }) {
   const [usage, setUsage] = useState(null); // Map<canonical_id, count>
   const [approvedIds, setApprovedIds] = useState(null); // Set<slug>
   const [overrides, setOverrides] = useState(null); // Map<slug, display_name>
+  const [parentIds, setParentIds] = useState(null); // Map<slug, parentId>  — hub assignment from ingredient_info.info.parentId (v0.13.0)
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(null);    // canonical_id mid-op
@@ -559,14 +560,19 @@ function CanonicalsList({ viewerId }) {
       // Non-fatal — without approvedIds every custom row just reads as PENDING.
       setApprovedIds(new Set());
       setOverrides(new Map());
+      setParentIds(new Map());
     } else {
       setApprovedIds(new Set((infoRows || []).map(r => r.ingredient_id).filter(Boolean)));
       const om = new Map();
+      const pm = new Map();
       for (const r of (infoRows || [])) {
         const dn = r.info?.display_name;
         if (r.ingredient_id && dn && typeof dn === "string") om.set(r.ingredient_id, dn);
+        const pid = r.info?.parentId;
+        if (r.ingredient_id && pid && typeof pid === "string") pm.set(r.ingredient_id, pid);
       }
       setOverrides(om);
+      setParentIds(pm);
     }
   }
 
@@ -576,7 +582,7 @@ function CanonicalsList({ viewerId }) {
   // use but aren't in the registry (user-created slugs). Every row
   // carries source + status flags so the UI can gate actions.
   const rows = useMemo(() => {
-    if (!usage || !approvedIds || !overrides) return null;
+    if (!usage || !approvedIds || !overrides || !parentIds) return null;
     const seen = new Set();
     const bundled = INGREDIENTS.map(i => {
       seen.add(i.id);
@@ -591,6 +597,9 @@ function CanonicalsList({ viewerId }) {
         source: "bundled",
         count: usage.get(i.id) || 0,
         approved: true,
+        // Bundled canonicals carry parentId from the registry; the
+        // dbMap override only applies to user-created canonicals.
+        parentId: i.parentId || null,
       };
     });
     const custom = [];
@@ -604,6 +613,7 @@ function CanonicalsList({ viewerId }) {
         source: "custom",
         count,
         approved: approvedIds.has(id),
+        parentId: parentIds.get(id) || null,
       });
     }
     // Orphan approvals — ingredient_info rows for a slug that's not in
@@ -620,10 +630,53 @@ function CanonicalsList({ viewerId }) {
         source: "custom",
         count: 0,
         approved: true,
+        parentId: parentIds.get(id) || null,
       });
     }
     return [...custom, ...bundled];
-  }, [usage, approvedIds, overrides]);
+  }, [usage, approvedIds, overrides, parentIds]);
+
+  // Set (or clear) the parentId / hub assignment on a user-created
+  // canonical. Bundled canonicals get their parentId from the registry,
+  // not from admin writes, so this action is scoped to isCustom rows.
+  async function setParent(row, newParentId) {
+    if (row.source !== "custom") return;
+    setBusy(row.id);
+    try {
+      // Read-modify-write on the JSONB info field so we preserve
+      // anything else already there (packaging, description, etc.).
+      const { data: existing } = await supabase
+        .from("ingredient_info")
+        .select("info")
+        .eq("ingredient_id", row.id)
+        .maybeSingle();
+      const prev = existing?.info || {};
+      const next = { ...prev };
+      if (newParentId) next.parentId = newParentId;
+      else delete next.parentId;
+      // Stamp _meta so the row passes isMeaningfullyEnriched now
+      // that it has real data (parentId qualifies as meaningful).
+      next._meta = {
+        ...(prev._meta || {}),
+        reviewed: true,
+        reviewed_by: viewerId || null,
+        reviewed_at: new Date().toISOString(),
+        source: "admin_set_parent",
+        stub: false,
+      };
+      const { error: upErr } = await supabase
+        .from("ingredient_info")
+        .upsert({ ingredient_id: row.id, info: next }, { onConflict: "ingredient_id" });
+      if (upErr) throw upErr;
+      setVersion(v => v + 1);
+      refreshDb?.();
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Couldn't set parent: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function renameBundled(row) {
     // eslint-disable-next-line no-alert
@@ -888,6 +941,62 @@ function CanonicalsList({ viewerId }) {
                 >
                   {isBusy ? "…" : "REJECT"}
                 </button>
+              )}
+
+              {/* GROUP UNDER chip picker (v0.13.0) — lets admin assign
+                  any user-created canonical to one of the bundled
+                  HUBS so it wraps correctly in the Kitchen tile
+                  grouper. Writes to ingredient_info.info.parentId.
+                  Bundled canonicals get their parentId from the
+                  registry and can't be re-routed — so we hide the
+                  picker on bundled rows to avoid confusion. */}
+              {isCustom && (
+                <div style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 8,
+                    color: "#555", letterSpacing: "0.1em",
+                    marginRight: 2,
+                  }}>
+                    GROUP UNDER
+                  </span>
+                  <button
+                    onClick={() => setParent(r, null)}
+                    disabled={isBusy || !r.parentId}
+                    style={{
+                      padding: "3px 7px",
+                      background: !r.parentId ? "#1a1a1a" : "transparent",
+                      border: `1px solid ${!r.parentId ? "#3a3a3a" : "#242424"}`,
+                      color: !r.parentId ? "#aaa" : "#555",
+                      borderRadius: 10,
+                      fontFamily: "'DM Mono',monospace", fontSize: 8,
+                      letterSpacing: "0.05em", cursor: "pointer",
+                    }}
+                  >
+                    — NONE
+                  </button>
+                  {HUBS.map(hub => {
+                    const active = r.parentId === hub.id;
+                    return (
+                      <button
+                        key={hub.id}
+                        onClick={() => setParent(r, hub.id)}
+                        disabled={isBusy || active}
+                        style={{
+                          padding: "3px 7px",
+                          background: active ? "#1a1608" : "transparent",
+                          border: `1px solid ${active ? "#f5c842" : "#242424"}`,
+                          color: active ? "#f5c842" : "#888",
+                          borderRadius: 10,
+                          fontFamily: "'DM Mono',monospace", fontSize: 8,
+                          letterSpacing: "0.05em",
+                          cursor: active ? "default" : "pointer",
+                        }}
+                      >
+                        {hub.name.toUpperCase()}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
             </div>
           );

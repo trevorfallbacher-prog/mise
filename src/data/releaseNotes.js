@@ -42,9 +42,48 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.10";
+export const CURRENT_VERSION = "0.13.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.13.0",
+    date:    "2026-04-18",
+    title:   "Canonical-as-identity refactor — no more ghost approvals",
+    summary:
+      "Architecture cleanup. 'Ingredient' retired as a core domain " +
+      "concept in favor of CANONICAL (identity) + COMPONENTS " +
+      "(composition). Every pantry item now always carries a " +
+      "canonical_id, and linking a canonical mirrors into components " +
+      "when empty. Admin auto-approve no longer writes empty {_meta} " +
+      "stubs that looked 'approved' but blocked enrichment, packaging, " +
+      "and hub grouping. ItemCard's metadata badge gains a new STUB " +
+      "state that shows the enrichment button so you can complete " +
+      "partial records.",
+    shipped: [
+      { kind: "architecture",
+        text: "Migration 0056 renames pantry_items.ingredient_ids → components, backfills canonical_id on any row missing it, and flags legacy _meta-only ingredient_info rows as stubs.",
+        commits: [] },
+      { kind: "fix",
+        text: "Admin auto-approve no longer writes empty stubs. Creates without real data leave ingredient_info untouched; the enrichment button stays available so you can fill the canonical in on your own schedule.",
+        commits: [] },
+      { kind: "feature",
+        text: "ItemCard's metadata badge now has four states: NO METADATA YET, NEEDS ENRICHMENT (stub), PENDING REVIEW, ENRICHED. Enrichment button visible in the first two.",
+        commits: [] },
+      { kind: "feature",
+        text: "AdminPanel → CANONICALS gains a GROUP UNDER chip picker per user-created canonical. Tap a hub chip (Pasta, Beans, Rice, …) to assign the parentId so the Kitchen tile grouper wraps rows correctly.",
+        commits: [] },
+      { kind: "fix",
+        text: "Linking a canonical to a pantry row now also mirrors it into components when the row has no composition tagged — so the hub grouper and recipe matcher both see it.",
+        commits: [] },
+      { kind: "fix",
+        text: "Free-text items added without picking a canonical now get their name slugified and stamped as canonical_id on save. Every row has an identity; nothing falls through as null.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "v0.14: drop the legacy pantry_items.ingredient_id column + the ingredientIds deprecated alias in usePantry.",
+      "Global copy pass renaming 'ingredient' → 'component' in visible UI strings.",
+    ],
+  },
   {
     version: "0.12.10",
     date:    "2026-04-18",

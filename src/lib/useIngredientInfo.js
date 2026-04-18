@@ -2,6 +2,27 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { supabase } from "./supabase";
 import { seedIngredientInfoOnce } from "./seedIngredientInfo";
 
+// Does this `info` object carry actual enrichment, or is it a ghost
+// stub left by admin auto-approve? Migration 0056 flagged legacy
+// stubs with `_meta.stub = true`; current-version auto-approve paths
+// skip the upsert entirely when there's no real data to write. Either
+// way, an ingredient_info row should count as "approved + enriched"
+// ONLY when it has at least one top-level key beyond `_meta`.
+//
+// Used to drive:
+//   * ItemCard's four-state metadata badge (none / stub / pending / enriched)
+//   * EnrichmentButton visibility — button shows on both "none" and "stub"
+//   * Package chip row resolution — chips only read from non-stub rows
+//   * Hub grouping's parentId fallback — only trusts non-stub rows
+export function isMeaningfullyEnriched(info) {
+  if (!info || typeof info !== "object") return false;
+  if (info?._meta?.stub === true) return false;
+  for (const k of Object.keys(info)) {
+    if (k !== "_meta") return true;
+  }
+  return false;
+}
+
 // Ingredient-metadata context + provider.
 //
 // Lifts the ingredient_info fetch out of IngredientCard so tapping a pantry

@@ -53,7 +53,7 @@ import {
 } from "../lib/userTemplates";
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
-import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import FieldExplainer from "./FieldExplainer";
@@ -1997,12 +1997,24 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     // then name-match. We deliberately do NOT fall back to
     // canonicalIdForType(customTypeId) — the food category is a broad
     // classification (Pasta), not the item's specific identity
-    // (Cavatappi). Picking "Pasta" as the type doesn't mean this row
-    // IS the canonical pasta row; canonical stays null until the user
-    // explicitly picks one or the name matches a registry alias.
+    // Canonical invariant (v0.13.0): every row must land with a
+    // canonical_id. If the user didn't pick one and the name doesn't
+    // match a registry alias, slugify the display name so free-text
+    // items still get a stable identity. Without this, the hub
+    // grouper and recipe matcher both get an all-null row and the
+    // "loose pile" grows unbounded.
     const canonicalId = customCanonicalId
       || inferCanonicalFromName(customName.trim())
+      || slugifyIngredientName(customName.trim())
       || null;
+
+    // Mirror canonical into components when user hasn't tagged
+    // composition (single-ingredient case). Multi-ingredient rows
+    // with explicit composition already have compIds populated and
+    // skip this fallback.
+    const effectiveComponents = compIds.length > 0
+      ? compIds
+      : (canonicalId ? [canonicalId] : []);
 
     // Unified save shape. Single-canonical picks, multi-canonical
     // composed meals, and pure free-text all land in the same payload —
@@ -2010,14 +2022,15 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     // to meal, or the row stays free-text.
     const item = {
       id: crypto.randomUUID(),
-      // First picked component (if any) becomes the primary tag so the
-      // legacy ingredient_id scalar stays useful. Zero components = pure
-      // free-text.
-      ingredientId: primaryComp?.id || null,
-      // ingredientIds is the user's picked composition — what's
-      // INSIDE the item. Identity (hot_dog) lands on canonical_id
-      // below, not here.
-      ingredientIds: compIds,
+      // First component (if any) becomes the primary tag so the
+      // legacy ingredient_id scalar stays useful. Zero components =
+      // pure free-text with no canonical (rare after the invariant
+      // above — canonicalId is almost always set).
+      ingredientId: primaryComp?.id || effectiveComponents[0] || null,
+      // Composition array — v0.13.0 renamed the field to `components`
+      // at the DB level (migration 0056). usePantry.js's toDb still
+      // accepts either `components` or legacy `ingredientIds`.
+      components: effectiveComponents,
       canonicalId,
       // 2+ components promotes the item to a Meal on save; single or
       // zero stays an ingredient (either free-text or canonical-tagged).
@@ -3023,35 +3036,39 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
           const nextId = ids[0] || null;
           setCustomCanonicalId(nextId);
           setCustomCanonicalOpen(false);
-          // Admin auto-approve on user-created slug — skip PENDING.
-          // When the create flow's packaging step produced sizes
-          // (extra.packaging), fold them into the stub so the live
-          // ingredient_info row has packaging on first write. Without
-          // this, the pending_ingredient_info row that LinkIngredient
-          // also wrote would sit stale while the admin stub claimed
-          // the canonical id with no packaging.
+          // Admin auto-approve on user-created slug.
+          //
+          // Old behavior (pre-v0.13): ALWAYS wrote a bare {_meta}
+          // stub to ingredient_info so the canonical id was "claimed."
+          // Side effect was a ghost-approved row — badge read
+          // "ENRICHED" but no data lived there, the enrichment
+          // button hid, package chips silently never rendered.
+          //
+          // New behavior: only upsert when the create flow produced
+          // real data (packaging or parentId via the PackagingStep).
+          // Empty creations leave ingredient_info untouched. The
+          // canonical_id on the pantry row is enough for identity;
+          // enrichment button stays available for the user to opt
+          // in later. No more ghost rows.
           if (isAdmin && nextId && !findIngredient(nextId)) {
-            const info = {
-              _meta: {
+            const payload = {};
+            if (extra?.packaging) payload.packaging = extra.packaging;
+            if (extra?.parentId)  payload.parentId  = extra.parentId;
+            if (Object.keys(payload).length > 0) {
+              payload._meta = {
                 reviewed: true,
                 reviewed_by: userId || null,
                 reviewed_at: new Date().toISOString(),
                 source: "admin_additem_create",
-              },
-              ...(extra?.packaging ? { packaging: extra.packaging } : {}),
-              // parentId pointer to one of the bundled HUBS so the
-              // Kitchen tile grouper can wrap this canonical's pantry
-              // rows under that hub. Set during canonical-create via
-              // the WRAPS UNDER GROUP picker in PackagingStep.
-              ...(extra?.parentId ? { parentId: extra.parentId } : {}),
-            };
-            supabase
-              .from("ingredient_info")
-              .upsert({ ingredient_id: nextId, info }, { onConflict: "ingredient_id" })
-              .then(({ error }) => {
-                if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
-                else refreshDb?.();
-              });
+              };
+              supabase
+                .from("ingredient_info")
+                .upsert({ ingredient_id: nextId, info: payload }, { onConflict: "ingredient_id" })
+                .then(({ error }) => {
+                  if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
+                  else refreshDb?.();
+                });
+            }
           }
         }}
         onClose={() => setCustomCanonicalOpen(false)}
@@ -3443,32 +3460,25 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     const loose = [];
 
     for (const item of visibleItems) {
-      // Hub lookup falls back across both identity axes: try the
-      // INGREDIENTS-axis ingredientId first (which is what the
-      // registry's parentId/hub relationship targets in the pasta /
-      // bean / rice hubs), then the CANONICAL-axis canonicalId. A row
-      // like "Organic Cavatappi Pasta" with canonical_id='cavatappi'
-      // and ingredient_ids=[] used to fall into the loose pile
-      // because ingredientId was null — but the user clearly
-      // identified it as cavatappi, so we should group it under
-      // Pasta with its siblings.
+      // Single-source hub lookup (v0.13.0). canonical_id is now the
+      // authoritative identity axis — migration 0056 guarantees every
+      // row carries one. Two paths to the hub:
       //
-      // Third fallback: dbMap[canonicalId]?.parentId. User-created
-      // canonicals (gemelli, my_special_pasta, etc.) aren't in the
-      // bundled INGREDIENTS library so findIngredient returns null
-      // even via canonicalId. The PackagingStep's PARENT GROUP picker
-      // stores parentId in ingredient_info.info.parentId — read it
-      // here so user-created canonicals also wrap into their hub.
-      let ing = findIngredient(item.ingredientId)
-             || findIngredient(item.canonicalId);
-      let hub = hubForIngredient(ing);
-      if (!hub) {
-        const customParentId = item.canonicalId
-          ? kitchenDbMap?.[item.canonicalId]?.parentId
-          : null;
-        if (customParentId) {
-          hub = findHub(customParentId);
-        }
+      //   1. Bundled canonical (spaghetti, penne, cavatappi) →
+      //      findIngredient(canonical_id) returns a registry object
+      //      with parentId baked in.
+      //   2. User-created canonical (gemelli, my_special_pasta) →
+      //      findIngredient returns null, but dbMap may have
+      //      ingredient_info.info.parentId set by the PackagingStep
+      //      PARENT GROUP picker or AdminPanel's GROUP UNDER chip.
+      //
+      // If both lookups miss, the item lands in the loose pile — no
+      // synthetic group is invented. The ingredient_id path from
+      // migration 0033 has been retired.
+      let hub = hubForIngredient(findIngredient(item.canonicalId));
+      if (!hub && item.canonicalId) {
+        const customParentId = kitchenDbMap?.[item.canonicalId]?.parentId;
+        if (customParentId) hub = findHub(customParentId);
       }
       if (hub) {
         if (!groups.has(hub.id)) groups.set(hub.id, { hub, items: [] });
