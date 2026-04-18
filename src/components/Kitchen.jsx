@@ -4915,6 +4915,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           receiptId={openReceiptId.receiptId}
           scanId={openReceiptId.scanId}
           pantry={pantry}
+          userId={userId}
           onOpenItem={(item) => setOpenItem(item)}
           onClose={() => setOpenReceiptId(null)}
         />

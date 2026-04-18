@@ -22,7 +22,7 @@ import { findIngredient, unitLabel } from "../data/ingredients";
 //   pantry               — full pantry array (for filtering related items)
 //   onClose()            — dismiss
 //   onOpenItem(item)     — open a specific pantry row in ItemCard
-export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, onOpenItem }) {
+export default function ReceiptView({ receiptId, scanId, pantry = [], userId, onClose, onOpenItem }) {
   const [receipt, setReceipt] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,6 +32,13 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
   const [editingField, setEditingField] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // Per-snapshot-row restore state. Keyed by snapshot index so the
+  // button on row N can show "…" while the others stay tappable.
+  // `restoredIds` tracks which snapshot rows we've already re-
+  // inserted this session so re-clicks stay idempotent until the
+  // realtime event rehydrates the `_live` field.
+  const [restoring, setRestoring] = useState(new Set());
+  const [restoreError, setRestoreError] = useState(null);
   // Inline "arm then confirm" pattern for destructive delete — swap
   // out window.confirm so the delete flow stays inside the sheet
   // with the actual receipt context visible, rather than ripping the
@@ -102,6 +109,74 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
     } catch (e) {
       setDeleting(false);
       alert(`Couldn't delete: ${e.message || e}`);
+    }
+  };
+
+  // Re-insert a "consumed" snapshot row back into pantry_items. The
+  // scan_items JSONB (migration 0050) preserved the full row shape at
+  // scan-confirm time, so we can rebuild the pantry row verbatim with
+  // a fresh id and the original source_* artifact pointer so provenance
+  // survives the round-trip. Used when pantry rows vanish unexpectedly
+  // (see the diff-based persistDiff race in useSyncedList.js — if
+  // anything ever removes a row locally without going through a cook
+  // or the ✕ button, the DB DELETE follows automatically).
+  const restoreSnapshotRow = async (snapshotIdx, snapshot) => {
+    if (!userId || !snapshot) return;
+    setRestoring(prev => new Set(prev).add(snapshotIdx));
+    setRestoreError(null);
+    try {
+      const fkCol = kind === "pantry_scan" ? "source_scan_id" : "source_receipt_id";
+      const newId = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const amt = typeof snapshot.amount === "number" ? snapshot.amount : 1;
+      const row = {
+        id: newId,
+        user_id: userId,
+        name: snapshot.name || snapshot.rawText || "restored item",
+        emoji: snapshot.emoji || "🥫",
+        amount: amt,
+        unit: snapshot.unit || "count",
+        max: Math.max(amt * 2, 1),
+        low_threshold: Math.max(amt * 0.25, 0.25),
+        category: snapshot.category || "pantry",
+        price_cents: snapshot.priceCents ?? null,
+        location: snapshot.location || "pantry",
+        purchased_at: new Date().toISOString(),
+        // Source provenance — pointer back to THIS artifact so the row
+        // shows up under its "Items from this scan" list on next open.
+        source_kind: kind === "pantry_scan" ? "pantry_scan" : "receipt",
+        [fkCol]: artifactId,
+        // Identity/composition — carry forward everything the snapshot
+        // knew so merge heuristics don't re-collide with other rows.
+        ...(snapshot.ingredientId ? { ingredient_id: snapshot.ingredientId } : {}),
+        ...(Array.isArray(snapshot.ingredientIds) && snapshot.ingredientIds.length
+          ? { ingredient_ids: snapshot.ingredientIds } : {}),
+        ...(snapshot.canonicalId ? { canonical_id: snapshot.canonicalId } : {}),
+        ...(snapshot.state ? { state: snapshot.state } : {}),
+        ...(snapshot.typeId ? { type_id: snapshot.typeId } : {}),
+        ...(snapshot.tileId ? { tile_id: snapshot.tileId } : {}),
+      };
+      const { error } = await supabase.from("pantry_items").insert(row);
+      if (error) throw error;
+    } catch (e) {
+      setRestoreError(e.message || String(e));
+    } finally {
+      setRestoring(prev => {
+        const next = new Set(prev);
+        next.delete(snapshotIdx);
+        return next;
+      });
+    }
+  };
+
+  // Bulk-restore everything currently flagged consumed. Sequential
+  // rather than parallel because pantry_items has a uniqueness story
+  // around ingredient_id that we don't want to race into a 409.
+  const restoreAllMissing = async (missingList) => {
+    for (const { idx, snapshot } of missingList) {
+      // eslint-disable-next-line no-await-in-loop
+      await restoreSnapshotRow(idx, snapshot);
     }
   };
 
@@ -193,6 +268,10 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
         id: live?.id || `snapshot-${artifactId}-${i}`,
         _live: live,
         _fromSnapshot: true,
+        // Stable index into the snapshot array. Used by the RESTORE
+        // action so per-row busy state survives re-renders even when
+        // the row has no live pantry counterpart to borrow an id from.
+        _snapshotIdx: i,
       };
     });
   }, [pantry, artifactId, kind, receipt]);
@@ -381,9 +460,48 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
         )}
 
         {/* Items that came from this receipt */}
-        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.12em", marginBottom: 8 }}>
-          ITEMS FROM THIS SCAN ({relatedItems.length})
-        </div>
+        {(() => {
+          // Collect the indices of snapshot rows that have no live
+          // counterpart — those are the "consumed" (actually
+          // disappeared) items we offer to restore in bulk.
+          const missingList = relatedItems
+            .map((item, idx) => ({ item, idx }))
+            .filter(({ item }) => item._fromSnapshot && !item._live && !restoring.has(item._snapshotIdx ?? item.id))
+            .map(({ item }) => ({ idx: item._snapshotIdx ?? item.id, snapshot: item }));
+          const missingCount = missingList.length;
+          return (
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.12em" }}>
+                ITEMS FROM THIS SCAN ({relatedItems.length})
+              </div>
+              {missingCount > 0 && userId && (
+                <button
+                  onClick={() => restoreAllMissing(missingList)}
+                  style={{
+                    padding: "6px 10px",
+                    background: "#1a1608", border: "1px solid #3a2f10",
+                    color: "#f5c842", borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+                    letterSpacing: "0.08em", cursor: "pointer",
+                  }}
+                  title="Re-insert every missing item from this scan back into your pantry"
+                >
+                  ↺ RESTORE {missingCount}
+                </button>
+              )}
+            </div>
+          );
+        })()}
+        {restoreError && (
+          <div style={{
+            marginBottom:8, padding:"8px 10px",
+            background:"#2a1515", border:"1px solid #3a1e1e",
+            color:"#d77777", borderRadius:8,
+            fontFamily:"'DM Sans',sans-serif", fontSize:12,
+          }}>
+            {restoreError}
+          </div>
+        )}
         {relatedItems.length === 0 ? (
           <div style={{
             padding: "16px", textAlign: "center",
@@ -394,38 +512,43 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {relatedItems.map(item => {
+            {relatedItems.map((item, idx) => {
               const canon = findIngredient(item.ingredientId || item.canonicalId);
               const uLabel = canon ? unitLabel(canon, item.unit) : item.unit;
               // Snapshot rows carry _live when the pantry still has
               // a matching row; tapping opens that current row in
               // ItemCard. When _live is null the item's been
-              // consumed / removed — still shown (historical record
-              // of the receipt) but with a subtle "consumed" marker
-              // and the tap becomes a no-op.
+              // removed — we now offer a RESTORE button that
+              // re-inserts from the captured snapshot (see the
+              // ghost-delete writeup in the commit message for why
+              // this matters as a safety net).
               const fromSnapshot = item._fromSnapshot;
               const live = item._live || null;
+              const missing = fromSnapshot && !live;
               const tappable = !fromSnapshot || !!live;
+              const snapshotIdx = item._snapshotIdx ?? idx;
+              const isRestoring = restoring.has(snapshotIdx);
               return (
-                <button
+                <div
                   key={item.id}
                   onClick={() => {
+                    if (!tappable || missing) return;
                     if (fromSnapshot) {
                       if (live) onOpenItem?.(live);
                     } else {
                       onOpenItem?.(item);
                     }
                   }}
-                  disabled={!tappable}
+                  role={tappable ? "button" : undefined}
                   style={{
                     display: "flex", alignItems: "center", gap: 10,
                     padding: "10px 12px",
                     background: tappable ? "#141414" : "#0f0f0f",
                     border: `1px solid ${tappable ? "#242424" : "#1a1a1a"}`,
                     borderRadius: 10,
-                    cursor: tappable ? "pointer" : "default",
+                    cursor: tappable && !missing ? "pointer" : "default",
                     textAlign: "left",
-                    opacity: tappable ? 1 : 0.55,
+                    opacity: tappable ? 1 : 0.85,
                   }}
                 >
                   <span style={{ fontSize: 20, flexShrink: 0 }}>{item.emoji || "🥫"}</span>
@@ -437,21 +560,42 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], onClose, o
                       {item.amount} {uLabel}
                       {item.priceCents != null ? ` · $${(item.priceCents / 100).toFixed(2)}` : ""}
                       {fromSnapshot && !live && (
-                        <span style={{ color: "#8a7f6e", marginLeft: 6, fontStyle: "italic" }}>· consumed</span>
+                        <span style={{ color: "#8a7f6e", marginLeft: 6, fontStyle: "italic" }}>· missing</span>
                       )}
                       {fromSnapshot && live && (
                         <span style={{ color: "#7ec87e", marginLeft: 6 }}>· still in kitchen</span>
                       )}
                     </div>
                   </div>
-                  <span style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 10,
-                    color: tappable ? "#7eb8d4" : "#3a3a3a",
-                    letterSpacing: "0.08em",
-                  }}>
-                    {tappable ? "→" : "·"}
-                  </span>
-                </button>
+                  {missing && userId ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        restoreSnapshotRow(snapshotIdx, item);
+                      }}
+                      disabled={isRestoring}
+                      style={{
+                        padding:"6px 10px",
+                        background: isRestoring ? "#1a1608" : "transparent",
+                        border: "1px solid #3a2f10",
+                        color:"#f5c842", borderRadius:8,
+                        fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700,
+                        letterSpacing:"0.08em",
+                        cursor: isRestoring ? "wait" : "pointer",
+                      }}
+                    >
+                      {isRestoring ? "…" : "↺ RESTORE"}
+                    </button>
+                  ) : (
+                    <span style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: tappable ? "#7eb8d4" : "#3a3a3a",
+                      letterSpacing: "0.08em",
+                    }}>
+                      {tappable ? "→" : "·"}
+                    </span>
+                  )}
+                </div>
               );
             })}
           </div>
