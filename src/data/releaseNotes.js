@@ -42,9 +42,35 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.12.8";
+export const CURRENT_VERSION = "0.12.9";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.12.9",
+    date:    "2026-04-18",
+    title:   "Hub grouping + packaging chips on edit",
+    summary:
+      "Two fixes that unblock the pasta-shelf workflow. First: " +
+      "pantry rows tagged only via CANONICAL (identity) now group " +
+      "under their hub (Pasta, Beans, Rice) alongside rows tagged " +
+      "via INGREDIENTS. Before, a Cavatappi Pasta with just a " +
+      "canonical tag sat loose; now it wraps under Pasta with its " +
+      "siblings. Second: the PACKAGE SIZE chip row now also appears " +
+      "when you edit an existing item's quantity — not just when " +
+      "adding a new item.",
+    shipped: [
+      { kind: "fix",
+        text: "Kitchen hub grouping falls back to canonicalId when ingredientId isn't set — identity-only rows now group correctly under their hub.",
+        commits: [] },
+      { kind: "feature",
+        text: "PACKAGE SIZE chip row available in ItemCard's quantity editor — tap a typical size to set amount + unit in one step.",
+        commits: [] },
+    ],
+    coming_soon: [
+      "PACKAGE SIZE on admin-pending canonicals (currently only surfaces once admin approves the row).",
+      "Scan-merge reserve bump — 3 identical SKUs → one row, reserve_count +2.",
+    ],
+  },
   {
     version: "0.12.8",
     date:    "2026-04-18",

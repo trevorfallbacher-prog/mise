@@ -3433,7 +3433,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     const loose = [];
 
     for (const item of visibleItems) {
-      const ing = findIngredient(item.ingredientId);
+      // Hub lookup falls back across both identity axes: try the
+      // INGREDIENTS-axis ingredientId first (which is what the
+      // registry's parentId/hub relationship targets in the pasta /
+      // bean / rice hubs), then the CANONICAL-axis canonicalId. A row
+      // like "Organic Cavatappi Pasta" with canonical_id='cavatappi'
+      // and ingredient_ids=[] used to fall into the loose pile
+      // because ingredientId was null — but the user clearly
+      // identified it as cavatappi, so we should group it under
+      // Pasta with its siblings. This preserves the current behavior
+      // for ingredient_ids-tagged rows (the fallback never fires
+      // when ingredientId already yields a hub).
+      const ing = findIngredient(item.ingredientId)
+               || findIngredient(item.canonicalId);
       const hub = hubForIngredient(ing);
       if (hub) {
         if (!groups.has(hub.id)) groups.set(hub.id, { hub, items: [] });

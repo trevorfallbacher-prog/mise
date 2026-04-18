@@ -799,6 +799,43 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       setEditingField(null);
                     }}
                   >
+                    {/* Packaging chip row for edit-mode — same typical
+                        sizes that show up in AddItemModal, now available
+                        when you're modifying an existing row's quantity.
+                        Tap sets both amount AND unit; falls back silently
+                        when the canonical has no packaging data. */}
+                    {(() => {
+                      const canonSlug = item.canonicalId || item.ingredientId;
+                      const pkg = canonSlug ? getDbInfo(canonSlug)?.packaging : null;
+                      const sizes = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
+                      if (sizes.length === 0) return null;
+                      return (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          {sizes.map((s, i) => {
+                            const active = String(s.amount) === String(item.amount) && (s.unit || "") === (item.unit || "");
+                            return (
+                              <button
+                                key={`${s.amount}-${s.unit}-${i}`}
+                                onClick={() => commit({ amount: Number(s.amount), unit: s.unit || item.unit, max: Math.max(Number(s.amount) * 2, 1) })}
+                                style={{
+                                  padding: "4px 10px",
+                                  background: active ? "#1a1608" : "transparent",
+                                  border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                                  color: active ? "#f5c842" : "#aaa",
+                                  borderRadius: 14,
+                                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                                  letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
+                                }}
+                              >
+                                {s.amount} {s.unit}
+                                {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <input
                         type="number" inputMode="decimal" min="0" step="any"
