@@ -827,7 +827,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                             return (
                               <button
                                 key={`${s.amount}-${s.unit}-${i}`}
-                                onClick={() => commit({ amount: Number(s.amount), unit: s.unit || item.unit, max: Math.max(Number(s.amount) * 2, 1) })}
+                                onClick={() => commit({ amount: Number(s.amount), unit: s.unit || item.unit, max: Math.max(Number(s.amount), 1) })}
                                 style={{
                                   padding: "4px 10px",
                                   background: active ? "#1a1608" : "transparent",

@@ -2039,7 +2039,11 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       emoji: primaryComp?.canonical?.emoji || "🥫",
       amount: amt,
       unit: customUnit.trim(),
-      max: Math.max(amt * 2, 1),
+      // `max` = the container's full size. At creation we mirror
+      // `amount` so the slider reads 100% (full container), dropping
+      // as the user consumes. Future: derive from the canonical's
+      // packaging catalog when available.
+      max: Math.max(amt, 1),
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
       // User's STORED IN (tile) placement — seeded from tileContext
@@ -3974,7 +3978,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             emoji: s.emoji,
             amount: s.amount,
             unit: s.unit,
-            max: Math.max(s.amount * 2, 1),
+            // Start full — the package bought IS the full container.
+            max: Math.max(s.amount, 1),
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: scanPriceCents,
@@ -4135,7 +4140,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         emoji: sItem.emoji || "🥫",
         amount: sItem.amount,
         unit: sItem.unit,
-        max: Math.max(sItem.amount * 2, 1),
+        // Start full — container size == what the user just bought.
+        max: Math.max(sItem.amount, 1),
         category: sItem.category || "pantry",
         lowThreshold: Math.max(sItem.amount * 0.25, 0.25),
       }];
