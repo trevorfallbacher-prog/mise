@@ -942,9 +942,31 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               const freshId = (typeof crypto !== "undefined" && crypto.randomUUID)
                 ? crypto.randomUUID()
                 : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              // Display-name fallback chain, most-informative → least.
+              // The old code dropped straight to "Barcode 8500…" when
+              // OFF returned a product with no name AND the resolver
+              // found no canonical, which happens more than expected.
+              // Now we walk an intermediate ladder before giving up:
+              //   1. productName (OFF's product_name / generic_name)
+              //   2. resolved canonical name (ramen, nori, etc.)
+              //   3. first OFF categoryHint, title-cased ("Tortilla
+              //      Chips" from "en:tortilla-chips") — captures
+              //      SOMETHING meaningful even when we don't resolve
+              //      to a canonical in our registry
+              //   4. brand + "item" ("Ocean's Halo item") — at least
+               //     the user sees the brand they just scanned
+              //   5. absolute last: "Barcode NNNNN" so the row isn't
+              //      nameless
+              const firstHintPretty = (res.categoryHints && res.categoryHints[0])
+                ? res.categoryHints[0].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+                : null;
               const row = {
                 id:            freshId,
-                name:          res.productName || canon?.name || `Barcode ${barcode}`,
+                name:          res.productName
+                               || canon?.name
+                               || firstHintPretty
+                               || (effectiveBrand ? `${effectiveBrand} item` : null)
+                               || `Barcode ${barcode}`,
                 emoji:         canon?.emoji || "🥫",
                 brand:         effectiveBrand || null,
                 category:      canon?.category || "pantry",
