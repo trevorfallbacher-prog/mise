@@ -223,7 +223,7 @@ const SCAN_EMOJI_OPTIONS = [
 ];
 
 // ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
-function Scanner({ userId, onItemsScanned, onClose }) {
+function Scanner({ userId, shoppingList = [], onItemsScanned, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
   // Barcode mode — skips the Claude-vision upload path and uses
@@ -5994,7 +5994,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     );
   };
 
-  if (scanning) return <Scanner userId={userId} onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
+  if (scanning) return <Scanner userId={userId} shoppingList={shoppingList} onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
