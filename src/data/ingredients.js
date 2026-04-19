@@ -1801,6 +1801,22 @@ export const INGREDIENTS = [
     estCentsPerBase: 0.7, // ~$4 for a 15oz Kikkoman
   },
   {
+    // Nori — dried edible seaweed sheets used for sushi rolls and as
+    // a finishing garnish. Most common mapping from OFF taxonomy tag
+    // `sushi-nori` / `seaweed-sheets` / `dried-seaweed`. Product lines
+    // commonly blend in flavor variants (wasabi, sea-salt, smoked) —
+    // those ride on pantry_items.attributes.flavor rather than forking
+    // the canonical.
+    id: "nori", name: "Nori", shortName: "Nori", emoji: "🍙", category: "pantry",
+    units: [
+      { id: "pack",  label: "packs",  toBase: 1 },        // full package (10-sheet standard)
+      { id: "sheet", label: "sheets", toBase: 0.1 },      // individual sheet, 1/10 of a standard pack
+      { id: "g",     label: "g",      toBase: 0.02 },     // ~50g per 10-sheet pack, ~5g per sheet
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 300, // ~$3 for a 10-sheet pack
+  },
+  {
     // Compound ingredient — bottled sriracha is one product, homemade is
     // another with the same id. Links to the "sriracha" scratch recipe
     // via skillDev.fromScratchRecipeId (Phase 1 of the compound work).

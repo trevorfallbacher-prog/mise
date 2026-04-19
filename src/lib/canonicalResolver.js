@@ -205,8 +205,38 @@ export function resolveCanonicalFromScan({
     }
   }
 
-  // No tier produced a match. Caller renders picker with productName
-  // as a search hint instead.
+  // No confident tier produced a match. Before giving up, surface the
+  // single best low-confidence candidate so the UI can render "We
+  // THINK it might be X — tap to confirm or pick something else"
+  // rather than silently showing nothing. Confidence "low" — the card
+  // styles this more tentatively than high/medium.
+  const weakCandidates = [];
+  for (const tag of (categoryHints || [])) {
+    const phrase = tagToPhrase(tag);
+    if (!phrase) continue;
+    const hit = bestMatchAboveFloor(phrase, 30);   // very permissive floor
+    if (hit) weakCandidates.push({ hit, reason: `tag:${tag}`, matchedOn: phrase });
+  }
+  const cleaned = cleanProductName(productName, brand);
+  if (cleaned) {
+    const hit = bestMatchAboveFloor(cleaned, 30);
+    if (hit) weakCandidates.push({ hit, reason: "name-cleaned", matchedOn: cleaned });
+  }
+  if (weakCandidates.length > 0) {
+    weakCandidates.sort((a, b) => b.hit.score - a.hit.score);
+    const best = weakCandidates[0];
+    return {
+      canonical:  best.hit.ingredient,
+      confidence: "low",
+      reason:     best.reason,
+      matchedOn:  best.matchedOn,
+      score:      best.hit.score,
+    };
+  }
+
+  // Nothing at all — registry has zero signal for this product. Caller
+  // renders a "no registry match" state with productName as a search
+  // seed for the manual canonical picker.
   return null;
 }
 
