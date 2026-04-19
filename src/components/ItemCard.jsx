@@ -546,43 +546,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 ) : null}
 
                 {/* CANONICAL / fallback segment. When canonical is
-                    set, tap opens the LinkIngredient picker; the
-                    small ✕ next to it unlinks (commits canonicalId:
-                    null) without needing to open the picker. When
-                    no canonical, fall back to the user-typed
+                    set, tap opens the LinkIngredient picker, which
+                    carries its own CLEAR CANONICAL button for
+                    unlinks (LinkIngredient.jsx:731) — no inline ✕
+                    needed in the header. Matches the brand segment's
+                    pattern: tap to edit, clear inside the editor.
+                    When no canonical, fall back to the user-typed
                     item.name with tap-to-rename (legacy path for
                     free-text rows). */}
                 {currentCanonical ? (
-                  <>
-                    <span
-                      onClick={() => !readOnly && setCanonicalPickerOpen(true)}
-                      style={{
-                        cursor: readOnly ? "default" : "pointer",
-                      }}
-                      title={readOnly ? undefined : "Tap to change canonical"}
-                    >
-                      {currentCanonical.name}
-                    </span>
-                    {!readOnly && (
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          commit({ canonicalId: null });
-                        }}
-                        aria-label="Unlink canonical"
-                        title="Unlink canonical"
-                        style={{
-                          background: "transparent", border: "none",
-                          color: "#6a5a5a", cursor: "pointer",
-                          fontFamily: "'DM Mono',monospace", fontSize: 14,
-                          padding: "0 4px", lineHeight: 1,
-                          alignSelf: "center",
-                        }}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </>
+                  <span
+                    onClick={() => !readOnly && setCanonicalPickerOpen(true)}
+                    style={{
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                    title={readOnly ? undefined : "Tap to change or clear canonical"}
+                  >
+                    {currentCanonical.name}
+                  </span>
                 ) : editingField === "name" ? (
                   <input
                     type="text"
