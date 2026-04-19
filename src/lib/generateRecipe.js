@@ -57,22 +57,43 @@ export async function generateRecipe({
   });
 
   if (error) {
-    // supabase-js wraps non-2xx responses. Try to pull the underlying
-    // { error, detail } JSON so the caller can surface something useful.
+    // supabase-js v2 wraps the upstream Response in error.context.
+    // Reading the body is async (it's a ReadableStream) so the old
+    // sync parse missed it and we surfaced Supabase's generic
+    // "Edge Function returned a non-2xx status code" instead of the
+    // actual detail from the edge function's error payload.
     let detail = "";
-    if (error.context?.body) {
+    const ctx = error.context;
+    if (ctx && typeof ctx.text === "function") {
       try {
-        const parsed = typeof error.context.body === "string"
-          ? JSON.parse(error.context.body)
-          : error.context.body;
+        const text = await ctx.text();
+        if (text) {
+          try {
+            const parsed = JSON.parse(text);
+            detail = parsed?.detail || parsed?.error || text;
+          } catch {
+            detail = text;
+          }
+        }
+      } catch {
+        // stream already consumed or not readable — fall through
+      }
+    } else if (ctx?.body) {
+      // Older shape: body is a string / object directly on context.
+      try {
+        const parsed = typeof ctx.body === "string" ? JSON.parse(ctx.body) : ctx.body;
         detail = parsed?.detail || parsed?.error || "";
       } catch {
-        // ignore — fall through to the generic message
+        // ignore
       }
     }
     const msg = detail
-      ? `Recipe draft failed: ${detail}`
+      ? `Recipe draft failed: ${String(detail).slice(0, 400)}`
       : `Recipe draft failed: ${error.message || "unknown error"}`;
+    // Log the full detail so it's accessible in devtools even when
+    // the UI truncates it.
+    // eslint-disable-next-line no-console
+    console.error("[generate-recipe] edge fn failure", { error, detail });
     throw new Error(msg);
   }
 

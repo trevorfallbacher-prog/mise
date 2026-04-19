@@ -451,8 +451,19 @@ export default function AIRecipe({
           <div style={{ marginTop: 14, fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4" }}>
             Draft hiccup
           </div>
-          <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888", lineHeight: 1.5 }}>
+          <div style={{
+            marginTop: 8, marginLeft: "auto", marginRight: "auto", maxWidth: 440,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888",
+            lineHeight: 1.5, wordBreak: "break-word", textAlign: "left",
+            padding: "10px 12px", background: "#0f0f0f",
+            border: "1px solid #242424", borderRadius: 10,
+            maxHeight: 180, overflowY: "auto",
+            whiteSpace: "pre-wrap",
+          }}>
             {errMsg || "Something went sideways."}
+          </div>
+          <div style={{ marginTop: 10, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.06em" }}>
+            Full detail also in devtools console.
           </div>
           <div style={{ marginTop: 20, display: "flex", gap: 10, justifyContent: "center" }}>
             <button onClick={() => setPhase("setup")} style={primaryBtn}>TRY AGAIN</button>
