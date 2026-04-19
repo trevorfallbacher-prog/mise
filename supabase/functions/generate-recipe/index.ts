@@ -230,7 +230,9 @@ function assemblePromptHeader(
         ? "a supporting side dish — smaller scale, meant to sit alongside a main; do NOT draft a full entrée"
         : c === "dessert"
           ? "a sweet dessert — do NOT draft a savory main or appetizer"
-          : "";
+          : c === "appetizer"
+            ? "a small opening bite — served before the main, meant to whet the appetite; 1-2 oz portions, finger-food or small-plate scale; do NOT draft a full entrée or a dessert"
+            : "";
     hardConstraintLines.push(
       `- COURSE = ${c.toUpperCase()}. The dish MUST function as ${roleDesc}.`,
     );
@@ -309,7 +311,7 @@ exact shape:
   "emoji":        "🍝",
   "cuisine":     "italian" | "french" | "mexican" | "american" | "japanese" | "thai" | "indian" | "chinese" | "mediterranean" | "other",
   "mealTiming":  "breakfast" | "lunch" | "dinner" | null,
-  "course":      "main" | "side" | "dessert" | null,
+  "course":      "main" | "side" | "dessert" | "appetizer" | null,
   "serves":      <integer 1..12>,
   "estimatedTime": { "prep": <minutes>, "cook": <minutes> },
   "ideal": [
@@ -402,6 +404,8 @@ exact shape. Every field is REQUIRED unless marked optional.
   "emoji":      "🍝",
   "cuisine":    "italian" | "french" | "mexican" | "american" | "japanese" | "thai" | "indian" | "chinese" | "mediterranean" | "other",
   "category":   "pasta" | "eggs" | "lunch" | "soup" | "salad" | "chicken" | "beef" | "pork" | "fish" | "vegetarian" | "dessert" | "sauce" | "snack" | "other",
+  "mealTiming": "breakfast" | "lunch" | "dinner" | null,
+  "course":     "main" | "side" | "dessert" | "appetizer" | null,
   "difficulty": <integer 1..10; 1-3 easy, 4-6 medium, 7-10 advanced>,
   "routes":     ["plan"],                               // always ["plan"] for generated recipes
   "time":       { "prep": <minutes>, "cook": <minutes> },
@@ -745,8 +749,8 @@ Deno.serve(async (req) => {
       subtitle:    recipe.subtitle   ?? null,
       emoji:       recipe.emoji      || "🍽️",
       cuisine:     recipe.cuisine    || "other",
-      mealTiming:  recipe.mealTiming ?? null,
-      course:      recipe.course     ?? null,
+      mealTiming:  normalizeMealTiming(recipe.mealTiming),
+      course:      normalizeCourse(recipe.course),
       serves:      clampInt(recipe.serves, 1, 12, 2),
       estimatedTime: recipe.estimatedTime || recipe.time || { prep: 10, cook: 20 },
       ideal:       Array.isArray(recipe.ideal)  ? recipe.ideal  : [],
@@ -779,6 +783,13 @@ Deno.serve(async (req) => {
     emoji:      recipe.emoji      || "🍽️",
     cuisine:    recipe.cuisine    || "other",
     category:   recipe.category   || "other",
+    // Preserve meal-composition tags the user picked (breakfast vs
+    // dinner, main vs side vs dessert vs appetizer). Claude returns
+    // them in its JSON; without this passthrough they were getting
+    // dropped during normalization, stripping the filter/grouping
+    // signal from every saved recipe.
+    mealTiming: normalizeMealTiming(recipe.mealTiming),
+    course:     normalizeCourse(recipe.course),
     difficulty: clampInt(recipe.difficulty, 1, 10, 3),
     routes:     Array.isArray(recipe.routes) && recipe.routes.length ? recipe.routes : ["plan"],
     time:       recipe.time       || { prep: 10, cook: 20 },
@@ -814,6 +825,18 @@ function clampInt(v: unknown, lo: number, hi: number, fallback: number): number 
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+// Whitelist the meal-composition enum values so a chatty model that
+// invents "brunch" or "starter" doesn't poison the saved recipe with a
+// value the UI can't render. Returns null for anything unrecognized.
+const MEAL_TIMING_VALUES = new Set(["breakfast", "lunch", "dinner"]);
+const COURSE_VALUES      = new Set(["main", "side", "dessert", "appetizer"]);
+function normalizeMealTiming(v: unknown): string | null {
+  return typeof v === "string" && MEAL_TIMING_VALUES.has(v) ? v : null;
+}
+function normalizeCourse(v: unknown): string | null {
+  return typeof v === "string" && COURSE_VALUES.has(v) ? v : null;
 }
 
 // Ensure every step carries the fields CookMode reads without

@@ -57,10 +57,11 @@ const MEAL_TIMING_CHIPS = [
 // on their own track. Same dish title can read very differently
 // depending on which of these Claude is aiming for.
 const COURSE_CHIPS = [
-  { id: "any",     label: "Any course" },
-  { id: "main",    label: "Main" },
-  { id: "side",    label: "Side" },
-  { id: "dessert", label: "Dessert" },
+  { id: "any",       label: "Any course" },
+  { id: "main",      label: "Main" },
+  { id: "side",      label: "Side" },
+  { id: "dessert",   label: "Dessert" },
+  { id: "appetizer", label: "Appetizer" },
 ];
 
 // Canonical ids that count as "protein" for the STAR INGREDIENTS
@@ -1139,6 +1140,18 @@ export default function AIRecipe({
             <div style={{ marginTop: 6, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
               {(recipe.cuisine || "").toUpperCase()} · {totalTimeMin(recipe)} MIN · {difficultyLabel(recipe.difficulty).toUpperCase()} · SERVES {recipe.serves}
             </div>
+            {/* Meal-composition tags — course (main/side/...) and meal
+                timing (breakfast/lunch/...) render as small neutral pills
+                below the cuisine line. Only surface when Claude stamped
+                them; a recipe with null tags (old drafts pre-Phase-1)
+                skips this row entirely. Neutral styling (no color)
+                keeps clear of the reserved color axes in CLAUDE.md. */}
+            {(recipe.course || recipe.mealTiming) && (
+              <div style={{ marginTop: 8, display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+                {recipe.course     && <MetaPill label={recipe.course} />}
+                {recipe.mealTiming && <MetaPill label={recipe.mealTiming} />}
+              </div>
+            )}
           </div>
 
           {recipe.aiRationale && (
@@ -1447,6 +1460,25 @@ function Section({ label, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+// Small neutral pill for meal-composition tags (course, mealTiming) on
+// recipe cards and previews. Neutral styling sidesteps the reserved
+// color axes in CLAUDE.md (tan/orange/blue/purple/yellow). Exported
+// via file-local usage; CreateMenu imports its own copy for the
+// PICK A RECIPE row.
+function MetaPill({ label }) {
+  return (
+    <span style={{
+      fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+      color: "#aaa", background: "#1a1a1a",
+      border: "1px solid #2a2a2a",
+      padding: "2px 7px", borderRadius: 6,
+      letterSpacing: "0.1em", textTransform: "uppercase",
+    }}>
+      {label}
+    </span>
   );
 }
 

@@ -595,9 +595,31 @@ function RecipeRow({ recipe, tag, tagColor, onClick }) {
         <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.05em", marginTop: 2 }}>
           {(recipe.cuisine || "").toUpperCase()} · {totalTimeMin(recipe)} MIN · {difficultyLabel(recipe.difficulty).toUpperCase()}
         </div>
+        {(recipe.course || recipe.mealTiming) && (
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 4 }}>
+            {recipe.course     && <MetaPill label={recipe.course} />}
+            {recipe.mealTiming && <MetaPill label={recipe.mealTiming} />}
+          </div>
+        )}
       </div>
       <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
     </button>
+  );
+}
+
+// Mirror of AIRecipe.MetaPill. Neutral styling keeps clear of the
+// reserved color axes in CLAUDE.md while still reading as metadata.
+function MetaPill({ label }) {
+  return (
+    <span style={{
+      fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+      color: "#aaa", background: "#1a1a1a",
+      border: "1px solid #2a2a2a",
+      padding: "2px 7px", borderRadius: 6,
+      letterSpacing: "0.1em", textTransform: "uppercase",
+    }}>
+      {label}
+    </span>
   );
 }
 

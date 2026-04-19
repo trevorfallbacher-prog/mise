@@ -26,6 +26,26 @@ const CATEGORY_OPTIONS = [
   "snack", "other",
 ];
 
+// Meal-composition tags — orthogonal to category. `category` describes
+// WHAT the recipe is ("pasta", "soup"); these describe its ROLE on the
+// plate ("main", "side") and WHEN it's eaten ("breakfast", "dinner").
+// Same enums as AIRecipe's COURSE_CHIPS / MEAL_TIMING_CHIPS and the
+// generate-recipe edge function so a recipe saved from either path
+// filters identically in the library.
+const COURSE_OPTIONS = [
+  { id: "any",       label: "— any —"  },
+  { id: "main",      label: "main"      },
+  { id: "side",      label: "side"      },
+  { id: "dessert",   label: "dessert"   },
+  { id: "appetizer", label: "appetizer" },
+];
+const MEAL_TIMING_OPTIONS = [
+  { id: "any",       label: "— any —"   },
+  { id: "breakfast", label: "breakfast" },
+  { id: "lunch",     label: "lunch"     },
+  { id: "dinner",    label: "dinner"    },
+];
+
 const EMOJI_SUGGESTIONS = [
   "🍝", "🍲", "🥗", "🍳", "🥞", "🍔", "🌮", "🥘", "🍱",
   "🥟", "🍛", "🍜", "🍣", "🍕", "🥪", "🍰", "🥐", "🍖", "🍗",
@@ -51,6 +71,8 @@ export default function CustomRecipeBuilder({
   const [emoji,      setEmoji]      = useState("🍽️");
   const [cuisine,    setCuisine]    = useState("other");
   const [category,   setCategory]   = useState("other");
+  const [course,     setCourse]     = useState("any");   // main/side/dessert/appetizer
+  const [mealTiming, setMealTiming] = useState("any");   // breakfast/lunch/dinner
   const [difficulty, setDifficulty] = useState(3);  // 1..10
 
   // Timing
@@ -149,6 +171,8 @@ export default function CustomRecipeBuilder({
       emoji:      emoji || "🍽️",
       cuisine,
       category,
+      course:     course === "any" ? null : course,
+      mealTiming: mealTiming === "any" ? null : mealTiming,
       difficulty: clamp(difficulty, 1, 10),
       routes:     ["plan"],
       time:       { prep: Number(prep) || 0, cook: Number(cook) || 0 },
@@ -232,6 +256,18 @@ export default function CustomRecipeBuilder({
             <Field label="CATEGORY">
               <select value={category} onChange={e => setCategory(e.target.value)} style={inputStyle}>
                 {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+          </Row>
+          <Row>
+            <Field label="COURSE">
+              <select value={course} onChange={e => setCourse(e.target.value)} style={inputStyle}>
+                {COURSE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+              </select>
+            </Field>
+            <Field label="MEAL TIMING">
+              <select value={mealTiming} onChange={e => setMealTiming(e.target.value)} style={inputStyle}>
+                {MEAL_TIMING_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
             </Field>
           </Row>
