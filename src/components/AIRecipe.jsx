@@ -704,6 +704,53 @@ export default function AIRecipe({
       return entries;
     })();
 
+    // When an ideal slot has no pantry match in the SKETCH, scan
+    // the user's actual pantry for anything that could fill it.
+    // The AI occasionally overlooks obvious pairings (saw this on
+    // "Pasta (penne or rigatoni)" with penne sitting right there in
+    // pantry). Three tiers, in order: same canonical id → same
+    // food category → name substring. Dedupes by canonical so a
+    // 50-can tuna stack contributes one candidate, not fifty.
+    const findRawPantryCandidates = (ideal) => {
+      const idealSlug = ideal.ingredientId || resolveNameToCanonicalId(ideal.name);
+      const idealCanon = idealSlug ? findIngredient(idealSlug) : null;
+      const idealCategory = idealCanon?.category || null;
+      // Items already locked into the recipe (pantry-matched,
+      // swapped-in, or user-added) shouldn't appear as candidates
+      // for OTHER missing slots.
+      const usedIds = new Set();
+      sketch.pantry.forEach((row, i) => {
+        if (pantryEdits.removes.has(i)) return;
+        if (row.pantryItemId) usedIds.add(row.pantryItemId);
+        const swapped = pantryEdits.swaps[i];
+        if (swapped) usedIds.add(swapped);
+      });
+      pantryEdits.adds.forEach(a => { if (a.pantryItemId) usedIds.add(a.pantryItemId); });
+
+      const seenCanon = new Set();
+      const exact = [];
+      const byCategory = [];
+      const byName = [];
+      for (const row of pantry) {
+        if (usedIds.has(row.id)) continue;
+        const canonKey = row.ingredientId || row.canonicalId || null;
+        if (canonKey && seenCanon.has(canonKey)) continue;
+        const rowCanon = row.ingredientId ? findIngredient(row.ingredientId) : null;
+        const rowCategory = rowCanon?.category || null;
+        if (idealSlug && row.ingredientId === idealSlug) {
+          if (canonKey) seenCanon.add(canonKey);
+          exact.push(row);
+        } else if (idealCategory && rowCategory === idealCategory) {
+          if (canonKey) seenCanon.add(canonKey);
+          byCategory.push(row);
+        } else if (namesMatch(row.name, ideal.name)) {
+          if (canonKey) seenCanon.add(canonKey);
+          byName.push(row);
+        }
+      }
+      return [...exact, ...byCategory, ...byName].slice(0, 6);
+    };
+
     const lockedCount = buildLockedIngredients().length;
 
     return (
@@ -768,11 +815,18 @@ export default function AIRecipe({
                   );
                 }
 
-                // MISSING — classical ingredient with no pantry match.
-                // Render as a shoppable row; user can + SHOP to promote.
+                // MISSING — classical ingredient with no pantry match
+                // IN THE SKETCH. Before offering + SHOP, scan the
+                // raw user pantry for candidates the AI overlooked
+                // (same canonical, same category, or name-fuzzy
+                // match). If any exist, present them as tap-to-use
+                // chips so the user recovers Claude's oversights
+                // without bouncing through the + ADD FROM PANTRY
+                // picker.
                 if (entry.kind === "missing") {
                   const ideal = sketch.ideal[entry.idealIdx];
                   const promoted = pantryEdits.shopping.has(entry.idealIdx);
+                  const rawCandidates = findRawPantryCandidates(ideal);
                   return (
                     <div key={`miss-${idx}`} style={{
                       padding: "10px 12px",
@@ -785,8 +839,12 @@ export default function AIRecipe({
                           <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: promoted ? "#7ec87e" : "#aaa" }}>
                             {ideal.name} · <span style={{ color: "#888", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{ideal.amount}</span>
                           </div>
-                          <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: promoted ? "#7ec87e" : "#f59e0b", letterSpacing: "0.06em" }}>
-                            {promoted ? "✓ ON SHOPPING LIST" : "✗ NOT IN PANTRY"}
+                          <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: promoted ? "#7ec87e" : (rawCandidates.length > 0 ? "#7eb8d4" : "#f59e0b"), letterSpacing: "0.06em" }}>
+                            {promoted
+                              ? "✓ ON SHOPPING LIST"
+                              : rawCandidates.length > 0
+                                ? `⚡ YOU HAVE ${rawCandidates.length} MATCH${rawCandidates.length === 1 ? "" : "ES"} IN PANTRY`
+                                : "✗ NOT IN PANTRY"}
                             {ideal.role && !promoted ? ` · ${String(ideal.role).toUpperCase()}` : ""}
                           </div>
                         </div>
@@ -794,6 +852,32 @@ export default function AIRecipe({
                           {promoted ? "✓ ON LIST" : "+ SHOP"}
                         </button>
                       </div>
+                      {rawCandidates.length > 0 && !promoted && (
+                        <div style={{
+                          marginTop: 10, paddingTop: 10,
+                          borderTop: "1px dashed #2a2a2a",
+                          display: "flex", flexDirection: "column", gap: 6,
+                        }}>
+                          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.08em" }}>
+                            THE AI MISSED THESE — TAP TO USE:
+                          </div>
+                          {rawCandidates.map(c => (
+                            <button
+                              key={c.id}
+                              onClick={() => addPantryRow(c)}
+                              style={swapOptionBtn}
+                            >
+                              <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                              <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                                {c.name}
+                              </span>
+                              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                                {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 }
