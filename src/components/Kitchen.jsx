@@ -2769,76 +2769,80 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               );
             })()}
 
-            {/* PACKAGE + STACKING moved BELOW the quantity grid into
-                their own standalone sections — they used to live
-                buried inside the QUANTITY tile (FULL PKG + × instance
-                stepper) which made package feel like a subfield of
-                quantity. They're orthogonal: QUANTITY = how much I'm
-                adding; PACKAGE = how big the container is; STACKING =
-                how many containers I'm adding. */}
-
-            {/* Quantity + Location + Expires — 3-column grid mirroring
-                ItemCard's inline edit row. Location (fridge/pantry/freezer)
-                replaces the old 6-chip food-category row; that field was
-                the ingredient classification, which now lives in the
-                FOOD CATEGORY tap line above. */}
+            {/* 3-col grid — PACKAGE SIZE | LOCATION | EXPIRES.
+                Mirrors ItemCard exactly. PACKAGE SIZE is the compact
+                setup control (set once, rarely changes). QUANTITY
+                is the big slider-driven section below (changes
+                constantly as the user eats through the package). */}
             {(() => {
-              // Gate flag for the QUANTITY tile. Until the user has
-              // declared PACKAGE SIZE, there's no denominator for
-              // "how much is left" — disable the input rather than
-              // let the user type a number that can't be contextualized.
               const gridPkgN   = parseFloat(packageSize);
               const gridHasPkg = Number.isFinite(gridPkgN) && gridPkgN > 0;
               return (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 18 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
+                  {/* PACKAGE SIZE tile — stacked input + unit input
+                      so the number has room in the narrow column. */}
                   <div style={{
                     padding: "10px 12px",
-                    background: gridHasPkg ? "#0f0f0f" : "#0a0a0a",
+                    background: "#0f0f0f",
                     border: "1px solid #1e1e1e",
                     borderRadius: 10,
-                    opacity: gridHasPkg ? 1 : 0.55,
                   }}>
-                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
-                    {gridHasPkg ? (
-                      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          value={amount}
-                          onChange={e => setAmount(e.target.value)}
-                          placeholder="0"
-                          style={{
-                            width: "100%",
-                            background: "transparent", border: "none", outline: "none",
-                            fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4",
-                            padding: 0, minWidth: 0,
-                          }}
-                        />
-                        {/* Unit is STATIC here — it's declared in the
-                            PACKAGE section below and inherited into
-                            QUANTITY as a read-only label. Package
-                            defines the measurement, quantity just
-                            reports how much of it remains. */}
-                        <span style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 12,
-                          color: "#aaa", flexShrink: 0, paddingLeft: 4,
-                        }}>
-                          {customUnit || "—"}
-                        </span>
-                      </div>
-                    ) : (
-                      <div style={{
-                        marginTop: 4,
-                        fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-                        color: "#666", fontStyle: "italic",
-                      }}>
-                        set PACKAGE SIZE below first
-                      </div>
-                    )}
-
-                    {/* FULL PKG input + instance stepper moved OUT of
-                        QUANTITY into the standalone PACKAGE + STACKING
-                        sections below the grid. */}
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>
+                      PACKAGE SIZE
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0" step="any"
+                        value={packageSize}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setPackageSize(v);
+                          // Auto-fill QUANTITY to match a freshly
+                          // declared package — sealed at 100%. Only
+                          // fires when amount is empty or was equal
+                          // to the old packageSize (sealed carry-
+                          // over). Mid-package values stay put.
+                          const n = parseFloat(v);
+                          if (!Number.isFinite(n) || n <= 0) return;
+                          const amtN = parseFloat(amount);
+                          const prevN = parseFloat(packageSize);
+                          const wasSealed = Number.isFinite(amtN) && Number.isFinite(prevN) && amtN === prevN;
+                          if (amount === "" || !Number.isFinite(amtN) || wasSealed) {
+                            setAmount(String(n));
+                          }
+                        }}
+                        placeholder="tap to set"
+                        style={{
+                          width: "100%",
+                          padding: "5px 8px",
+                          background: "#0a0a0a",
+                          border: `1px solid ${gridHasPkg ? "#f5c842" : "#2a2a2a"}`,
+                          color: gridHasPkg ? "#f5c842" : "#888",
+                          borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 14,
+                          fontWeight: 500,
+                          outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <input
+                        value={customUnit}
+                        onChange={e => setCustomUnit(e.target.value)}
+                        placeholder="unit"
+                        style={{
+                          width: "100%",
+                          padding: "4px 8px",
+                          background: "#0a0a0a",
+                          border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
+                          color: customUnit ? "#f5c842" : "#888",
+                          borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
                   </div>
 
               <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
@@ -2908,133 +2912,127 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 bubbles up separately from generic-penne aggregates.
                 Free-text PACKAGE SIZE input accepts any value the
                 user types. */}
+            {/* QUANTITY — big slider-driven section. Swapped into
+                where the old PACKAGE SIZE big block lived (mirroring
+                the ItemCard swap). PACKAGE SIZE is now the compact
+                setup tile in the grid above; QUANTITY gets the
+                prominent slider + input + status + chips. */}
             {(() => {
-              const sizes     = popularPackages.rows || [];
-              const pkgN      = parseFloat(packageSize);
-              const hasPkg    = Number.isFinite(pkgN) && pkgN > 0;
-              const amtN      = parseFloat(amount);
-              const hasAmt    = Number.isFinite(amtN) && amtN >= 0;
-              const pct       = (hasPkg && hasAmt)
-                ? Math.round(Math.min(1, amtN / pkgN) * 100)
-                : null;
+              const sizes       = popularPackages.rows || [];
+              const pkgN        = parseFloat(packageSize);
+              const hasPkg      = Number.isFinite(pkgN) && pkgN > 0;
+              const amtN        = parseFloat(amount);
+              const hasAmt      = Number.isFinite(amtN) && amtN >= 0;
+              const maxVal      = hasPkg ? pkgN : 0;
+              const ratio       = hasPkg && hasAmt ? Math.min(1, amtN / maxVal) : 0;
+              const sliderColor = ratio <= 0.25 ? "#ef4444" : ratio <= 0.5 ? "#f59e0b" : "#7ec87e";
+              const step        = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
+              const pct         = Math.round(ratio * 100);
+              const sealed      = hasPkg && hasAmt && amtN === maxVal;
+              const opened      = hasPkg && hasAmt && amtN > 0 && amtN < maxVal;
+              const overflowed  = hasPkg && hasAmt && amtN > maxVal;
               return (
                 <div style={{
-                  padding: "12px 14px", marginBottom: 14,
+                  padding: "14px 16px", marginBottom: 14,
                   background: "#0f0f0f", border: "1px solid #1e1e1e",
                   borderRadius: 10,
                 }}>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                  {/* Header: label + SEALED/OPENED badge + status */}
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                     <div style={{
                       fontFamily: "'DM Mono',monospace", fontSize: 10,
                       color: "#f5c842", letterSpacing: "0.08em",
                     }}>
-                      PACKAGE
+                      QUANTITY
                     </div>
+                    {sealed && (
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#7ec87e", letterSpacing: "0.08em",
+                      }}>
+                        ● SEALED
+                      </div>
+                    )}
+                    {opened && (
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#f59e0b", letterSpacing: "0.08em",
+                      }}>
+                        ◐ OPENED
+                      </div>
+                    )}
                     <div style={{
                       fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-                      color: "#888",
+                      color: overflowed ? "#ef4444" : "#888",
                     }}>
-                      {hasPkg
-                        ? (pct != null
-                            ? `${amtN} of ${pkgN} ${customUnit || ""} · ${pct}% full at save`
-                            : `full size: ${pkgN} ${customUnit || ""}`)
-                        : "optional — set a full package size and QUANTITY becomes % filled"}
+                      {!hasPkg
+                        ? "set PACKAGE SIZE above to enable the slider"
+                        : overflowed
+                          ? `${amtN} exceeds package (${maxVal}) — raise PACKAGE SIZE or lower QUANTITY`
+                          : sealed
+                            ? `${maxVal} ${customUnit || ""} · full`
+                            : `${amtN} of ${maxVal} left · ${pct}%`}
                     </div>
                   </div>
 
-                  {/* FULL PKG — free-text, user-settable, no canonical
-                      required. Drives the ItemCard slider + SEALED vs
-                      OPENED signal after save. */}
+                  {/* Primary input — big number + static unit */}
                   <div style={{
                     display: "flex", alignItems: "center", gap: 8,
-                    marginBottom: sizes.length > 0 ? 10 : 0,
-                    flexWrap: "wrap",
+                    padding: "10px 12px",
+                    background: "#0a0a0a",
+                    border: `1px solid ${sealed ? "#7ec87e55" : opened ? "#f59e0b55" : "#3a3a3a"}`,
+                    borderRadius: 8,
+                    marginBottom: hasPkg ? 10 : (sizes.length > 0 ? 10 : 0),
+                    opacity: hasPkg ? 1 : 0.55,
                   }}>
+                    <input
+                      type="number" inputMode="decimal" min="0" step="any"
+                      value={amount}
+                      onChange={e => setAmount(e.target.value)}
+                      placeholder={hasPkg ? "how much is left" : "set PACKAGE SIZE first"}
+                      disabled={!hasPkg}
+                      style={{
+                        flex: 1, minWidth: 0,
+                        background: "transparent", border: "none", outline: "none",
+                        color: "#f5c842",
+                        fontFamily: "'DM Mono',monospace",
+                        fontSize: 20, fontWeight: 500,
+                        padding: 0,
+                        cursor: hasPkg ? "text" : "not-allowed",
+                      }}
+                    />
                     <span style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 9,
-                      color: "#666", letterSpacing: "0.08em", flexShrink: 0,
+                      fontFamily: "'DM Mono',monospace", fontSize: 14,
+                      color: "#aaa", flexShrink: 0,
                     }}>
-                      FULL PKG
+                      {customUnit || "—"}
                     </span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0" step="any"
-                      value={packageSize}
-                      onChange={e => {
-                        const v = e.target.value;
-                        setPackageSize(v);
-                        // Setting PACKAGE SIZE auto-fills QUANTITY to
-                        // match — a freshly declared package starts
-                        // sealed at 100%. Only fires when amount is
-                        // empty OR was previously equal to packageSize
-                        // (sealed carry-over after resizing); if the
-                        // user has already set a specific amount that
-                        // differs, we leave it alone.
-                        const n = parseFloat(v);
-                        if (!Number.isFinite(n) || n <= 0) return;
-                        const amtN = parseFloat(amount);
-                        const prevN = parseFloat(packageSize);
-                        const wasSealed = Number.isFinite(amtN) && Number.isFinite(prevN) && amtN === prevN;
-                        if (amount === "" || !Number.isFinite(amtN) || wasSealed) {
-                          setAmount(String(n));
-                        }
-                      }}
-                      placeholder="set size"
-                      style={{
-                        width: 90, padding: "4px 8px",
-                        background: "#0a0a0a",
-                        border: `1px solid ${hasPkg ? "#f5c842" : "#2a2a2a"}`,
-                        color: hasPkg ? "#f5c842" : "#888",
-                        borderRadius: 6,
-                        fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
-                      }}
-                    />
-                    {/* UNIT input lives here, not in QUANTITY. Package
-                        size declares the measurement; QUANTITY inherits
-                        it as static text. Free-text so the user can type
-                        any unit (oz, lb, g, cup, bottle, etc.). */}
-                    <input
-                      value={customUnit}
-                      onChange={e => setCustomUnit(e.target.value)}
-                      placeholder="unit"
-                      style={{
-                        width: 70, padding: "4px 8px",
-                        background: "#0a0a0a",
-                        border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
-                        color: customUnit ? "#f5c842" : "#888",
-                        borderRadius: 6,
-                        fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
-                      }}
-                    />
-                    {hasPkg && (
-                      <button
-                        onClick={() => setPackageSize("")}
-                        style={{
-                          padding: "3px 8px",
-                          background: "transparent", border: "1px solid #2a2a2a",
-                          color: "#888", borderRadius: 4,
-                          fontFamily: "'DM Mono',monospace", fontSize: 9,
-                          letterSpacing: "0.06em", cursor: "pointer", marginLeft: "auto",
-                        }}
-                      >
-                        CLEAR
-                      </button>
-                    )}
                   </div>
 
-                  {/* Observation-learned suggestion chips. Sourced
-                      from the popular_package_sizes RPC, filtered on
-                      the current (brand, canonical) pair. Empty for
-                      a first-of-kind canonical — user types a size
-                      and future users inherit it automatically. */}
+                  {/* Slider — drag-to-estimate how much is left. Only
+                      renders when a package size is declared. */}
+                  {hasPkg && (
+                    <input
+                      type="range"
+                      min="0" max={maxVal} step={step}
+                      value={Number.isFinite(amtN) ? amtN : 0}
+                      onChange={e => setAmount(String(Number(e.target.value)))}
+                      aria-label="Estimate remaining"
+                      style={{ width: "100%", accentColor: sliderColor, marginBottom: sizes.length > 0 ? 10 : 0 }}
+                    />
+                  )}
+
+                  {/* OTHERS USE chips — tap fills PACKAGE SIZE + unit
+                      + QUANTITY together (fresh sealed package at
+                      100%). Source: popular_package_sizes RPC with
+                      Tier 3 AI fallback. */}
                   {sizes.length > 0 && (
                     <div>
                       <div style={{
                         fontFamily: "'DM Mono',monospace", fontSize: 9,
                         color: "#666", letterSpacing: "0.08em", marginBottom: 6,
                       }}>
-                        OTHERS USE
+                        OTHERS USE THIS SIZE
                       </div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {sizes.map((s, i) => {
@@ -3044,19 +3042,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                             <button
                               key={`${s.amount}-${s.unit}-${s.brand || "_"}-${i}`}
                               onClick={() => {
+                                // Chip tap = "open a fresh package of
+                                // this size." Fills PACKAGE SIZE + unit
+                                // and sets QUANTITY to match so the
+                                // row lands sealed at 100%.
                                 setPackageSize(String(s.amount));
                                 if (s.unit) setCustomUnit(s.unit);
-                                // Setting PACKAGE SIZE primes QUANTITY
-                                // to the same value — fresh sealed
-                                // package starts at 100%. Honors the
-                                // same "don't clobber mid-package"
-                                // rule as the free-text input below.
-                                const amtN = parseFloat(amount);
-                                const prevPkgN = parseFloat(packageSize);
-                                const wasSealed = Number.isFinite(amtN) && Number.isFinite(prevPkgN) && amtN === prevPkgN;
-                                if (amount === "" || !Number.isFinite(amtN) || wasSealed) {
-                                  setAmount(String(s.amount));
-                                }
+                                setAmount(String(s.amount));
                               }}
                               style={{
                                 padding: "4px 10px",
