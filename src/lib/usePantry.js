@@ -101,6 +101,10 @@ function fromDb(row) {
   // 'green_onion'). Identity, NOT composition — user-composed
   // ingredient_ids[] stays free-form.
   if (row.canonical_id       !== undefined) item.canonicalId       = row.canonical_id || null;
+  // brand (migration 0061) — manufacturer label parsed off the raw
+  // name by parseIdentity. Orthogonal to the six-row identity stack
+  // (CLAUDE.md); surfaced in UI parenthetically next to the name.
+  if (row.brand              !== undefined) item.brand             = row.brand || null;
   // protected (migration 0044) — sentimental / keepsake rows that
   // shouldn't be ✕-deletable. DB enforces via the delete policy;
   // this mapping just lets the UI know so it can hide the delete
@@ -175,6 +179,7 @@ function toDb(item) {
     ...(item.tileId            !== undefined ? { tile_id: item.tileId || null } : {}),
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
+    ...(item.brand             !== undefined ? { brand: item.brand || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
     // Packaging + reserves (migration 0054). Passthrough only when the
     // caller set them — older code paths that don't know about

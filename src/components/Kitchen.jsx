@@ -6,7 +6,7 @@ import {
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
   stateLabel, statesForIngredient, statesForItem, detectStateFromText,
-  inferCanonicalFromName, fuzzyMatchIngredient,
+  inferCanonicalFromName, fuzzyMatchIngredient, parseIdentity,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -464,11 +464,20 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         // flour→pantry), then fall back to a category default.
         const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
         const location = activeMode.location || regLocation || defaultLocationForCategory(cat);
+        // Three-layer parse: BRAND → STATE → CANONICAL. Pulls brand
+        // tokens off the rawText BEFORE state / canonical detection so
+        // "KERRYGOLD SHRD MOZZ" gets cleanly decomposed into brand
+        // Kerrygold + state shredded + mozzarella cheese instead of
+        // the brand tokens drowning out the downstream matches.
+        const parsed = parseIdentity(rawText);
         // State detection — grocery receipts abbreviate heavily ("SHRD
         // MOZZ", "SLCD PROV"), and the scan text is the only place we
         // can recover that information. Detect against rawText (the
         // actual receipt abbreviations), only apply when we have a
-        // trusted canonical.
+        // trusted canonical. parseIdentity's state layer is vocabulary-
+        // agnostic; re-run detectStateFromText here so the match is
+        // filtered against the canonical's state vocabulary (milk has
+        // no state vocab → WHL MILK's 'whole' is correctly dropped).
         const detectedState = canon
           ? detectStateFromText(rawText, canon)
           : null;
@@ -482,6 +491,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           confidence: rawConf || confidence,
           mode: activeMode.id,
           detected_state: detectedState || null,
+          detected_brand: parsed.brand || null,
           price_cents: typeof item.priceCents === "number" ? item.priceCents : null,
           amount_raw: item.amount != null ? String(item.amount) + (item.unit ? ` ${item.unit}` : "") : null,
           scanned_at: new Date().toISOString(),
@@ -509,6 +519,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           sourceKind,
           scanRaw,
           ...(detectedState ? { state: detectedState } : {}),
+          ...(parsed.brand ? { brand: parsed.brand } : {}),
         };
         if (!canon) {
           const inferred = inferUnitsForScanned(base);
@@ -1768,6 +1779,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Brand (migration 0061). Parsed opportunistically off the typed
+  // name via parseIdentity — "KERRYGOLD UNSALTED BUTTER" stamps
+  // brand="Kerrygold" without the user reaching for a picker. Stays
+  // sticky once set; a user who pastes over the name keeps their
+  // prior brand until they explicitly clear it (matches how
+  // customTypeId / customTileId behave).
+  const [customBrand, setCustomBrand] = useState(null);
   // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
   // packages the user has beyond the one they're treating as "open"
   // (the amount field). Stays zero for liquid-mode rows; >0 flips
@@ -2089,6 +2107,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       // undefined-as-unset.
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
+      ...(customBrand ? { brand: customBrand } : {}),
     };
 
     // Per-instance add: insert N independent rows sharing identity so
@@ -2295,7 +2314,21 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 </div>
               <input
                 value={customName}
-                onChange={e => setCustomName(e.target.value)}
+                onChange={e => {
+                  const next = e.target.value;
+                  setCustomName(next);
+                  // Opportunistic brand harvest (migration 0061).
+                  // parseIdentity peels BRAND off raw text — if the
+                  // user typed / pasted "KERRYGOLD UNSALTED BUTTER",
+                  // stamp Kerrygold without requiring a picker. Only
+                  // fills when the user hasn't already set a brand;
+                  // never clears a prior pick (matches how the
+                  // canonical + type fields stay sticky).
+                  if (!customBrand) {
+                    const parsed = parseIdentity(next);
+                    if (parsed.brand) setCustomBrand(parsed.brand);
+                  }
+                }}
                 placeholder="Add an item"
                 style={{
                   width: "100%",
@@ -4050,6 +4083,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
             ...(s.state      ? { state: s.state           } : {}),
             ...(s.scanRaw    ? { scanRaw: s.scanRaw       } : {}),
+            // Brand (migration 0061) — parseIdentity peeled this off
+            // the raw scan text during normalization. Conditional so
+            // un-branded rows stay undefined and hit toDb's skip path.
+            ...(s.brand      ? { brand: s.brand           } : {}),
             // Multi-canonical tag array (0033). The Scanner's LinkIngredient
             // picker emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element

@@ -5584,7 +5584,12 @@ export function stateLabel(state) {
 // overlap (e.g., "shredded_cooked" should NOT match "shredded" alone —
 // but the list below is for RAW codes on produce/cheese and doesn't
 // touch the cooked-meat vocabulary, so there's no collision today).
-const STATE_SCAN_CODES = [
+//
+// Exported so parseIdentity (and any other caller that wants the
+// same raw-text → state vocabulary) can reuse this table without
+// re-duplicating the patterns. Shape is stable: array of
+// { pattern: RegExp, state: stateId } entries, iterated top-down.
+export const STATE_ALIASES = [
   // dairy / cheese
   { pattern: /\bshrd\b|\bshred\b|\bshredded\b/i, state: "shredded" },
   { pattern: /\bslcd\b|\bsliced?\b/i,            state: "sliced"   },
@@ -5654,8 +5659,167 @@ export function detectStateFromText(text, ingredient) {
   const vocab = statesForIngredient(ingredient);
   if (!vocab || vocab.length === 0) return null;
   const vocabSet = new Set(vocab);
-  for (const { pattern, state } of STATE_SCAN_CODES) {
+  for (const { pattern, state } of STATE_ALIASES) {
     if (pattern.test(text) && vocabSet.has(state)) return state;
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BRAND axis — grocery manufacturer labels that ride along with the
+// free-text name ("KERRYGOLD UNSALTED", "TYSON CHKN TNDRLN"). Pulled
+// onto a separate column via migration 0061 so parseIdentity can
+// strip brand tokens BEFORE running state / canonical detection —
+// otherwise "KERRYGOLD" drowns out the cheese keyword match and
+// "TYSON" leaks into canonical inference as noise.
+//
+// Shape mirrors STATE_ALIASES: array of { pattern, brand } with a
+// display-cased `brand` (the receipt abbreviation gets folded back
+// to the brand's canonical capitalization so "KERRYGOLD" and
+// "kerrygold" both render as "Kerrygold" in the UI).
+//
+// Small curated list — we cover the brands that recur across our
+// users' receipts rather than every SKU on the shelf. parseIdentity
+// returns null on unknown brands so the rest of the pipeline falls
+// back to the existing behavior unchanged. A future BRANDS registry
+// can extend this from a data file the same way CANONICAL_ALIASES
+// unified state-baked slugs.
+// ─────────────────────────────────────────────────────────────────────────────
+export const BRAND_ALIASES = [
+  // dairy
+  { pattern: /\bkerrygold\b/i,                 brand: "Kerrygold" },
+  { pattern: /\bplugr[aá]\b/i,                 brand: "Plugrá" },
+  { pattern: /\borganic\s+valley\b/i,          brand: "Organic Valley" },
+  { pattern: /\bdaisy\b/i,                     brand: "Daisy" },
+  { pattern: /\bchobani\b/i,                   brand: "Chobani" },
+  { pattern: /\bfage\b/i,                      brand: "Fage" },
+  { pattern: /\byoplait\b/i,                   brand: "Yoplait" },
+  { pattern: /\bdannon\b/i,                    brand: "Dannon" },
+  { pattern: /\bphiladelphia\b|\bphilly\s+crm\b/i, brand: "Philadelphia" },
+  { pattern: /\bboursin\b/i,                   brand: "Boursin" },
+  { pattern: /\bsilk\b/i,                      brand: "Silk" },
+  { pattern: /\boatly\b/i,                     brand: "Oatly" },
+  // meat / poultry
+  { pattern: /\btyson\b/i,                     brand: "Tyson" },
+  { pattern: /\bperdue\b/i,                    brand: "Perdue" },
+  { pattern: /\bbutterball\b/i,                brand: "Butterball" },
+  { pattern: /\bjimmy\s+dean\b/i,              brand: "Jimmy Dean" },
+  { pattern: /\boscar\s+mayer\b/i,             brand: "Oscar Mayer" },
+  { pattern: /\bhormel\b/i,                    brand: "Hormel" },
+  { pattern: /\bapplegate\b/i,                 brand: "Applegate" },
+  { pattern: /\bboar'?s\s+head\b/i,            brand: "Boar's Head" },
+  // pantry
+  { pattern: /\bheinz\b/i,                     brand: "Heinz" },
+  { pattern: /\bkraft\b/i,                     brand: "Kraft" },
+  { pattern: /\bhellmann'?s\b/i,               brand: "Hellmann's" },
+  { pattern: /\bduke'?s\b/i,                   brand: "Duke's" },
+  { pattern: /\bjif\b/i,                       brand: "Jif" },
+  { pattern: /\bskippy\b/i,                    brand: "Skippy" },
+  { pattern: /\bsmucker'?s\b/i,                brand: "Smucker's" },
+  { pattern: /\bcampbell'?s\b/i,               brand: "Campbell's" },
+  { pattern: /\bprogresso\b/i,                 brand: "Progresso" },
+  { pattern: /\bmutti\b/i,                     brand: "Mutti" },
+  { pattern: /\bcento\b/i,                     brand: "Cento" },
+  { pattern: /\bde\s+cecco\b/i,                brand: "De Cecco" },
+  { pattern: /\bbarilla\b/i,                   brand: "Barilla" },
+  { pattern: /\brao'?s\b/i,                    brand: "Rao's" },
+  { pattern: /\bkikkoman\b/i,                  brand: "Kikkoman" },
+  { pattern: /\bhuy\s+fong\b/i,                brand: "Huy Fong" },
+  { pattern: /\bcholula\b/i,                   brand: "Cholula" },
+  { pattern: /\btabasco\b/i,                   brand: "Tabasco" },
+  { pattern: /\bfrank'?s\s+redhot\b/i,         brand: "Frank's RedHot" },
+  // store brands — catch last so "KIRKLAND OSCAR MAYER" (rare) still
+  // records the more-specific brand; the longest-matching pattern
+  // isn't enforced here because store brands don't overlap with name
+  // brands in practice.
+  { pattern: /\bkirkland\b/i,                  brand: "Kirkland" },
+  { pattern: /\btrader\s+joe'?s\b/i,           brand: "Trader Joe's" },
+  { pattern: /\bwhole\s+foods\b|\b365\s+(?:by|whole)\b/i, brand: "365" },
+  { pattern: /\bgreat\s+value\b/i,             brand: "Great Value" },
+  { pattern: /\bgood\s+&?\s*gather\b/i,        brand: "Good & Gather" },
+  { pattern: /\bsignature\s+select\b/i,        brand: "Signature Select" },
+];
+
+// Strip every occurrence of `pattern` from `text`, collapse resulting
+// whitespace, and return the cleaned string. Used by parseIdentity to
+// subtract matched brand/state tokens before the next layer runs —
+// "KERRYGOLD SHRD MOZZ" → (strip KERRYGOLD) → "SHRD MOZZ" → (strip SHRD)
+// → "MOZZ" → canonical lookup finds mozzarella cleanly.
+function stripPattern(text, pattern) {
+  if (!text) return "";
+  // Build a global version of the pattern so replaceAll-ish behavior
+  // works even when the incoming pattern uses a single-match flag set.
+  const flags = pattern.flags.includes("g") ? pattern.flags : pattern.flags + "g";
+  const global = new RegExp(pattern.source, flags);
+  return text.replace(global, " ").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Three-layer BRAND → STATE → CANONICAL parser. Run on any raw
+ * grocery-receipt / pantry-scan / user-typed name to peel the
+ * identity stack apart into its axes.
+ *
+ *   parseIdentity("KERRYGOLD SHRD MOZZ")
+ *     → { brand: "Kerrygold", state: "shredded", canonical: "mozzarella",
+ *         remainder: "mozz" }
+ *
+ *   parseIdentity("TYSON CHKN TNDRLN")
+ *     → { brand: "Tyson", state: "tenderloin", canonical: "chicken",
+ *         remainder: "chkn" }
+ *
+ *   parseIdentity("bananas")
+ *     → { brand: null, state: null, canonical: "banana", remainder: "bananas" }
+ *
+ * Each layer runs against the text AFTER earlier layers have stripped
+ * their matched tokens — that's what keeps brand tokens from drowning
+ * out canonical matches and what prevents the state-vocabulary from
+ * matching against a brand substring (no current brand collides with
+ * a state keyword, but the order insulates us from future additions).
+ *
+ * Returns null-valued axes when no layer fires. The STATE layer here
+ * is vocabulary-agnostic — it returns whatever STATE_ALIASES matches
+ * since we don't know the canonical yet. Callers that need to validate
+ * the state against an ingredient's state vocabulary should re-run
+ * detectStateFromText with the resolved canonical, which applies the
+ * per-ingredient filter.
+ */
+export function parseIdentity(rawText) {
+  const empty = { brand: null, state: null, canonical: null, remainder: "" };
+  if (!rawText || typeof rawText !== "string") return empty;
+  let remainder = rawText.trim();
+  if (!remainder) return empty;
+
+  // ── 1. BRAND — peel manufacturer labels first. Name-brand receipts
+  //    lead with "KERRYGOLD" / "TYSON"; stripping these up-front keeps
+  //    their tokens from biasing the later state + canonical layers.
+  let brand = null;
+  for (const { pattern, brand: label } of BRAND_ALIASES) {
+    if (pattern.test(remainder)) {
+      brand = label;
+      remainder = stripPattern(remainder, pattern);
+      break;
+    }
+  }
+
+  // ── 2. STATE — grocery POS abbreviations (SHRD/SLCD/WHL/GRND). First
+  //    match wins, mirroring detectStateFromText's order. We don't
+  //    gate on the ingredient's vocabulary here because the canonical
+  //    isn't resolved yet — callers that need the vocab check should
+  //    re-run detectStateFromText after resolving the canonical.
+  let state = null;
+  for (const { pattern, state: stateId } of STATE_ALIASES) {
+    if (pattern.test(remainder)) {
+      state = stateId;
+      remainder = stripPattern(remainder, pattern);
+      break;
+    }
+  }
+
+  // ── 3. CANONICAL — substring-match against the bundled alias map.
+  //    Longest match wins (same ordering discipline as
+  //    inferCanonicalFromName). The remainder drives the lookup so
+  //    brand/state tokens don't bias the match.
+  const canonical = inferCanonicalFromName(remainder) || null;
+
+  return { brand, state, canonical, remainder };
 }
