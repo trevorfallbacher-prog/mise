@@ -464,6 +464,58 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
             <div style={{ fontSize: 40, flexShrink: 0 }}>{item.emoji || "🥫"}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
+              {/* BRAND kicker — metadata above the name, orthogonal to
+                  the six colored identity axes per CLAUDE.md. Small,
+                  muted, tap to edit. When null, renders a low-
+                  prominence dashed "+ BRAND" affordance so the control
+                  is discoverable without competing with the real
+                  axis rows. */}
+              {!readOnly && (editingField === "brand" ? (
+                <input
+                  type="text"
+                  autoFocus
+                  defaultValue={item.brand || ""}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    commit({ brand: v || null });
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") setEditingField(null);
+                  }}
+                  placeholder="Kerrygold, Heinz, …"
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#f5c842", letterSpacing: "0.12em",
+                    background: "#0a0a0a", border: "1px solid #f5c842",
+                    borderRadius: 4, padding: "2px 6px", outline: "none",
+                    textTransform: "uppercase",
+                    width: "80%",
+                  }}
+                />
+              ) : (
+                <div
+                  onClick={() => startEdit("brand")}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    letterSpacing: "0.12em", marginBottom: 2,
+                    cursor: "pointer",
+                    color: item.brand ? "#aaa" : "#444",
+                  }}
+                >
+                  {item.brand
+                    ? <>{item.brand.toUpperCase()}<span style={{ marginLeft: 6, color: "#555" }}>✎</span></>
+                    : <span style={{ borderBottom: "1px dashed #333" }}>+ BRAND</span>}
+                </div>
+              ))}
+              {readOnly && item.brand && (
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#aaa", letterSpacing: "0.12em", marginBottom: 2,
+                }}>
+                  {item.brand.toUpperCase()}
+                </div>
+              )}
               {editingField === "name" ? (
                 <input
                   type="text"

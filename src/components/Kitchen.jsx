@@ -1813,6 +1813,12 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // prior brand until they explicitly clear it (matches how
   // customTypeId / customTileId behave).
   const [customBrand, setCustomBrand] = useState(null);
+  // BRAND row inline-edit mode — flips true when the user taps the
+  // BRAND row above the CANONICAL tap line. Input autofocuses,
+  // blur commits + closes. Separate from customBrand so the row can
+  // freely toggle between display and edit without losing the
+  // stored value.
+  const [customBrandOpen, setCustomBrandOpen] = useState(false);
   // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
   // packages the user has beyond the one they're treating as "open"
   // (the amount field). Stays zero for liquid-mode rows; >0 flips
@@ -2389,6 +2395,79 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     6. INGREDIENTS     (yellow  #f5c842)
                   Never reorder. Every entry-point (ItemCard,
                   AddItemModal, scan rows) renders them in this order. */}
+
+              {/* BRAND — orthogonal to the six colored axes per
+                  CLAUDE.md (no reserved color; uses neutral gray).
+                  Renders above the CANONICAL tap line. parseIdentity
+                  auto-harvests brand from the typed name on every
+                  keystroke (see the name input's onChange); this row
+                  surfaces that value + lets the user type/override/
+                  clear manually. Tapping flips into inline-input mode.
+                  Empty value on blur clears customBrand entirely. */}
+              {customBrandOpen ? (
+                <input
+                  type="text"
+                  autoFocus
+                  defaultValue={customBrand || ""}
+                  onBlur={e => {
+                    const v = e.target.value.trim();
+                    setCustomBrand(v || null);
+                    setCustomBrandOpen(false);
+                  }}
+                  onKeyDown={e => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") setCustomBrandOpen(false);
+                  }}
+                  placeholder="Kerrygold, Heinz, …"
+                  style={{
+                    marginTop: 6,
+                    width: "80%",
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#f5c842", letterSpacing: "0.12em",
+                    background: "#0a0a0a", border: "1px solid #f5c842",
+                    borderRadius: 4, padding: "3px 8px", outline: "none",
+                    textTransform: "uppercase",
+                  }}
+                />
+              ) : (
+                <div
+                  onClick={() => setCustomBrandOpen(true)}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: customBrand ? "#aaa" : "#555",
+                    letterSpacing: "0.12em", marginTop: 6,
+                    cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 6,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span style={{ color: "#666" }}>BRAND:</span>
+                  {customBrand ? (
+                    <>
+                      <span>{customBrand.toUpperCase()}</span>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          setCustomBrand(null);
+                        }}
+                        aria-label="Clear brand"
+                        style={{
+                          background: "transparent", border: "none",
+                          color: "#555", cursor: "pointer",
+                          fontFamily: "'DM Mono',monospace", fontSize: 10,
+                          padding: 0, marginLeft: 2,
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </>
+                  ) : (
+                    <span style={{ color: "#555", borderBottom: "1px dashed #333" }}>
+                      + SET BRAND
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* CANONICAL — tan. Tap opens LinkIngredient single
                   mode; empty state falls back to the derived preview
@@ -3142,12 +3221,28 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               </div>
             </div>
 
-            {/* Inline pickers — shown when the FOOD CATEGORY or STORED IN
-                tap lines are tapped. The full label/preview UI moved to
-                the tap lines at the top of the modal, so these are the
-                picker-only renders. */}
+            {/* FOOD CATEGORY + STORED IN pickers — wrapped in
+                ModalSheet so they present as dimmed-backdrop overlays
+                that pop up at eye-level instead of rendering inline
+                at the bottom of the modal (where the user couldn't
+                tell focus had moved and scrolled-off content was
+                hidden). Mirrors the exact pattern used for the
+                scan-confirm row pickers (Kitchen.jsx ~line 1476 and
+                ~1515) so the interaction feels consistent across the
+                two surfaces. Headline + purpose line above each
+                picker tells the user why they're here and where to
+                start typing. */}
             {typePickerOpen && (
-              <div style={{ marginBottom: 16 }}>
+              <ModalSheet onClose={() => setTypePickerOpen(false)} maxHeight="86vh">
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:10 }}>
+                  CATEGORY
+                </div>
+                <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 6px", lineHeight:1.2 }}>
+                  What category does {customName.trim() || "this item"} belong to?
+                </h2>
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", lineHeight:1.5, margin:"0 0 14px" }}>
+                  Category drives the state picker (sliced / ground / whole / ...) and the default tile — pick the one that best matches.
+                </p>
                 <TypePicker
                   userId={userId}
                   selectedTypeId={customTypeId}
@@ -3165,11 +3260,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     setTypePickerOpen(false);
                   }}
                 />
-              </div>
+              </ModalSheet>
             )}
 
             {tilePickerOpen && (
-              <div style={{ marginBottom: 16 }}>
+              <ModalSheet onClose={() => setTilePickerOpen(false)} maxHeight="86vh">
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em", marginBottom:10 }}>
+                  STORED IN
+                </div>
+                <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+                  Where does {customName.trim() || "this item"} live?
+                </h2>
                 <IdentifiedAsPicker
                   userId={userId}
                   locationHint={customLocation}
@@ -3181,7 +3282,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     setTilePickerOpen(false);
                   }}
                 />
-              </div>
+              </ModalSheet>
             )}
 
         <div style={{ display:"flex", gap:10 }}>
@@ -4505,6 +4606,30 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     <span style={{ color:"#666", fontWeight:400 }}> · {canonicalLabel}</span>
                   )}
                 </span>
+                {/* BRAND tag — parallel to the STATE tag below. Uses
+                    neutral gray styling since brand is orthogonal to
+                    the six colored identity axes per CLAUDE.md. Keeps
+                    "Butter · Kerrygold" scannable at the tile-card
+                    level without opening the item. Hidden when brand
+                    is null (most rows). */}
+                {item.brand && (
+                  <span
+                    title={`Brand: ${item.brand}`}
+                    style={{
+                      fontFamily:"'DM Mono',monospace", fontSize:9,
+                      color:"#aaa",
+                      background:"#161616",
+                      border:"1px solid #2a2a2a",
+                      borderRadius:4,
+                      padding:"1px 6px",
+                      letterSpacing:"0.08em",
+                      flexShrink:0,
+                      textTransform:"uppercase",
+                    }}
+                  >
+                    {item.brand}
+                  </span>
+                )}
                 {item.state && (
                   <span
                     title={`State: ${stateLabel(item.state)}`}
