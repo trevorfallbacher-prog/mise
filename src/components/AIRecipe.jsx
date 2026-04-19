@@ -174,6 +174,13 @@ export default function AIRecipe({
                     // Falls back to onSave when parent didn't provide.
   onSchedule,       // (recipe) => Promise — parent persists + opens SchedulePicker
   onSaveAndCook,    // (recipe) => Promise — existing save + cook path
+  onMealSave,       // ({ name, emoji, cuisine, mealTiming, anchorSlug, pieces })
+                    // => Promise<meal> — parent persists a MEAL row
+                    // (meals + meal_recipes). Called from the sticky
+                    // header's SAVE MEAL CTA once the user has two+
+                    // pieces composed. Optional — when absent, the
+                    // CTA just closes the overlay and leaves pieces
+                    // as loose recipes in the library.
   onShoppingAdd,    // (items[]) => void — receives the locked ingredients
                     // promoted to shopping in the tweak phase so the
                     // parent can merge them into the shoppingList state.
@@ -639,35 +646,73 @@ export default function AIRecipe({
     });
   };
 
-  // "SAVE MEAL" CTA from the sticky header. If the user is sitting on
-  // a preview (e.g. the dessert they just drafted) that hasn't been
-  // pinned into pieces yet, silently persist it and append so the
-  // meal captures every piece the user was composing. Phase 2 ships
-  // without the meals table (Phase 3); for now, every piece is already
-  // in user_recipes individually, so this just drops the in-progress
-  // state and lets the parent close. When Phase 3 lands, this writes
-  // the meals + meal_recipes rows.
+  // "SAVE MEAL" CTA from the sticky header. Two jobs:
+  //   1. If the user is sitting on a preview (e.g. the dessert they
+  //      just drafted) that hasn't been pinned yet, silently persist
+  //      it and append so the meal captures everything on screen.
+  //   2. Persist the meal itself — a `meals` row plus one
+  //      `meal_recipes` row per piece — via onMealSave. The pieces
+  //      are already in user_recipes individually (every + Add
+  //      triggered a silent save), so the meal is a pure pointer-set.
   const finishMeal = async () => {
-    const pinnedSlugs = new Set((mealInProgress?.pieces || []).map(p => p.recipe?.slug).filter(Boolean));
-    const shouldPinCurrent = phase === "preview" &&
-      recipe &&
-      recipe.course !== "bake" && recipe.course !== "prep" &&
-      !pinnedSlugs.has(recipe.slug);
-    if (shouldPinCurrent) {
-      const saver = onSilentSave || onSave;
-      if (saver) {
-        setBusy("compose");
+    const saver = onSilentSave || onSave;
+    setBusy("compose");
+    try {
+      // 1. Pin the current preview's recipe if it's not yet in pieces.
+      //    Build the committed piece list in a local so we use the
+      //    post-pin snapshot without waiting for setState to flush.
+      let committed = mealInProgress;
+      const pinnedSlugs = new Set((committed?.pieces || []).map(p => p.recipe?.slug).filter(Boolean));
+      const shouldPinCurrent = phase === "preview" &&
+        recipe &&
+        recipe.course !== "bake" && recipe.course !== "prep" &&
+        !pinnedSlugs.has(recipe.slug);
+      if (shouldPinCurrent && saver) {
         try {
-          const saved = (await saver(recipe)) || recipe;
-          setMealInProgress((prev) => prev
-            ? { ...prev, pieces: [...prev.pieces, { course: saved.course || "side", recipe: saved }] }
-            : { anchor: saved, pieces: [{ course: saved.course || "main", recipe: saved }] });
+          const resolvedCourse     = recipe.course     || (course     === "any" ? null : course);
+          const resolvedMealTiming = recipe.mealTiming || (mealTiming === "any" ? null : mealTiming);
+          const recipeWithTags = { ...recipe, course: resolvedCourse, mealTiming: resolvedMealTiming };
+          const saved = (await saver(recipeWithTags)) || recipeWithTags;
+          const incoming = { course: saved.course || "side", recipe: saved };
+          committed = committed
+            ? { ...committed, pieces: [...committed.pieces, incoming] }
+            : { anchor: saved, pieces: [{ course: saved.course || "main", recipe: saved }] };
+          setMealInProgress(committed);
         } catch (e) {
           console.error("[ai recipe] finishMeal pin-current failed:", e);
-        } finally {
-          setBusy(null);
         }
       }
+
+      // 2. Persist the meal row. Need a parent handler + at least one
+      //    piece; otherwise the CTA is really just "close this flow".
+      const piecesForRow = (committed?.pieces || [])
+        .filter(p => p.recipe?.slug)
+        .map((p, i) => ({
+          recipeSlug: p.recipe.slug,
+          course:     p.course || "main",
+          sortOrder:  i,
+        }));
+      if (onMealSave && piecesForRow.length > 0) {
+        const anchor = committed?.anchor || piecesForRow[0];
+        const mealTimingForRow = anchor?.mealTiming
+          || (mealTiming === "any" ? null : mealTiming)
+          || null;
+        const name = buildMealName(committed?.anchor, committed?.pieces);
+        try {
+          await onMealSave({
+            name,
+            emoji:       committed?.anchor?.emoji   || null,
+            cuisine:     committed?.anchor?.cuisine || null,
+            mealTiming:  mealTimingForRow,
+            anchorSlug:  committed?.anchor?.slug    || null,
+            pieces:      piecesForRow,
+          });
+        } catch (e) {
+          console.error("[ai recipe] finishMeal onMealSave failed:", e);
+        }
+      }
+    } finally {
+      setBusy(null);
     }
     setMealInProgress(null);
     setPairWith(null);
@@ -1892,6 +1937,23 @@ const shopActiveBtn = {
   ...shopBtn,
   background: "#0f1a0f", border: "1px solid #1e3a1e", color: "#7ec87e",
 };
+
+// Auto-generate a display name for a composed meal. Uses the anchor's
+// title directly; if we have a strong cuisine + mealTiming signal
+// we append a descriptor ("Ribeye · Italian Dinner"). Keeps it short
+// so it fits a calendar tile. User can rename later via a library edit.
+function buildMealName(anchor, _pieces) {
+  if (!anchor?.title) return "Untitled meal";
+  const base = anchor.title.trim();
+  const bits = [];
+  if (anchor.cuisine && anchor.cuisine !== "other") {
+    bits.push(anchor.cuisine.charAt(0).toUpperCase() + anchor.cuisine.slice(1));
+  }
+  if (anchor.mealTiming) {
+    bits.push(anchor.mealTiming.charAt(0).toUpperCase() + anchor.mealTiming.slice(1));
+  }
+  return bits.length ? `${base} · ${bits.join(" ")}` : base;
+}
 
 // ── Compose-a-meal components ────────────────────────────────────────
 

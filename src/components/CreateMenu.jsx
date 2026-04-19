@@ -10,6 +10,7 @@ import {
 } from "../data/recipes";
 import { inferCanonicalFromName, findIngredient } from "../data/ingredients";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { useMeals } from "../lib/useMeals";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useCookLog } from "../lib/useCookLog";
@@ -47,12 +48,22 @@ export default function CreateMenu({
 }) {
   const [mode, setMode] = useState("choose");        // choose | custom | ai | template | addIntent | cook
   const [activeRecipe, setActiveRecipe] = useState(null);
+  // When set, the meal-detail overlay is shown (rendered on top of
+  // the template picker) so the user can inspect pieces + cook one.
+  const [viewingMeal, setViewingMeal] = useState(null);
   // When set, SchedulePicker renders on top of the current mode. The
   // recipe has already been persisted to user_recipes by the time we
   // enter this state — picking a day just writes the scheduled_meals row.
   const [scheduling, setScheduling] = useState(null); // recipe object | null
 
   const { recipes: userRecipes, saveRecipe } = useUserRecipes(userId);
+  // MEAL composition hook — exposes hydrated meals + CRUD. Pieces
+  // resolve through userRecipes and bundled RECIPES so tap-to-cook on
+  // a meal's piece hands CookMode a full recipe object.
+  const { meals, createMeal, deleteMeal } = useMeals(userId, {
+    userRecipes,
+    bundledRecipes: RECIPES,
+  });
   const { schedule } = useScheduledMeals(userId);
   const { push: pushToast } = useToast();
   // Ingredient enrichment is provided once at App level; reading it
@@ -103,6 +114,20 @@ export default function CreateMenu({
     const q = query.trim().toLowerCase();
     return q ? RECIPES.filter(r => matches(r, q)) : RECIPES;
   }, [query]);
+  // Meals are searched against the meal's own identity (name /
+  // cuisine / mealTiming) plus each piece's title, so typing "ribeye"
+  // surfaces a meal whose main is named Ribeye even if the meal was
+  // renamed to something generic.
+  const filteredMeals = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return meals;
+    return meals.filter(m => {
+      if ((m.name || "").toLowerCase().includes(q)) return true;
+      if ((m.cuisine || "").toLowerCase().includes(q)) return true;
+      if ((m.mealTiming || "").toLowerCase().includes(q)) return true;
+      return (m.pieces || []).some(p => (p.recipe?.title || "").toLowerCase().includes(q));
+    });
+  }, [meals, query]);
 
   // Enter CookMode with a given recipe, regardless of source.
   const startCooking = (recipe) => {
@@ -249,6 +274,15 @@ export default function CreateMenu({
           onSilentSave={handleSilentSave("ai")}
           onSchedule={handleSchedule("ai")}
           onSaveAndCook={handleSaveAndCook("ai")}
+          onMealSave={async (payload) => {
+            try {
+              await createMeal(payload);
+              pushToast("Meal saved", { emoji: "🍽️", kind: "info" });
+            } catch (e) {
+              console.error("[createMenu] createMeal failed:", e);
+              pushToast("Couldn't save meal", { emoji: "⚠️", kind: "warn" });
+            }
+          }}
           onShoppingAdd={(items) => {
             // Items come in as { name, amount, unit, ingredientId,
             // source: "ai-recipe" }. Merge into shoppingList with
@@ -372,7 +406,7 @@ export default function CreateMenu({
 
   if (mode === "template") {
     const totalResults =
-      filteredUserCustom.length + filteredUserAI.length + filteredBundled.length;
+      filteredMeals.length + filteredUserCustom.length + filteredUserAI.length + filteredBundled.length;
     return (
       <div style={OVERLAY_STYLE}>
         <div style={{ padding: "24px 20px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid #1e1e1e" }}>
@@ -397,6 +431,17 @@ export default function CreateMenu({
           />
         </div>
         <div style={{ padding: "14px 20px 100px" }}>
+          {filteredMeals.length > 0 && (
+            <RecipeSection title="YOUR MEALS" accent={TAG_MEAL}>
+              {filteredMeals.map(m => (
+                <MealRow
+                  key={m.id}
+                  meal={m}
+                  onClick={() => setViewingMeal(m)}
+                />
+              ))}
+            </RecipeSection>
+          )}
           {filteredUserCustom.length > 0 && (
             <RecipeSection title="YOUR RECIPES" accent={TAG_CUSTOM}>
               {filteredUserCustom.map(ur => (
@@ -441,6 +486,30 @@ export default function CreateMenu({
             </div>
           )}
         </div>
+        {viewingMeal && (
+          <MealDetail
+            meal={viewingMeal}
+            onClose={() => setViewingMeal(null)}
+            onCookPiece={(pieceRecipe) => {
+              // Tap a piece inside the meal detail to cook just that
+              // piece. Phase 3 doesn't sequence multiple pieces — each
+              // component cooks individually. "Cook whole meal" is a
+              // future ticket (CookMode needs a multi-recipe mode).
+              setViewingMeal(null);
+              startCooking(pieceRecipe);
+            }}
+            onDelete={async () => {
+              try {
+                await deleteMeal(viewingMeal.id);
+                setViewingMeal(null);
+                pushToast("Meal removed (recipes kept)", { emoji: "🗑️", kind: "info" });
+              } catch (e) {
+                console.error("[createMenu] deleteMeal failed:", e);
+                pushToast("Couldn't remove meal", { emoji: "⚠️", kind: "warn" });
+              }
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -488,10 +557,12 @@ export default function CreateMenu({
         <BigCard
           emoji="📖"
           accent="#7eb8d4"
-          title="Pick a recipe"
-          blurb={`${userCustom.length + userAI.length > 0
-            ? `${userCustom.length + userAI.length} saved · `
-            : ""}${RECIPES.length} bundled templates.`}
+          title="Pick a recipe or meal"
+          blurb={`${meals.length > 0 ? `${meals.length} meal${meals.length === 1 ? "" : "s"} · ` : ""}${
+            userCustom.length + userAI.length > 0
+              ? `${userCustom.length + userAI.length} recipes · `
+              : ""
+          }${RECIPES.length} bundled templates.`}
           onClick={() => setMode("template")}
         />
 
@@ -639,10 +710,201 @@ function MetaPill({ label }) {
 
 // Tag colors per CLAUDE.md palette. CUSTOM uses the canonical-identity
 // tan (user-authored identity); AI uses the state-axis purple (mirrors
-// the AI-recipe card accent). These avoid colliding with STORED-IN
-// (blue) and INGREDIENTS (yellow) axes.
+// the AI-recipe card accent); MEAL uses a soft cream-white since
+// "meal" is a higher-order concept (a bundle) and none of the reserved
+// axis colors fit — green was the obvious third but it's reserved for
+// the pantry accent elsewhere in the app.
 const TAG_CUSTOM = "#b8a878";
 const TAG_AI     = "#c7a8d4";
+const TAG_MEAL   = "#e0d4b8";
+
+// Row for a composed MEAL in the PICK A RECIPE list. Visually heavier
+// than a single-recipe row so the user sees at a glance this is a
+// bundle, not a recipe. Shows piece count + per-piece emoji stack.
+function MealRow({ meal, onClick }) {
+  const pieceEmojis = (meal.pieces || [])
+    .slice(0, 4)
+    .map(p => p.recipe?.emoji || "🍽️");
+  const pieceCount = (meal.pieces || []).length;
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex", alignItems: "center", gap: 12,
+        padding: "12px 14px",
+        background: "linear-gradient(135deg, #1a1815 0%, #151310 100%)",
+        border: `1px solid ${TAG_MEAL}33`,
+        borderRadius: 12, cursor: "pointer", textAlign: "left",
+      }}
+    >
+      <div style={{ fontSize: 26, flexShrink: 0 }}>{meal.emoji || "🍽️"}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{
+            fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            flex: 1, minWidth: 0,
+          }}>
+            {meal.name}
+          </div>
+          <span style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+            color: TAG_MEAL, background: `${TAG_MEAL}15`,
+            border: `1px solid ${TAG_MEAL}55`,
+            padding: "2px 6px", borderRadius: 6,
+            letterSpacing: "0.1em", flexShrink: 0,
+          }}>
+            MEAL
+          </span>
+        </div>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555",
+          letterSpacing: "0.05em", marginTop: 2,
+          display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span>{pieceCount} PIECE{pieceCount === 1 ? "" : "S"}</span>
+          {meal.cuisine && <span>· {meal.cuisine.toUpperCase()}</span>}
+          {meal.mealTiming && <span>· {meal.mealTiming.toUpperCase()}</span>}
+          <span style={{ marginLeft: "auto", fontSize: 13, letterSpacing: 0 }}>
+            {pieceEmojis.join(" ")}
+          </span>
+        </div>
+      </div>
+      <span style={{ color: TAG_MEAL, fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+    </button>
+  );
+}
+
+// Full-screen overlay showing a meal's pieces. Each piece is a
+// tappable row that fires onCookPiece(pieceRecipe) — Phase 3 cooks
+// individual pieces via the existing CookMode; a future "cook whole
+// meal" mode would sequence the pieces. Includes a delete action
+// that cascades only to meal_recipes (pieces stay in the library).
+function MealDetail({ meal, onClose, onCookPiece, onDelete }) {
+  const pieceCount = (meal.pieces || []).length;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 220,
+      background: "#0b0b0b",
+      maxWidth: 480, margin: "0 auto",
+      overflowY: "auto",
+    }}>
+      <div style={{
+        padding: "24px 20px 12px",
+        display: "flex", alignItems: "center", gap: 10,
+        borderBottom: "1px solid #1e1e1e",
+      }}>
+        <button onClick={onClose} style={iconBtn}>←</button>
+        <div style={{
+          flex: 1, fontFamily: "'DM Mono',monospace", fontSize: 10,
+          color: TAG_MEAL, letterSpacing: "0.12em",
+        }}>
+          MEAL DETAIL
+        </div>
+        <button onClick={onClose} style={iconBtn}>✕</button>
+      </div>
+      <div style={{ padding: "20px 20px 0", textAlign: "center" }}>
+        <div style={{ fontSize: 46 }}>{meal.emoji || "🍽️"}</div>
+        <h1 style={{
+          fontFamily: "'Fraunces',serif", fontSize: 24, fontWeight: 300,
+          fontStyle: "italic", color: "#f0ece4", margin: "8px 0 2px",
+        }}>
+          {meal.name}
+        </h1>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555",
+          letterSpacing: "0.1em",
+        }}>
+          {pieceCount} PIECE{pieceCount === 1 ? "" : "S"}
+          {meal.cuisine && ` · ${meal.cuisine.toUpperCase()}`}
+          {meal.mealTiming && ` · ${meal.mealTiming.toUpperCase()}`}
+        </div>
+      </div>
+      <div style={{ padding: "20px 20px 100px" }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10,
+          color: TAG_MEAL, letterSpacing: "0.12em",
+          marginBottom: 8,
+        }}>
+          PIECES
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {(meal.pieces || []).map((p, i) => {
+            const r = p.recipe;
+            const missing = !r;
+            return (
+              <button
+                key={`${p.recipeSlug}-${i}`}
+                onClick={() => !missing && onCookPiece(r)}
+                disabled={missing}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  padding: "12px 14px",
+                  background: missing ? "#1a1515" : "#161616",
+                  border: `1px solid ${missing ? "#3a2020" : "#2a2a2a"}`,
+                  borderRadius: 12,
+                  cursor: missing ? "not-allowed" : "pointer",
+                  textAlign: "left",
+                  opacity: missing ? 0.65 : 1,
+                }}
+              >
+                <div style={{ fontSize: 24, flexShrink: 0 }}>
+                  {r?.emoji || "🍽️"}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{
+                      fontFamily: "'Fraunces',serif", fontSize: 14, color: "#f0ece4",
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                      flex: 1, minWidth: 0,
+                    }}>
+                      {r?.title || `(missing: ${p.recipeSlug})`}
+                    </div>
+                    <span style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+                      color: "#aaa", background: "#1a1a1a",
+                      border: "1px solid #2a2a2a",
+                      padding: "2px 6px", borderRadius: 6,
+                      letterSpacing: "0.1em", textTransform: "uppercase",
+                      flexShrink: 0,
+                    }}>
+                      {p.course}
+                    </span>
+                  </div>
+                  {r && (
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555",
+                      letterSpacing: "0.05em", marginTop: 2,
+                    }}>
+                      {(r.cuisine || "").toUpperCase()} · {totalTimeMin(r)} MIN
+                    </div>
+                  )}
+                </div>
+                {!missing && (
+                  <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>
+                    COOK →
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          onClick={onDelete}
+          style={{
+            marginTop: 24, width: "100%", padding: "12px",
+            background: "transparent", border: "1px solid #3a2020",
+            color: "#a06060", borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 600,
+            letterSpacing: "0.1em", cursor: "pointer",
+          }}
+        >
+          REMOVE MEAL · KEEP RECIPES
+        </button>
+      </div>
+    </div>
+  );
+}
 
 const OVERLAY_STYLE = {
   position: "fixed", inset: 0, zIndex: 210,
