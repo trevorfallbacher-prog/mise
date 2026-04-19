@@ -5,6 +5,7 @@ import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
 import { useIngredientInfo, slugifyIngredientName, isMeaningfullyEnriched } from "../lib/useIngredientInfo";
+import { usePopularPackages } from "../lib/usePopularPackages";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
 import { FRIDGE_TILES } from "../lib/fridgeTiles";
@@ -341,6 +342,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
       }
     }
   };
+
+  // Popular package sizes for this row — observation-learned chip
+  // suggestions, replacing the old admin-curated
+  // `ingredient_info.packaging.sizes` path. Keyed on (brand,
+  // canonical_id) so Kerrygold Butter's 8oz bubbles up separately
+  // from generic-butter aggregates. Hook must be called at component
+  // top level; the returned rows get rendered inside the PACKAGE
+  // section below.
+  const popularPackages = usePopularPackages(
+    itemProp?.brand || null,
+    itemProp?.canonicalId || itemProp?.ingredientId || null,
+    5
+  );
 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
@@ -758,14 +772,14 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               first (same pattern as the pantry-row edit UX). Escape
               cancels; Enter (or blur) commits. */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
-            {/* QUANTITY — always-editable. No tap-to-expand dance, no
-                nested edit-mode popup. The number input and unit
-                select are live controls; typing commits on blur /
-                enter; picking a unit commits immediately. Package
-                suggestion chips, FULL PKG, and the slide-to-estimate
-                gauge all live in the standalone PACKAGE section
-                below — QUANTITY is strictly "how much is in the
-                row RIGHT NOW." */}
+            {/* PACKAGE SIZE tile — swapped in where QUANTITY used to
+                live. PACKAGE SIZE is set once at add-time and rarely
+                edited, so it belongs in a compact tile alongside
+                LOCATION and EXPIRES. The big slider-driven control
+                below is QUANTITY (the thing that changes constantly
+                as the user eats through the package). Unit dropdown
+                lives HERE — package size declares the unit, and
+                QUANTITY inherits it as static text. */}
             <div
               style={{
                 padding: "10px 12px",
@@ -775,155 +789,123 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               }}
             >
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>
-                QUANTITY
+                PACKAGE SIZE
               </div>
               {readOnly ? (
-                <div style={{ marginTop: 2 }}>
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4" }}>
-                    {Number(item.amount || 0).toFixed(Number.isInteger(item.amount) ? 0 : 2)} {canonical ? unitLabel(canonical, item.unit) : (item.unit || "")}
-                  </div>
-                  {item.reserveCount > 0 && (
-                    <div style={{
-                      marginTop: 3,
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#f5c842", letterSpacing: "0.08em",
-                    }}>
-                      + {item.reserveCount} SEALED
-                    </div>
-                  )}
+                <div style={{ marginTop: 2, fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4" }}>
+                  {Number(item.max) > 0
+                    ? `${Number(item.max)} ${canonical ? unitLabel(canonical, item.unit) : (item.unit || "")}`
+                    : "—"}
                 </div>
               ) : (() => {
+                const hasPackage = Number(item.max) > 0;
                 const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
                 const hasCurrent = units.some(u => u.id === item.unit);
                 const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
                 return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                    <input
+                      key={`pkg-${item.id}-${item.max}`}
+                      type="number" inputMode="decimal" min="0" step="any"
+                      defaultValue={hasPackage ? item.max : ""}
+                      placeholder="size"
+                      onBlur={e => {
+                        const v = e.target.value;
+                        if (v === "") {
+                          if (hasPackage) commit({ max: 0 });
+                          return;
+                        }
+                        const n = parseFloat(v);
+                        if (!Number.isFinite(n) || n < 0) return;
+                        if (n === Number(item.max)) return;
+                        // Setting PACKAGE SIZE primes QUANTITY to match
+                        // on fresh or previously-sealed rows. Mid-
+                        // package values left alone.
+                        const amt = Number(item.amount || 0);
+                        const wasSealed = amt > 0 && amt === Number(item.max);
+                        const patch = { max: n };
+                        if (amt === 0 || wasSealed) patch.amount = n;
+                        commit(patch);
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Escape") {
+                          e.currentTarget.value = hasPackage ? String(item.max) : "";
+                          e.currentTarget.blur();
+                        }
+                      }}
+                      onClick={e => e.stopPropagation()}
+                      style={{
+                        flex: 1, minWidth: 0, width: "100%",
+                        padding: "4px 8px",
+                        background: "#0a0a0a",
+                        border: `1px solid ${hasPackage ? "#f5c842" : "#2a2a2a"}`,
+                        color: hasPackage ? "#f5c842" : "#888",
+                        borderRadius: 6,
+                        fontFamily: "'DM Mono',monospace", fontSize: 14, outline: "none",
+                      }}
+                    />
+                    {customUnitOpen ? (
                       <input
-                        key={`qty-${item.id}-${item.amount}`}
-                        type="number" inputMode="decimal" min="0" step="any"
-                        defaultValue={item.amount}
+                        key={`unit-${item.id}`}
+                        type="text"
+                        autoFocus
+                        defaultValue={item.unit || ""}
+                        placeholder="unit"
                         onBlur={e => {
-                          const v = parseFloat(e.target.value);
-                          if (Number.isFinite(v) && v >= 0 && v !== Number(item.amount)) {
-                            commit({ amount: v });
-                          }
+                          const v = e.target.value.trim();
+                          if (v && v !== item.unit) commit({ unit: v });
+                          setCustomUnitOpen(false);
                         }}
                         onKeyDown={e => {
                           if (e.key === "Enter") {
-                            const v = parseFloat(e.target.value);
-                            if (Number.isFinite(v) && v >= 0) commit({ amount: v });
-                            e.currentTarget.blur();
+                            const v = e.target.value.trim();
+                            if (v) commit({ unit: v });
+                            setCustomUnitOpen(false);
                           }
-                          if (e.key === "Escape") {
-                            e.currentTarget.value = String(item.amount);
-                            e.currentTarget.blur();
-                          }
+                          if (e.key === "Escape") setCustomUnitOpen(false);
                         }}
                         onClick={e => e.stopPropagation()}
                         style={{
-                          flex: 1, minWidth: 0, width: "100%",
-                          padding: "4px 8px",
-                          background: "#0a0a0a",
-                          border: "1px solid #2a2a2a",
-                          color: "#f5c842",
-                          borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 14, outline: "none",
+                          width: 70, padding: "4px 8px",
+                          background: "#0a0a0a", border: "1px solid #2a2a2a",
+                          color: "#f5c842", borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
                         }}
                       />
-                      {customUnitOpen ? (
-                        <input
-                          key={`unit-${item.id}`}
-                          type="text"
-                          autoFocus
-                          defaultValue={item.unit || ""}
-                          placeholder="unit"
-                          onBlur={e => {
-                            const v = e.target.value.trim();
-                            if (v && v !== item.unit) commit({ unit: v });
-                            setCustomUnitOpen(false);
-                          }}
-                          onKeyDown={e => {
-                            if (e.key === "Enter") {
-                              const v = e.target.value.trim();
-                              if (v) commit({ unit: v });
-                              setCustomUnitOpen(false);
-                            }
-                            if (e.key === "Escape") setCustomUnitOpen(false);
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          style={{
-                            width: 80, padding: "4px 8px",
-                            background: "#0a0a0a", border: "1px solid #2a2a2a",
-                            color: "#f5c842", borderRadius: 6,
-                            fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
-                          }}
-                        />
-                      ) : (
-                        <select
-                          key={`unit-sel-${item.id}-${item.unit}`}
-                          value={opts.some(u => u.id === item.unit) ? item.unit : (opts[0]?.id || "")}
-                          onChange={e => {
-                            if (e.target.value === "__custom") {
-                              setCustomUnitOpen(true);
-                              return;
-                            }
-                            if (e.target.value !== item.unit) commit({ unit: e.target.value });
-                          }}
-                          onClick={e => e.stopPropagation()}
-                          style={{
-                            padding: "4px 24px 4px 8px",
-                            background: "#0a0a0a", border: "1px solid #2a2a2a",
-                            color: "#aaa", borderRadius: 6,
-                            fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
-                            cursor: "pointer",
-                            appearance: "none",
-                            WebkitAppearance: "none",
-                            MozAppearance: "none",
-                            backgroundImage: "linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%)",
-                            backgroundPosition: "calc(100% - 14px) 50%, calc(100% - 9px) 50%",
-                            backgroundSize: "5px 5px, 5px 5px",
-                            backgroundRepeat: "no-repeat",
-                          }}
-                        >
-                          {opts.map(u => (
-                            <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
-                          ))}
-                          <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
-                        </select>
-                      )}
-                    </div>
-                    {/* SEALED / OPENED badge — derived from the
-                        relationship between amount and max. A sealed
-                        row has amount == max (user set package size,
-                        QUANTITY auto-filled to 100%). An opened row
-                        has amount < max. Rows without a package
-                        (max === 0) render no badge — we don't know
-                        what 100% means without a package size. */}
-                    {(() => {
-                      const amt = Number(item.amount || 0);
-                      const mx  = Number(item.max || 0);
-                      if (mx <= 0 || amt <= 0) return null;
-                      const sealed = amt === mx;
-                      const opened = amt < mx;
-                      if (!sealed && !opened) return null;
-                      return (
-                        <div style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 10,
-                          color: sealed ? "#7ec87e" : "#f59e0b",
-                          letterSpacing: "0.08em",
-                        }}>
-                          {sealed ? "● SEALED" : "◐ OPENED"}
-                        </div>
-                      );
-                    })()}
-                    {item.reserveCount > 0 && (
-                      <div style={{
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        color: "#f5c842", letterSpacing: "0.08em",
-                      }}>
-                        + {item.reserveCount} SEALED
-                      </div>
+                    ) : (
+                      <select
+                        key={`unit-sel-${item.id}-${item.unit}`}
+                        value={opts.some(u => u.id === item.unit) ? item.unit : (opts[0]?.id || "")}
+                        onChange={e => {
+                          if (e.target.value === "__custom") {
+                            setCustomUnitOpen(true);
+                            return;
+                          }
+                          if (e.target.value !== item.unit) commit({ unit: e.target.value });
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                          padding: "4px 22px 4px 8px",
+                          background: "#0a0a0a", border: "1px solid #2a2a2a",
+                          color: "#aaa", borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                          cursor: "pointer",
+                          appearance: "none",
+                          WebkitAppearance: "none",
+                          MozAppearance: "none",
+                          backgroundImage: "linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%)",
+                          backgroundPosition: "calc(100% - 12px) 50%, calc(100% - 7px) 50%",
+                          backgroundSize: "5px 5px, 5px 5px",
+                          backgroundRepeat: "no-repeat",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {opts.map(u => (
+                          <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
+                        ))}
+                        <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
+                      </select>
                     )}
                   </div>
                 );
@@ -1026,110 +1008,109 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             </div>
           </div>
 
-          {/* PACKAGE — top-level section (no longer buried in QUANTITY
-              edit). Defines what 100% means for this row's gauge:
-              "the bag holds 12oz, I have 6oz left" = half-full. Pairs
-              with QUANTITY (what's left) as orthogonal concepts.
+          {/* QUANTITY — the main interactive section, front-and-center.
+              Swapped in where the PACKAGE SIZE big block used to
+              live. Logic: PACKAGE SIZE is set once at add-time (tile
+              above in the 3-col grid); QUANTITY is what changes
+              constantly as the user eats through the package, so it
+              gets the slider + status readout + prominent input.
 
-              Always visible, always user-editable — the FULL PKG
-              input writes straight to pantry_items.max, no admin
-              approval. Canonical-provided chips (from
-              ingredient_info.packaging.sizes) are SUGGESTIONS only;
-              the user can type any custom value in the free-text
-              input. Slider/gauge surfaces once a package size is
-              declared so "what's left" gets a visual reference.
+              SEALED ⇄ OPENED is derived from amount vs max:
+                amount == max  → SEALED   (green ●)
+                amount <  max  → OPENED   (amber ◐)
+                no package yet → no badge (we can't claim a state
+                                           without a reference)
 
-              Hidden in readOnly (scan preview) since the whole point
-              is direct inline editing. */}
+              OTHERS USE chip row lives here too — tapping a chip
+              fills PACKAGE SIZE AND QUANTITY together (fresh sealed
+              package at 100%). Observation-learned from the
+              popular_package_sizes RPC (migration 0063), so the
+              chips are "what real households with this (brand,
+              canonical) have declared" rather than admin-curated. */}
           {!readOnly && (() => {
             const hasPackage = Number(item.max) > 0;
-            const canonSlug  = item.canonicalId || item.ingredientId;
-            const pkg        = canonSlug ? getDbInfo(canonSlug)?.packaging : null;
-            const sizes      = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
+            const sizes      = popularPackages.rows || [];
             const maxVal     = hasPackage ? Number(item.max) : 0;
-            const ratio      = hasPackage ? Math.min(1, (Number(item.amount) || 0) / maxVal) : 0;
+            const amtN       = Number(item.amount || 0);
+            const ratio      = hasPackage ? Math.min(1, amtN / maxVal) : 0;
             const sliderColor = ratio <= 0.25 ? "#ef4444"
               : ratio <= 0.5 ? "#f59e0b"
               : "#7ec87e";
             const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
-            const amountDisplay = Number(item.amount || 0);
             const pct = Math.round(ratio * 100);
+            const sealed = hasPackage && amtN > 0 && amtN === maxVal;
+            const opened = hasPackage && amtN > 0 && amtN < maxVal;
+            const overflowed = hasPackage && amtN > maxVal;
             return (
               <div style={{
                 padding: "14px 16px", marginBottom: 12,
                 background: "#0f0f0f", border: "1px solid #1e1e1e",
                 borderRadius: 10,
               }}>
-                {/* Header — label + short purpose. NO fake claims like
-                    "100% full"; we only report facts the user told us. */}
-                <div style={{ marginBottom: 10 }}>
+                {/* Header — label + state badge inline. */}
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                   <div style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 10,
                     color: "#f5c842", letterSpacing: "0.08em",
                   }}>
-                    PACKAGE SIZE
+                    QUANTITY
                   </div>
+                  {sealed && (
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#7ec87e", letterSpacing: "0.08em",
+                    }}>
+                      ● SEALED
+                    </div>
+                  )}
+                  {opened && (
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#f59e0b", letterSpacing: "0.08em",
+                    }}>
+                      ◐ OPENED
+                    </div>
+                  )}
                   <div style={{
                     fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-                    color: "#888", marginTop: 2,
+                    color: overflowed ? "#ef4444" : "#888",
                   }}>
-                    You set this. It becomes the row's max — QUANTITY is
-                    then read as how much of the package is left.
+                    {!hasPackage
+                      ? "set PACKAGE SIZE above to enable the slider"
+                      : overflowed
+                        ? `${amtN} exceeds package (${maxVal}) — raise PACKAGE SIZE or lower QUANTITY`
+                        : sealed
+                          ? `${maxVal} ${item.unit || ""} · full`
+                          : `${amtN.toFixed(Number.isInteger(amtN) ? 0 : 1)} of ${maxVal} left · ${pct}%`}
                   </div>
                 </div>
 
-                {/* PRIMARY CONTROL — the "link" the user asked for. A
-                    big, obvious input that takes whatever value the
-                    user types and writes it to pantry_items.max. No
-                    admin approval, no canonical requirement, no
-                    gating — just type a number. */}
+                {/* PRIMARY INPUT — how much is on the shelf right now.
+                    Number input + static unit (unit lives on PACKAGE
+                    SIZE tile, inherited here). */}
                 <div style={{
                   display: "flex", alignItems: "center", gap: 8,
                   padding: "10px 12px",
                   background: "#0a0a0a",
-                  border: `1px solid ${hasPackage ? "#f5c842" : "#3a3a3a"}`,
+                  border: `1px solid ${sealed ? "#7ec87e55" : opened ? "#f59e0b55" : "#3a3a3a"}`,
                   borderRadius: 8,
-                  marginBottom: (sizes.length > 0 || hasPackage) ? 10 : 0,
+                  marginBottom: hasPackage ? 10 : (sizes.length > 0 ? 10 : 0),
                 }}>
                   <input
-                    key={`pkg-${item.id}-${item.max}`}
-                    type="number"
-                    inputMode="decimal"
-                    min="0" step="any"
-                    defaultValue={hasPackage ? item.max : ""}
-                    placeholder="type package size"
+                    key={`qty-${item.id}-${item.amount}`}
+                    type="number" inputMode="decimal" min="0" step="any"
+                    defaultValue={amtN > 0 ? amtN : ""}
+                    placeholder="how much is left"
                     onBlur={e => {
-                      const v = e.target.value;
-                      if (v === "") {
-                        if (hasPackage) commit({ max: 0 });
-                        return;
+                      const v = parseFloat(e.target.value);
+                      if (Number.isFinite(v) && v >= 0 && v !== amtN) {
+                        commit({ amount: v });
                       }
-                      const n = parseFloat(v);
-                      if (!Number.isFinite(n) || n < 0) return;
-                      if (n === Number(item.max)) return;
-                      // Setting PACKAGE SIZE also primes QUANTITY to
-                      // match — a freshly declared package starts
-                      // sealed at 100%. Two cases where we sync
-                      // amount:
-                      //   * No amount yet (0 or undeclared) — pure
-                      //     initialization
-                      //   * amount currently == max — this row was
-                      //     sealed; resizing the package keeps it
-                      //     sealed at the new size
-                      // If amount is mid-package (user already ate
-                      // some), leave amount alone — the user declared
-                      // a different container size but they know what
-                      // they have on the shelf.
-                      const amt = Number(item.amount || 0);
-                      const wasSealed = amt > 0 && amt === Number(item.max);
-                      const patch = { max: n };
-                      if (amt === 0 || wasSealed) patch.amount = n;
-                      commit(patch);
                     }}
                     onKeyDown={e => {
                       if (e.key === "Enter") e.currentTarget.blur();
                       if (e.key === "Escape") {
-                        e.currentTarget.value = hasPackage ? String(item.max) : "";
+                        e.currentTarget.value = amtN > 0 ? String(amtN) : "";
                         e.currentTarget.blur();
                       }
                     }}
@@ -1137,103 +1118,91 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                     style={{
                       flex: 1, minWidth: 0,
                       background: "transparent", border: "none", outline: "none",
-                      color: hasPackage ? "#f5c842" : "#f0ece4",
+                      color: "#f5c842",
                       fontFamily: "'DM Mono',monospace",
-                      fontSize: 18, fontWeight: 500,
+                      fontSize: 20, fontWeight: 500,
                       padding: 0,
                     }}
                   />
                   <span style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 13,
-                    color: hasPackage ? "#aaa" : "#666", flexShrink: 0,
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    color: "#aaa", flexShrink: 0,
                   }}>
-                    {item.unit || "unit"}
+                    {item.unit || "—"}
                   </span>
-                  {hasPackage && (
-                    <button
-                      onClick={e => { e.stopPropagation(); commit({ max: 0 }); }}
-                      style={{
-                        padding: "4px 10px",
-                        background: "transparent", border: "1px solid #2a2a2a",
-                        color: "#888", borderRadius: 4,
-                        fontFamily: "'DM Mono',monospace", fontSize: 10,
-                        letterSpacing: "0.06em", cursor: "pointer",
-                      }}
-                    >
-                      CLEAR
-                    </button>
-                  )}
                 </div>
 
-                {/* Current-state readout — ONLY shown when the user has
-                    declared a package AND the numbers are meaningful. No
-                    "100% full" lie; just honest math. */}
-                {hasPackage && (
-                  <div style={{
-                    fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-                    color: amountDisplay > maxVal ? "#ef4444" : "#888",
-                    marginBottom: sizes.length > 0 ? 10 : 0,
-                  }}>
-                    {amountDisplay > maxVal
-                      ? `QUANTITY (${amountDisplay}) is larger than the package — raise the package size or lower quantity`
-                      : amountDisplay < maxVal
-                        ? `${amountDisplay.toFixed(Number.isInteger(amountDisplay) ? 0 : 1)} of ${maxVal} left · ${pct}%`
-                        : `QUANTITY matches package size — tap QUANTITY above to log what's actually left`}
-                  </div>
-                )}
-
-                {/* Canonical-provided suggestion chips. Tap fills
-                    max + unit in one shot. Admin-curated
-                    (ingredient_info.packaging.sizes) — shown as
-                    quick-picks ONLY; the user is never forced to
-                    pick from here, the free-text input above
-                    accepts any value. */}
-                {sizes.length > 0 && (
-                  <div style={{
-                    display: "flex", gap: 6, flexWrap: "wrap",
-                    marginBottom: hasPackage ? 10 : 0,
-                  }}>
-                    {sizes.map((s, i) => {
-                      const active = String(s.amount) === String(item.max) && (s.unit || "") === (item.unit || "");
-                      return (
-                        <button
-                          key={`${s.amount}-${s.unit}-${i}`}
-                          onClick={e => {
-                            e.stopPropagation();
-                            commit({ max: Number(s.amount), unit: s.unit || item.unit });
-                          }}
-                          style={{
-                            padding: "4px 10px",
-                            background: active ? "#1a1608" : "transparent",
-                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                            color: active ? "#f5c842" : "#aaa",
-                            borderRadius: 14,
-                            fontFamily: "'DM Mono',monospace", fontSize: 10,
-                            letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
-                          }}
-                        >
-                          {s.amount} {s.unit}
-                          {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Slide-to-estimate — only renders when a package is
-                    declared so the gauge has a reference for 100%.
-                    Half a bag of chips is eaten, nobody's weighing
-                    what's left; drag to what looks right. */}
+                {/* Slider — drag-to-estimate how much is left. Only
+                    renders when a package size is declared so the
+                    gauge has a reference for 100%. Half a bag is
+                    eaten, nobody's weighing what's left; drag to
+                    what looks right. */}
                 {hasPackage && (
                   <input
                     type="range"
                     min="0" max={maxVal} step={step}
-                    value={Number(item.amount) || 0}
+                    value={amtN}
                     onChange={e => commit({ amount: Number(e.target.value) })}
                     onClick={e => e.stopPropagation()}
                     aria-label={`Estimate ${item.name} remaining`}
-                    style={{ width: "100%", accentColor: sliderColor }}
+                    style={{ width: "100%", accentColor: sliderColor, marginBottom: sizes.length > 0 ? 10 : 0 }}
                   />
+                )}
+
+                {/* OTHERS USE — observation-learned suggestion chips
+                    for PACKAGE SIZE. Sourced from popular_package_sizes
+                    RPC (migration 0063), keyed on (brand, canonical).
+                    Tapping a chip fills PACKAGE SIZE *and* QUANTITY
+                    to that size — opening a fresh sealed package in
+                    one tap. The chips surface in the QUANTITY section
+                    because this is where the user looks first when
+                    they open the card; a nudge toward "set a size so
+                    the gauge works." */}
+                {sizes.length > 0 && (
+                  <div>
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#666", letterSpacing: "0.08em", marginBottom: 6,
+                    }}>
+                      OTHERS USE THIS SIZE
+                    </div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {sizes.map((s, i) => {
+                        const active = Number(s.amount) === Number(item.max) && (s.unit || "") === (item.unit || "");
+                        return (
+                          <button
+                            key={`${s.amount}-${s.unit}-${s.brand || "_"}-${i}`}
+                            onClick={e => {
+                              e.stopPropagation();
+                              // Chip tap = "open a fresh package of
+                              // this size." Fills PACKAGE SIZE
+                              // (max), inherits unit, AND sets
+                              // QUANTITY to the same value so the
+                              // row lands sealed at 100%.
+                              const patch = {
+                                max: Number(s.amount),
+                                unit: s.unit || item.unit,
+                                amount: Number(s.amount),
+                              };
+                              commit(patch);
+                            }}
+                            style={{
+                              padding: "4px 10px",
+                              background: active ? "#1a1608" : "transparent",
+                              border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                              color: active ? "#f5c842" : "#aaa",
+                              borderRadius: 14,
+                              fontFamily: "'DM Mono',monospace", fontSize: 10,
+                              letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
+                            }}
+                          >
+                            {s.amount} {s.unit}
+                            {s.brand ? <span style={{ color: "#7eb8d4", marginLeft: 4 }}>· {s.brand}</span> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             );

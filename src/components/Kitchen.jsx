@@ -55,6 +55,7 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { usePopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import FieldExplainer from "./FieldExplainer";
@@ -1806,6 +1807,16 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // prior brand until they explicitly clear it (matches how
   // customTypeId / customTileId behave).
   const [customBrand, setCustomBrand] = useState(null);
+  // Observation-learned PACKAGE SIZE chips — replaces the admin-
+  // curated ingredient_info.packaging.sizes bank. Keyed on the
+  // live (brand, canonical) pair so the chips update as the user
+  // types a brand-containing name or picks a canonical. Hook has
+  // to live at component top level; IIFE in the PACKAGE section
+  // reads popularPackages.rows.
+  const primaryCanonicalId = customCanonicalId
+    || (customComponents[0]?.canonical?.id)
+    || null;
+  const popularPackages = usePopularPackages(customBrand, primaryCanonicalId, 5);
   // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
   // packages the user has beyond the one they're treating as "open"
   // (the amount field). Stays zero for liquid-mode rows; >0 flips
@@ -2843,14 +2854,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 gauge; pairs with QUANTITY ("how much" I'm adding
                 right now) as orthogonal concepts. Per-item value
                 writes straight to pantry_items.max on save, no
-                admin approval. Canonical-provided chips (admin-
-                curated ingredient_info.packaging.sizes) are
-                suggestions only — the free-text FULL PKG input
-                accepts any user value. */}
+                admin approval. Suggestion chips are observation-
+                learned (popular_package_sizes RPC, migration 0063)
+                keyed on (brand, canonical) so Barilla Penne's 16oz
+                bubbles up separately from generic-penne aggregates.
+                Free-text PACKAGE SIZE input accepts any value the
+                user types. */}
             {(() => {
-              const primaryId = (customComponents[0]?.canonical?.id) || null;
-              const pkg       = primaryId ? dbMap?.[primaryId]?.packaging : null;
-              const sizes     = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
+              const sizes     = popularPackages.rows || [];
               const pkgN      = parseFloat(packageSize);
               const hasPkg    = Number.isFinite(pkgN) && pkgN > 0;
               const amtN      = parseFloat(amount);
@@ -2953,37 +2964,57 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     )}
                   </div>
 
-                  {/* Canonical suggestion chips (admin-curated).
-                      Tap fills both PACKAGE SIZE and QUANTITY unit
-                      in one shot. Skipped when the canonical has no
-                      packaging bank. */}
+                  {/* Observation-learned suggestion chips. Sourced
+                      from the popular_package_sizes RPC, filtered on
+                      the current (brand, canonical) pair. Empty for
+                      a first-of-kind canonical — user types a size
+                      and future users inherit it automatically. */}
                   {sizes.length > 0 && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {sizes.map((s, i) => {
-                        const active = String(s.amount) === String(packageSize)
-                          && (s.unit || "") === (customUnit || "");
-                        return (
-                          <button
-                            key={`${s.amount}-${s.unit}-${i}`}
-                            onClick={() => {
-                              setPackageSize(String(s.amount));
-                              if (s.unit) setCustomUnit(s.unit);
-                            }}
-                            style={{
-                              padding: "4px 10px",
-                              background: active ? "#1a1608" : "transparent",
-                              border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                              color: active ? "#f5c842" : "#bbb",
-                              borderRadius: 14,
-                              fontFamily: "'DM Mono',monospace", fontSize: 10,
-                              letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
-                            }}
-                          >
-                            {s.amount} {s.unit}
-                            {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
-                          </button>
-                        );
-                      })}
+                    <div>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: "#666", letterSpacing: "0.08em", marginBottom: 6,
+                      }}>
+                        OTHERS USE
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {sizes.map((s, i) => {
+                          const active = Number(s.amount) === Number(packageSize)
+                            && (s.unit || "") === (customUnit || "");
+                          return (
+                            <button
+                              key={`${s.amount}-${s.unit}-${s.brand || "_"}-${i}`}
+                              onClick={() => {
+                                setPackageSize(String(s.amount));
+                                if (s.unit) setCustomUnit(s.unit);
+                                // Setting PACKAGE SIZE primes QUANTITY
+                                // to the same value — fresh sealed
+                                // package starts at 100%. Honors the
+                                // same "don't clobber mid-package"
+                                // rule as the free-text input below.
+                                const amtN = parseFloat(amount);
+                                const prevPkgN = parseFloat(packageSize);
+                                const wasSealed = Number.isFinite(amtN) && Number.isFinite(prevPkgN) && amtN === prevPkgN;
+                                if (amount === "" || !Number.isFinite(amtN) || wasSealed) {
+                                  setAmount(String(s.amount));
+                                }
+                              }}
+                              style={{
+                                padding: "4px 10px",
+                                background: active ? "#1a1608" : "transparent",
+                                border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                                color: active ? "#f5c842" : "#bbb",
+                                borderRadius: 14,
+                                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                                letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
+                              }}
+                            >
+                              {s.amount} {s.unit}
+                              {s.brand ? <span style={{ color: "#7eb8d4", marginLeft: 4 }}>· {s.brand}</span> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3265,40 +3296,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
             }
             if (canon) cascadeFromCanonical(canon);
           }
-          // Admin auto-approve on user-created slug.
-          //
-          // Old behavior (pre-v0.13): ALWAYS wrote a bare {_meta}
-          // stub to ingredient_info so the canonical id was "claimed."
-          // Side effect was a ghost-approved row — badge read
-          // "ENRICHED" but no data lived there, the enrichment
-          // button hid, package chips silently never rendered.
-          //
-          // New behavior: only upsert when the create flow produced
-          // real data (packaging or parentId via the PackagingStep).
-          // Empty creations leave ingredient_info untouched. The
-          // canonical_id on the pantry row is enough for identity;
-          // enrichment button stays available for the user to opt
-          // in later. No more ghost rows.
-          if (isAdmin && nextId && !findIngredient(nextId)) {
-            const payload = {};
-            if (extra?.packaging) payload.packaging = extra.packaging;
-            if (extra?.parentId)  payload.parentId  = extra.parentId;
-            if (Object.keys(payload).length > 0) {
-              payload._meta = {
-                reviewed: true,
-                reviewed_by: userId || null,
-                reviewed_at: new Date().toISOString(),
-                source: "admin_additem_create",
-              };
-              supabase
-                .from("ingredient_info")
-                .upsert({ ingredient_id: nextId, info: payload }, { onConflict: "ingredient_id" })
-                .then(({ error }) => {
-                  if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
-                  else refreshDb?.();
-                });
-            }
-          }
+          // Admin auto-approve on packaging / parentId writes was
+          // retired alongside the PackagingStep removal. Package
+          // sizes now come from the observation corpus
+          // (popular_package_sizes RPC); parentId hub assignment
+          // moves to a separate flow if needed. Empty creations
+          // still leave ingredient_info untouched — the
+          // canonical_id on the pantry row is enough for identity.
         }}
         onClose={() => setCustomCanonicalOpen(false)}
       />
