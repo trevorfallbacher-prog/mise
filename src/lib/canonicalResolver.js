@@ -178,12 +178,19 @@ export function resolveCanonicalFromScan({
   // Score floor of 70 matches the "confident enough to auto-link"
   // threshold suggested in fuzzyMatchIngredient's own comment.
   //
-  // autoApply trips at score >= 95 — essentially a name-normalized
-  // exact match. "heavy-cream" tag fuzzing against the "Heavy Cream"
-  // canonical scores 100 (exact after normalization) + small bonus
-  // and makes the user's confirmation tap pointless. Below 95,
-  // suggestion card surfaces so the user can verify.
-  for (const tag of (categoryHints || [])) {
+  // autoApply requires DOUBLE confidence: score >= 95 (exact name
+  // match after normalization) AND the matched tag was the
+  // most-specific one OFF gave us (index 0). OFF orders category
+  // tags specific → broad, so a protein-ramen scan produces
+  // ["ramen-noodles", "noodles", ..., "pastas"] — matching on
+  // "pastas" (a fallback parent three hops deep) is NOT a direct
+  // match, even though it normalizes to a 100-score hit on the
+  // "pasta" canonical. Previously auto-applied; now surfaces the
+  // suggestion card so the user can confirm or pick the correct
+  // specific canonical.
+  const tagList = Array.isArray(categoryHints) ? categoryHints : [];
+  for (let i = 0; i < tagList.length; i++) {
+    const tag = tagList[i];
     const phrase = tagToPhrase(tag);
     if (!phrase) continue;
     const hit = bestMatchAboveFloor(phrase, 70);
@@ -194,7 +201,7 @@ export function resolveCanonicalFromScan({
         reason: `tag:${tag}`,
         matchedOn: phrase,
         score: hit.score,
-        autoApply: hit.score >= 95,
+        autoApply: hit.score >= 95 && i === 0,
       };
     }
   }
