@@ -174,8 +174,18 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       const base64 = await fileToBase64(file);
       const res = await decodeBarcodeFromImage(base64, mediaType);
       if (res?.found && res.barcode) {
-        stopStream();
-        onDetected?.(res.barcode);
+        // Populate the typed field with the decoded digits and ask
+        // the user to confirm before we hit OFF. Vision misreads
+        // are real (a Haiku pass dropped an 8 and a 9 off a UPC
+        // in testing). Letting the user eyeball the digits against
+        // the package catches errors before they become an
+        // apparently-missing product.
+        setTyped(res.barcode);
+        setDecodeMsg(
+          `Read: ${formatBarcodeDigits(res.barcode)}\n\n` +
+          `Check it matches the digits printed under the barcode on your package. ` +
+          `Fix any wrong digits, then tap LOOK UP.`,
+        );
         return;
       }
       // Human-facing reason map. Two buckets — model-readable misses
@@ -309,6 +319,7 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
               borderRadius: 10,
               fontFamily: "'DM Sans',sans-serif", fontSize: 12,
               color: "#e0b090", lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
             }}>
               {decodeMsg}
             </div>
@@ -434,6 +445,20 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       )}
     </div>
   );
+}
+
+// Format a raw digit string into the grouped display under a real
+// barcode ("0 12345 67890 5" for UPC-A) so the user can line it up
+// against the package digit-for-digit. Fall back to the raw string
+// when the length doesn't match a known structure.
+function formatBarcodeDigits(raw) {
+  if (!raw || typeof raw !== "string") return raw || "";
+  const d = raw.replace(/\D/g, "");
+  if (d.length === 12) return `${d[0]} ${d.slice(1, 6)} ${d.slice(6, 11)} ${d[11]}`;   // UPC-A
+  if (d.length === 13) return `${d[0]} ${d.slice(1, 7)} ${d.slice(7)}`;                 // EAN-13
+  if (d.length === 8)  return `${d.slice(0, 4)} ${d.slice(4)}`;                         // EAN-8 / UPC-E
+  if (d.length === 14) return `${d[0]} ${d.slice(1, 4)} ${d.slice(4, 9)} ${d.slice(9)}`; // ITF-14
+  return d;
 }
 
 // Read a File as a base64 string (no data: prefix), matching the edge

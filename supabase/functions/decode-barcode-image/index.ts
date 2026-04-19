@@ -41,16 +41,18 @@ const CORS_HEADERS = {
 };
 const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
-// Haiku 4.5 — vision-capable, fast (~1s for a digit read), cheap.
-// Reading a 12-digit number off a photo doesn't need Opus-level
-// reasoning; Haiku is plenty.
-const MODEL = "claude-haiku-4-5-20251001";
+// Sonnet 4.6 — Haiku 4.5 turned out to miss digits on real-world
+// product photos (dropped an 8 from an 811670031139 UPC in testing;
+// Go-UPC's fuzzy matcher was more forgiving than ours could be).
+// Reading 12 digits precisely is an accuracy task, not a speed task;
+// Sonnet is the right tool. Still responds in ~2s for this prompt.
+const MODEL = "claude-sonnet-4-6";
 
 const PROMPT = `You are reading a barcode off a product photo.
 
 Every UPC / EAN / ITF barcode prints its digits in human-readable form
 directly below or beside the bars. Your job is to extract ONLY those
-digits.
+digits, precisely.
 
 Return ONE of these exact JSON shapes, nothing else. No prose, no
 markdown fences, no explanation.
@@ -63,14 +65,35 @@ markdown fences, no explanation.
     { "error": "unreadable" }               // blurry / cut off / glare
     { "error": "not_a_product" }            // QR code, loyalty card, wristband
 
-Rules:
-  - Digits only. No spaces, no hyphens, no letters. "0 12345 67890 5" -> "0123456789012" (concatenate the groups).
-  - Don't pad or trim — report exactly the digit count printed.
-  - If you see multiple barcodes, return the one on the main product
-    label (the big one on the box/bag/bottle), not a serial-number
-    sticker or a promo code.
-  - If you can't read at least 8 digits confidently, return
-    { "error": "unreadable" } — a wrong guess is worse than a miss.`;
+Rules (precision matters — wrong digits are worse than a miss):
+
+  1. Common barcode structures. Use these to sanity-check your read:
+     - UPC-A: 12 digits, printed as "X XXXXX XXXXX X" (1-5-5-1 groups)
+     - EAN-13: 13 digits, printed as "X XXXXXX XXXXXX" (1-6-6)
+     - EAN-8: 8 digits, printed as "XXXX XXXX" (4-4)
+     - UPC-E: 8 digits, single block
+     - ITF-14: 14 digits, usually grouped 1-3-5-5 or similar
+
+  2. Count every digit in the PRINTED text under the bars. If the
+     label shows 4 groups, concatenate all 4. Don't skip a group
+     because it's small — the leading / trailing single digits
+     (check digits, number-system digits) are often printed smaller
+     than the middle block but they are STILL PART OF THE BARCODE.
+
+  3. "0 12345 67890 5" -> "0123456789012". Twelve digits. If your
+     output has fewer digits than the printed label shows, you
+     missed one — re-read, don't submit.
+
+  4. Digits only in the output. No spaces, no hyphens, no letters.
+
+  5. If you see multiple barcodes, return the one on the main product
+     label (the big one on the box/bag/bottle), not a serial-number
+     sticker, a promo code, or a secondary shipping label.
+
+  6. If you can't read the full code confidently — even by one digit
+     — return { "error": "unreadable" }. A wrong guess routes the
+     user to the wrong product; an honest miss just asks them to
+     retake the photo.`;
 
 // OFF accepts 8-14 digit codes (UPC-E=8, EAN-8=8, UPC-A=12, EAN-13=13,
 // ITF-14=14). Guard against the model returning something that won't
