@@ -55,6 +55,7 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
@@ -2532,7 +2533,18 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   const matches = [...bundled, ...synthScored]
                     .sort((a, b) => b.score - a.score)
                     .slice(0, 5);
-                  if (matches.length === 0) return null;
+
+                  // "+ CREATE" row — always rendered so the user can
+                  // mint a fresh canonical for anything the typeahead
+                  // didn't surface. Exact-slug match suppresses the
+                  // row so we don't show "+ CREATE prosciutto" when
+                  // prosciutto is already bound / top hit.
+                  const wouldSlug = slugifyIngredientName(needle);
+                  const alreadyExists = matches.some(
+                    m => m.ingredient.id === wouldSlug
+                  );
+                  const showCreate = wouldSlug && !alreadyExists;
+                  if (matches.length === 0 && !showCreate) return null;
                   return (
                     <div style={{
                       marginTop: 6,
@@ -2580,6 +2592,75 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                           </span>
                         </button>
                       ))}
+
+                      {/* + CREATE NEW CANONICAL — escape hatch when
+                          the typeahead doesn't surface what the user
+                          has in mind. Tap → slugify(typed) becomes
+                          the new canonical id, set it on the row,
+                          fire enrichment in the background (auto-
+                          approves + lands in ingredient_info so
+                          future users get the canonical for free).
+                          Matches LinkIngredient's createNewFromQuery
+                          semantics so both entry points mint
+                          identical rows. */}
+                      {showCreate && (
+                        <button
+                          key="__create"
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            const id = wouldSlug;
+                            setCustomCanonicalId(id);
+                            setCustomName(needle);
+                            // Synthesize a minimal canonical object
+                            // for cascade (routing fields fall back
+                            // to defaults since we don't know the
+                            // category yet — enrichment will fill it).
+                            cascadeFromCanonical({
+                              id,
+                              name: needle,
+                              emoji: "✨",
+                              category: "pantry",
+                            });
+                            // Fire-and-forget enrichment so Claude
+                            // fills description/packaging/etc. behind
+                            // the scenes. Mirrors
+                            // LinkIngredient.createNewFromQuery.
+                            if (!findIngredient(id)) {
+                              enrichIngredient({ canonical_id: id })
+                                .then(() => { refreshDb?.(); })
+                                .catch(err => console.warn("[auto-enrich] failed for", id, err?.message));
+                            }
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px",
+                            background: "transparent",
+                            border: `1px dashed #f5c84244`,
+                            color: "#f5c842",
+                            borderRadius: 8,
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                            cursor: "pointer", textAlign: "left",
+                            marginTop: 4,
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "#1a1608"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>➕</span>
+                          <span style={{
+                            flex: 1, overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            Create <strong style={{ color: "#f5c842" }}>"{needle}"</strong> as a new canonical
+                          </span>
+                          <span style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#f5c842", letterSpacing: "0.08em",
+                            flexShrink: 0,
+                          }}>
+                            TAP TO CREATE
+                          </span>
+                        </button>
+                      )}
                     </div>
                   );
                 })()}
