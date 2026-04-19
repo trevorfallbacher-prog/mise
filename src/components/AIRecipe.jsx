@@ -140,10 +140,12 @@ export default function AIRecipe({
   const [difficulty, setDifficulty] = useState("medium");
 
   // Protein picker source — collapse the pantry to one chip per
-  // canonical (5 cans of tuna = one TUNA chip, not five). Filter to
-  // proteiny rows via isProteinRow. Empty when the pantry has no
-  // proteins; we hide the Section in that case.
-  const proteinOptions = useMemo(() => {
+  // canonical (5 cans of tuna = one TUNA chip, not five) and group
+  // by category so the user can scan MEAT / POULTRY / SEAFOOD /
+  // PLANT at a glance instead of reading a wall of chips. Uses the
+  // canonical's full `name` (not `shortName`) so "Ground Beef" and
+  // "Ground Pork" don't both read as just "Ground."
+  const proteinGroups = useMemo(() => {
     const byCanonical = new Map();
     for (const row of pantry) {
       if (!isProteinRow(row)) continue;
@@ -153,12 +155,40 @@ export default function AIRecipe({
         const canon = findIngredient(slug);
         byCanonical.set(slug, {
           id: slug,
-          label: canon?.shortName || canon?.name || row.name || slug,
+          // Full name first; shortName was causing "Ground Beef" and
+          // "Ground Pork" to both render as "Ground."
+          label: canon?.name || row.name || slug,
           emoji: row.emoji || canon?.emoji || "🍖",
+          category: canon?.category || null,
+          slug,
         });
       }
     }
-    return [...byCanonical.values()];
+    // Categories in the order we want them surfaced. Anything that
+    // doesn't match one of the meat/poultry/seafood buckets lands
+    // under "PLANT & OTHER" — tofu, eggs, beans, egg whites, etc.
+    const categoryOrder = [
+      { key: "meat",    label: "Meat" },
+      { key: "poultry", label: "Poultry" },
+      { key: "seafood", label: "Seafood" },
+      { key: "plant",   label: "Plant & other" },
+    ];
+    const groups = new Map(categoryOrder.map(c => [c.key, { ...c, items: [] }]));
+    for (const opt of byCanonical.values()) {
+      const key = ["meat", "poultry", "seafood"].includes(opt.category)
+        ? opt.category
+        : "plant";
+      groups.get(key).items.push(opt);
+    }
+    // Sort each group alphabetically; drop empties.
+    const out = [];
+    for (const c of categoryOrder) {
+      const g = groups.get(c.key);
+      if (g.items.length === 0) continue;
+      g.items.sort((a, b) => a.label.localeCompare(b.label));
+      out.push(g);
+    }
+    return out;
   }, [pantry]);
 
   const pantryCount = pantry.length;
@@ -195,7 +225,23 @@ export default function AIRecipe({
         avoidTitles: previousTitles,
         context: built.context,
       };
-      const { sketch: drafted } = await generateRecipe(payload);
+      const result = await generateRecipe(payload);
+      // Graceful fallback — if the edge function hasn't been
+      // redeployed with Phase 2, the client sees { recipe }
+      // instead of { sketch } and we skip tweak entirely, landing
+      // in preview with the single-pass result. Logs so the user
+      // knows they need to deploy to unlock the tweak flow.
+      if (result.fellBackToFinal) {
+        // eslint-disable-next-line no-console
+        console.warn("[AIRecipe] generate-recipe edge fn predates Phase 2 (sketch mode) — deploy `supabase functions deploy generate-recipe` to enable the tweak flow.");
+        setRecipe(result.recipe);
+        if (result.recipe?.title) {
+          setPreviousTitles(prev => (prev.includes(result.recipe.title) ? prev : [...prev, result.recipe.title]));
+        }
+        setPhase("preview");
+        return;
+      }
+      const drafted = result.sketch;
       setSketch(drafted);
       // Reset the tweak diff every fresh sketch — old swaps from a
       // previous draft don't apply to the new ingredient list.
@@ -979,33 +1025,49 @@ export default function AIRecipe({
             proteins. Multi-select: the user's explicit "use these"
             signal. Beats the expiring-soon heuristic in the pantry
             ranking. */}
-        {proteinOptions.length > 0 && (
+        {proteinGroups.length > 0 && (
           <Section label="BUILD AROUND THESE PROTEINS">
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {proteinOptions.map(o => {
-                const active = starIngredientIds.includes(o.id);
-                return (
-                  <button
-                    key={o.id}
-                    onClick={() => setStarIngredientIds(prev => (
-                      active ? prev.filter(id => id !== o.id) : [...prev, o.id]
-                    ))}
-                    style={{
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                      padding: "7px 12px",
-                      background: active ? "#1e1a0e" : "#161616",
-                      border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                      color: active ? "#f5c842" : "#888",
-                      borderRadius: 20,
-                      fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                      cursor: "pointer", transition: "all 0.2s",
-                    }}
-                  >
-                    <span style={{ fontSize: 14 }}>{o.emoji}</span>
-                    {o.label}
-                  </button>
-                );
-              })}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {proteinGroups.map(group => (
+                <div key={group.key}>
+                  {/* Per-category sub-header. Keeps the four buckets
+                      (Meat / Poultry / Seafood / Plant & other) scannable
+                      instead of a single wall of chips. */}
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#666", letterSpacing: "0.1em",
+                    marginBottom: 6,
+                  }}>
+                    {group.label.toUpperCase()}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {group.items.map(o => {
+                      const active = starIngredientIds.includes(o.id);
+                      return (
+                        <button
+                          key={o.id}
+                          onClick={() => setStarIngredientIds(prev => (
+                            active ? prev.filter(id => id !== o.id) : [...prev, o.id]
+                          ))}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 6,
+                            padding: "7px 12px",
+                            background: active ? "#1e1a0e" : "#161616",
+                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                            color: active ? "#f5c842" : "#888",
+                            borderRadius: 20,
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                            cursor: "pointer", transition: "all 0.2s",
+                          }}
+                        >
+                          <span style={{ fontSize: 14 }}>{o.emoji}</span>
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </Section>
         )}

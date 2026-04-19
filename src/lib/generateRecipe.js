@@ -77,9 +77,17 @@ export async function generateRecipe({
   }
 
   // Sketch responses come back as { sketch }; final as { recipe }.
-  // Caller handles the shape.
+  // If sketch mode receives a { recipe } (the pre-Phase-2 edge
+  // function that ignores the mode flag), treat it as a graceful
+  // fallback — the caller can land straight in preview skipping
+  // the tweak phase. Signals this via data.fellBackToFinal = true.
   if (mode === "sketch") {
-    if (!data?.sketch) throw new Error("Sketch succeeded but response was empty");
+    if (!data?.sketch) {
+      if (data?.recipe) {
+        return { sketch: null, recipe: data.recipe, fellBackToFinal: true };
+      }
+      throw new Error("Sketch succeeded but response was empty");
+    }
   } else {
     if (!data?.recipe) throw new Error("Recipe draft succeeded but response was empty");
   }
