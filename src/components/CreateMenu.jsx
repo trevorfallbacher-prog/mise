@@ -8,6 +8,7 @@ import {
   totalTimeMin,
   difficultyLabel,
 } from "../data/recipes";
+import { inferCanonicalFromName, findIngredient } from "../data/ingredients";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
@@ -238,21 +239,37 @@ export default function CreateMenu({
             // Items come in as { name, amount, unit, ingredientId,
             // source: "ai-recipe" }. Merge into shoppingList with
             // fresh uuids so useSyncedList persists them.
+            //
+            // Canonical backfill: AIRecipe forwards `ingredientId`
+            // only when Claude stamped it on the recipe ingredient.
+            // Claude leaves it null for "staples it assumed" and any
+            // newly-introduced ingredient (generate-recipe/index.ts
+            // :447). Before we push to the list, run a substring
+            // lookup against the bundled registry so a match like
+            // "ricotta cheese" → ricotta lands with the canonical
+            // stamped — enabling the +30 receipt-scan bias tier
+            // instead of the weaker +20 free-text tier.
             if (!items || items.length === 0) return;
             setShoppingList(prev => [
               ...prev,
-              ...items.map(i => ({
-                id: (typeof crypto !== "undefined" && crypto.randomUUID)
-                  ? crypto.randomUUID()
-                  : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-                name: i.name,
-                emoji: "🥫",
-                amount: i.amount,
-                unit: i.unit,
-                ingredientId: i.ingredientId || null,
-                category: "pantry",
-                source: "ai-recipe",
-              })),
+              ...items.map(i => {
+                const resolvedId = i.ingredientId
+                  || inferCanonicalFromName(i.name)
+                  || null;
+                const canonical = findIngredient(resolvedId);
+                return {
+                  id: (typeof crypto !== "undefined" && crypto.randomUUID)
+                    ? crypto.randomUUID()
+                    : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                  name: canonical?.name || i.name,
+                  emoji: canonical?.emoji || "🥫",
+                  amount: i.amount,
+                  unit: i.unit,
+                  ingredientId: resolvedId,
+                  category: canonical?.category || "pantry",
+                  source: "ai-recipe",
+                };
+              }),
             ]);
           }}
         />
