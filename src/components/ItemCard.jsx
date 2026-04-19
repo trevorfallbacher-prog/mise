@@ -1390,23 +1390,59 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         ? `Awaiting admin review`
                         : state === "stub"
                           ? `Stub only — fill in to enable packaging + grouping`
-                          : `Enrich ${itemIdentityName}`}
+                          : item.canonicalId
+                            ? `Enrich ${itemIdentityName}`
+                            : `Link a canonical to enrich — item names aren't used`}
                   </div>
                 </div>
                 {/* Enrichment is a one-shot per canonical. We show the
                     button when there's NO info yet ("none") AND when
                     the row is a stub (exists but empty). Hide on
                     "pending" (already drafted, avoid clobbering) and
-                    "enriched" (done; re-firing wastes credits). */}
+                    "enriched" (done; re-firing wastes credits).
+
+                    IMPORTANT — enrichment is ONLY fired when the row
+                    has a real canonical_id. The old sourceName
+                    fallback slugified the user's display name into a
+                    fake canonical ("Cane Sugar" → "cane_sugar") and
+                    passed that to Claude, which then described the
+                    ITEM NAME rather than a real canonical entity.
+                    User-visible result: enrichment for "Cane Sugar
+                    Organic Fair Trade" was literally about that exact
+                    string, not the underlying sugar canonical. Per
+                    user directive: item names should never be used to
+                    calculate the AI summary.
+
+                    Without a canonical, we show a "link first" CTA
+                    instead of the enrich button. Tapping it opens the
+                    LinkIngredient picker (via onEditTags) so the user
+                    can bind a real canonical; enrichment auto-fires
+                    when a new canonical is minted (see
+                    LinkIngredient.createNewFromQuery), and when a
+                    bundled canonical is picked, the bundled seed
+                    already carries the description. */}
                 {(state === "none" || state === "stub") && (
                   item.canonicalId ? (
                     <EnrichmentButton canonicalId={item.canonicalId} compact />
                   ) : (
-                    <EnrichmentButton
-                      sourceName={item.name}
-                      pantryItemId={item.id}
-                      compact
-                    />
+                    <button
+                      type="button"
+                      onClick={() => onEditTags?.()}
+                      disabled={!onEditTags}
+                      style={{
+                        padding: "6px 12px",
+                        background: "#1a1608",
+                        border: "1px solid #f5c84244",
+                        color: "#f5c842",
+                        borderRadius: 8,
+                        fontFamily: "'DM Mono',monospace", fontSize: 11,
+                        letterSpacing: "0.06em",
+                        cursor: onEditTags ? "pointer" : "not-allowed",
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                      }}
+                    >
+                      🔗 LINK CANONICAL FIRST
+                    </button>
                   )
                 )}
               </div>
