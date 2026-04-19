@@ -169,8 +169,25 @@ export function IngredientInfoProvider({ children }) {
   // Slug lookup for user-scoped pending drafts. Used by IngredientCard for
   // canonicals that haven't been seeded yet (slug = canonical id), and by
   // ItemCard for custom pantry items (slug = slugified source_name).
+  //
+  // Only returns rows that are STILL in pending status. fetchPending()
+  // loads both 'pending' and 'approved' rows into pendingMap (so the
+  // admin-approved info is available to any future "was this approved"
+  // consumer), but the PENDING badge on ItemCard and IngredientCard
+  // must only fire while the row is genuinely awaiting review —
+  // otherwise an already-approved ingredient reads "✨ PENDING ·
+  // Awaiting admin review" forever because the row stayed in the
+  // table with status='approved' after the admin clicked APPROVE.
+  // The AdminPanel ENRICHMENTS queue already filters
+  // `.eq("status","pending")` (AdminPanel.jsx:321); this mirrors
+  // that filter for the client-side badge so the two views agree.
   const getPendingInfo = useCallback(
-    (slug) => (slug ? pendingMap[slug]?.info || null : null),
+    (slug) => {
+      if (!slug) return null;
+      const row = pendingMap[slug];
+      if (!row || row.status !== "pending") return null;
+      return row.info || null;
+    },
     [pendingMap]
   );
 

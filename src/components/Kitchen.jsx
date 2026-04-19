@@ -6,7 +6,7 @@ import {
   unitLabel, inferUnitsForScanned, toBase,
   estimatePriceCents, getIngredientInfo, estimateExpirationDays,
   stateLabel, statesForIngredient, statesForItem, detectStateFromText,
-  inferCanonicalFromName, fuzzyMatchIngredient,
+  inferCanonicalFromName, fuzzyMatchIngredient, parseIdentity,
 } from "../data/ingredients";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
@@ -55,6 +55,7 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { usePopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import FieldExplainer from "./FieldExplainer";
@@ -300,6 +301,9 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const IDENTITY_KEYS = [
     "name", "ingredientId", "ingredientIds", "canonicalId",
     "emoji", "category", "tileId", "typeId", "kind",
+    // Brand (migration 0062). Edits to the brand chip propagate
+    // across duplicate raw-text rows same as name + canonicalId.
+    "brand",
   ];
   const propagateCorrection = (sourceIdx, patch) => setScannedItems(prev => {
     const source = prev[sourceIdx];
@@ -325,6 +329,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         typeId: merged.typeId,
         canonicalId: merged.canonicalId || merged.ingredientId,
         ingredientIds: merged.ingredientIds,
+        brand: merged.brand,
       }).catch(() => {});
     }
     return prev.map((item, i) => {
@@ -464,11 +469,28 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         // flour→pantry), then fall back to a category default.
         const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
         const location = activeMode.location || regLocation || defaultLocationForCategory(cat);
+        // Three-layer parse: BRAND → STATE → CANONICAL. Pulls brand
+        // tokens off the rawText BEFORE state / canonical detection so
+        // "KG SHRD MOZZ" gets cleanly decomposed into brand Kerrygold
+        // + state shredded + mozzarella cheese instead of the brand
+        // tokens drowning out the downstream matches.
+        //
+        // Authority order for the resolved brand (migration 0062):
+        //   1. item.brand    — Claude's scan-time extraction
+        //   2. parsed.brand  — client-side BRAND_ALIASES fallback
+        // Corrections (via applyCorrection below) can override both.
+        const parsed = parseIdentity(rawText);
+        const resolvedBrand = (typeof item.brand === "string" && item.brand.trim())
+          ? item.brand.trim()
+          : (parsed.brand || null);
         // State detection — grocery receipts abbreviate heavily ("SHRD
         // MOZZ", "SLCD PROV"), and the scan text is the only place we
         // can recover that information. Detect against rawText (the
         // actual receipt abbreviations), only apply when we have a
-        // trusted canonical.
+        // trusted canonical. parseIdentity's state layer is vocabulary-
+        // agnostic; re-run detectStateFromText here so the match is
+        // filtered against the canonical's state vocabulary (milk has
+        // no state vocab → WHL MILK's 'whole' is correctly dropped).
         const detectedState = canon
           ? detectStateFromText(rawText, canon)
           : null;
@@ -482,6 +504,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           confidence: rawConf || confidence,
           mode: activeMode.id,
           detected_state: detectedState || null,
+          // detected_brand preserves the resolved value (Claude or
+          // fallback) so the ItemCard's "raw scan" panel can surface
+          // it alongside detected_state for debug / trust.
+          detected_brand: resolvedBrand,
           price_cents: typeof item.priceCents === "number" ? item.priceCents : null,
           amount_raw: item.amount != null ? String(item.amount) + (item.unit ? ` ${item.unit}` : "") : null,
           scanned_at: new Date().toISOString(),
@@ -509,6 +535,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           sourceKind,
           scanRaw,
           ...(detectedState ? { state: detectedState } : {}),
+          ...(resolvedBrand ? { brand: resolvedBrand } : {}),
         };
         if (!canon) {
           const inferred = inferUnitsForScanned(base);
@@ -586,6 +613,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           patched.canonicalId = c.canonicalId;
           patched.ingredientId = c.canonicalId;
         }
+        // Brand (migration 0062). Correction memory overrides the
+        // scan-time brand resolution — a household that taught
+        // "HCF" → H-E-B wins over Claude's null / fallback regex.
+        if (c.brand) patched.brand = c.brand;
         return patched;
       };
       // Auto-link on strong AND unambiguous match. Two gates:
@@ -646,7 +677,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         // the top TWO from the bundled side so we can measure the
         // score gap against the runner-up and skip auto-link when
         // multiple canonicals tie (the "BREAST" ambiguity case).
-        const bundled = fuzzyMatchIngredient(needle, 5);
+        //
+        // shoppingList bias: canonicals that appear on the user's
+        // active shopping list get +30 (ingredientId match) or +20
+        // (free-text name match) added to their base score. This
+        // shifts ambiguous cases toward what the user went shopping
+        // for without overriding strong independent matches.
+        const bundled = fuzzyMatchIngredient(needle, 5, shoppingList);
         const synthScored = [];
         for (const canon of approvedSynthetics) {
           const score = scoreSyntheticForAuto(needle, canon);
@@ -1304,6 +1341,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                   typeId: row.typeId,
                   canonicalId: row.canonicalId || row.ingredientId,
                   ingredientIds: row.ingredientIds,
+                  brand: row.brand,
                 }).catch(() => {});
               }
             }
@@ -1768,6 +1806,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   const [customName, setCustomName] = useState("");
   const [customUnit, setCustomUnit] = useState("");
   const [customCategory, setCustomCategory] = useState("pantry");
+  // Brand (migration 0061). Parsed opportunistically off the typed
+  // name via parseIdentity — "KERRYGOLD UNSALTED BUTTER" stamps
+  // brand="Kerrygold" without the user reaching for a picker. Stays
+  // sticky once set; a user who pastes over the name keeps their
+  // prior brand until they explicitly clear it (matches how
+  // customTypeId / customTileId behave).
+  const [customBrand, setCustomBrand] = useState(null);
   // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
   // packages the user has beyond the one they're treating as "open"
   // (the amount field). Stays zero for liquid-mode rows; >0 flips
@@ -1817,6 +1862,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // customComponentsOpen because the CANONICAL axis is one-of (identity)
   // and the components axis is many-of (composition).
   const [customCanonicalOpen, setCustomCanonicalOpen] = useState(false);
+
+  // Observation-learned PACKAGE SIZE chips — replaces the admin-
+  // curated ingredient_info.packaging.sizes bank. Keyed on the
+  // live (brand, canonical) pair so the chips update as the user
+  // types a brand-containing name or picks a canonical. Declared
+  // AFTER customCanonicalId + customComponents so the closure sees
+  // the initialized values (TDZ violation if declared above).
+  const primaryCanonicalId = customCanonicalId
+    || (customComponents[0]?.canonical?.id)
+    || null;
+  const popularPackages = usePopularPackages(customBrand, primaryCanonicalId, 5);
 
   // Family-shared user templates, newest-first. Empty until the user
   // (or any family member) saves their first custom item; grows as
@@ -2089,6 +2145,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       // undefined-as-unset.
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
+      ...(customBrand ? { brand: customBrand } : {}),
     };
 
     // Per-instance add: insert N independent rows sharing identity so
@@ -2295,7 +2352,21 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 </div>
               <input
                 value={customName}
-                onChange={e => setCustomName(e.target.value)}
+                onChange={e => {
+                  const next = e.target.value;
+                  setCustomName(next);
+                  // Opportunistic brand harvest (migration 0061).
+                  // parseIdentity peels BRAND off raw text — if the
+                  // user typed / pasted "KERRYGOLD UNSALTED BUTTER",
+                  // stamp Kerrygold without requiring a picker. Only
+                  // fills when the user hasn't already set a brand;
+                  // never clears a prior pick (matches how the
+                  // canonical + type fields stay sticky).
+                  if (!customBrand) {
+                    const parsed = parseIdentity(next);
+                    if (parsed.brand) setCustomBrand(parsed.brand);
+                  }
+                }}
                 placeholder="Add an item"
                 style={{
                   width: "100%",
@@ -2479,7 +2550,22 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 )}
               </div>
 
+              {/* Typeahead suggestion dropdown REMOVED. It used to fan
+                  out template + canonical substring matches below the
+                  name input, but it was a firehose — showing 10+
+                  cheese canonicals when the user typed "f" buries
+                  the signal. Per user: "item names are the most
+                  throw-away thing we have." Canonical binding now
+                  happens via the explicit CANONICAL tap line which
+                  opens LinkIngredient (targeted picker, not
+                  dump-everything). Free-text name still lands as-is
+                  if the user doesn't bind a canonical. The original
+                  dropdown JSX below is kept as a short-circuited
+                  no-op so the surrounding closure + braces still
+                  balance; it renders nothing. */}
               {(() => {
+                return null;
+                // eslint-disable-next-line no-unreachable
                 const typed = (customName || "").trim().toLowerCase();
                 if (!typed) return null;
 
@@ -2683,177 +2769,81 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               );
             })()}
 
-            {/* Packaging chips — only render when the chosen canonical
-                carries `packaging.sizes` in its ingredient_info.
-                Tapping a chip pre-fills amount + unit with the
-                typical package size so the user doesn't have to
-                re-type what "1 can of black beans" means. The chip
-                also primes `max` so the gauge represents one
-                package, matching how the reserves stepper expects
-                package-mode rows to be shaped. */}
+            {/* 3-col grid — PACKAGE SIZE | LOCATION | EXPIRES.
+                Mirrors ItemCard exactly. PACKAGE SIZE is the compact
+                setup control (set once, rarely changes). QUANTITY
+                is the big slider-driven section below (changes
+                constantly as the user eats through the package). */}
             {(() => {
-              const primaryId = (customComponents[0]?.canonical?.id) || null;
-              const pkg = primaryId ? dbMap?.[primaryId]?.packaging : null;
-              const sizes = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
-              if (sizes.length === 0) return null;
-              const selectedIdx = sizes.findIndex(
-                s => String(s.amount) === String(amount) && (s.unit || "") === (customUnit || "")
-              );
+              const gridPkgN   = parseFloat(packageSize);
+              const gridHasPkg = Number.isFinite(gridPkgN) && gridPkgN > 0;
               return (
-                <div style={{
-                  padding: "10px 12px", marginBottom: 10,
-                  background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
-                }}>
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
-                    PACKAGE SIZE
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {sizes.map((s, i) => {
-                      const active = i === selectedIdx;
-                      return (
-                        <button
-                          key={`${s.amount}-${s.unit}-${i}`}
-                          onClick={() => {
-                            setAmount(String(s.amount));
-                            setCustomUnit(s.unit || "");
-                          }}
-                          style={{
-                            padding: "6px 10px",
-                            background: active ? "#1a1608" : "transparent",
-                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                            color: active ? "#f5c842" : "#bbb",
-                            borderRadius: 16,
-                            fontFamily: "'DM Mono',monospace", fontSize: 10,
-                            letterSpacing: "0.04em",
-                            cursor: "pointer",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {s.amount} {s.unit}
-                          {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Quantity + Location + Expires — 3-column grid mirroring
-                ItemCard's inline edit row. Location (fridge/pantry/freezer)
-                replaces the old 6-chip food-category row; that field was
-                the ingredient classification, which now lives in the
-                FOOD CATEGORY tap line above. */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 18 }}>
-              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="0"
-                    style={{
-                      width: "100%",
-                      background: "transparent", border: "none", outline: "none",
-                      fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4",
-                      padding: 0, minWidth: 0,
-                    }}
-                  />
-                  <input
-                    value={customUnit}
-                    onChange={e => setCustomUnit(e.target.value)}
-                    placeholder="unit"
-                    style={{
-                      width: 48,
-                      background: "transparent", border: "none", outline: "none",
-                      fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#aaa",
-                      padding: 0, minWidth: 0,
-                    }}
-                  />
-                </div>
-
-                {/* PACKAGE SIZE — optional "full container" declaration.
-                    Drives the ItemCard slider and the SEALED vs OPENED
-                    signal (amount == max → sealed; amount < max →
-                    opened). Blank = undeclared. */}
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
-                }}>
-                  <span style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: packageSize ? "#f5c842" : "#555",
-                    letterSpacing: "0.1em", flexShrink: 0,
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 14 }}>
+                  {/* PACKAGE SIZE tile — stacked input + unit input
+                      so the number has room in the narrow column. */}
+                  <div style={{
+                    padding: "10px 12px",
+                    background: "#0f0f0f",
+                    border: "1px solid #1e1e1e",
+                    borderRadius: 10,
                   }}>
-                    FULL PKG
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0" step="any"
-                    value={packageSize}
-                    onChange={e => setPackageSize(e.target.value)}
-                    placeholder="optional"
-                    style={{
-                      flex: 1, minWidth: 0,
-                      background: "transparent", border: "none", outline: "none",
-                      fontFamily: "'DM Mono',monospace", fontSize: 12,
-                      color: packageSize ? "#f5c842" : "#888",
-                      padding: 0,
-                    }}
-                  />
-                </div>
-
-                {/* Instance-count stepper. "+N" sibling rows this save
-                    creates, so the render layer stacks a 50-can Costco
-                    run into one card. See migration 0057's fan-out
-                    for the receipt-scan equivalent. */}
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
-                }}>
-                  <span style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: instanceCount > 1 ? "#f5c842" : "#555",
-                    letterSpacing: "0.1em",
-                  }}>
-                    {instanceCount > 1 ? `×${instanceCount} PACKAGES` : "1 PACKAGE"}
-                  </span>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button
-                      onClick={() => setInstanceCount(n => Math.max(1, n - 1))}
-                      disabled={instanceCount <= 1}
-                      aria-label="decrement packages"
-                      style={{
-                        width: 22, height: 22,
-                        background: "transparent",
-                        border: "1px solid #2a2a2a",
-                        color: instanceCount <= 1 ? "#333" : "#888",
-                        borderRadius: 4, cursor: instanceCount <= 1 ? "not-allowed" : "pointer",
-                        fontFamily: "'DM Mono',monospace", fontSize: 12,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        lineHeight: 1, padding: 0,
-                      }}
-                    >−</button>
-                    <button
-                      onClick={() => setInstanceCount(n => n + 1)}
-                      aria-label="increment packages"
-                      style={{
-                        width: 22, height: 22,
-                        background: "transparent",
-                        border: "1px solid #2a2a2a",
-                        color: "#888",
-                        borderRadius: 4, cursor: "pointer",
-                        fontFamily: "'DM Mono',monospace", fontSize: 12,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        lineHeight: 1, padding: 0,
-                      }}
-                    >+</button>
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>
+                      PACKAGE SIZE
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0" step="any"
+                        value={packageSize}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setPackageSize(v);
+                          // Auto-fill QUANTITY to match a freshly
+                          // declared package — sealed at 100%. Only
+                          // fires when amount is empty or was equal
+                          // to the old packageSize (sealed carry-
+                          // over). Mid-package values stay put.
+                          const n = parseFloat(v);
+                          if (!Number.isFinite(n) || n <= 0) return;
+                          const amtN = parseFloat(amount);
+                          const prevN = parseFloat(packageSize);
+                          const wasSealed = Number.isFinite(amtN) && Number.isFinite(prevN) && amtN === prevN;
+                          if (amount === "" || !Number.isFinite(amtN) || wasSealed) {
+                            setAmount(String(n));
+                          }
+                        }}
+                        placeholder="tap to set"
+                        style={{
+                          width: "100%",
+                          padding: "5px 8px",
+                          background: "#0a0a0a",
+                          border: `1px solid ${gridHasPkg ? "#f5c842" : "#2a2a2a"}`,
+                          color: gridHasPkg ? "#f5c842" : "#888",
+                          borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 14,
+                          fontWeight: 500,
+                          outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                      <input
+                        value={customUnit}
+                        onChange={e => setCustomUnit(e.target.value)}
+                        placeholder="unit"
+                        style={{
+                          width: "100%",
+                          padding: "4px 8px",
+                          background: "#0a0a0a",
+                          border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
+                          color: customUnit ? "#f5c842" : "#888",
+                          borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
                   </div>
-                </div>
-              </div>
 
               <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>LOCATION</div>
@@ -2906,6 +2896,249 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     padding: "4px 0 0", marginTop: 0,
                   }}
                 />
+              </div>
+                </div>
+              );
+            })()}
+
+            {/* PACKAGE — top-level section (no longer buried in
+                QUANTITY). Defines what 100% means for this row's
+                gauge; pairs with QUANTITY ("how much" I'm adding
+                right now) as orthogonal concepts. Per-item value
+                writes straight to pantry_items.max on save, no
+                admin approval. Suggestion chips are observation-
+                learned (popular_package_sizes RPC, migration 0063)
+                keyed on (brand, canonical) so Barilla Penne's 16oz
+                bubbles up separately from generic-penne aggregates.
+                Free-text PACKAGE SIZE input accepts any value the
+                user types. */}
+            {/* QUANTITY — big slider-driven section. Swapped into
+                where the old PACKAGE SIZE big block lived (mirroring
+                the ItemCard swap). PACKAGE SIZE is now the compact
+                setup tile in the grid above; QUANTITY gets the
+                prominent slider + input + status + chips. */}
+            {(() => {
+              const sizes       = popularPackages.rows || [];
+              const pkgN        = parseFloat(packageSize);
+              const hasPkg      = Number.isFinite(pkgN) && pkgN > 0;
+              const amtN        = parseFloat(amount);
+              const hasAmt      = Number.isFinite(amtN) && amtN >= 0;
+              const maxVal      = hasPkg ? pkgN : 0;
+              const ratio       = hasPkg && hasAmt ? Math.min(1, amtN / maxVal) : 0;
+              const sliderColor = ratio <= 0.25 ? "#ef4444" : ratio <= 0.5 ? "#f59e0b" : "#7ec87e";
+              const step        = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
+              const pct         = Math.round(ratio * 100);
+              const sealed      = hasPkg && hasAmt && amtN === maxVal;
+              const opened      = hasPkg && hasAmt && amtN > 0 && amtN < maxVal;
+              const overflowed  = hasPkg && hasAmt && amtN > maxVal;
+              return (
+                <div style={{
+                  padding: "14px 16px", marginBottom: 14,
+                  background: "#0f0f0f", border: "1px solid #1e1e1e",
+                  borderRadius: 10,
+                }}>
+                  {/* Header: label + SEALED/OPENED badge + status */}
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#f5c842", letterSpacing: "0.08em",
+                    }}>
+                      QUANTITY
+                    </div>
+                    {sealed && (
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#7ec87e", letterSpacing: "0.08em",
+                      }}>
+                        ● SEALED
+                      </div>
+                    )}
+                    {opened && (
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: "#f59e0b", letterSpacing: "0.08em",
+                      }}>
+                        ◐ OPENED
+                      </div>
+                    )}
+                    <div style={{
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                      color: overflowed ? "#ef4444" : "#888",
+                    }}>
+                      {!hasPkg
+                        ? "set PACKAGE SIZE above to enable the slider"
+                        : overflowed
+                          ? `${amtN} exceeds package (${maxVal}) — raise PACKAGE SIZE or lower QUANTITY`
+                          : sealed
+                            ? `${maxVal} ${customUnit || ""} · full`
+                            : `${amtN} of ${maxVal} left · ${pct}%`}
+                    </div>
+                  </div>
+
+                  {/* Primary input — big number + static unit */}
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "10px 12px",
+                    background: "#0a0a0a",
+                    border: `1px solid ${sealed ? "#7ec87e55" : opened ? "#f59e0b55" : "#3a3a3a"}`,
+                    borderRadius: 8,
+                    marginBottom: hasPkg ? 10 : (sizes.length > 0 ? 10 : 0),
+                    opacity: hasPkg ? 1 : 0.55,
+                  }}>
+                    <input
+                      type="number" inputMode="decimal" min="0" step="any"
+                      value={amount}
+                      onChange={e => setAmount(e.target.value)}
+                      placeholder={hasPkg ? "how much is left" : "set PACKAGE SIZE first"}
+                      disabled={!hasPkg}
+                      style={{
+                        flex: 1, minWidth: 0,
+                        background: "transparent", border: "none", outline: "none",
+                        color: "#f5c842",
+                        fontFamily: "'DM Mono',monospace",
+                        fontSize: 20, fontWeight: 500,
+                        padding: 0,
+                        cursor: hasPkg ? "text" : "not-allowed",
+                      }}
+                    />
+                    <span style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 14,
+                      color: "#aaa", flexShrink: 0,
+                    }}>
+                      {customUnit || "—"}
+                    </span>
+                  </div>
+
+                  {/* Slider — drag-to-estimate how much is left. Only
+                      renders when a package size is declared. */}
+                  {hasPkg && (
+                    <input
+                      type="range"
+                      min="0" max={maxVal} step={step}
+                      value={Number.isFinite(amtN) ? amtN : 0}
+                      onChange={e => setAmount(String(Number(e.target.value)))}
+                      aria-label="Estimate remaining"
+                      style={{ width: "100%", accentColor: sliderColor, marginBottom: sizes.length > 0 ? 10 : 0 }}
+                    />
+                  )}
+
+                  {/* OTHERS USE chips — tap fills PACKAGE SIZE + unit
+                      + QUANTITY together (fresh sealed package at
+                      100%). Source: popular_package_sizes RPC with
+                      Tier 3 AI fallback. */}
+                  {sizes.length > 0 && (
+                    <div>
+                      <div style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        color: "#666", letterSpacing: "0.08em", marginBottom: 6,
+                      }}>
+                        OTHERS USE THIS SIZE
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {sizes.map((s, i) => {
+                          const active = Number(s.amount) === Number(packageSize)
+                            && (s.unit || "") === (customUnit || "");
+                          return (
+                            <button
+                              key={`${s.amount}-${s.unit}-${s.brand || "_"}-${i}`}
+                              onClick={() => {
+                                // Chip tap = "open a fresh package of
+                                // this size." Fills PACKAGE SIZE + unit
+                                // and sets QUANTITY to match so the
+                                // row lands sealed at 100%.
+                                setPackageSize(String(s.amount));
+                                if (s.unit) setCustomUnit(s.unit);
+                                setAmount(String(s.amount));
+                              }}
+                              style={{
+                                padding: "4px 10px",
+                                background: active ? "#1a1608" : "transparent",
+                                border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                                color: active ? "#f5c842" : "#bbb",
+                                borderRadius: 14,
+                                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                                letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
+                              }}
+                            >
+                              {s.amount} {s.unit}
+                              {s.brand ? <span style={{ color: "#7eb8d4", marginLeft: 4 }}>· {s.brand}</span> : null}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* STACKING — how many identical packages the save
+                creates as sibling rows (the render layer groups
+                them into one stacked card). Also moved out of
+                QUANTITY — this is a different axis from "how much
+                is in one package." */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "12px 14px", marginBottom: 14,
+              background: "#0f0f0f", border: "1px solid #1e1e1e",
+              borderRadius: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: instanceCount > 1 ? "#f5c842" : "#888",
+                  letterSpacing: "0.08em",
+                }}>
+                  STACKING
+                </div>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                  color: "#888", marginTop: 2,
+                }}>
+                  {instanceCount > 1
+                    ? `Adding ×${instanceCount} identical packages as sibling rows`
+                    : "Adding 1 package — tap + to add multiple (Costco run)"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <button
+                  onClick={() => setInstanceCount(n => Math.max(1, n - 1))}
+                  disabled={instanceCount <= 1}
+                  aria-label="decrement packages"
+                  style={{
+                    width: 28, height: 28,
+                    background: "transparent",
+                    border: "1px solid #2a2a2a",
+                    color: instanceCount <= 1 ? "#333" : "#bbb",
+                    borderRadius: 6,
+                    cursor: instanceCount <= 1 ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1, padding: 0,
+                  }}
+                >−</button>
+                <div style={{
+                  minWidth: 32, padding: "0 6px",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: "'DM Mono',monospace", fontSize: 12,
+                  color: instanceCount > 1 ? "#f5c842" : "#aaa",
+                }}>
+                  ×{instanceCount}
+                </div>
+                <button
+                  onClick={() => setInstanceCount(n => n + 1)}
+                  aria-label="increment packages"
+                  style={{
+                    width: 28, height: 28,
+                    background: "transparent",
+                    border: "1px solid #2a2a2a",
+                    color: "#bbb",
+                    borderRadius: 6, cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1, padding: 0,
+                  }}
+                >+</button>
               </div>
             </div>
 
@@ -3114,40 +3347,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
             }
             if (canon) cascadeFromCanonical(canon);
           }
-          // Admin auto-approve on user-created slug.
-          //
-          // Old behavior (pre-v0.13): ALWAYS wrote a bare {_meta}
-          // stub to ingredient_info so the canonical id was "claimed."
-          // Side effect was a ghost-approved row — badge read
-          // "ENRICHED" but no data lived there, the enrichment
-          // button hid, package chips silently never rendered.
-          //
-          // New behavior: only upsert when the create flow produced
-          // real data (packaging or parentId via the PackagingStep).
-          // Empty creations leave ingredient_info untouched. The
-          // canonical_id on the pantry row is enough for identity;
-          // enrichment button stays available for the user to opt
-          // in later. No more ghost rows.
-          if (isAdmin && nextId && !findIngredient(nextId)) {
-            const payload = {};
-            if (extra?.packaging) payload.packaging = extra.packaging;
-            if (extra?.parentId)  payload.parentId  = extra.parentId;
-            if (Object.keys(payload).length > 0) {
-              payload._meta = {
-                reviewed: true,
-                reviewed_by: userId || null,
-                reviewed_at: new Date().toISOString(),
-                source: "admin_additem_create",
-              };
-              supabase
-                .from("ingredient_info")
-                .upsert({ ingredient_id: nextId, info: payload }, { onConflict: "ingredient_id" })
-                .then(({ error }) => {
-                  if (error) console.warn("[admin_auto_approve] upsert failed:", error.message);
-                  else refreshDb?.();
-                });
-            }
-          }
+          // Admin auto-approve on packaging / parentId writes was
+          // retired alongside the PackagingStep removal. Package
+          // sizes now come from the observation corpus
+          // (popular_package_sizes RPC); parentId hub assignment
+          // moves to a separate flow if needed. Empty creations
+          // still leave ingredient_info untouched — the
+          // canonical_id on the pantry row is enough for identity.
         }}
         onClose={() => setCustomCanonicalOpen(false)}
       />
@@ -4050,6 +4256,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             ...(s.sourceKind ? { sourceKind: s.sourceKind } : {}),
             ...(s.state      ? { state: s.state           } : {}),
             ...(s.scanRaw    ? { scanRaw: s.scanRaw       } : {}),
+            // Brand (migration 0061) — parseIdentity peeled this off
+            // the raw scan text during normalization. Conditional so
+            // un-branded rows stay undefined and hit toDb's skip path.
+            ...(s.brand      ? { brand: s.brand           } : {}),
             // Multi-canonical tag array (0033). The Scanner's LinkIngredient
             // picker emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element
@@ -4099,6 +4309,26 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       });
       return next;
     });
+
+    // Close the shopping-list loop. Any confirmed scan row whose
+    // canonical_id matches a still-open shopping-list entry gets
+    // that entry dropped. User typed "ricotta" onto their list for
+    // a recipe → scanned the receipt → ricotta's in pantry → list
+    // entry removed. No duplicate tap-to-check required. Only the
+    // canonical-id match path fires here — free-text list entries
+    // (e.g. "organic eggs from the farmer's market") stay put so a
+    // receipt that generically matches "eggs" doesn't accidentally
+    // delete them.
+    const scannedCanonicalIds = new Set(
+      fannedItems
+        .map(s => s.canonicalId || s.ingredientId)
+        .filter(Boolean)
+    );
+    if (scannedCanonicalIds.size > 0) {
+      setShoppingList(prev =>
+        prev.filter(s => !(s.ingredientId && scannedCanonicalIds.has(s.ingredientId)))
+      );
+    }
 
     // Summary toast — sits above the bottom nav for 4.5s. Keep it short:
     // small receipts (1–3 items) get the name roll-call; big receipts
@@ -4211,17 +4441,24 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   const removeShoppingItem = id => setShoppingList(prev => prev.filter(i => i.id !== id));
   const removePantryItem = id => setPantry(prev => prev.filter(i => i.id !== id));
 
-  // Patch a pantry row in place. Also bump `max` up if the user set an amount
-  // bigger than the current max (otherwise the progress bar caps at 100% and
-  // lies about how much they have).
+  // Patch a pantry row in place. No implicit field coupling — the
+  // patch writes exactly the fields the caller sent, nothing else.
+  //
+  // We used to auto-bump `max` to `amount` whenever amount was edited
+  // ("so the progress bar doesn't cap at 100% and lie"), but that
+  // silently clobbered the user's declared package size. Someone
+  // types amount=1000 on a 500g package and the package flips to
+  // 1000 behind their back. Now amount and max move independently.
+  // If amount > max, the slider saturates at 100% — that's honest:
+  // the user told us the package is 500g and they have 1000g; the
+  // package number is the one to fix, not amount.
+  //
+  // lowThreshold also dropped out of auto-recompute; it's derived at
+  // add-time in AddItemModal and stays stable after unless the user
+  // edits it explicitly.
   const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
     if (p.id !== id) return p;
-    const next = { ...p, ...patch };
-    if (typeof patch.amount === "number") {
-      next.max = Math.max(p.max, next.amount);
-      next.lowThreshold = Math.max(next.max * 0.25, 0.25);
-    }
-    return next;
+    return { ...p, ...patch };
   }));
 
   // Render one pantry-item row. Used both for standalone items and for items

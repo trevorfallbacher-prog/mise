@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
-import { findIngredient, unitLabel, compareQty } from "../data/ingredients";
+import { findIngredient, unitLabel, compareQty, inferCanonicalFromName } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 import CookComplete from "./CookComplete";
 
@@ -283,13 +283,25 @@ export default function CookMode({
       const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
       const next = [...prev];
       toAdd.forEach(({ ing, row }) => {
-        const canonical = findIngredient(ing.ingredientId);
-        const key = ing.ingredientId || (row?.name || ing.item).toLowerCase();
+        // Canonical backfill: Claude may leave ing.ingredientId null
+        // for "staples it assumed" or newly-introduced ingredients
+        // (per generate-recipe/index.ts:447). Run the item text
+        // through inferCanonicalFromName to hit any bundled canonical
+        // that substring-matches — that stamps ingredientId on the
+        // shopping-list row so the downstream receipt-scan bias
+        // (+30 for ingredientId match) fires, not just the weaker
+        // +20 name-substring tier. No AI call — cheap local lookup.
+        const candidateName = row?.name || ing.item;
+        const resolvedId = ing.ingredientId
+          || inferCanonicalFromName(candidateName)
+          || null;
+        const canonical = findIngredient(resolvedId);
+        const key = resolvedId || candidateName.toLowerCase();
         if (existing.has(key)) return;
         existing.add(key);
         next.push({
           id: crypto.randomUUID(),
-          ingredientId: ing.ingredientId || null,
+          ingredientId: resolvedId,
           name: canonical?.name || row?.name || ing.item,
           emoji: canonical?.emoji || row?.emoji || "🥫",
           amount: ing.qty?.amount ?? 1,

@@ -42,6 +42,10 @@ export function fromDb(row) {
     typeId:            row.type_id,
     canonicalId:       row.canonical_id,
     ingredientIds:     row.ingredient_ids || [],
+    // Brand payload (migration 0062). Household-learned
+    // abbreviation → brand mapping. Null until a family member taps
+    // to correct the brand chip on a scan row.
+    brand:             row.brand || null,
     correctionCount:   row.correction_count || 0,
     lastUsedAt:        row.last_used_at,
     createdAt:         row.created_at,
@@ -130,6 +134,7 @@ export async function rememberScanCorrection({
   typeId,
   canonicalId,
   ingredientIds,
+  brand,
 }) {
   if (!userId) return { error: new Error("userId required") };
   const normalized = normalizeScanText(rawText);
@@ -156,6 +161,11 @@ export async function rememberScanCorrection({
   if (Array.isArray(ingredientIds) && ingredientIds.length > 0) {
     patch.ingredient_ids = ingredientIds;
   }
+  // Brand (migration 0062). Same discipline as the other fields:
+  // only overwrites when the caller supplied a value, so a brand-
+  // only correction doesn't wipe the canonical_id a prior
+  // correction set.
+  if (brand)         patch.brand          = brand;
 
   if (existing) {
     const { error } = await supabase

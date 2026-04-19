@@ -4,7 +4,7 @@ import { INGREDIENTS, HUBS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
-import EditPackagingModal from "./EditPackagingModal";
+// EditPackagingModal import removed — admin sizes catalog retired.
 
 // AdminPanel — elevated-permissions inspector, scoped to profiles
 // where role = 'admin' (see migration 0042). Mounted from Settings
@@ -535,7 +535,7 @@ function CanonicalsList({ viewerId }) {
   // Packaging editor — opens a ModalSheet over the admin panel,
   // seeded with the canonical's saved sizes + parentId. Null =
   // closed; object = the row being edited.
-  const [editPackagingFor, setEditPackagingFor] = useState(null);
+  // editPackagingFor state retired — no admin packaging surface.
   // Refresh the session-level dbMap after every approve/reject/rename
   // so the scan-time auto-star-link and the LinkIngredient picker
   // pick up the admin's changes without a page reload.
@@ -929,14 +929,13 @@ function CanonicalsList({ viewerId }) {
               >
                 {isBusy ? "…" : "RENAME"}
               </button>
-              <button
-                onClick={() => setEditPackagingFor({ slug: r.id, name: r.name || r.bundledName || r.id })}
-                disabled={isBusy}
-                title="Edit the shared package sizes catalog for this canonical"
-                style={adminBtnStyle("#0f1620", "#7eb8d4")}
-              >
-                PACKAGES
-              </button>
+              {/* PACKAGES button retired — package sizes are now
+                  learned from user pantry_items via the
+                  popular_package_sizes RPC (migration 0063) and
+                  backstopped by AI-generated typicalSizes from
+                  ingredient_info.info.package.typicalSizes. Admin
+                  curation of the sizes catalog is no longer a
+                  concept. */}
               {isCustom && !r.approved && (
                 <button
                   onClick={() => approveCustom(r)}
@@ -1030,24 +1029,15 @@ function CanonicalsList({ viewerId }) {
         stub so the slug stops reading as PENDING, REJECT clears the
         slug from every pantry_items row and drops the stub, RENAME
         rewrites the slug across the board and carries any approval
-        forward. PACKAGES opens the shared-catalog editor for this
-        canonical's typical sizes — pantry_items rows continue to
-        carry their own amount/unit regardless.
+        forward. Package sizes are no longer admin-curated here —
+        they're learned from pantry_items observations
+        (popular_package_sizes RPC) with AI-generated typicalSizes
+        as the cold-start fallback.
       </div>
 
-      {editPackagingFor && (
-        <EditPackagingModal
-          slug={editPackagingFor.slug}
-          name={editPackagingFor.name}
-          viewerId={viewerId}
-          onClose={() => setEditPackagingFor(null)}
-          onSaved={() => {
-            setEditPackagingFor(null);
-            setVersion(v => v + 1);
-            refreshDb?.();
-          }}
-        />
-      )}
+      {/* EditPackagingModal removed — admin sizes catalog retired.
+          See the PACKAGES-button removal note above for the full
+          story. */}
     </div>
   );
 }

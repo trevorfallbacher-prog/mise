@@ -4,6 +4,7 @@ import { BLEND_PRESETS } from "../data/blendPresets";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { suggestedPackaging, DEFAULT_PACKAGING_BY_CATEGORY } from "../data/defaultPackaging";
 import { supabase } from "../lib/supabase";
+import { enrichIngredient } from "../lib/enrichIngredient";
 
 // Turn an admin-approved ingredient_info slug ("pepperoni") into a
 // synthetic canonical object so the picker can surface it alongside
@@ -103,7 +104,7 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
   // any row whose id isn't in INGREDIENTS is a user-minted canonical
   // that an admin approved. Those need to show up in this picker or
   // users who created them can never re-tag another item with them.
-  const { dbMap } = useIngredientInfo();
+  const { dbMap, refreshDb: refreshDbInfo } = useIngredientInfo();
   const approvedSynthetics = useMemo(() => {
     const out = [];
     for (const [slug, info] of Object.entries(dbMap || {})) {
@@ -204,26 +205,55 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
 
   // Create a brand-new canonical from the user's typed query. The slug
   // becomes the canonicalId; later enrichment (pending_ingredient_info)
-  // New-canonical creation state. When non-null, a packaging-picker
-  // overlay renders in place of the suggestion list so the user can
-  // attach typical package sizes at creation time — useful for canned /
-  // dried / dairy products where every future add benefits from the
-  // sizes. Skippable for ingredients where packaging doesn't matter
-  // (fresh produce by weight, loose spices, etc.).
-  const [creating, setCreating] = useState(null); // { name, id } | null
+  // fills in metadata. findIngredient() will miss on this id until
+  // then, so we attach a synthetic canonical object to the selection
+  // so the UI chip renders with the user's name right away.
+  //
+  // The old PackagingStep that used to pop up here — asking users to
+  // enter typical package sizes for admin review — was annihilated in
+  // favor of observation-learned sizes (popular_package_sizes RPC,
+  // migration 0063). New canonicals start with zero suggestions and
+  // the first user's declared size becomes the corpus seed.
+  // `creating` stays as a no-op state for back-compat; nothing reads
+  // it anymore.
+  const [creating, setCreating] = useState(null); // deprecated — kept to avoid ripple
 
-  // fills in metadata. findIngredient() will miss on this id until then,
-  // so we attach a synthetic canonical object to the selection so the UI
-  // chip renders with the user's name right away.
   const createNewFromQuery = (raw) => {
     const name = (raw || "").trim();
     if (name.length < 2) return;
     const id = slugifyIngredientName(name);
     if (!id) return;
-    // Route through the packaging step first. User can tap SKIP to
-    // commit immediately (legacy behavior) or pick sizes to stash as
-    // a pending_ingredient_info row that admin review will promote.
-    setCreating({ name, id });
+    // Commit the new canonical directly — no packaging step, no
+    // pending_ingredient_info write from this path. Future users'
+    // declared sizes fill the observation corpus (popular_package_sizes
+    // RPC) which becomes the chip source in ItemCard / AddItemModal.
+    if (singleMode) {
+      onLink([id]);
+    } else {
+      setSelected(prev => {
+        if (prev.some(s => s.id === id)) return prev;
+        const existing = findIngredient(id);
+        return [...prev, {
+          id,
+          canonical: existing || { id, name, emoji: "✨", category: "user" },
+        }];
+      });
+      setSearch("");
+    }
+    // Auto-fire AI enrichment in the background — no button press,
+    // no admin queue. The edge function now auto-approves the
+    // write (edit in 0063 chunk); the user just sees the description
+    // / sourcing / tips show up on the card as soon as Claude
+    // finishes. Fire-and-forget so slow network doesn't block the
+    // commit. Only triggers when the slug ISN'T already in the
+    // registry (bundled canonicals are already enriched).
+    if (!findIngredient(id)) {
+      enrichIngredient({ canonical_id: id }).then(() => {
+        refreshDbInfo?.();
+      }).catch(err => {
+        console.warn("[auto-enrich] failed for", id, err?.message);
+      });
+    }
   };
 
   // Called by the packaging step when the user commits (with or
@@ -422,14 +452,11 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
             : "Tap to add ingredients to this row. Multi-tag for composed items — burritos, pizzas, shredded blends."}
         </p>
 
-        {creating && (
-          <PackagingStep
-            name={creating.name}
-            slug={creating.id}
-            onCommit={finalizeCreate}
-            onCancel={() => setCreating(null)}
-          />
-        )}
+        {/* PackagingStep modal removed — no more admin-curated
+            packaging. Observation-learned chips from
+            popular_package_sizes (migration 0063) replace the
+            per-canonical size bank. New canonicals commit
+            immediately with no size prompt. */}
 
         {/* SELECTED — the accumulator. Shown at the very top so the
             user always sees what's on deck before committing. Hidden
