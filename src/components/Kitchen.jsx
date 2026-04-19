@@ -2356,6 +2356,71 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
                   ITEM
                 </div>
+                {/* BRAND affordance ABOVE the name input — mirrors
+                    ItemCard's header pattern. In ItemCard the header
+                    is derived ("Kerrygold Butter") so brand lives
+                    inline; here the header is a live editable input
+                    so brand sits above as a kicker chip. Three
+                    states:
+                      - editing: inline text input, blur commits/clears
+                      - set: gray chip with uppercase brand + ✎, tap
+                        to edit
+                      - unset: small dashed "+ ADD BRAND" affordance */}
+                {customBrandOpen ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    defaultValue={customBrand || ""}
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      setCustomBrand(v || null);
+                      setCustomBrandOpen(false);
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setCustomBrandOpen(false);
+                    }}
+                    placeholder="Kerrygold…"
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#f5c842", letterSpacing: "0.12em",
+                      background: "#0a0a0a", border: "1px solid #f5c842",
+                      borderRadius: 6, padding: "2px 8px", outline: "none",
+                      textTransform: "uppercase",
+                      width: 140, marginTop: 2,
+                    }}
+                  />
+                ) : customBrand ? (
+                  <span
+                    onClick={() => setCustomBrandOpen(true)}
+                    style={{
+                      display: "inline-block", marginTop: 2,
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#aaa", letterSpacing: "0.12em",
+                      background: "#141414",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 6, padding: "2px 8px",
+                      cursor: "pointer",
+                      textTransform: "uppercase",
+                    }}
+                    title="Tap to edit brand"
+                  >
+                    {customBrand} <span style={{ color: "#555", marginLeft: 4 }}>✎</span>
+                  </span>
+                ) : (
+                  <span
+                    onClick={() => setCustomBrandOpen(true)}
+                    style={{
+                      display: "inline-block", marginTop: 2,
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#555", letterSpacing: "0.12em",
+                      cursor: "pointer",
+                      borderBottom: "1px dashed #2a2a2a",
+                    }}
+                  >
+                    + ADD BRAND
+                  </span>
+                )}
               <input
                 value={customName}
                 onChange={e => {
@@ -2396,82 +2461,23 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   Never reorder. Every entry-point (ItemCard,
                   AddItemModal, scan rows) renders them in this order. */}
 
-              {/* BRAND + CANONICAL on ONE row — brand rides inline
-                  as a gray chip at the start of the canonical row
-                  because they describe one identity ("DelDuca
-                  Prosciutto"). Gray styling signals "different axis"
-                  (per CLAUDE.md); visual adjacency signals
-                  "modifies the thing to its right". parseIdentity
-                  auto-harvests brand from the typed name on every
-                  keystroke — the chip surfaces whatever's in
-                  customBrand and lets the user type/override/clear
-                  manually. The outer div is the CANONICAL tap target
-                  (opens LinkIngredient); the BRAND chip stops
-                  propagation and runs its own edit mode. */}
+              {/* CANONICAL tap line — BRAND chip was merged here in
+                  an earlier commit, now pulled out to the kicker
+                  above the name input (mirrors ItemCard's header
+                  pattern where brand lives with the name, not with
+                  canonical). CANONICAL stays pure-tan. */}
               <div
+                onClick={() => setCustomCanonicalOpen(true)}
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 10,
                   color: "#b8a878",
                   letterSpacing: "0.08em", marginTop: 6,
+                  cursor: "pointer",
                   display: "flex", alignItems: "center", gap: 6,
                   flexWrap: "wrap",
                 }}
               >
-                {customBrandOpen ? (
-                  <input
-                    type="text"
-                    autoFocus
-                    defaultValue={customBrand || ""}
-                    onBlur={e => {
-                      const v = e.target.value.trim();
-                      setCustomBrand(v || null);
-                      setCustomBrandOpen(false);
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") e.currentTarget.blur();
-                      if (e.key === "Escape") setCustomBrandOpen(false);
-                    }}
-                    onClick={e => e.stopPropagation()}
-                    placeholder="Kerrygold…"
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#f5c842", letterSpacing: "0.12em",
-                      background: "#0a0a0a", border: "1px solid #f5c842",
-                      borderRadius: 6, padding: "2px 8px", outline: "none",
-                      textTransform: "uppercase",
-                      width: 140,
-                    }}
-                  />
-                ) : (
-                  <span
-                    onClick={e => { e.stopPropagation(); setCustomBrandOpen(true); }}
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: customBrand ? "#aaa" : "#555",
-                      letterSpacing: "0.12em",
-                      background: "#141414",
-                      border: `1px solid ${customBrand ? "#2a2a2a" : "#262626"}`,
-                      borderStyle: customBrand ? "solid" : "dashed",
-                      borderRadius: 6, padding: "2px 8px",
-                      cursor: "pointer", whiteSpace: "nowrap",
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {customBrand || "+ brand"}
-                  </span>
-                )}
-                {/* CANONICAL tap target — remainder of the row after
-                    the BRAND chip. Clicking opens LinkIngredient; the
-                    BRAND chip above stops propagation so it can handle
-                    its own edit mode without opening the picker. */}
-                <span
-                  onClick={() => setCustomCanonicalOpen(true)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    cursor: "pointer", flexWrap: "wrap",
-                  }}
-                >
-                  <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
+                <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
                 {(() => {
                   const explicit = customCanonicalId;
                   const derivedPreview = explicit
@@ -2503,7 +2509,6 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     </>
                   );
                 })()}
-                </span>
               </div>
 
               {/* FOOD CATEGORY — orange. */}
