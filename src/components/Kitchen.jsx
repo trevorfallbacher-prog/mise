@@ -2465,7 +2465,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                           if (inferredId) setCustomCanonicalId(inferredId);
                         }, 180);
                       }}
-                      placeholder="what is it?"
+                      placeholder="What is it?"
                       style={{
                         flex: "1 1 auto", minWidth: 0,
                         background: "transparent",
