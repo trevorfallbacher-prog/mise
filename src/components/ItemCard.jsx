@@ -267,7 +267,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // the composite product. Single-tag items skip this line since
   // the deep-dive already shows the same info.
   const { getInfo: getDbInfo, getPendingInfo, refreshDb } = useIngredientInfo();
-  const { get: getBrandNutrition } = useBrandNutrition();
+  const { get: getBrandNutrition, upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  const { push: pushToast } = useToast();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
     const intensityRank = { mild: 1, moderate: 2, intense: 3 };
@@ -365,6 +366,14 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
+  // "+ ADD BRAND" now opens a small chooser: type the brand manually
+  // OR scan a barcode. Scanning also opportunistically patches name
+  // when OFF gives us better data, and writes brand_nutrition so the
+  // nutrition chip lights up. This lets users fill in receipt-imported
+  // items post-hoc without being locked into typing.
+  const [brandChooserOpen, setBrandChooserOpen] = useState(false);
+  const [brandScannerOpen, setBrandScannerOpen] = useState(false);
+  const [brandScanBusy,    setBrandScanBusy]    = useState(false);
   // Flips true when the user picks "+ custom…" in the unit dropdown.
   // Replaces the <select> with a free-text <input> so they can type a
   // unit that isn't in the canonical's ladder ("pack", "wheel",
@@ -481,7 +490,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   set it appears on the inline block before canonical." */}
               {!readOnly && !item.brand && editingField !== "brand" && (
                 <div
-                  onClick={() => startEdit("brand")}
+                  onClick={() => setBrandChooserOpen(true)}
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 9,
                     color: "#555", letterSpacing: "0.12em",
@@ -844,7 +853,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               a source-of-signal badge. Hidden when no resolver tier
               returns numbers — the coverage story reads honestly
               instead of faking zeros. */}
-          <NutritionChip item={item} getInfo={getDbInfo} getBrandNutrition={getBrandNutrition} />
+          <NutritionChip
+            item={item}
+            getInfo={getDbInfo}
+            getBrandNutrition={getBrandNutrition}
+            onUpdate={onUpdate}
+          />
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -2286,116 +2300,218 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           }}
         />
       )}
+
+      {/* Brand chooser sheet — opens when user taps "+ ADD BRAND".
+          Two paths: type it manually (defers to the existing inline
+          edit flow) or scan a barcode (opens BarcodeScanner, pulls
+          brand + optional product name from OFF, writes the row's
+          brand + the brand_nutrition row so the chip can resolve
+          nutrition from the new brand tier). Backdrop dismisses. */}
+      {brandChooserOpen && (
+        <div
+          onClick={() => setBrandChooserOpen(false)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 220,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "flex-end", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%", maxWidth: 480,
+              background: "#141414",
+              borderTop: "1px solid #2a2a2a",
+              borderRadius: "16px 16px 0 0",
+              padding: "20px 20px 28px",
+              display: "flex", flexDirection: "column", gap: 10,
+            }}
+          >
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              color: "#888", letterSpacing: "0.12em", marginBottom: 4,
+            }}>
+              ADD BRAND
+            </div>
+            <button
+              type="button"
+              disabled={brandScanBusy}
+              onClick={() => { setBrandChooserOpen(false); startEdit("brand"); }}
+              style={brandChooserBtnStyle}
+            >
+              <span style={{ fontSize: 20 }}>✏️</span>
+              <span style={{ flex: 1, textAlign: "left" }}>
+                <span style={brandChooserTitleStyle}>Type brand name</span>
+                <span style={brandChooserBlurbStyle}>
+                  Inline input. For when the brand's easy to read off the package.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={brandScanBusy}
+              onClick={() => { setBrandChooserOpen(false); setBrandScannerOpen(true); }}
+              style={brandChooserBtnStyle}
+            >
+              <span style={{ fontSize: 20 }}>📷</span>
+              <span style={{ flex: 1, textAlign: "left" }}>
+                <span style={brandChooserTitleStyle}>Scan barcode</span>
+                <span style={brandChooserBlurbStyle}>
+                  Pulls brand + product name + nutrition from Open Food Facts.
+                </span>
+              </span>
+            </button>
+            <button
+              onClick={() => setBrandChooserOpen(false)}
+              style={{
+                marginTop: 6, padding: "10px",
+                background: "transparent", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 10,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* BarcodeScanner overlay for the brand-scan path. On decode,
+          patches the row's brand (always) and name (if current name
+          reads as generic / short / looks receipt-auto-generated) and
+          writes the brand_nutrition row when we have a canonical id
+          to pin against. Skips the write path silently when canonical
+          is null — user needs to set CANONICAL separately; toast
+          explains. */}
+      {brandScannerOpen && (
+        <BarcodeScanner
+          onCancel={() => setBrandScannerOpen(false)}
+          onDetected={async (barcode) => {
+            setBrandScannerOpen(false);
+            setBrandScanBusy(true);
+            try {
+              const res = await lookupBarcode(barcode, { brandNutritionRows });
+              if (!res?.found) {
+                const msg = res?.reason === "edge_fn_not_deployed"
+                  ? "Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode"
+                  : res?.reason === "fetch_failed"
+                    ? `Barcode lookup failed (${res?.status || "network"}).`
+                    : res?.reason === "no_nutriments"
+                      ? `Found ${barcode} but Open Food Facts has no nutrition data for it.`
+                      : `No match for ${barcode} in Open Food Facts.`;
+                pushToast(msg, { emoji: "🔍", kind: "warn", ttl: 5500 });
+                return;
+              }
+              // Build the patch for the row. Brand always, name only
+              // when the current name looks receipt-auto-generated
+              // (short, all-caps, abbreviated — the typical
+              // "ACQUAMAR FLA" receipt-scan read). Users who typed
+              // a deliberate name keep it.
+              const patch = {};
+              if (res.brand) patch.brand = res.brand;
+              if (res.productName && looksReceiptGenerated(item.name)) {
+                patch.name = res.productName;
+              }
+              if (Object.keys(patch).length > 0) {
+                onUpdate?.(patch);
+              }
+              // Write brand_nutrition when we can — needs a canonical
+              // to pin against. If canonical is null, we still set
+              // brand on the row above so the user can assign
+              // canonical later and the nutrition will resolve from
+              // brand_nutrition once both are set.
+              const canonId = item.ingredientId || item.canonicalId || null;
+              const brandForWrite = res.brand;
+              if (res.cached) {
+                pushToast("Already in the nutrition database.", { emoji: "💾", kind: "info", ttl: 3500 });
+              } else if (canonId && brandForWrite && res.nutrition) {
+                await upsertBrandNutrition({
+                  canonicalId: canonId,
+                  brand:       brandForWrite,
+                  nutrition:   res.nutrition,
+                  barcode:     res.barcode,
+                  source:      res.source || "openfoodfacts",
+                  sourceId:    res.sourceId || res.barcode,
+                });
+                pushToast(`Nutrition saved for ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+              } else if (!canonId) {
+                pushToast(`Brand set to ${brandForWrite}. Assign a canonical to pin nutrition to it.`, { emoji: "🏷️", kind: "info", ttl: 5000 });
+              } else {
+                pushToast(`Brand set to ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+              }
+            } catch (e) {
+              console.error("[itemcard] brand scan failed:", e);
+              pushToast("Scan lookup failed. Try again.", { emoji: "⚠️", kind: "warn", ttl: 4500 });
+            } finally {
+              setBrandScanBusy(false);
+            }
+          }}
+        />
+      )}
     </>
   );
 }
 
+// Heuristic: does this pantry name look auto-generated by a receipt
+// scanner rather than a human? Short + no lowercase + abbreviations
+// are all signals. "ACQUAMAR FLA" / "CHOBANI YGT" / "KROGER CKN BRST"
+// vs "Homemade pasta sauce" / "my leftover chicken". When true we
+// feel OK overwriting with OFF's cleaner product_name; when false
+// the user deliberately typed the name and we leave it alone.
+function looksReceiptGenerated(name) {
+  if (!name) return true;                  // null name → fill in
+  const n = String(name).trim();
+  if (!n) return true;
+  if (n.length > 40) return false;         // long name → definitely user-typed
+  // All-caps or near-all-caps is the strongest receipt tell.
+  const lowerCount = (n.match(/[a-z]/g) || []).length;
+  const upperCount = (n.match(/[A-Z]/g) || []).length;
+  if (upperCount >= 3 && lowerCount === 0) return true;
+  return false;
+}
+
+// Brand chooser sheet button styles — shared between the two options
+// so they visually read as peers (type vs scan), not primary/secondary.
+const brandChooserBtnStyle = {
+  display: "flex", alignItems: "center", gap: 12,
+  padding: "14px 14px",
+  background: "#1a1a1a", border: "1px solid #2a2a2a",
+  borderRadius: 12, cursor: "pointer",
+  textAlign: "left",
+};
+const brandChooserTitleStyle = {
+  display: "block",
+  fontFamily: "'Fraunces',serif", fontSize: 16, fontStyle: "italic",
+  color: "#f0ece4", fontWeight: 400,
+};
+const brandChooserBlurbStyle = {
+  display: "block", marginTop: 2,
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888",
+  lineHeight: 1.4,
+};
+
 // Nutrition chip — compact macro line + expandable detail. Runs
 // through `pantryItemNutrition` so brand/override/canonical resolution
-// stays consistent across every surface. Hidden when no signal tier
-// produces numbers (better to show nothing than a fake zero — and
-// Phase 3 will add a "scan barcode" affordance here to fill gaps).
-function NutritionChip({ item, getInfo, getBrandNutrition }) {
+// stays consistent across every surface. When no resolver tier fires
+// (unknown state), the chip simply hides — the scan affordance to
+// fill the gap lives behind "+ ADD BRAND" in the identity stack, not
+// as a standalone CTA here (keeps the nutrition band uncluttered and
+// one discoverable entry point for data enrichment).
+function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
-  const [scannerOpen, setScannerOpen] = useState(false);
-  const [scanBusy, setScanBusy] = useState(false);
-  const { upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
-  const { push: pushToast } = useToast();
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
-  // This lets the hook change its internal representation without
-  // touching every render path.
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
-  const canonicalId = item?.ingredientId || item?.canonicalId || null;
   const { nutrition, source, brand } = pantryItemNutrition(
     {
-      ingredientId: canonicalId,
+      ingredientId: item?.ingredientId || item?.canonicalId || null,
       brand: item?.brand || null,
       nutritionOverride: item?.nutritionOverride || null,
     },
     { getInfo, brandNutrition: brandNutritionMap },
   );
-  // Shared scan handler — used by both the unknown-state CTA and
-  // (later, Phase 4) a "wrong? update" path from the expanded sheet.
-  // Writes straight to brand_nutrition since the canonical_id is
-  // already resolved on this row (no form to fill out).
-  const handleScan = async (barcode) => {
-    setScannerOpen(false);
-    setScanBusy(true);
-    try {
-      const res = await lookupBarcode(barcode, { brandNutritionRows });
-      if (!res?.found) {
-        pushToast("No match in Open Food Facts.", { emoji: "🔍", kind: "warn", ttl: 4500 });
-        return;
-      }
-      if (res.cached) {
-        pushToast("Already in the database — nutrition should now show.", { emoji: "💾", kind: "info", ttl: 3500 });
-        return;
-      }
-      if (!canonicalId) {
-        pushToast("Set the canonical first so nutrition pins to the right ingredient.", { emoji: "🏷️", kind: "warn", ttl: 5000 });
-        return;
-      }
-      const brandForWrite = item?.brand || res.brand;
-      if (!brandForWrite) {
-        pushToast("Set a brand first so the nutrition can attach to it.", { emoji: "🏷️", kind: "warn", ttl: 5000 });
-        return;
-      }
-      await upsertBrandNutrition({
-        canonicalId,
-        brand:     brandForWrite,
-        nutrition: res.nutrition,
-        barcode:   res.barcode,
-        source:    res.source || "openfoodfacts",
-        sourceId:  res.sourceId || res.barcode,
-      });
-      pushToast(`Nutrition saved for ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
-    } catch (e) {
-      console.error("[nutrition] scan lookup failed:", e);
-      pushToast("Lookup failed. Try again.", { emoji: "⚠️", kind: "warn", ttl: 4500 });
-    } finally {
-      setScanBusy(false);
-    }
-  };
-  // Unknown state — offer a scan CTA instead of hiding the whole
-  // band. Surfaces that we know we DON'T know, and gives the user
-  // a one-tap path to fix it without leaving the card.
-  if (!nutrition) {
-    return (
-      <div style={{ marginBottom: 14 }}>
-        <button
-          type="button"
-          onClick={() => setScannerOpen(true)}
-          disabled={scanBusy}
-          style={{
-            width: "100%", padding: "10px 12px",
-            background: "#141414",
-            border: "1px dashed #2a2a2a",
-            borderRadius: 10,
-            display: "flex", alignItems: "center", gap: 10,
-            cursor: scanBusy ? "wait" : "pointer",
-            textAlign: "left", opacity: scanBusy ? 0.6 : 1,
-          }}
-        >
-          <span style={{ fontSize: 16 }}>📷</span>
-          <span style={{
-            flex: 1,
-            fontFamily: "'DM Mono',monospace", fontSize: 10,
-            color: "#888", letterSpacing: "0.1em",
-          }}>
-            {scanBusy ? "LOOKING UP…" : "SCAN BARCODE FOR NUTRITION"}
-          </span>
-          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>→</span>
-        </button>
-        {scannerOpen && (
-          <BarcodeScanner
-            onCancel={() => setScannerOpen(false)}
-            onDetected={handleScan}
-          />
-        )}
-      </div>
-    );
-  }
+  if (!nutrition) return null;
   const badge = sourceBadge(source);
   const per = nutrition.per === "100g" ? "per 100g"
             : nutrition.per === "count" ? "per item"
