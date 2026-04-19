@@ -94,7 +94,7 @@ export default function AIRecipe({
   onSchedule,       // (recipe) => Promise — parent persists + opens SchedulePicker
   onSaveAndCook,    // (recipe) => Promise — existing save + cook path
 }) {
-  const [phase,  setPhase]  = useState("setup");     // setup | loading | preview | error
+  const [phase,  setPhase]  = useState("setup");     // setup | sketch_loading | tweak | final_loading | preview | error
   const [recipe, setRecipe] = useState(null);
   const [errMsg, setErrMsg] = useState("");
   // Titles we've already shown the user this session — handed to the
@@ -104,6 +104,29 @@ export default function AIRecipe({
   // Per-action busy state so exactly one button shows SAVING… and
   // the other two stay tappable / disabled appropriately.
   const [busy,   setBusy]   = useState(null);         // null | "save" | "schedule" | "cook"
+
+  // Sketch + tweak state. The sketch holds the rough draft (title +
+  // dual IDEAL/PANTRY ingredient lists, no steps). pantryEdits is
+  // the diff the user applied during the tweak phase: per-row
+  // swaps to a different pantry item, removes, extra adds (e.g.
+  // "throw in egg whites"), and ideal items promoted to shopping
+  // ("yes I'll buy the mozzarella"). Combined into the locked
+  // ingredient list on COOK THIS.
+  const [sketch, setSketch] = useState(null);
+  const [pantryEdits, setPantryEdits] = useState({
+    swaps:    {},          // sketch.pantry index → pantry row id
+    removes:  new Set(),   // sketch.pantry indices the user dropped
+    adds:     [],          // [{ name, amount, ingredientId, pantryItemId, emoji }]
+    shopping: new Set(),   // sketch.ideal indices the user wants on the shopping list
+  });
+  // Inline picker open state. swapOpenIdx = which pantry-row's swap
+  // popover is open (null = none). addOpen = "+ ADD" picker visible.
+  const [swapOpenIdx, setSwapOpenIdx] = useState(null);
+  const [addOpen, setAddOpen]         = useState(false);
+  // Revision instruction for the FINAL cook — the user's "make it
+  // spicier, skip the garlic in the steps" note. Sent as
+  // prefs.recipeFeedback on the second call.
+  const [recipeFeedback, setRecipeFeedback] = useState("");
 
   // Prefs. mealPrompt is the hero input — renamed from "notes" to
   // signal that the user is DIRECTING an AI, not scribbling a
@@ -140,53 +163,145 @@ export default function AIRecipe({
 
   const pantryCount = pantry.length;
 
+  // Shared prefs payload — both the sketch and final calls assemble
+  // the same set; only mode + lockedIngredients differ.
+  const buildPrefs = (extra = {}) => ({
+    cuisine, time, difficulty,
+    mealPrompt: mealPrompt.trim() || undefined,
+    mealTiming: mealTiming === "any" ? undefined : mealTiming,
+    course: course === "any" ? undefined : course,
+    starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
+    ...extra,
+  });
+
+  // Phase 2 entry — kicks off the cheap sketch pass. User lands on
+  // the tweak screen with the rough draft + dual IDEAL/PANTRY lists,
+  // can swap / remove / add / promote-to-shopping / type feedback,
+  // then taps COOK THIS to fire the final full-recipe call.
   const start = async () => {
-    setPhase("loading");
+    setPhase("sketch_loading");
     setErrMsg("");
     try {
-      // Rich context (profile + history + pantry enrichment) on the
-      // first draft of a session — that's when the model benefits
-      // most from specific signals. REGEN calls (previousTitles
-      // non-empty) strip back to lean so the second draft doesn't
-      // re-anchor on the same pairings as the first.
       const isRegen = previousTitles.length > 0;
       const built = buildAIContext({
-        pantry,
-        profile,
-        ingredientInfo,
-        cookLogs,
+        pantry, profile, ingredientInfo, cookLogs,
         mode: isRegen ? "lean" : "rich",
-        // Lift user-picked proteins to the top of the ranked list
-        // so Claude sees them as the anchor even when other pantry
-        // items are closer to expiration. Ranking still respects
-        // the 40-item cap.
         starIngredientIds,
       });
       const payload = {
+        mode: "sketch",
         pantry: built.pantry,
-        prefs: {
-          cuisine, time, difficulty,
-          mealPrompt: mealPrompt.trim() || undefined,
-          mealTiming: mealTiming === "any" ? undefined : mealTiming,
-          course: course === "any" ? undefined : course,
-          starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
-        },
+        prefs: buildPrefs(),
         avoidTitles: previousTitles,
         context: built.context,
       };
+      const { sketch: drafted } = await generateRecipe(payload);
+      setSketch(drafted);
+      // Reset the tweak diff every fresh sketch — old swaps from a
+      // previous draft don't apply to the new ingredient list.
+      setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
+      setRecipeFeedback("");
+      setSwapOpenIdx(null);
+      setAddOpen(false);
+      if (drafted?.title) {
+        setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
+      }
+      setPhase("tweak");
+    } catch (e) {
+      console.error("AI recipe sketch failed:", e);
+      setErrMsg(e?.message || "Sketch failed");
+      setPhase("error");
+    }
+  };
+
+  // Build the locked-ingredients payload from the sketch + the
+  // user's tweak diff. Order: kept pantry rows (with swaps applied)
+  // → user adds → ideal-promoted-to-shopping. Removes are dropped.
+  const buildLockedIngredients = () => {
+    if (!sketch) return [];
+    const out = [];
+    sketch.pantry.forEach((row, i) => {
+      if (pantryEdits.removes.has(i)) return;
+      const swappedId = pantryEdits.swaps[i];
+      const swappedRow = swappedId ? pantry.find(p => p.id === swappedId) : null;
+      if (swappedRow) {
+        out.push({
+          name: swappedRow.name,
+          amount: row.amount,
+          ingredientId: swappedRow.ingredientId || swappedRow.canonicalId || null,
+          pantryItemId: swappedRow.id,
+          source: "pantry",
+          note: row.subbedFrom ? `subbed from ${row.subbedFrom} (was ${row.name})` : `swapped in for ${row.name}`,
+        });
+      } else {
+        out.push({
+          name: row.name,
+          amount: row.amount,
+          ingredientId: row.ingredientId ?? null,
+          pantryItemId: row.pantryItemId ?? null,
+          source: row.pantryItemId ? "pantry" : "shopping",
+          note: row.subbedFrom ? `subbed from ${row.subbedFrom}` : null,
+        });
+      }
+    });
+    pantryEdits.adds.forEach(add => {
+      out.push({
+        name: add.name,
+        amount: add.amount,
+        ingredientId: add.ingredientId || null,
+        pantryItemId: add.pantryItemId || null,
+        source: "added",
+        note: null,
+      });
+    });
+    pantryEdits.shopping.forEach(idx => {
+      const ideal = sketch.ideal[idx];
+      if (!ideal) return;
+      out.push({
+        name: ideal.name,
+        amount: ideal.amount,
+        ingredientId: null,
+        pantryItemId: null,
+        source: "shopping",
+        note: "user will pick up",
+      });
+    });
+    return out;
+  };
+
+  // Phase 4 entry — fires the FINAL full-recipe call with the
+  // user's locked ingredient set + revision feedback. Lands in the
+  // existing preview phase.
+  const cookFinal = async () => {
+    if (!sketch) return;
+    setPhase("final_loading");
+    setErrMsg("");
+    try {
+      const built = buildAIContext({
+        pantry, profile, ingredientInfo, cookLogs,
+        mode: "rich",
+        starIngredientIds,
+      });
+      const locked = buildLockedIngredients();
+      const payload = {
+        mode: "final",
+        pantry: built.pantry,
+        prefs: buildPrefs({
+          recipeFeedback: recipeFeedback.trim() || undefined,
+        }),
+        avoidTitles: previousTitles,
+        context: built.context,
+        lockedIngredients: locked,
+      };
       const { recipe: drafted } = await generateRecipe(payload);
       setRecipe(drafted);
-      // Remember this draft's title so the next REGEN steers away from
-      // it. The edge function truncates to the last 5; we stash the
-      // full session history so a user who scrolls through many drafts
-      // never sees a repeat from earlier in the same sitting.
       if (drafted?.title) {
         setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
       }
       setPhase("preview");
     } catch (e) {
-      console.error("AI recipe draft failed:", e);
-      setErrMsg(e?.message || "Draft failed");
+      console.error("AI recipe final failed:", e);
+      setErrMsg(e?.message || "Final cook failed");
       setPhase("error");
     }
   };
@@ -218,17 +333,20 @@ export default function AIRecipe({
     </div>
   );
 
-  if (phase === "loading") {
+  if (phase === "sketch_loading" || phase === "final_loading" || phase === "loading") {
+    const isFinal = phase === "final_loading";
     return (
       <div>
         {header}
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 44, animation: "spin 1.2s linear infinite", display: "inline-block" }}>✨</div>
           <div style={{ marginTop: 18, fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4" }}>
-            Drafting from your pantry…
+            {isFinal ? "Cooking it up…" : "Sketching from your pantry…"}
           </div>
           <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5 }}>
-            Claude is looking at {pantryCount} pantry {pantryCount === 1 ? "item" : "items"} and your preferences.
+            {isFinal
+              ? "Writing the steps around what you locked in."
+              : `Claude is looking at ${pantryCount} pantry ${pantryCount === 1 ? "item" : "items"} and your preferences.`}
           </div>
         </div>
         <style>{`@keyframes spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }`}</style>
@@ -251,6 +369,404 @@ export default function AIRecipe({
           <div style={{ marginTop: 20, display: "flex", gap: 10, justifyContent: "center" }}>
             <button onClick={() => setPhase("setup")} style={primaryBtn}>TRY AGAIN</button>
             <button onClick={onCancel} style={secondaryBtn}>CANCEL</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "tweak" && sketch) {
+    // Helpers scoped to the tweak render so they can close over
+    // pantryEdits + setPantryEdits cleanly.
+    const pantryById = new Map(pantry.map(p => [p.id, p]));
+    const lookupPantryRow = (id) => (id ? pantryById.get(id) : null);
+
+    // Same-category alternates for the swap picker. Falls back to
+    // an empty list when the canonical isn't in the registry.
+    const swapCandidatesFor = (sketchPantryRow) => {
+      const targetCanon = sketchPantryRow.ingredientId
+        ? findIngredient(sketchPantryRow.ingredientId)
+        : null;
+      const targetCat = targetCanon?.category;
+      const targetId  = targetCanon?.id;
+      const seen = new Set();
+      const out = [];
+      for (const row of pantry) {
+        const canon = row.ingredientId ? findIngredient(row.ingredientId) : null;
+        // Skip the row that's already the current pick.
+        if (row.id === sketchPantryRow.pantryItemId) continue;
+        // Skip already-listed rows of the same canonical to keep
+        // the picker compact (one chip per canonical, not per
+        // physical instance).
+        const key = canon?.id || row.name?.toLowerCase() || row.id;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Same category wins; if no canonical match was available
+        // we just show every other pantry row (rare fallback).
+        if (!targetCat || (canon && canon.category === targetCat) || canon?.id === targetId) {
+          out.push(row);
+        }
+      }
+      return out;
+    };
+
+    const toggleRemove = (i) => setPantryEdits(prev => {
+      const removes = new Set(prev.removes);
+      if (removes.has(i)) removes.delete(i);
+      else removes.add(i);
+      return { ...prev, removes };
+    });
+    const applySwap = (i, rowId) => setPantryEdits(prev => ({
+      ...prev,
+      swaps: { ...prev.swaps, [i]: rowId },
+    }));
+    const clearSwap = (i) => setPantryEdits(prev => {
+      const swaps = { ...prev.swaps };
+      delete swaps[i];
+      return { ...prev, swaps };
+    });
+    const togglePromoteToShopping = (i) => setPantryEdits(prev => {
+      const shopping = new Set(prev.shopping);
+      if (shopping.has(i)) shopping.delete(i);
+      else shopping.add(i);
+      return { ...prev, shopping };
+    });
+    const dropAdd = (i) => setPantryEdits(prev => ({
+      ...prev,
+      adds: prev.adds.filter((_, idx) => idx !== i),
+    }));
+    const addPantryRow = (row) => setPantryEdits(prev => ({
+      ...prev,
+      adds: [...prev.adds, {
+        name: row.name,
+        amount: `${row.amount ?? 1}${row.unit ? ` ${row.unit}` : ""}`,
+        ingredientId: row.ingredientId || row.canonicalId || null,
+        pantryItemId: row.id,
+        emoji: row.emoji,
+      }],
+    }));
+
+    // IDEAL items the user might want to grab. Filter out anything
+    // the pantry list already covers (by name match) so we don't
+    // double-show ingredients that ARE in the kitchen.
+    const pantryNames = new Set(
+      sketch.pantry
+        .filter((_, i) => !pantryEdits.removes.has(i))
+        .map(p => (p.name || "").toLowerCase())
+    );
+    sketch.pantry.forEach(p => { if (p.subbedFrom) pantryNames.add(p.subbedFrom.toLowerCase()); });
+    const idealMissing = sketch.ideal
+      .map((row, i) => ({ row, i }))
+      .filter(({ row }) => !pantryNames.has((row.name || "").toLowerCase()));
+
+    const lockedCount = buildLockedIngredients().length;
+
+    return (
+      <div>
+        {header}
+        <div style={{ padding: "12px 20px 60px" }}>
+          {/* Sketch header — title + emoji + AI rationale. Reads as
+              "here's what we drafted, want to tweak before cooking?" */}
+          <div style={{ textAlign: "center", padding: "8px 0 16px" }}>
+            <div style={{ fontSize: 48 }}>{sketch.emoji || "🍽️"}</div>
+            <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 24, fontWeight: 300, fontStyle: "italic", color: "#f0ece4", margin: "8px 0 4px" }}>
+              {sketch.title}
+            </h1>
+            {sketch.subtitle && (
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.4 }}>
+                {sketch.subtitle}
+              </div>
+            )}
+            <div style={{
+              marginTop: 10, display: "inline-flex", gap: 6, alignItems: "center",
+              padding: "4px 10px", background: "#1a1608",
+              border: "1px solid #c7a8d455", borderRadius: 14,
+              fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#c7a8d4",
+              letterSpacing: "0.08em",
+            }}>
+              ✨ SKETCH — TWEAK BEFORE COOK
+            </div>
+          </div>
+
+          {sketch.aiRationale && (
+            <div style={{
+              padding: "10px 12px", marginBottom: 14,
+              background: "#0f0d18", border: "1px solid #2a2438", borderRadius: 10,
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#c7a8d4", lineHeight: 1.5,
+            }}>
+              {sketch.aiRationale}
+            </div>
+          )}
+
+          {/* PANTRY column — what the recipe will use, derived from
+              the sketch + the user's tweak diff. Each row shows the
+              pulled pantry item inline + swap/remove affordances. */}
+          <Section label="WHAT WE'RE GRABBING FROM YOUR KITCHEN">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {sketch.pantry.map((row, i) => {
+                if (pantryEdits.removes.has(i)) {
+                  // Removed rows render as a thin strip with an
+                  // "undo" affordance so accidental removes are
+                  // recoverable without re-running the sketch.
+                  return (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "8px 12px", background: "#0a0a0a",
+                      border: "1px dashed #2a2a2a", borderRadius: 10,
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#555",
+                    }}>
+                      <span><s>{row.name} · {row.amount}</s></span>
+                      <button onClick={() => toggleRemove(i)} style={undoChip}>UNDO</button>
+                    </div>
+                  );
+                }
+                const swappedId = pantryEdits.swaps[i];
+                const swappedRow = lookupPantryRow(swappedId);
+                const originRow  = lookupPantryRow(row.pantryItemId);
+                const showRow    = swappedRow || originRow;
+                const swapOpen   = swapOpenIdx === i;
+                return (
+                  <div key={i} style={{
+                    padding: "10px 12px",
+                    background: "#141414", border: "1px solid #1e1e1e", borderRadius: 12,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4" }}>
+                          {swappedRow ? swappedRow.name : row.name} · <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{row.amount}</span>
+                        </div>
+                        {showRow && (
+                          <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7ec87e", letterSpacing: "0.06em" }}>
+                            ✓ FROM {showRow.amount}{showRow.unit ? ` ${showRow.unit}` : ""} · {showRow.location || "pantry"}
+                          </div>
+                        )}
+                        {!showRow && row.pantryItemId == null && (
+                          <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#f59e0b", letterSpacing: "0.06em" }}>
+                            ⚠ NOT IN PANTRY — SHOPPING
+                          </div>
+                        )}
+                        {row.subbedFrom && (
+                          <div style={{ marginTop: 3, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
+                            subbed from {row.subbedFrom}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                        <button
+                          onClick={() => setSwapOpenIdx(swapOpen ? null : i)}
+                          style={swapOpen ? swapBtnActive : swapBtn}
+                        >
+                          ⇌ SWAP
+                        </button>
+                        <button onClick={() => toggleRemove(i)} style={removeBtn}>×</button>
+                      </div>
+                    </div>
+                    {swapOpen && (() => {
+                      const candidates = swapCandidatesFor(row);
+                      return (
+                        <div style={{
+                          marginTop: 10, paddingTop: 10,
+                          borderTop: "1px dashed #2a2a2a",
+                          display: "flex", flexDirection: "column", gap: 6,
+                        }}>
+                          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.08em" }}>
+                            SWAP TO ANOTHER {((findIngredient(row.ingredientId)?.category) || "ingredient").toUpperCase()}:
+                          </div>
+                          {candidates.length === 0 && (
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                              Nothing else in that category — try Recipe Feedback below.
+                            </div>
+                          )}
+                          {candidates.map(c => (
+                            <button
+                              key={c.id}
+                              onClick={() => { applySwap(i, c.id); setSwapOpenIdx(null); }}
+                              style={swapOptionBtn}
+                            >
+                              <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                              <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                                {c.name}
+                              </span>
+                              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                                {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                              </span>
+                            </button>
+                          ))}
+                          {swappedRow && (
+                            <button onClick={() => { clearSwap(i); setSwapOpenIdx(null); }} style={swapClearBtn}>
+                              ↺ REVERT TO ORIGINAL ({row.name})
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                );
+              })}
+
+              {/* User-added rows (egg-whites case) */}
+              {pantryEdits.adds.map((add, i) => (
+                <div key={`add-${i}`} style={{
+                  padding: "10px 12px",
+                  background: "#0f1a0f", border: "1px solid #1e3a1e", borderRadius: 12,
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 14, color: "#f0ece4" }}>
+                      {add.emoji ? `${add.emoji} ` : ""}{add.name} · <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{add.amount}</span>
+                    </div>
+                    <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7ec87e", letterSpacing: "0.06em" }}>
+                      + ADDED BY YOU
+                    </div>
+                  </div>
+                  <button onClick={() => dropAdd(i)} style={removeBtn}>×</button>
+                </div>
+              ))}
+            </div>
+
+            {/* + ADD INGREDIENT FROM PANTRY — egg-whites case. */}
+            <div style={{ marginTop: 10 }}>
+              <button
+                onClick={() => setAddOpen(o => !o)}
+                style={addOpen ? addBtnActive : addBtn}
+              >
+                {addOpen ? "× CLOSE" : "+ ADD INGREDIENT FROM PANTRY"}
+              </button>
+              {addOpen && (() => {
+                // Filter out pantry rows that are already in the
+                // sketch (by canonical or by name) or already
+                // user-added.
+                const usedIds = new Set();
+                sketch.pantry.forEach((row, i) => {
+                  if (pantryEdits.removes.has(i)) return;
+                  if (row.pantryItemId) usedIds.add(row.pantryItemId);
+                  const swapped = pantryEdits.swaps[i];
+                  if (swapped) usedIds.add(swapped);
+                });
+                pantryEdits.adds.forEach(a => { if (a.pantryItemId) usedIds.add(a.pantryItemId); });
+                const seenCanon = new Set();
+                const candidates = pantry.filter(p => {
+                  if (usedIds.has(p.id)) return false;
+                  const canonId = p.ingredientId || p.canonicalId || p.name?.toLowerCase();
+                  if (canonId && seenCanon.has(canonId)) return false;
+                  if (canonId) seenCanon.add(canonId);
+                  return true;
+                });
+                return (
+                  <div style={{
+                    marginTop: 8, padding: "10px 12px",
+                    background: "#0a0a0a", border: "1px solid #242424", borderRadius: 10,
+                    maxHeight: 240, overflowY: "auto",
+                    display: "flex", flexDirection: "column", gap: 6,
+                  }}>
+                    {candidates.length === 0 ? (
+                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic", padding: "12px 0", textAlign: "center" }}>
+                        Every pantry item is already in the recipe.
+                      </div>
+                    ) : candidates.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => { addPantryRow(p); setAddOpen(false); }}
+                        style={swapOptionBtn}
+                      >
+                        <span style={{ fontSize: 16 }}>{p.emoji || "🥫"}</span>
+                        <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                          {p.name}
+                        </span>
+                        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                          {p.amount}{p.unit ? ` ${p.unit}` : ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </Section>
+
+          {/* IDEAL items NOT in pantry — the "you may want to grab"
+              shopping prompt. User can promote each to the locked
+              list as a shopping-source ingredient. */}
+          {idealMissing.length > 0 && (
+            <Section label="ALSO TYPICAL IN THIS DISH">
+              <div style={{ marginBottom: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
+                These aren't in your kitchen. Tap to add to the recipe and your shopping list — or skip and we'll cook without.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {idealMissing.map(({ row, i }) => {
+                  const promoted = pantryEdits.shopping.has(i);
+                  return (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                      padding: "8px 12px",
+                      background: promoted ? "#0f1a0f" : "#0a0a0a",
+                      border: `1px solid ${promoted ? "#1e3a1e" : "#242424"}`,
+                      borderRadius: 10,
+                    }}>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: promoted ? "#7ec87e" : "#aaa" }}>
+                          {row.name} · <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#888" }}>{row.amount}</span>
+                        </div>
+                        {row.role && (
+                          <div style={{ marginTop: 2, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.06em" }}>
+                            {row.role.toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+                      <button onClick={() => togglePromoteToShopping(i)} style={promoted ? shopActiveBtn : shopBtn}>
+                        {promoted ? "✓ ON LIST" : "+ SHOP"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
+
+          {/* Recipe Feedback — second prompt, scoped to this sketch.
+              Shapes the EXECUTION (technique, seasoning, plating) of
+              the final cook. Distinct from the Meal Prompt at setup
+              which shaped the CONCEPT. */}
+          <Section label="ANY LAST NOTES BEFORE WE COOK?">
+            <textarea
+              value={recipeFeedback}
+              onChange={e => setRecipeFeedback(e.target.value)}
+              placeholder='e.g. "make it spicier" · "skip the garlic in the steps" · "crispier edges" · "keep it under 30 min"'
+              rows={3}
+              style={{
+                width: "100%", padding: "10px 12px",
+                background: "#0a0a0a", border: "1px solid #242424",
+                borderRadius: 10, color: "#f0ece4",
+                fontFamily: "'DM Sans',sans-serif", fontSize: 13, lineHeight: 1.5,
+                outline: "none", boxSizing: "border-box", resize: "vertical",
+              }}
+            />
+          </Section>
+
+          {/* Action bar — REGEN sketch (back to setup with same prefs)
+              vs COOK THIS (locks the ingredient set + fires final). */}
+          <div style={{ marginTop: 24, display: "flex", gap: 10 }}>
+            <button onClick={() => setPhase("setup")} style={iconActionBtn} title="Back to setup">
+              ←
+            </button>
+            <button onClick={start} style={secondaryBtn}>
+              ↻ NEW SKETCH
+            </button>
+            <button
+              onClick={cookFinal}
+              disabled={lockedCount === 0}
+              style={{
+                flex: 2, padding: "14px",
+                background: lockedCount === 0 ? "#2a2a2a" : "linear-gradient(135deg, #c7a8d4 0%, #a389b8 100%)",
+                color: lockedCount === 0 ? "#555" : "#111",
+                border: "none", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+                letterSpacing: "0.1em",
+                cursor: lockedCount === 0 ? "not-allowed" : "pointer",
+              }}
+            >
+              ✨ COOK THIS · {lockedCount}
+            </button>
           </div>
         </div>
       </div>
@@ -637,4 +1153,60 @@ const iconActionBtn = {
   color: "#888", borderRadius: 12,
   fontFamily: "'DM Mono',monospace", fontSize: 16,
   cursor: "pointer", flexShrink: 0,
+};
+
+// ── Tweak phase buttons ─────────────────────────────────────────────
+const swapBtn = {
+  padding: "5px 10px",
+  background: "#0f1620", border: "1px solid #1f3040",
+  color: "#7eb8d4", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  letterSpacing: "0.06em", cursor: "pointer", whiteSpace: "nowrap",
+};
+const swapBtnActive = { ...swapBtn, background: "#1a2430", color: "#9bcae0" };
+const removeBtn = {
+  width: 28, height: 28, padding: 0,
+  background: "transparent", border: "1px solid #2a2a2a",
+  color: "#666", borderRadius: 14,
+  fontFamily: "'DM Mono',monospace", fontSize: 14,
+  cursor: "pointer", flexShrink: 0,
+};
+const undoChip = {
+  padding: "4px 8px",
+  background: "transparent", border: "1px solid #2a2a2a",
+  color: "#888", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  letterSpacing: "0.06em", cursor: "pointer",
+};
+const swapOptionBtn = {
+  display: "flex", alignItems: "center", gap: 10,
+  padding: "8px 10px", width: "100%",
+  background: "#141414", border: "1px solid #242424",
+  borderRadius: 8, cursor: "pointer", textAlign: "left",
+};
+const swapClearBtn = {
+  marginTop: 4, padding: "6px 10px",
+  background: "transparent", border: "1px dashed #3a3a3a",
+  color: "#888", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 10,
+  letterSpacing: "0.06em", cursor: "pointer",
+};
+const addBtn = {
+  width: "100%", padding: "10px",
+  background: "transparent", border: "1px dashed #3a3a3a",
+  color: "#888", borderRadius: 10,
+  fontFamily: "'DM Mono',monospace", fontSize: 11,
+  letterSpacing: "0.08em", cursor: "pointer",
+};
+const addBtnActive = { ...addBtn, color: "#aaa", borderStyle: "solid" };
+const shopBtn = {
+  padding: "6px 12px",
+  background: "#1a1608", border: "1px solid #3a2f10",
+  color: "#f5c842", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+  letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
+};
+const shopActiveBtn = {
+  ...shopBtn,
+  background: "#0f1a0f", border: "1px solid #1e3a1e", color: "#7ec87e",
 };
