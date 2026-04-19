@@ -1090,15 +1090,36 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // Vanilla Greek Yogurt 5.3oz") > cleaned productName
               // via resolver's helper > top categoryHint
               // title-cased > null.
-              const cleanedName = res.productName
+              // Suggestion priority. Each candidate runs through
+              // cleanProductName (which strips brand + marketing +
+              // unit tokens) so the brand never leaks into the
+              // suggested canonical name — bug symptom: user said
+              // the canonical was coming back AS the brand, which
+              // happened when genericName or an unstripped
+              // productName survived intact because the bare value
+              // happened to BE the brand.
+              const toTitle = (s) => s.replace(/\b\w/g, c => c.toUpperCase());
+              const cleanedProduct = res.productName
                 ? cleanProductName(res.productName, effectiveBrand)
                 : "";
+              const cleanedGeneric = res.genericName
+                ? cleanProductName(res.genericName, effectiveBrand)
+                : "";
+              // Drop any candidate that collapsed to the brand
+              // itself (everything got stripped; residue IS the
+              // brand lowercased) or that's empty after cleaning.
+              const brandLower = (effectiveBrand || "").toLowerCase().trim();
+              const valid = (s) => {
+                const v = (s || "").trim().toLowerCase();
+                if (!v) return false;
+                if (brandLower && v === brandLower) return false;
+                return true;
+              };
               const suggestedName =
-                (res.genericName && res.genericName.trim())
-                  ? res.genericName.trim().replace(/\b\w/g, c => c.toUpperCase())
-                  : (cleanedName
-                      ? cleanedName.replace(/\b\w/g, c => c.toUpperCase())
-                      : firstHintPretty);
+                (valid(cleanedProduct) && toTitle(cleanedProduct))
+                || (valid(cleanedGeneric) && toTitle(cleanedGeneric))
+                || firstHintPretty
+                || null;
               if (!canon && suggestedName) {
                 setCanonicalCreatePrompt({
                   suggestedName,
@@ -1965,12 +1986,25 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
         ? `OFF name: ${sourceHint.productName}`
         : null;
   return (
+    // Outer wrapper: full-viewport fixed cover so the Scanner content
+    // behind it is visually suppressed. Separate from the content
+    // container below so the maxWidth constraint doesn't fight the
+    // fixed-position inset:0 (which on iOS PWA standalone can render
+    // an empty black screen if the browser interprets the combo
+    // inconsistently — symptom user hit: 'everything blackened').
     <div style={{
       position:"fixed", inset:0, zIndex:345,
       background:"#0b0b0b",
-      display:"flex", flexDirection:"column",
-      maxWidth:480, margin:"0 auto",
+      overflowY:"auto",
+      display:"flex", flexDirection:"column", alignItems:"stretch",
     }}>
+      {/* Inner content — constrained to the app's 480px column, but
+          its SIZE is what's maxWidth'd, not the fixed layer itself. */}
+      <div style={{
+        width:"100%", maxWidth:480, margin:"0 auto",
+        display:"flex", flexDirection:"column", flex:1,
+        minHeight:"100%",
+      }}>
       <div style={{ padding:"24px 20px 12px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #1e1e1e" }}>
         <button onClick={onCancel} style={promptIconBtn}>←</button>
         <div style={{ flex:1, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#c7a8d4", letterSpacing:"0.12em" }}>
@@ -1978,7 +2012,7 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
         </div>
         <button onClick={onCancel} style={promptIconBtn}>✕</button>
       </div>
-      <div style={{ flex:1, padding:"28px 20px", overflowY:"auto" }}>
+      <div style={{ flex:1, padding:"28px 20px" }}>
         <div style={{ fontSize:44, marginBottom:14 }}>✨</div>
         <h1 style={{
           fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300,
@@ -2057,6 +2091,7 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
             SKIP — STOCK WITHOUT CANONICAL
           </button>
         </div>
+      </div>
       </div>
     </div>
   );
