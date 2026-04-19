@@ -1,13 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { decodeBarcodeFromImage } from "../lib/lookupBarcode";
+import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 
-// Barcode reader with three fallback layers:
-//   1. Live BarcodeDetector (Chrome/Edge/Android, Safari 17+ proper).
-//   2. Photo-capture via <input type="file" capture="environment"> →
-//      Claude vision decodes the human-readable digits printed below
-//      the bars. Works on iOS PWA standalone mode and any browser
-//      with camera access, even when BarcodeDetector is missing.
-//   3. Typed input — the user reads the digits and types them.
+// Barcode reader with layered fallbacks (best signal first):
+//
+//   LIVE SCANNING
+//     1a. Native BarcodeDetector (Chrome/Edge/Android, Safari 17+ proper).
+//         Fastest, zero bundle cost.
+//     1b. @zxing/browser decoder on the same <video> stream when
+//         BarcodeDetector isn't exposed (Firefox mobile, older Safari).
+//         Lazy-loaded ~200KB dep; free, offline, no API cost.
+//
+//   PHOTO CAPTURE (for iOS PWA standalone where live-video is blocked)
+//     2a. @zxing/browser decoding a still image from <input type="file"
+//         capture="environment">. Primary path. Accurate, free, fast.
+//     2b. Claude vision edge function (decode-barcode-image) as the
+//         fallback when zxing can't decode — handles damaged, faded,
+//         or hand-labeled barcodes where bar-pattern reads fail but
+//         the human-readable digits are still legible.
+//
+//   LAST RESORT
+//     3. Typed input — user reads the digits and types them.
 //
 // Emits on the `onDetected(barcode)` callback once per session (the
 // stream stops immediately after the first read so we don't spam the
@@ -29,41 +42,22 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
   const [decoding, setDecoding] = useState(false);
   const [decodeMsg, setDecodeMsg] = useState("");
 
-  // Native-first boot. Extracted into a ref-stable function so the
-  // "TRY CAMERA AGAIN" button in the denied state can re-run the
-  // same sequence — useful for the user who came back after
-  // unblocking the camera in browser settings.
-  const cancelledRef = useRef(false);
+  // Live-scanner boot. Request the camera first, then pick the best
+  // detector we can: native BarcodeDetector (free, fastest) if
+  // available, else @zxing/browser (lazy-loaded, algorithmic bar-
+  // pattern decoding). Both share the same onDetected callback and
+  // the same camera stream — only one is active at a time.
+  const cancelledRef   = useRef(false);
+  const zxingStopRef   = useRef(null);   // { stop: () => void } | null
   const bootCamera = async () => {
     cancelledRef.current = false;
-    // Clear any prior stream before re-requesting (retry path).
+    // Clear any prior stream / detector before re-requesting (retry path).
     stopStream();
     setState("init");
 
-    // Feature detect. `window.BarcodeDetector` is a bare class;
-    // some browsers implement the constructor but not the
-    // getSupportedFormats call, so we guard both.
-    const hasNative = typeof window !== "undefined" && "BarcodeDetector" in window;
-    if (!hasNative) {
-      setState("native_unavailable");
-      return;
-    }
-    try {
-      const supported = await window.BarcodeDetector.getSupportedFormats();
-      const formats = BARCODE_FORMATS.filter(f => supported.includes(f));
-      if (formats.length === 0) {
-        setState("native_unavailable");
-        return;
-      }
-      detectorRef.current = new window.BarcodeDetector({ formats });
-    } catch (e) {
-      console.warn("[barcode] detector init failed:", e);
-      setState("native_unavailable");
-      return;
-    }
-    // Request the back camera — UPC scanning is rear-facing and
-    // `facingMode: "environment"` tells mobile browsers to default
-    // to it.
+    // Camera access first — needed by EITHER detector. If this
+    // fails with a denial, fall through to the photo-capture path
+    // without wasting a zxing load.
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -85,9 +79,49 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       try { await videoRef.current.play(); } catch { /* autoplay blocked; user tap resumes */ }
     }
     setState("scanning");
-    // Detection loop — poll every ~350ms. Native impls are slow
-    // under heavy CPU; tighter polling melts batteries without
-    // improving hit rate.
+
+    // Prefer native BarcodeDetector — zero dependency cost, fastest.
+    const hasNative = typeof window !== "undefined" && "BarcodeDetector" in window;
+    if (hasNative) {
+      try {
+        const supported = await window.BarcodeDetector.getSupportedFormats();
+        const formats = BARCODE_FORMATS.filter(f => supported.includes(f));
+        if (formats.length > 0) {
+          detectorRef.current = new window.BarcodeDetector({ formats });
+          startNativePolling();
+          return;
+        }
+      } catch (e) {
+        console.warn("[barcode] native detector init failed, falling back to zxing:", e);
+      }
+    }
+
+    // Fall back to zxing's live video decoder. Lazy-imports
+    // @zxing/browser on first call; cached on module scope after.
+    try {
+      const scanner = await createZxingLiveScanner(
+        videoRef.current,
+        (digits) => {
+          if (cancelledRef.current) return;
+          stopStream();
+          onDetected?.(digits);
+        },
+        (err) => { console.warn("[barcode] zxing live error:", err); },
+      );
+      zxingStopRef.current = scanner;
+    } catch (err) {
+      // Both paths failed. Release the camera and drop to the
+      // photo-capture UI — still useful even without live scanning.
+      console.warn("[barcode] zxing fallback failed:", err);
+      stopStream();
+      if (!cancelledRef.current) setState("native_unavailable");
+    }
+  };
+
+  // Native BarcodeDetector polling loop. Zxing manages its own loop
+  // internally (see createZxingLiveScanner), so this only runs in
+  // the native-path branch.
+  function startNativePolling() {
     const tick = async () => {
       if (cancelledRef.current) return;
       const video = videoRef.current;
@@ -111,7 +145,7 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       tickRef.current = window.setTimeout(tick, 350);
     };
     tickRef.current = window.setTimeout(tick, 350);
-  };
+  }
 
   // Called by the "TRY CAMERA AGAIN" button in the denied state.
   // Re-invokes getUserMedia so a user who just unblocked the camera
@@ -133,6 +167,13 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
     if (tickRef.current) {
       window.clearTimeout(tickRef.current);
       tickRef.current = null;
+    }
+    // Zxing live scanner runs its own loop — stop it explicitly so
+    // a pending decodeOnceFromVideoElement promise doesn't fire
+    // onDetected after we've closed.
+    if (zxingStopRef.current) {
+      try { zxingStopRef.current.stop?.(); } catch { /* noop */ }
+      zxingStopRef.current = null;
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
@@ -171,15 +212,32 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
     setDecoding(true);
     setDecodeMsg("Reading the barcode…");
     try {
+      // 1. Try @zxing/browser first — decodes the bar pattern
+      //    algorithmically, no API cost, usually more accurate than
+      //    vision-based digit OCR. Lazy-loaded on first use.
+      const zxingRes = await decodeImageFileWithZxing(file);
+      if (zxingRes?.found && zxingRes.barcode) {
+        // Populate the typed field with the decoded digits and ask
+        // the user to confirm before we hit OFF. Even zxing can
+        // misread a damaged label; a quick eyeball check against
+        // the printed digits under the bars is cheap.
+        setTyped(zxingRes.barcode);
+        setDecodeMsg(
+          `Read: ${formatBarcodeDigits(zxingRes.barcode)}\n\n` +
+          `Check it matches the digits printed under the barcode on your package. ` +
+          `Fix any wrong digits, then tap LOOK UP.`,
+        );
+        return;
+      }
+
+      // 2. Zxing couldn't resolve the bar pattern (damaged label,
+      //    glare, extreme angle) — fall back to the Claude vision
+      //    edge function, which reads the human-readable digits
+      //    printed next to the bars. Slower + has an API cost, but
+      //    handles cases zxing can't.
       const base64 = await fileToBase64(file);
       const res = await decodeBarcodeFromImage(base64, mediaType);
       if (res?.found && res.barcode) {
-        // Populate the typed field with the decoded digits and ask
-        // the user to confirm before we hit OFF. Vision misreads
-        // are real (a Haiku pass dropped an 8 and a 9 off a UPC
-        // in testing). Letting the user eyeball the digits against
-        // the package catches errors before they become an
-        // apparently-missing product.
         setTyped(res.barcode);
         setDecodeMsg(
           `Read: ${formatBarcodeDigits(res.barcode)}\n\n` +
