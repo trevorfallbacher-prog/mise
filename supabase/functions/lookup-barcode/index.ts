@@ -184,7 +184,27 @@ function firstBrand(raw: unknown): string | null {
   return first ? first : null;
 }
 
+// Top-level guard so any uncaught throw inside the handler returns
+// a 500 with a legible message instead of a bare Supabase 502 (which
+// just reads as "Barcode lookup failed (502)" on the client). Helps
+// surface runtime errors the user can actually triage — unexpected
+// OFF payload shapes, AbortSignal incompatibilities, etc.
 Deno.serve(async (req) => {
+  try {
+    return await handleLookup(req);
+  } catch (err) {
+    console.error("[lookup-barcode] uncaught:", err);
+    return new Response(
+      JSON.stringify({
+        error: `lookup-barcode crashed: ${err?.message || String(err)}`,
+        stack: err?.stack ? String(err.stack).slice(0, 2000) : null,
+      }),
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
+});
+
+async function handleLookup(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
   }
@@ -227,19 +247,28 @@ Deno.serve(async (req) => {
     const MAX_ATTEMPTS = 2;
     const PER_ATTEMPT_MS = 10000;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      // Manual AbortController instead of AbortSignal.timeout —
+      // broader Deno-runtime compatibility. Some Supabase edge
+      // function runtime versions don't expose AbortSignal.timeout
+      // and using it throws a ReferenceError before the fetch even
+      // starts, which surfaced as a bare 502 to the client.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), PER_ATTEMPT_MS);
       try {
         const resp = await fetch(
           `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
           {
             headers: { "User-Agent": OFF_USER_AGENT },
-            signal: AbortSignal.timeout(PER_ATTEMPT_MS),
+            signal: ctrl.signal,
           },
         );
+        clearTimeout(timer);
         return resp;
       } catch (err) {
-        // Timeout, network error, DNS — log and retry once. On the
-        // second failure, give up and let the caller surface
-        // off_unavailable rather than 502.
+        clearTimeout(timer);
+        // AbortError (timeout), network error, DNS — log and retry
+        // once. On the second failure, give up and let the caller
+        // surface off_unavailable rather than 502.
         console.warn(`[lookup-barcode] OFF attempt ${attempt}/${MAX_ATTEMPTS} failed:`, String(err));
         if (attempt === MAX_ATTEMPTS) return null;
       }
@@ -332,4 +361,4 @@ Deno.serve(async (req) => {
   };
 
   return new Response(JSON.stringify(payload), { status: 200, headers: JSON_HEADERS });
-});
+}
