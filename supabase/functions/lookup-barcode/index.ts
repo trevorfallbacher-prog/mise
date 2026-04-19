@@ -215,16 +215,46 @@ Deno.serve(async (req) => {
 
   // Hit Open Food Facts v2. The `product.json` endpoint returns
   // `status: 1` on hit with a `product` block, `status: 0` on miss.
-  let offResp: Response;
-  try {
-    offResp = await fetch(
-      `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
-      { headers: { "User-Agent": OFF_USER_AGENT } },
-    );
-  } catch (err) {
+  //
+  // Retry + timeout wrap: OFF is known-flaky under load (5xx bursts,
+  // 30s+ hangs). Without bounds, a hung fetch trips Supabase's
+  // platform timeout and our edge fn returns a raw 502 to the
+  // client — the user sees a cryptic "Barcode lookup failed (502)"
+  // when the actual cause is just OFF being slow. A 10s per-attempt
+  // timeout + one retry lets us fail fast to a structured
+  // off_unavailable response the client can surface meaningfully.
+  async function fetchOff(): Promise<Response | null> {
+    const MAX_ATTEMPTS = 2;
+    const PER_ATTEMPT_MS = 10000;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const resp = await fetch(
+          `https://world.openfoodfacts.org/api/v2/product/${barcode}.json`,
+          {
+            headers: { "User-Agent": OFF_USER_AGENT },
+            signal: AbortSignal.timeout(PER_ATTEMPT_MS),
+          },
+        );
+        return resp;
+      } catch (err) {
+        // Timeout, network error, DNS — log and retry once. On the
+        // second failure, give up and let the caller surface
+        // off_unavailable rather than 502.
+        console.warn(`[lookup-barcode] OFF attempt ${attempt}/${MAX_ATTEMPTS} failed:`, String(err));
+        if (attempt === MAX_ATTEMPTS) return null;
+      }
+    }
+    return null;
+  }
+  const offResp = await fetchOff();
+
+  if (!offResp) {
+    // Retries exhausted. OFF is either down, hanging, or blocking
+    // our IP. Client renders the existing 'Open Food Facts is
+    // having a rough moment' message — same copy as a 5xx response.
     return new Response(
-      JSON.stringify({ error: `open food facts fetch failed: ${String(err)}` }),
-      { status: 502, headers: JSON_HEADERS },
+      JSON.stringify({ found: false, barcode, reason: "off_unavailable" }),
+      { status: 200, headers: JSON_HEADERS },
     );
   }
 
