@@ -122,6 +122,25 @@ function normalizeForMatch(name) {
     .trim();
 }
 
+// Split an ideal name on alternative separators into candidate sub-
+// names. Claude frequently emits "ciabatta or crusty bread" / "salt &
+// black pepper" / "penne, rigatoni" — those are alternatives, not
+// compound identities, and matching the literal compound against the
+// pantry fails on both sides: "ciabatta or crusty bread" isn't a
+// substring of "Ciabatta Roll" (false negative), and a broad category
+// fallback on a loose resolver sweep pulls in unrelated rows (false
+// positive). Splitting lets each alternative resolve to its own
+// canonical and match cleanly.
+const NAME_SEPARATOR_RE = /\s+or\s+|\s+and\s+|\s*[&/,]\s*/i;
+function splitIdealName(name) {
+  if (!name) return [];
+  const parts = String(name)
+    .split(NAME_SEPARATOR_RE)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [String(name)];
+}
+
 // Do two ingredient display names refer to the same thing? Uses
 // normalized substring containment both directions — catches
 // "Ricotta" vs "GV Ricotta 32oz", "Crescent Roll" vs "Crescent
@@ -919,28 +938,44 @@ export default function AIRecipe({
         // than display-name — handles "GV Ricotta 32oz" vs "Ricotta"
         // without needing brand/size stripping heuristics to line
         // up exactly.
-        const idealCanonId = ideal.ingredientId || resolveNameToCanonicalId(ideal.name);
+        // Resolve ideal → one primary canonical id plus any alt
+        // canonicals the AI's "or/and/&/," separators implied. The
+        // sketch's pantry column matches a canonical on EITHER side,
+        // so splitting the ideal lets "ciabatta or crusty bread"
+        // pair with a sketch.pantry row canonical'd to "ciabatta".
+        const idealCanonIds = new Set();
+        if (ideal.ingredientId) idealCanonIds.add(ideal.ingredientId);
+        const directSlug = resolveNameToCanonicalId(ideal.name);
+        if (directSlug) idealCanonIds.add(directSlug);
+        for (const sub of splitIdealName(ideal.name)) {
+          const subSlug = resolveNameToCanonicalId(sub);
+          if (subSlug) idealCanonIds.add(subSlug);
+        }
+        const idealSubNames = [ideal.name, ...splitIdealName(ideal.name)];
 
         // (1) subbedFrom match — the sketch told us which ideal
         // slot this pantry row was subbing for. Cheapest, truest
-        // signal: pair on that.
+        // signal: pair on that. Check against every sub-name so the
+        // "ciabatta" the AI picked still matches a subbedFrom of
+        // "ciabatta or crusty bread".
         for (let j = 0; j < sketch.pantry.length; j++) {
           if (matchedPantryIdx.has(j)) continue;
           const p = sketch.pantry[j];
-          if (p.subbedFrom && namesMatch(p.subbedFrom, ideal.name)) {
+          if (!p.subbedFrom) continue;
+          if (idealSubNames.some(n => namesMatch(p.subbedFrom, n))) {
             pantryIdx = j;
             isSub = true;
             break;
           }
         }
-        // (2) canonical-id match — same slug on both sides means
-        // same ingredient regardless of brand / size / casing in
-        // the display names.
-        if (pantryIdx === null && idealCanonId) {
+        // (2) canonical-id match — same slug on EITHER side (primary
+        // OR any alt from the split) means same ingredient regardless
+        // of brand / size / casing in the display names.
+        if (pantryIdx === null && idealCanonIds.size > 0) {
           for (let j = 0; j < sketch.pantry.length; j++) {
             if (matchedPantryIdx.has(j)) continue;
             const p = sketch.pantry[j];
-            if (p.ingredientId && p.ingredientId === idealCanonId) {
+            if (p.ingredientId && idealCanonIds.has(p.ingredientId)) {
               pantryIdx = j;
               isSub = false;
               break;
@@ -948,12 +983,14 @@ export default function AIRecipe({
           }
         }
         // (3) fuzzy name match — last-resort fallback for rows
-        // without canonical ids on either side.
+        // without canonical ids on either side. Match against any
+        // sub-name so "Ciabatta Roll" can pair with the "ciabatta"
+        // alt of a compound ideal.
         if (pantryIdx === null) {
           for (let j = 0; j < sketch.pantry.length; j++) {
             if (matchedPantryIdx.has(j)) continue;
             const p = sketch.pantry[j];
-            if (namesMatch(p.name, ideal.name)) {
+            if (idealSubNames.some(n => namesMatch(p.name, n))) {
               pantryIdx = j;
               isSub = false;
               break;
@@ -998,9 +1035,29 @@ export default function AIRecipe({
     // food category → name substring. Dedupes by canonical so a
     // 50-can tuna stack contributes one candidate, not fifty.
     const findRawPantryCandidates = (ideal) => {
-      const idealSlug = ideal.ingredientId || resolveNameToCanonicalId(ideal.name);
-      const idealCanon = idealSlug ? findIngredient(idealSlug) : null;
-      const idealCategory = idealCanon?.category || null;
+      // Build a list of resolution targets: one per sub-name the AI
+      // wrote ("ciabatta or crusty bread" → two targets). The top-
+      // level ingredientId, when Claude stamped one, rides along as
+      // an additional exact-match target.
+      const subNames = splitIdealName(ideal.name);
+      const targets = subNames.map(n => {
+        const slug = resolveNameToCanonicalId(n);
+        const canon = slug ? findIngredient(slug) : null;
+        return {
+          name:     n,
+          slug,
+          category: canon?.category || null,
+        };
+      });
+      if (ideal.ingredientId) {
+        const canon = findIngredient(ideal.ingredientId);
+        targets.unshift({
+          name:     ideal.name,
+          slug:     ideal.ingredientId,
+          category: canon?.category || null,
+        });
+      }
+
       // Items already locked into the recipe (pantry-matched,
       // swapped-in, or user-added) shouldn't appear as candidates
       // for OTHER missing slots.
@@ -1023,13 +1080,46 @@ export default function AIRecipe({
         if (canonKey && seenCanon.has(canonKey)) continue;
         const rowCanon = row.ingredientId ? findIngredient(row.ingredientId) : null;
         const rowCategory = rowCanon?.category || null;
-        if (idealSlug && row.ingredientId === idealSlug) {
+
+        // Tier 1 — exact canonical match against ANY target slug.
+        // "Ciabatta Roll" (ingredientId: "ciabatta") lines up with
+        // target {slug: "ciabatta"} from the split, even when the
+        // compound ideal name wouldn't substring-match.
+        let matched = null;
+        for (const t of targets) {
+          if (t.slug && row.ingredientId === t.slug) { matched = "exact"; break; }
+        }
+
+        // Tier 2 — category match, BUT only when the row's name also
+        // carries a name-level signal for the same target. Without
+        // this name check, a loose category like "pantry" pulled in
+        // every unrelated jar/box/bag that happened to share the
+        // fallback bucket (Mustard, Crackers, Oats, Sugar all landing
+        // under "salt & black pepper"). Requiring both raises the bar.
+        if (!matched) {
+          for (const t of targets) {
+            if (t.category && rowCategory === t.category && namesMatch(row.name, t.name)) {
+              matched = "byCategory"; break;
+            }
+          }
+        }
+
+        // Tier 3 — last-resort fuzzy name match against any target.
+        // Catches user-typed pantry rows (no ingredientId, no
+        // category) where the name alone has to do the work.
+        if (!matched) {
+          for (const t of targets) {
+            if (namesMatch(row.name, t.name)) { matched = "byName"; break; }
+          }
+        }
+
+        if (matched === "exact") {
           if (canonKey) seenCanon.add(canonKey);
           exact.push(row);
-        } else if (idealCategory && rowCategory === idealCategory) {
+        } else if (matched === "byCategory") {
           if (canonKey) seenCanon.add(canonKey);
           byCategory.push(row);
-        } else if (namesMatch(row.name, ideal.name)) {
+        } else if (matched === "byName") {
           if (canonKey) seenCanon.add(canonKey);
           byName.push(row);
         }
