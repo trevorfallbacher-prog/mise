@@ -357,11 +357,14 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, fa
 
   return (
     <div style={{
-      // Z.picker (340) sits ABOVE Z.card (320) where ItemCard
-      // renders. Tapping a provenance link on an open ItemCard
-      // must pop ReceiptView on top — previously stuck behind at
-      // zIndex 318, forcing the user to close the ItemCard first.
-      position: "fixed", inset: 0, background: "#000000dd", zIndex: Z.picker,
+      // Z.confirm (350) — deliberately above Z.picker (340) and
+      // Z.card (320). Earlier attempt used Z.picker but nested
+      // card/picker renderings could still overshadow the receipt
+      // overlay in practice. Z.confirm is the "above everything
+      // user-driven" tier; ReceiptView shares it because tapping
+      // a provenance chevron must ALWAYS surface the receipt on
+      // top, never beneath the card that opened it.
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: Z.confirm,
       display: "flex", alignItems: "flex-end",
       maxWidth: 480, margin: "0 auto",
     }}>
