@@ -2451,10 +2451,19 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                         }
                       }}
                       onBlur={e => {
+                        // Defer the blur-resolution one tick so a tap
+                        // on a canonical-typeahead row below can bind
+                        // the canonical before this handler clears
+                        // customName or runs inferCanonicalFromName.
+                        // Without the defer, the onMouseDown on a
+                        // dropdown row fires blur first and the tap's
+                        // click event never registers.
                         const typed = e.target.value.trim();
-                        if (!typed || customCanonicalId) return;
-                        const inferredId = inferCanonicalFromName(typed);
-                        if (inferredId) setCustomCanonicalId(inferredId);
+                        setTimeout(() => {
+                          if (!typed || customCanonicalId) return;
+                          const inferredId = inferCanonicalFromName(typed);
+                          if (inferredId) setCustomCanonicalId(inferredId);
+                        }, 180);
                       }}
                       placeholder="what is it?"
                       style={{
@@ -2470,6 +2479,70 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     />
                   )}
                 </div>
+
+                {/* Canonical typeahead — only renders while the user
+                    is typing into the "what is it?" fallback input
+                    AND no canonical is bound yet. Shows up to 5
+                    fuzzy-matched bundled canonicals. Tap → binds the
+                    canonical (sets customCanonicalId, hides this
+                    whole block since the input collapses to the tan
+                    canonical display above). Shopping-list bias
+                    passed in so items on the active list float to
+                    the top — same +30 tier used by receipt scan
+                    matching. */}
+                {!customCanonicalId && customName.trim().length >= 2 && (() => {
+                  const matches = fuzzyMatchIngredient(customName.trim(), 5, shoppingList);
+                  if (matches.length === 0) return null;
+                  return (
+                    <div style={{
+                      marginTop: 6,
+                      background: "#0a0a0a",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 10,
+                      padding: 4,
+                      display: "flex", flexDirection: "column", gap: 2,
+                    }}>
+                      {matches.map(m => (
+                        <button
+                          key={m.ingredient.id}
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            setCustomCanonicalId(m.ingredient.id);
+                            setCustomName(m.ingredient.name || customName);
+                            cascadeFromCanonical(m.ingredient);
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px",
+                            background: "transparent",
+                            border: "1px solid transparent",
+                            color: "#f0ece4",
+                            borderRadius: 8,
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "#141414"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>{m.ingredient.emoji || "✨"}</span>
+                          <span style={{
+                            flex: 1, overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {m.ingredient.name}
+                          </span>
+                          <span style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#555", letterSpacing: "0.08em",
+                            flexShrink: 0,
+                          }}>
+                            TAP TO LINK
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {/* + LINK CANONICAL below the header when unset */}
                 {!customCanonicalId && (
