@@ -2847,7 +2847,6 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   </>
                 );
               })()}
-              </div>
 
               {/* Typeahead suggestion dropdown REMOVED. It used to fan
                   out template + canonical substring matches below the
