@@ -826,7 +826,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 const hasCurrent = units.some(u => u.id === item.unit);
                 const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
                 return (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                  // STACKED: number input on top, unit dropdown below.
+                  // The side-by-side layout was squishing the number
+                  // input in the narrow 3-col grid tile — "1000" was
+                  // rendered but clipped off the visible area. Stacking
+                  // gives the number its own full-width row so the
+                  // package size is always readable at a glance.
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4 }}>
                     <input
                       type="number" inputMode="decimal" min="0" step="any"
                       value={pkgFocused
@@ -837,7 +843,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         setPkgFocused(true);
                       }}
                       onChange={e => setPkgDraft(e.target.value)}
-                      placeholder="size"
+                      placeholder="tap to set"
                       onBlur={() => {
                         setPkgFocused(false);
                         const v = pkgDraft;
@@ -865,13 +871,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       }}
                       onClick={e => e.stopPropagation()}
                       style={{
-                        flex: 1, minWidth: 0, width: "100%",
-                        padding: "4px 8px",
+                        width: "100%",
+                        padding: "5px 8px",
                         background: "#0a0a0a",
                         border: `1px solid ${hasPackage ? "#f5c842" : "#2a2a2a"}`,
                         color: hasPackage ? "#f5c842" : "#888",
                         borderRadius: 6,
-                        fontFamily: "'DM Mono',monospace", fontSize: 14, outline: "none",
+                        fontFamily: "'DM Mono',monospace", fontSize: 14,
+                        fontWeight: 500,
+                        outline: "none",
+                        boxSizing: "border-box",
                       }}
                     />
                     {customUnitOpen ? (
@@ -896,10 +905,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         }}
                         onClick={e => e.stopPropagation()}
                         style={{
-                          width: 70, padding: "4px 8px",
+                          width: "100%",
+                          padding: "4px 8px",
                           background: "#0a0a0a", border: "1px solid #2a2a2a",
                           color: "#f5c842", borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
+                          boxSizing: "border-box",
                         }}
                       />
                     ) : (
@@ -915,10 +926,11 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         }}
                         onClick={e => e.stopPropagation()}
                         style={{
+                          width: "100%",
                           padding: "4px 22px 4px 8px",
                           background: "#0a0a0a", border: "1px solid #2a2a2a",
                           color: "#aaa", borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
                           cursor: "pointer",
                           appearance: "none",
                           WebkitAppearance: "none",
@@ -927,7 +939,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                           backgroundPosition: "calc(100% - 12px) 50%, calc(100% - 7px) 50%",
                           backgroundSize: "5px 5px, 5px 5px",
                           backgroundRepeat: "no-repeat",
-                          flexShrink: 0,
+                          boxSizing: "border-box",
                         }}
                       >
                         {opts.map(u => (
