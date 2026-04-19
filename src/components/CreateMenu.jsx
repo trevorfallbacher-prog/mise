@@ -15,6 +15,7 @@ import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useCookLog } from "../lib/useCookLog";
 import { useToast } from "../lib/toast";
+import { mealNutrition, formatMacros } from "../lib/nutrition";
 
 // CreateMenu — full-screen overlay launched by the center ➕ in the
 // tab bar. Universal creation hub: launches either a COOK flow
@@ -489,6 +490,8 @@ export default function CreateMenu({
         {viewingMeal && (
           <MealDetail
             meal={viewingMeal}
+            pantry={pantry}
+            ingredientInfo={ingredientInfo}
             onClose={() => setViewingMeal(null)}
             onCookPiece={(pieceRecipe) => {
               // Tap a piece inside the meal detail to cook just that
@@ -780,8 +783,16 @@ function MealRow({ meal, onClick }) {
 // individual pieces via the existing CookMode; a future "cook whole
 // meal" mode would sequence the pieces. Includes a delete action
 // that cascades only to meal_recipes (pieces stay in the library).
-function MealDetail({ meal, onClose, onCookPiece, onDelete }) {
+function MealDetail({ meal, pantry = [], ingredientInfo, onClose, onCookPiece, onDelete }) {
   const pieceCount = (meal.pieces || []).length;
+  // Sum of per-serving macros across each piece. Hidden when no piece
+  // resolves (coverage.ingredients.resolved === 0) so we don't render
+  // a misleading zero card on a meal where no nutrition data exists.
+  const macros = useMemo(
+    () => mealNutrition(meal, { pantry, getInfo: ingredientInfo?.getInfo }),
+    [meal, pantry, ingredientInfo],
+  );
+  const showMacros = macros && macros.coverage.ingredients.resolved > 0;
   return (
     <div style={{
       position: "fixed", inset: 0, zIndex: 220,
@@ -819,6 +830,32 @@ function MealDetail({ meal, onClose, onCookPiece, onDelete }) {
           {meal.cuisine && ` · ${meal.cuisine.toUpperCase()}`}
           {meal.mealTiming && ` · ${meal.mealTiming.toUpperCase()}`}
         </div>
+        {/* Meal-level macros — sum of per-serving across pieces. One
+            eater's share of the whole meal. Coverage string is honest
+            when not every ingredient resolved. */}
+        {showMacros && (
+          <div style={{
+            marginTop: 14, padding: "10px 14px",
+            background: "#141414", border: "1px solid #242424",
+            borderRadius: 10,
+          }}>
+            <div style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+            }}>
+              ~ {formatMacros(macros.total, { verbose: true })}
+            </div>
+            <div style={{
+              marginTop: 3,
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#666", letterSpacing: "0.08em",
+            }}>
+              PER EATER
+              {macros.coverage.ingredients.resolved < macros.coverage.ingredients.total
+                ? ` · BASED ON ${macros.coverage.ingredients.resolved} OF ${macros.coverage.ingredients.total} INGREDIENTS`
+                : ""}
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ padding: "20px 20px 100px" }}>
         <div style={{

@@ -3,6 +3,7 @@ import { generateRecipe } from "../lib/generateRecipe";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 import { findIngredient, INGREDIENTS } from "../data/ingredients";
+import { recipeNutrition, formatMacros } from "../lib/nutrition";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -1540,6 +1541,11 @@ export default function AIRecipe({
                 {recipe.mealTiming && <MetaPill label={recipe.mealTiming} />}
               </div>
             )}
+            {/* Nutrition summary — per-serving macros rolled up from
+                the ingredients list. `coverage` discloses gaps so we
+                don't pretend a recipe is 100% known when some lines
+                didn't resolve. */}
+            <RecipeNutritionLine recipe={recipe} pantry={pantry} ingredientInfo={ingredientInfo} />
           </div>
 
           {recipe.aiRationale && (
@@ -2486,6 +2492,43 @@ function PickExistingPicker({
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Per-serving macros rolled up across the recipe's ingredients.
+// Renders as a compact single line between the cuisine/timing meta
+// and the ingredients list. Hidden when no ingredient resolves so
+// we don't surface a fake "0 kcal" on a recipe the nutrition data
+// doesn't cover. Coverage ratio ("based on 7 of 9") is always shown
+// when partial so the user knows we're estimating.
+function RecipeNutritionLine({ recipe, pantry, ingredientInfo }) {
+  const summary = useMemo(
+    () => recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo }),
+    [recipe, pantry, ingredientInfo],
+  );
+  if (!summary || summary.coverage.resolved === 0) return null;
+  const { resolved, total } = summary.coverage;
+  const partial = resolved < total;
+  return (
+    <div style={{
+      marginTop: 10, padding: "8px 12px",
+      background: "#141414", border: "1px solid #242424",
+      borderRadius: 10, textAlign: "center",
+    }}>
+      <div style={{
+        fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+      }}>
+        ~ {formatMacros(summary.perServing, { verbose: true })}
+      </div>
+      <div style={{
+        marginTop: 3,
+        fontFamily: "'DM Mono',monospace", fontSize: 9,
+        color: "#666", letterSpacing: "0.08em",
+      }}>
+        PER SERVING
+        {partial ? ` · BASED ON ${resolved} OF ${total} INGREDIENTS` : ""}
       </div>
     </div>
   );

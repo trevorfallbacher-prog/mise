@@ -19,6 +19,7 @@ import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanon
 import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
+import { pantryItemNutrition, formatMacros, sourceBadge } from "../lib/nutrition";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -831,6 +832,14 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             </div>
           </div>
 
+          {/* NUTRITION — resolver-based macro chip. Sits as a neutral
+              band below the six colored identity axes (not a new axis
+              per CLAUDE.md: brand / nutrition / etc are metadata that
+              ride along). Tapping expands to a compact macro grid with
+              a source-of-signal badge. Hidden when no resolver tier
+              returns numbers — the coverage story reads honestly
+              instead of faking zeros. */}
+          <NutritionChip item={item} getInfo={getDbInfo} />
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -2273,5 +2282,114 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         />
       )}
     </>
+  );
+}
+
+// Nutrition chip — compact macro line + expandable detail. Runs
+// through `pantryItemNutrition` so brand/override/canonical resolution
+// stays consistent across every surface. Hidden when no signal tier
+// produces numbers (better to show nothing than a fake zero — and
+// Phase 3 will add a "scan barcode" affordance here to fill gaps).
+function NutritionChip({ item, getInfo }) {
+  const [expanded, setExpanded] = useState(false);
+  const { nutrition, source, brand } = pantryItemNutrition(
+    { ingredientId: item?.ingredientId || item?.canonicalId || null, brand: item?.brand || null, nutritionOverride: item?.nutritionOverride || null },
+    { getInfo },
+  );
+  if (!nutrition) return null;
+  const badge = sourceBadge(source);
+  const per = nutrition.per === "100g" ? "per 100g"
+            : nutrition.per === "count" ? "per item"
+            : nutrition.per === "serving" && nutrition.serving_g ? `per ${nutrition.serving_g}g serving`
+            : "";
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button
+        onClick={() => setExpanded(x => !x)}
+        style={{
+          width: "100%", padding: "10px 12px",
+          background: "#141414",
+          border: "1px solid #242424",
+          borderRadius: 10,
+          display: "flex", alignItems: "center", gap: 10,
+          cursor: "pointer", textAlign: "left",
+        }}
+      >
+        <span style={{ fontSize: 16 }}>🔥</span>
+        <span style={{
+          flex: 1,
+          fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+        }}>
+          {formatMacros(nutrition)}
+        </span>
+        {per && (
+          <span style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            color: "#777", letterSpacing: "0.08em",
+          }}>
+            {per.toUpperCase()}
+          </span>
+        )}
+        {badge.label && (
+          <span style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+            color: badge.color, background: `${badge.color}15`,
+            border: `1px solid ${badge.color}55`,
+            padding: "2px 6px", borderRadius: 6,
+            letterSpacing: "0.1em",
+          }}>
+            {badge.label}
+            {brand ? ` · ${brand}` : ""}
+          </span>
+        )}
+        <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
+          {expanded ? "▾" : "▸"}
+        </span>
+      </button>
+      {expanded && (
+        <div style={{
+          marginTop: 6, padding: "10px 12px",
+          background: "#0f0f0f", border: "1px solid #1e1e1e",
+          borderRadius: 10,
+          display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8,
+        }}>
+          <MacroCell label="CALORIES" value={nutrition.kcal}     unit="kcal" />
+          <MacroCell label="PROTEIN"  value={nutrition.protein_g} unit="g" />
+          <MacroCell label="CARBS"    value={nutrition.carb_g}    unit="g" />
+          <MacroCell label="FAT"      value={nutrition.fat_g}     unit="g" />
+          {typeof nutrition.fiber_g   === "number" && <MacroCell label="FIBER"  value={nutrition.fiber_g}   unit="g"  />}
+          {typeof nutrition.sugar_g   === "number" && <MacroCell label="SUGAR"  value={nutrition.sugar_g}   unit="g"  />}
+          {typeof nutrition.sodium_mg === "number" && <MacroCell label="SODIUM" value={nutrition.sodium_mg} unit="mg" />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MacroCell({ label, value, unit }) {
+  return (
+    <div style={{
+      padding: "6px 8px",
+      background: "#161616", border: "1px solid #252525",
+      borderRadius: 8,
+    }}>
+      <div style={{
+        fontFamily: "'DM Mono',monospace", fontSize: 8,
+        color: "#666", letterSpacing: "0.1em",
+      }}>
+        {label}
+      </div>
+      <div style={{
+        marginTop: 2,
+        fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4",
+      }}>
+        {typeof value === "number" ? Math.round(value * 10) / 10 : "—"}
+        {typeof value === "number" && (
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", marginLeft: 4 }}>
+            {unit}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
