@@ -164,6 +164,18 @@ function categoryHints(tags: unknown): string[] {
     .slice(0, 8);
 }
 
+// Shared helper for OFF's other tag arrays (origins_tags,
+// countries_tags, labels_tags). Same language-prefix strip, no cap —
+// these are usually short (2-5 items) and fully useful for attribute
+// pill rendering on the client.
+function stripPrefixArray(tags: unknown): string[] {
+  if (!Array.isArray(tags)) return [];
+  return (tags as unknown[])
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.replace(/^[a-z]{2}:/, "").trim())
+    .filter(Boolean);
+}
+
 // "Ferrero, Nutella" → "Ferrero" (first brand wins; OFF lists them
 // comma-separated with the manufacturer first). Empty string → null.
 function firstBrand(raw: unknown): string | null {
@@ -269,6 +281,19 @@ Deno.serve(async (req) => {
                      ? product.generic_name.trim()
                      : null,
     categoryHints: categoryHints(product.categories_tags),
+    // Origin / provenance data. OFF maintains two overlapping fields:
+    // origins_tags (where the ingredients came from) and
+    // countries_tags (where the product was manufactured / sold).
+    // We return both stripped of language prefix; the client dedupes
+    // + title-cases them for display.
+    originTags:    stripPrefixArray(product.origins_tags),
+    countryTags:   stripPrefixArray(product.countries_tags),
+    // Certification + dietary labels (usda-organic, kosher, halal,
+    // non-gmo-project-verified, fair-trade, pdo, gluten-free, vegan,
+    // etc). Stripped of language prefix; client maps known ids to
+    // display labels via a curated table, renders unknown ones as
+    // humanized slugs.
+    labelTags:     stripPrefixArray(product.labels_tags),
     quantity:      quantityRaw,
     nutrition,
     source:        "openfoodfacts",

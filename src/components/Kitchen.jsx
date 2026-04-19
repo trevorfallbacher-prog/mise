@@ -64,6 +64,7 @@ import {
   parsePackageSize,
   parseStateFromText,
   stateForCanonical,
+  buildAttributesFromScan,
 } from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages } from "../lib/usePopularPackages";
@@ -2203,6 +2204,10 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
       ...(customBrand ? { brand: customBrand } : {}),
+      // Scan-extracted attribute metadata (origins, certifications,
+      // flavor variants). Null when not scanned or scan produced no
+      // recognizable attributes.
+      ...(scannedPayload?.attributes ? { attributes: scannedPayload.attributes } : {}),
     };
 
     // Per-instance add: insert N independent rows sharing identity so
@@ -2503,11 +2508,23 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                       ? { state: stateForCanonical(rawState, match.canonical) }
                       : null;
                     const packageSize = parsePackageSize(res.quantity);
+                    // Attribute extraction (origin, certifications,
+                    // flavor) — orthogonal to canonical, always extract
+                    // when we have the OFF data, regardless of whether
+                    // the canonical resolved.
+                    const attributes = buildAttributesFromScan({
+                      productName:   res.productName,
+                      categoryHints: res.categoryHints || [],
+                      originTags:    res.originTags  || [],
+                      countryTags:   res.countryTags || [],
+                      labelTags:     res.labelTags   || [],
+                    });
                     if (match) {
                       setCanonicalSuggestion({
                         match,
                         inferredState: inferredState?.state ? inferredState : null,
                         packageSize,
+                        attributes,
                       });
                     } else if (packageSize) {
                       // No canonical match but we got a package size —
@@ -2529,6 +2546,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                         source:      res.source,
                         sourceId:    res.sourceId,
                         canonicalId: res.canonicalId || null,
+                        // Attributes stash so the save path can pin
+                        // origin / certifications / flavor onto the
+                        // new pantry row even if the user never
+                        // interacts with the suggestion card (the
+                        // attributes are orthogonal to canonical
+                        // and don't need confirmation).
+                        attributes,
                       });
                       pushToastFromScan(
                         `Found: ${res.productName || res.brand || res.barcode}`,
@@ -2564,6 +2588,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 match={canonicalSuggestion.match}
                 inferredState={canonicalSuggestion.inferredState}
                 packageSize={canonicalSuggestion.packageSize}
+                attributes={canonicalSuggestion.attributes}
                 onUse={() => {
                   const { match, inferredState, packageSize } = canonicalSuggestion;
                   setCustomCanonicalId(match.canonical.id);

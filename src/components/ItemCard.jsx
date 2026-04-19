@@ -14,6 +14,7 @@ import {
   parsePackageSize,
   parseStateFromText,
   stateForCanonical,
+  buildAttributesFromScan,
 } from "../lib/canonicalResolver";
 import { useToast } from "../lib/toast";
 import { usePopularPackages } from "../lib/usePopularPackages";
@@ -863,11 +864,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               to accept the resolver's pick (and any inferred state
               + package size), DIFFERENT to clear it + open the
               canonical picker for manual selection. */}
+          {/* Attribute pills band — origin, certifications, flavor
+              variants extracted from barcode scans or manually
+              entered. Neutral-tinted pills below the six colored
+              identity axes (per CLAUDE.md: metadata ride-along, not
+              a new reserved axis). Hidden when no attributes present. */}
+          <AttributePillsRow attributes={item.attributes} />
+
           {canonicalSuggestion && (
             <CanonicalSuggestionCard
               match={canonicalSuggestion.match}
               inferredState={canonicalSuggestion.inferredState}
               packageSize={canonicalSuggestion.packageSize}
+              attributes={canonicalSuggestion.attributes}
               onUse={async () => {
                 const s = canonicalSuggestion;
                 const patch = { ingredientId: s.match.canonical.id };
@@ -2486,6 +2495,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               if (Object.keys(patch).length > 0) {
                 onUpdate?.(patch);
               }
+              // Attribute extraction runs regardless of canonical
+              // state — origins / certifications / flavor are
+              // orthogonal to canonical and always worth saving if
+              // the scan surfaced them. Merges with any existing
+              // attributes on the row so repeated scans aren't
+              // destructive.
+              const scannedAttributes = buildAttributesFromScan({
+                productName:   res.productName,
+                categoryHints: res.categoryHints || [],
+                originTags:    res.originTags  || [],
+                countryTags:   res.countryTags || [],
+                labelTags:     res.labelTags   || [],
+              });
+              if (scannedAttributes) {
+                const mergedAttributes = mergeAttributes(item.attributes, scannedAttributes);
+                onUpdate?.({ attributes: mergedAttributes });
+              }
+
               // Resolve canonical from OFF data. Only surfaces a
               // suggestion when no canonical is currently set on the
               // row — if the user's already pinned a canonical we
@@ -2508,6 +2535,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                     match,
                     inferredState: inferredState?.state ? inferredState : null,
                     packageSize,
+                    attributes: scannedAttributes,
                     pendingNutrition: res.nutrition,   // save with brand_nutrition after canonical confirms
                     pendingBarcode:   res.barcode,
                     pendingSource:    res.source || "openfoodfacts",
@@ -2571,6 +2599,93 @@ function looksReceiptGenerated(name) {
   const upperCount = (n.match(/[A-Z]/g) || []).length;
   if (upperCount >= 3 && lowerCount === 0) return true;
   return false;
+}
+
+// Pills band rendering the row's attributes metadata — origins,
+// certifications, flavor variants. Same palette as the suggestion
+// card's metadata row so pills feel continuous across the scan
+// flow → saved row. Hidden when nothing to show.
+function AttributePillsRow({ attributes }) {
+  if (!attributes) return null;
+  const origins        = Array.isArray(attributes.origins)        ? attributes.origins        : [];
+  const certifications = Array.isArray(attributes.certifications) ? attributes.certifications : [];
+  const flavor         = Array.isArray(attributes.flavor)         ? attributes.flavor         : [];
+  if (origins.length === 0 && certifications.length === 0 && flavor.length === 0) return null;
+  return (
+    <div style={{
+      marginBottom: 12,
+      display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+    }}>
+      {origins.map((o) => (
+        <span key={`o-${o}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#8aa4b8", background: "#0f151a",
+          border: "1px solid #1e2a36",
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          📍 {o.toUpperCase()}
+        </span>
+      ))}
+      {certifications.map((c) => (
+        <span key={`c-${c.id}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: c.kind === "dietary" ? "#d9c594" : "#7ec87e",
+          background: c.kind === "dietary" ? "#1c1810" : "#0f1a0f",
+          border: `1px solid ${c.kind === "dietary" ? "#3a2f10" : "#1e3a1e"}`,
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          {c.label.toUpperCase()}
+        </span>
+      ))}
+      {flavor.map((f) => (
+        <span key={`f-${f}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#d4a8c7", background: "#1c1520",
+          border: "1px solid #3a253a",
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          {f.toUpperCase()}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Merge a scanned attribute blob into whatever the row already
+// carries. Origins / flavor get unioned (deduped by lowercase);
+// certifications get unioned (deduped by id). A second scan of the
+// same product is idempotent; a scan of a DIFFERENT product with
+// overlapping attributes adds without removing existing ones.
+function mergeAttributes(existing, incoming) {
+  if (!incoming) return existing || null;
+  if (!existing) return incoming;
+  const out = { ...existing };
+  for (const key of ["origins", "flavor"]) {
+    const merged = [...(existing[key] || []), ...(incoming[key] || [])];
+    const seen = new Set();
+    const deduped = [];
+    for (const v of merged) {
+      const k = String(v || "").toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(v);
+    }
+    if (deduped.length > 0) out[key] = deduped;
+  }
+  if (existing.certifications || incoming.certifications) {
+    const seen = new Set();
+    const merged = [];
+    for (const cert of [...(existing.certifications || []), ...(incoming.certifications || [])]) {
+      if (!cert || !cert.id || seen.has(cert.id)) continue;
+      seen.add(cert.id);
+      merged.push(cert);
+    }
+    if (merged.length > 0) out.certifications = merged;
+  }
+  return out;
 }
 
 // Brand chooser sheet button styles — shared between the two options

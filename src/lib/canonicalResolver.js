@@ -387,3 +387,228 @@ export function stateForCanonical(state, canonical) {
   if (!allowed || !Array.isArray(allowed)) return null;
   return allowed.includes(state) ? state : null;
 }
+
+// ── Origin extraction ────────────────────────────────────────────────
+//
+// OFF returns two overlapping tag arrays — `origins_tags` (where the
+// ingredients came from) and `countries_tags` (where the finished
+// product is sold). Origin is the stronger signal for a pantry row —
+// "Parma, Italy" matters more than "Sold in United States" — so
+// origins wins when both are present. Deduped + title-cased.
+
+const COMMON_COUNTRY_SLUG_FIXUPS = {
+  // OFF uses lowercase-slug country names; titleCase() handles most
+  // cases, but a handful need special capitalization.
+  "usa": "USA",
+  "uk": "UK",
+  "eu": "EU",
+  "united-states": "United States",
+  "united-kingdom": "United Kingdom",
+};
+
+function titleCaseSlug(slug) {
+  if (!slug) return "";
+  const s = String(slug).toLowerCase();
+  if (COMMON_COUNTRY_SLUG_FIXUPS[s]) return COMMON_COUNTRY_SLUG_FIXUPS[s];
+  return s
+    .split("-")
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+// Parse OFF's origins + countries tag arrays into a clean, deduped
+// list of human-readable origin strings. Origins first (more specific),
+// countries only when origins is empty (less specific fallback).
+export function parseOrigins(originTags = [], countryTags = []) {
+  const out = [];
+  const seen = new Set();
+  const sources = (originTags && originTags.length > 0) ? originTags : (countryTags || []);
+  for (const raw of sources) {
+    if (!raw || typeof raw !== "string") continue;
+    const pretty = titleCaseSlug(raw.trim());
+    if (!pretty) continue;
+    const key = pretty.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(pretty);
+    if (out.length >= 4) break;  // cap — we only pill the top ones
+  }
+  return out;
+}
+
+// ── Certification extraction ────────────────────────────────────────
+//
+// OFF's `labels_tags` is the clean source — stable slugs like
+// "usda-organic", "kosher", "non-gmo-project-verified". We maintain a
+// curated map for the common ones so we can render a recognizable
+// display label + badge color. Unknown tags fall through to a
+// humanized slug.
+//
+// Each entry returns { id, label, kind } where kind is one of:
+//   - "cert"    — formal third-party certification (USDA Organic, Kosher)
+//   - "dietary" — derived claim (gluten-free, vegan)
+// The UI uses kind to color-tint the pill (green for cert, cream for
+// dietary).
+
+const CERT_LABEL_MAP = {
+  // Organic / agricultural
+  "organic":                       { label: "Organic",             kind: "cert" },
+  "usda-organic":                  { label: "USDA Organic",        kind: "cert" },
+  "eu-organic":                    { label: "EU Organic",          kind: "cert" },
+  "certified-organic":             { label: "Certified Organic",   kind: "cert" },
+  // Religious
+  "kosher":                        { label: "Kosher",              kind: "cert" },
+  "ou-kosher":                     { label: "OU Kosher",           kind: "cert" },
+  "halal":                         { label: "Halal",               kind: "cert" },
+  // GMO / sourcing
+  "non-gmo-project-verified":      { label: "Non-GMO Verified",    kind: "cert" },
+  "no-gmos":                       { label: "No GMOs",             kind: "cert" },
+  "fair-trade":                    { label: "Fair Trade",          kind: "cert" },
+  "rainforest-alliance":           { label: "Rainforest Alliance", kind: "cert" },
+  "msc-certified":                 { label: "MSC Certified",       kind: "cert" },
+  // Regional origin
+  "pdo":                           { label: "PDO",                 kind: "cert" },
+  "pgi":                           { label: "PGI",                 kind: "cert" },
+  "tsg":                           { label: "TSG",                 kind: "cert" },
+  // Dietary claims
+  "gluten-free":                   { label: "Gluten-Free",         kind: "dietary" },
+  "dairy-free":                    { label: "Dairy-Free",          kind: "dietary" },
+  "vegan":                         { label: "Vegan",               kind: "dietary" },
+  "vegetarian":                    { label: "Vegetarian",          kind: "dietary" },
+  "keto":                          { label: "Keto",                kind: "dietary" },
+  "paleo":                         { label: "Paleo",               kind: "dietary" },
+  "no-added-sugar":                { label: "No Added Sugar",      kind: "dietary" },
+  "low-sodium":                    { label: "Low Sodium",          kind: "dietary" },
+  "low-fat":                       { label: "Low Fat",             kind: "dietary" },
+  "sugar-free":                    { label: "Sugar-Free",          kind: "dietary" },
+  // Production method
+  "grass-fed":                     { label: "Grass-Fed",           kind: "cert" },
+  "pasture-raised":                { label: "Pasture-Raised",      kind: "cert" },
+  "free-range":                    { label: "Free-Range",          kind: "cert" },
+  "cage-free":                     { label: "Cage-Free",           kind: "cert" },
+  "wild-caught":                   { label: "Wild-Caught",         kind: "cert" },
+  "sustainably-sourced":           { label: "Sustainably Sourced", kind: "cert" },
+};
+
+// OFF's labels_tags sometimes contain low-value noise — marketing
+// boilerplate tags that don't translate into useful attribute pills
+// (e.g. "fr-triman" is a French recycling mark; "green-dot" is packaging
+// disposal symbol). Drop these.
+const LABEL_NOISE = new Set([
+  "fr-triman", "green-dot", "point-vert", "tidyman", "der-gruene-punkt",
+  "eu-green-dot", "recyclable", "recycle-me",
+]);
+
+export function parseCertifications(labelTags = []) {
+  if (!Array.isArray(labelTags)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of labelTags) {
+    if (!raw || typeof raw !== "string") continue;
+    const id = raw.trim().toLowerCase();
+    if (!id || seen.has(id) || LABEL_NOISE.has(id)) continue;
+    seen.add(id);
+    const known = CERT_LABEL_MAP[id];
+    if (known) {
+      out.push({ id, label: known.label, kind: known.kind });
+    } else {
+      // Unknown tag — keep it as a generic cert pill so user can
+      // still see it; labeling it via titleCase. Phase 2 can log
+      // frequent unknowns to grow the curated map.
+      out.push({ id, label: titleCaseSlug(id), kind: "cert" });
+    }
+    if (out.length >= 6) break;  // cap — don't flood the card with pills
+  }
+  return out;
+}
+
+// ── Flavor / variant extraction ─────────────────────────────────────
+//
+// Pulls flavor modifier words from productName that sit on top of the
+// canonical identity — "Wasabi" on nori, "Salted" on caramel, "Maple"
+// on bacon, "Smoked" on salmon. Distinct from canonical (WHAT it is)
+// and state (physical form). Scanned text is matched against a
+// curated vocabulary — Phase 1 keeps it small and food-agnostic; can
+// grow as we observe common OFF productName patterns.
+//
+// Returns an array of flavor strings (title-cased) rather than a
+// single value because a product can carry multiple modifiers
+// ("Honey Smoked Turkey" -> ["Honey", "Smoked"]).
+
+const FLAVOR_KEYWORDS = [
+  // Sweetness / salt profile
+  "salted", "unsalted", "lightly-salted", "sea-salt", "sweetened",
+  "unsweetened", "honey", "maple", "agave", "vanilla", "caramel",
+  "chocolate", "cocoa", "mocha",
+  // Heat / spice
+  "spicy", "hot", "mild", "jalapeno", "habanero", "sriracha", "chipotle",
+  "wasabi", "horseradish", "ginger", "peppercorn", "black-pepper",
+  // Smoke / char
+  "smoked", "cold-smoked", "hot-smoked", "mesquite", "hickory", "applewood",
+  "charred", "fire-roasted",
+  // Herb / aromatic
+  "garlic", "rosemary", "basil", "thyme", "oregano", "dill", "cilantro",
+  "lemon", "lime", "citrus", "orange", "mint",
+  // Vinegar / pickle
+  "pickled", "brined", "vinegar", "balsamic", "teriyaki", "soy", "miso",
+  // Sweet flavor add
+  "strawberry", "blueberry", "raspberry", "peach", "apple", "cherry",
+  "banana", "coconut",
+  // Cheese variants often carried as flavor
+  "cheddar", "ranch", "bbq", "buffalo", "sour-cream",
+];
+
+// Normalize FLAVOR_KEYWORDS into a lookup set + ordered phrase array.
+// Phrases with hyphens (multi-word keywords like "cold-smoked") need
+// to be matched as multi-word in productName (whitespace form).
+const FLAVOR_PHRASES = FLAVOR_KEYWORDS.map((k) => ({
+  slug: k,
+  phrase: k.replace(/-/g, " "),
+  display: titleCaseSlug(k),
+}));
+
+export function parseFlavorVariant(productName, categoryHints = []) {
+  if (!productName && (!categoryHints || categoryHints.length === 0)) return [];
+  const hay = [
+    productName ? String(productName).toLowerCase() : "",
+    ...(Array.isArray(categoryHints)
+      ? categoryHints.map((t) => String(t || "").toLowerCase().replace(/-/g, " "))
+      : []),
+  ].filter(Boolean).join(" | ");
+  if (!hay) return [];
+  const out = [];
+  const seen = new Set();
+  // Match longer phrases first so "cold smoked" wins over "smoked".
+  const byLen = [...FLAVOR_PHRASES].sort((a, b) => b.phrase.length - a.phrase.length);
+  for (const { phrase, display } of byLen) {
+    const re = new RegExp(`\\b${phrase.replace(/\s+/g, "\\s+")}\\b`, "i");
+    if (re.test(hay) && !seen.has(display)) {
+      seen.add(display);
+      out.push(display);
+    }
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+// Convenience — combine origin + certification + flavor into a single
+// attributes object suitable for the pantry_items.attributes JSONB
+// column. Only includes non-empty keys so we don't write empty
+// arrays / objects into the DB.
+export function buildAttributesFromScan({
+  productName   = null,
+  categoryHints = [],
+  originTags    = [],
+  countryTags   = [],
+  labelTags     = [],
+}) {
+  const origins         = parseOrigins(originTags, countryTags);
+  const certifications  = parseCertifications(labelTags);
+  const flavor          = parseFlavorVariant(productName, categoryHints);
+  const out = {};
+  if (origins.length > 0)        out.origins        = origins;
+  if (certifications.length > 0) out.certifications = certifications;
+  if (flavor.length > 0)         out.flavor         = flavor;
+  return Object.keys(out).length > 0 ? out : null;
+}

@@ -1,3 +1,13 @@
+// Does the attributes blob carry any non-empty dimensions worth
+// rendering a metadata row for?
+function hasAttributes(a) {
+  if (!a) return false;
+  if (a.origins && a.origins.length > 0) return true;
+  if (a.certifications && a.certifications.length > 0) return true;
+  if (a.flavor && a.flavor.length > 0) return true;
+  return false;
+}
+
 // Suggestion card rendered after a successful barcode scan to confirm
 // the canonical match before we lock it into the pantry row. Per
 // design direction: always show, never silent-apply — even a high-
@@ -26,6 +36,7 @@ export default function CanonicalSuggestionCard({
   match,
   inferredState,
   packageSize,
+  attributes,          // { origins?, certifications?, flavor? } | null
   onUse,
   onDifferent,
 }) {
@@ -92,8 +103,8 @@ export default function CanonicalSuggestionCard({
         </span>
       </div>
 
-      {/* Metadata row — matched-on breadcrumb + optional state/size pills */}
-      {(sourceBreadcrumb || inferredState?.state || packageSize) && (
+      {/* Metadata row — matched-on breadcrumb + state/size/attr pills */}
+      {(sourceBreadcrumb || inferredState?.state || packageSize || hasAttributes(attributes)) && (
         <div style={{
           marginTop: 8, display: "flex", alignItems: "center",
           gap: 6, flexWrap: "wrap",
@@ -130,6 +141,43 @@ export default function CanonicalSuggestionCard({
               {packageSize.amount} {packageSize.unit}
             </span>
           )}
+          {/* Origins — muted blue tint, not a reserved axis color */}
+          {(attributes?.origins || []).map((origin) => (
+            <span key={`orig-${origin}`} style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#8aa4b8", background: "#0f151a",
+              border: "1px solid #1e2a36",
+              padding: "2px 7px", borderRadius: 6,
+              letterSpacing: "0.06em",
+            }}>
+              📍 {origin.toUpperCase()}
+            </span>
+          ))}
+          {/* Certifications — green for formal certs, cream for dietary */}
+          {(attributes?.certifications || []).map((cert) => (
+            <span key={`cert-${cert.id}`} style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: cert.kind === "dietary" ? "#d9c594" : "#7ec87e",
+              background: cert.kind === "dietary" ? "#1c1810" : "#0f1a0f",
+              border: `1px solid ${cert.kind === "dietary" ? "#3a2f10" : "#1e3a1e"}`,
+              padding: "2px 7px", borderRadius: 6,
+              letterSpacing: "0.06em",
+            }}>
+              {cert.label.toUpperCase()}
+            </span>
+          ))}
+          {/* Flavor / variant — muted purple (state-axis cousin) */}
+          {(attributes?.flavor || []).map((flavor) => (
+            <span key={`flav-${flavor}`} style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#d4a8c7", background: "#1c1520",
+              border: "1px solid #3a253a",
+              padding: "2px 7px", borderRadius: 6,
+              letterSpacing: "0.06em",
+            }}>
+              {flavor.toUpperCase()}
+            </span>
+          ))}
         </div>
       )}
 
