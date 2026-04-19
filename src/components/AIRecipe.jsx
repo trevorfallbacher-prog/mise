@@ -576,16 +576,22 @@ export default function AIRecipe({
         cuisine:     anchor.cuisine || undefined,
         ingredients: ingredientDescriptors(anchor),
       });
-      // Reset just the sketch + tweak machinery. Preserve the user's
-      // meal prompt / cuisine / time / difficulty / star ingredients
-      // — their original intent still applies. Preserve previousTitles
-      // so the new draft doesn't land on a title they already saw.
+      // Reset the sketch + tweak machinery AND star-ingredient picks.
+      // Star ingredients are a "build around THIS protein" signal for
+      // the piece the user is currently drafting; they should never
+      // carry from main → side. The eggs that were the main's hero
+      // shouldn't reappear in the side's star slot — the anchor's
+      // proteins already ride along via pairWith, so Claude has the
+      // context without the side being forced to include them.
+      // mealPrompt / cuisine / time / difficulty stay — those read as
+      // overall session mood, not piece-specific direction.
       setRecipe(null);
       setSketch(null);
       setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
       setAddOpen(false);
+      setStarIngredientIds([]);
       setCourse(courseType);
       setErrMsg("");
       setPhase("setup");
