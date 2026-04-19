@@ -1817,6 +1817,69 @@ export const INGREDIENTS = [
     estCentsPerBase: 300, // ~$3 for a 10-sheet pack
   },
   {
+    // Ramen — Japanese / Asian wheat noodle. Distinct from Italian
+    // pasta (pasta_hub) despite OFF's taxonomy putting both under
+    // the broader "pastas" parent tag. Without this canonical, any
+    // scanned ramen product falls through to the "pasta" canonical
+    // via OFF's tag cascade, which is technically accurate but
+    // collapses the specificity the user cares about (protein
+    // ramen != spaghetti). Covers fresh, instant, and dried forms —
+    // the `state` axis can carry "dried" / "fresh" when it matters.
+    id: "ramen", name: "Ramen", shortName: "Ramen", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },          // instant-ramen "brick"
+      { id: "serving", label: "servings", toBase: 0.5 },        // half a brick = one bowl
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "lb",      label: "lb",       toBase: 453.6 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 120, // ~$1.20 per pack for standard instant
+  },
+  {
+    // Udon — thick Japanese wheat noodle. Usually sold fresh-packed
+    // (vacuum-sealed, refrigerated) or dried. Separate canonical
+    // because the thicker bite changes how recipes treat it vs
+    // ramen / soba.
+    id: "udon", name: "Udon", shortName: "Udon", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },
+      { id: "serving", label: "servings", toBase: 0.5 },
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 180,
+  },
+  {
+    // Soba — Japanese buckwheat noodle. Usually dried, sometimes
+    // fresh. Buckwheat content varies 30-100% by brand; the
+    // attribute axis can carry grade / % details when relevant.
+    id: "soba", name: "Soba", shortName: "Soba", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },
+      { id: "serving", label: "servings", toBase: 0.5 },
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 220,
+  },
+  {
+    // Rice noodles — base for pho, pad thai, drunken noodles. Wheat-
+    // free (relevant for GF diets). Sold dried, thin / wide variants
+    // differ by recipe need; attribute axis can carry the shape.
+    id: "rice_noodles", name: "Rice Noodles", shortName: "Rice Noodles", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },
+      { id: "serving", label: "servings", toBase: 0.5 },
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 200,
+  },
+  {
     // Compound ingredient — bottled sriracha is one product, homemade is
     // another with the same id. Links to the "sriracha" scratch recipe
     // via skillDev.fromScratchRecipeId (Phase 1 of the compound work).
