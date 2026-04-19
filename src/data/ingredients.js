@@ -1660,7 +1660,7 @@ export const INGREDIENTS = [
       { id: "lb",  label: "lb",   toBase: 453.6 },
       { id: "bag", label: "bags", toBase: 454 }, // 1lb bag typical
     ],
-    defaultUnit: "bag",
+    defaultUnit: "lb",
   },
   {
     id: "quinoa", name: "Quinoa", emoji: "🌾", category: "pantry",
@@ -1786,7 +1786,7 @@ export const INGREDIENTS = [
       { id: "lb",  label: "lb",   toBase: 453.6 },
       { id: "bag", label: "bags", toBase: 340 }, // 12oz bag
     ],
-    defaultUnit: "bag",
+    defaultUnit: "oz",
   },
   {
     id: "soy_sauce", name: "Soy Sauce", emoji: "🍶", category: "pantry",
@@ -2485,11 +2485,16 @@ const UNITS_MEAT = [
   { id: "oz", label: "oz", toBase: 28.35 },
   { id: "kg", label: "kg", toBase: 1000 },
 ];
+// "bag" deliberately excluded from the default ladder — a bag IS
+// the package (i.e. pantry_items.max is the bag's content). Using
+// "bag" as the unit makes "1 bag out of 16oz package" tautological.
+// Per-ingredient unit lists may still declare "bag" explicitly when
+// the curator wants it as an option (e.g. chips, where "0.25 bag"
+// is natural); this generic fallback sticks to weight/volume.
 const UNITS_DRY_WEIGHT = [
   { id: "oz",  label: "oz",  toBase: 28.35 },
   { id: "lb",  label: "lb",  toBase: 453.6 },
   { id: "cup", label: "cups",toBase: 150 },
-  { id: "bag", label: "bags",toBase: 454 },
   { id: "g",   label: "g",   toBase: 1 },
 ];
 const UNITS_PRODUCE_COUNT = [

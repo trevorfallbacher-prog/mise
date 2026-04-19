@@ -366,6 +366,33 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   const [customUnitOpen, setCustomUnitOpen] = useState(false);
   useEffect(() => { if (editingField !== "qty") setCustomUnitOpen(false); }, [editingField]);
 
+  // Local draft state for the number inputs so typing never gets
+  // clobbered by commit-triggered re-renders. The old uncontrolled-
+  // input + `key={...max}` pattern was re-mounting the input mid-type
+  // and wiping the user's keystrokes. Controlled value + onChange
+  // keeps typing smooth; onBlur flushes to the real commit path.
+  const [pkgDraft, setPkgDraft] = useState("");
+  const [amtDraft, setAmtDraft] = useState("");
+  // Re-seed the drafts when the canonical `item` switches (different
+  // row opened) or when max / amount change via slider / chip tap
+  // AND the user isn't actively editing the field. We can't tell
+  // "actively editing" directly, so we use document.activeElement:
+  // if the input is focused, leave the draft alone.
+  useEffect(() => {
+    const active = typeof document !== "undefined" && document.activeElement;
+    const editingPkg = active && active.dataset && active.dataset.draft === "pkg";
+    if (!editingPkg) {
+      setPkgDraft(Number(itemProp?.max) > 0 ? String(itemProp.max) : "");
+    }
+  }, [itemProp?.id, itemProp?.max]);
+  useEffect(() => {
+    const active = typeof document !== "undefined" && document.activeElement;
+    const editingAmt = active && active.dataset && active.dataset.draft === "amt";
+    if (!editingAmt) {
+      setAmtDraft(Number(itemProp?.amount) > 0 ? String(itemProp.amount) : "");
+    }
+  }, [itemProp?.id, itemProp?.amount]);
+
   if (!itemProp) return null;
 
   const readOnly = !onUpdate;
@@ -805,12 +832,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 return (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                     <input
-                      key={`pkg-${item.id}-${item.max}`}
+                      data-draft="pkg"
                       type="number" inputMode="decimal" min="0" step="any"
-                      defaultValue={hasPackage ? item.max : ""}
+                      value={pkgDraft}
+                      onChange={e => setPkgDraft(e.target.value)}
                       placeholder="size"
-                      onBlur={e => {
-                        const v = e.target.value;
+                      onBlur={() => {
+                        const v = pkgDraft;
                         if (v === "") {
                           if (hasPackage) commit({ max: 0 });
                           return;
@@ -818,19 +846,26 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         const n = parseFloat(v);
                         if (!Number.isFinite(n) || n < 0) return;
                         if (n === Number(item.max)) return;
-                        // Setting PACKAGE SIZE primes QUANTITY to match
-                        // on fresh or previously-sealed rows. Mid-
-                        // package values left alone.
+                        // Setting PACKAGE SIZE always primes QUANTITY
+                        // to match, UNLESS the row is mid-package
+                        // (user has already eaten some — amount > 0
+                        // AND amount < old max AND old max > 0). In
+                        // any other case (fresh row with no max,
+                        // previously sealed, or clearing) we treat
+                        // the new size as a "fresh sealed package"
+                        // and land amount = max so the gauge starts
+                        // at 100%.
                         const amt = Number(item.amount || 0);
-                        const wasSealed = amt > 0 && amt === Number(item.max);
+                        const oldMax = Number(item.max || 0);
+                        const midPackage = amt > 0 && oldMax > 0 && amt < oldMax;
                         const patch = { max: n };
-                        if (amt === 0 || wasSealed) patch.amount = n;
+                        if (!midPackage) patch.amount = n;
                         commit(patch);
                       }}
                       onKeyDown={e => {
                         if (e.key === "Enter") e.currentTarget.blur();
                         if (e.key === "Escape") {
-                          e.currentTarget.value = hasPackage ? String(item.max) : "";
+                          setPkgDraft(hasPackage ? String(item.max) : "");
                           e.currentTarget.blur();
                         }
                       }}
@@ -1097,12 +1132,14 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   marginBottom: hasPackage ? 10 : (sizes.length > 0 ? 10 : 0),
                 }}>
                   <input
-                    key={`qty-${item.id}-${item.amount}`}
+                    data-draft="amt"
                     type="number" inputMode="decimal" min="0" step="any"
-                    defaultValue={amtN > 0 ? amtN : ""}
+                    value={amtDraft}
+                    onChange={e => setAmtDraft(e.target.value)}
                     placeholder="how much is left"
-                    onBlur={e => {
-                      const v = parseFloat(e.target.value);
+                    onBlur={() => {
+                      if (amtDraft === "") return;
+                      const v = parseFloat(amtDraft);
                       if (Number.isFinite(v) && v >= 0 && v !== amtN) {
                         commit({ amount: v });
                       }
@@ -1110,7 +1147,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                     onKeyDown={e => {
                       if (e.key === "Enter") e.currentTarget.blur();
                       if (e.key === "Escape") {
-                        e.currentTarget.value = amtN > 0 ? String(amtN) : "";
+                        setAmtDraft(amtN > 0 ? String(amtN) : "");
                         e.currentTarget.blur();
                       }
                     }}
