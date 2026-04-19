@@ -546,21 +546,43 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 ) : null}
 
                 {/* CANONICAL / fallback segment. When canonical is
-                    set, tap opens the LinkIngredient picker (via the
-                    existing setCanonicalPickerOpen handler used by
-                    the axis row below). When no canonical, fall back
-                    to the user-typed item.name with tap-to-rename
-                    (legacy path for free-text rows). */}
+                    set, tap opens the LinkIngredient picker; the
+                    small ✕ next to it unlinks (commits canonicalId:
+                    null) without needing to open the picker. When
+                    no canonical, fall back to the user-typed
+                    item.name with tap-to-rename (legacy path for
+                    free-text rows). */}
                 {currentCanonical ? (
-                  <span
-                    onClick={() => !readOnly && setCanonicalPickerOpen(true)}
-                    style={{
-                      cursor: readOnly ? "default" : "pointer",
-                    }}
-                    title={readOnly ? undefined : "Tap to change canonical"}
-                  >
-                    {currentCanonical.name}
-                  </span>
+                  <>
+                    <span
+                      onClick={() => !readOnly && setCanonicalPickerOpen(true)}
+                      style={{
+                        cursor: readOnly ? "default" : "pointer",
+                      }}
+                      title={readOnly ? undefined : "Tap to change canonical"}
+                    >
+                      {currentCanonical.name}
+                    </span>
+                    {!readOnly && (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          commit({ canonicalId: null });
+                        }}
+                        aria-label="Unlink canonical"
+                        title="Unlink canonical"
+                        style={{
+                          background: "transparent", border: "none",
+                          color: "#6a5a5a", cursor: "pointer",
+                          fontFamily: "'DM Mono',monospace", fontSize: 14,
+                          padding: "0 4px", lineHeight: 1,
+                          alignSelf: "center",
+                        }}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </>
                 ) : editingField === "name" ? (
                   <input
                     type="text"
@@ -595,93 +617,33 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   a slug → "Title Case" display with a ✨ emoji so the
                   link still reads as a link, not as "+ SET CANONICAL"
                   (which would make it look like the save failed). */}
-              {onUpdate && (() => {
-                const customDisplayName = !currentCanonical && item.canonicalId
-                  ? item.canonicalId.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
-                  : null;
-                const linked = currentCanonical || customDisplayName;
-                return (
-                  <div
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 11,
-                      color: "#b8a878",
-                      letterSpacing: "0.06em", marginTop: 4,
-                      display: "flex", alignItems: "center", gap: 6,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    {/* BRAND chip removed from this row — brand is
-                        now part of the big italic title above
-                        ("DelDuca Prosciutto"), with an "+ ADD BRAND"
-                        affordance rendered above the title when
-                        unset. Leaves the CANONICAL row pure-tan
-                        again. */}
-                    <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
-                    {linked ? (
-                      <>
-                        <span
-                          onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
-                          style={{
-                            display: "flex", alignItems: "center", gap: 6,
-                            cursor: "pointer",
-                            borderBottom: "1px dashed #b8a87844",
-                            paddingBottom: 1,
-                          }}
-                        >
-                          <span style={{ fontSize: 13 }}>
-                            {currentCanonical?.emoji || "✨"}
-                          </span>
-                          <span style={{
-                            color: "#d4c9ac", fontFamily: "'Fraunces',serif",
-                            fontSize: 14, fontStyle: "italic", fontWeight: 400,
-                          }}>
-                            {currentCanonical?.name || customDisplayName}
-                          </span>
-                          {!currentCanonical && !isAdmin && (
-                            <span style={{
-                              fontFamily: "'DM Mono',monospace", fontSize: 8,
-                              color: "#8a7f6e", letterSpacing: "0.1em",
-                              marginLeft: 2,
-                            }}>
-                              · PENDING
-                            </span>
-                          )}
-                        </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            commit({ canonicalId: null });
-                          }}
-                          aria-label="Unlink canonical"
-                          style={{
-                            background: "transparent",
-                            border: "1px solid #3a2a2a",
-                            color: "#d98a8a", cursor: "pointer",
-                            borderRadius: 6,
-                            padding: "1px 7px",
-                            fontFamily: "'DM Mono',monospace", fontSize: 10,
-                            letterSpacing: "0.06em",
-                            lineHeight: 1.4,
-                          }}
-                        >
-                          ✕ UNLINK
-                        </button>
-                      </>
-                    ) : (
-                      <span
-                        onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
-                        style={{
-                          color: "#b8a878",
-                          borderBottom: "1px dashed #b8a87844",
-                          cursor: "pointer",
-                        }}
-                      >
-                        + SET CANONICAL
-                      </span>
-                    )}
-                  </div>
-                );
-              })()}
+              {/* CANONICAL axis row DELETED — canonical now lives in
+                  the big italic header above, so restating it here
+                  was pure duplication. Preserved affordances:
+                  - UNLINK (when canonical set) → small ✕ next to
+                    the canonical word in the header
+                  - SET CANONICAL (when unset) → small muted "+ LINK
+                    CANONICAL" chip rendered below the header, only
+                    when canonical is null and the row has a chance
+                    of being upgradable. Empty-state affordance
+                    doesn't compete with the axis rows because it's
+                    sized + colored like the "+ ADD BRAND" kicker
+                    above the header (same micro-scale, same gray,
+                    same dashed border). */}
+              {onUpdate && !item.canonicalId && !readOnly && (
+                <div
+                  onClick={(e) => { e.stopPropagation(); setCanonicalPickerOpen(true); }}
+                  style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#8a7f6e", letterSpacing: "0.12em",
+                    cursor: "pointer", marginTop: 4,
+                    width: "fit-content",
+                    borderBottom: "1px dashed #3a2f1044",
+                  }}
+                >
+                  + LINK CANONICAL
+                </div>
+              )}
 
               {/* FOOD CATEGORY — orange badge. Reserved color across
                   the app for the WWEIA "what kind of thing is this"
