@@ -366,32 +366,28 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   const [customUnitOpen, setCustomUnitOpen] = useState(false);
   useEffect(() => { if (editingField !== "qty") setCustomUnitOpen(false); }, [editingField]);
 
-  // Local draft state for the number inputs so typing never gets
-  // clobbered by commit-triggered re-renders. The old uncontrolled-
-  // input + `key={...max}` pattern was re-mounting the input mid-type
-  // and wiping the user's keystrokes. Controlled value + onChange
-  // keeps typing smooth; onBlur flushes to the real commit path.
-  const [pkgDraft, setPkgDraft] = useState("");
-  const [amtDraft, setAmtDraft] = useState("");
-  // Re-seed the drafts when the canonical `item` switches (different
-  // row opened) or when max / amount change via slider / chip tap
-  // AND the user isn't actively editing the field. We can't tell
-  // "actively editing" directly, so we use document.activeElement:
-  // if the input is focused, leave the draft alone.
-  useEffect(() => {
-    const active = typeof document !== "undefined" && document.activeElement;
-    const editingPkg = active && active.dataset && active.dataset.draft === "pkg";
-    if (!editingPkg) {
-      setPkgDraft(Number(itemProp?.max) > 0 ? String(itemProp.max) : "");
-    }
-  }, [itemProp?.id, itemProp?.max]);
-  useEffect(() => {
-    const active = typeof document !== "undefined" && document.activeElement;
-    const editingAmt = active && active.dataset && active.dataset.draft === "amt";
-    if (!editingAmt) {
-      setAmtDraft(Number(itemProp?.amount) > 0 ? String(itemProp.amount) : "");
-    }
-  }, [itemProp?.id, itemProp?.amount]);
+  // Focus-aware input state for PACKAGE SIZE + QUANTITY.
+  //
+  // Not-focused: the render reads directly from the merged `item`
+  //   (which includes `pendingChanges`), so the input is always in
+  //   sync with commits, chip taps, slider drags, and parent
+  //   realtime updates.
+  //
+  // Focused: the render switches to the local draft, so the user's
+  //   in-progress keystrokes never get clobbered by a re-render.
+  //
+  // onFocus seeds the draft from the current merged value. onBlur
+  // parses the draft, commits if it differs, and clears the focus
+  // flag (flipping value back to the merged-source render).
+  //
+  // This replaces the old useState+useEffect-keyed-on-itemProp
+  // pattern, which was reading stale `itemProp.max` (since commits
+  // only touch `pendingChanges`) and producing the "input looks
+  // empty" symptom.
+  const [pkgFocused, setPkgFocused] = useState(false);
+  const [pkgDraft,   setPkgDraft]   = useState("");
+  const [amtFocused, setAmtFocused] = useState(false);
+  const [amtDraft,   setAmtDraft]   = useState("");
 
   if (!itemProp) return null;
 
@@ -832,12 +828,18 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 return (
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                     <input
-                      data-draft="pkg"
                       type="number" inputMode="decimal" min="0" step="any"
-                      value={pkgDraft}
+                      value={pkgFocused
+                        ? pkgDraft
+                        : (hasPackage ? String(item.max) : "")}
+                      onFocus={() => {
+                        setPkgDraft(hasPackage ? String(item.max) : "");
+                        setPkgFocused(true);
+                      }}
                       onChange={e => setPkgDraft(e.target.value)}
                       placeholder="size"
                       onBlur={() => {
+                        setPkgFocused(false);
                         const v = pkgDraft;
                         if (v === "") {
                           if (hasPackage) commit({ max: 0 });
@@ -846,21 +848,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         const n = parseFloat(v);
                         if (!Number.isFinite(n) || n < 0) return;
                         if (n === Number(item.max)) return;
-                        // Setting PACKAGE SIZE always primes QUANTITY
-                        // to match, UNLESS the row is mid-package
-                        // (user has already eaten some — amount > 0
-                        // AND amount < old max AND old max > 0). In
-                        // any other case (fresh row with no max,
-                        // previously sealed, or clearing) we treat
-                        // the new size as a "fresh sealed package"
-                        // and land amount = max so the gauge starts
-                        // at 100%.
-                        const amt = Number(item.amount || 0);
-                        const oldMax = Number(item.max || 0);
-                        const midPackage = amt > 0 && oldMax > 0 && amt < oldMax;
-                        const patch = { max: n };
-                        if (!midPackage) patch.amount = n;
-                        commit(patch);
+                        // Declaring a PACKAGE SIZE = declaring a
+                        // fresh sealed package at 100%. amount =
+                        // max, always. If the user wants to log a
+                        // mid-package state, they edit QUANTITY
+                        // afterward (that path writes amount only,
+                        // never max).
+                        commit({ max: n, amount: n });
                       }}
                       onKeyDown={e => {
                         if (e.key === "Enter") e.currentTarget.blur();
@@ -1132,15 +1126,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   marginBottom: hasPackage ? 10 : (sizes.length > 0 ? 10 : 0),
                 }}>
                   <input
-                    data-draft="amt"
                     type="number" inputMode="decimal" min="0" step="any"
-                    value={amtDraft}
+                    value={amtFocused
+                      ? amtDraft
+                      : (amtN > 0 ? String(amtN) : "")}
+                    onFocus={() => {
+                      setAmtDraft(amtN > 0 ? String(amtN) : "");
+                      setAmtFocused(true);
+                    }}
                     onChange={e => setAmtDraft(e.target.value)}
                     placeholder="how much is left"
                     onBlur={() => {
+                      setAmtFocused(false);
                       if (amtDraft === "") return;
                       const v = parseFloat(amtDraft);
                       if (Number.isFinite(v) && v >= 0 && v !== amtN) {
+                        // QUANTITY edit writes amount only — never
+                        // touches max. If amount > max the header
+                        // warns; user can fix by raising PACKAGE SIZE.
                         commit({ amount: v });
                       }
                     }}
