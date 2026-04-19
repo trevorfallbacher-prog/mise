@@ -3549,7 +3549,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 <TypePicker
                   userId={userId}
                   selectedTypeId={customTypeId}
-                  suggestedTypeId={inferFoodTypeFromName(customName)}
+                  // Bound canonical is the authority when it exists —
+                  // "Cheddar" canonical starrs wweia_cheese even if the
+                  // user's typed name doesn't contain the word. Falls
+                  // back to name-alias inference for free-text rows.
+                  suggestedTypeId={
+                    typeIdForCanonical(customCanonicalId ? findIngredient(customCanonicalId) : null)
+                    || inferFoodTypeFromName(customName)
+                  }
                   onPick={(typeId, defaultTileId, defaultLocation) => {
                     setCustomTypeId(typeId);
                     if (defaultTileId && !customTileId) setCustomTileId(defaultTileId);

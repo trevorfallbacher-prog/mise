@@ -302,6 +302,26 @@ export const FOOD_TYPES = [
     canonicalId: "sugar",
   },
   {
+    // Catch-all for the baking drawer beyond flour + sugar.
+    // Covers leaveners (yeast, baking powder / soda), extracts
+    // (vanilla, almond), thickeners (cornstarch, cream of tartar),
+    // and flavor/decor (cocoa powder, chocolate chips, sprinkles,
+    // food coloring). Vanilla extract technically parses as an
+    // alcohol but no one looks for it there — user executive call:
+    // it lives here.
+    id: "wweia_baking_essentials", label: "Baking essentials", emoji: "🧁",
+    defaultTileId: "baking",
+    blurb: "Leaveners, extracts, cocoa, cornstarch, chips",
+    aliases: [
+      "yeast", "active dry yeast", "instant yeast", "sourdough starter",
+      "baking powder", "baking soda",
+      "vanilla extract", "almond extract", "lemon extract", "peppermint extract",
+      "cornstarch", "corn starch", "arrowroot", "cream of tartar",
+      "cocoa powder", "cacao powder", "baking chocolate",
+      "chocolate chip", "chocolate chips", "sprinkles", "food coloring",
+    ],
+  },
+  {
     id: "wweia_oils", label: "Oils", emoji: "🫗",
     defaultTileId: "oils_fats",
     blurb: "Cooking, finishing, specialty",

@@ -15,7 +15,7 @@ import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
-import { findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
+import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
@@ -2137,9 +2137,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           <TypePicker
             userId={userId}
             selectedTypeId={item.typeId || null}
-            // Keyword-inferred suggestion — only fires when no type
-            // is set yet (re-pickers have explicit intent).
-            suggestedTypeId={!item.typeId ? inferFoodTypeFromName(item.name) : null}
+            // Only star a suggestion when no type is set yet
+            // (re-pickers have explicit intent). Bound canonical is
+            // the authority — starrs via typeIdForCanonical first,
+            // falls back to free-text name inference.
+            suggestedTypeId={
+              item.typeId
+                ? null
+                : typeIdForCanonical(item.canonicalId ? findIngredient(item.canonicalId) : null)
+                  || inferFoodTypeFromName(item.name)
+            }
             onPick={(typeId, defaultTileId, defaultLocation) => {
               const patch = { typeId };
               // Cross-axis auto-fill: if the item has no tile yet
