@@ -15,3 +15,9 @@ verify_jwt = false
 [functions.send-push]
 verify_jwt = false
 
+[functions.lookup-barcode]
+verify_jwt = false
+
+[functions.decode-barcode-image]
+verify_jwt = false
+
