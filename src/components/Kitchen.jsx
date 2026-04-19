@@ -4956,25 +4956,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
 
       {view === "stock" && (
         <>
-          {/* Low stock */}
-          {!alertDismissed && lowItems.length > 0 && (
-            <div style={{ margin:"12px 20px 0", padding:"14px 16px", background:"#1a0f00", border:"1px solid #f59e0b44", borderRadius:14 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f59e0b", letterSpacing:"0.12em" }}>⚠ RUNNING LOW</div>
-                <button onClick={()=>setAlertDismissed(true)} style={{ background:"none", border:"none", color:"#555", fontSize:14, cursor:"pointer" }}>×</button>
-              </div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-                {lowItems.map(item => (
-                  <span key={item.id} style={{ display:"inline-flex", alignItems:"center", gap:4, background:"#241a00", border:"1px solid #f59e0b33", borderRadius:20, padding:"4px 10px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f59e0b" }}>
-                    {item.emoji} {item.name}
-                  </span>
-                ))}
-              </div>
-              <button onClick={addLowStockToList} style={{ width:"100%", padding:"10px", background:"#f59e0b22", border:"1px solid #f59e0b44", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f59e0b", cursor:"pointer", letterSpacing:"0.08em" }}>
-                ADD ALL TO SHOPPING LIST →
-              </button>
-            </div>
-          )}
+          {/* LOW STOCK alert temporarily removed — the isStackLow /
+              isLow heuristics are firing too aggressively (flagging
+              nearly every row as low) and the banner became clutter
+              instead of a useful signal. The underlying lowItems /
+              addLowStockToList logic stays in place so we can re-
+              mount the surface once the threshold math is right. */}
 
           {/* Scan / manual-add / deduction CTAs moved to the floating
               ➕ CreateMenu overlay. Kitchen is now inventory +
