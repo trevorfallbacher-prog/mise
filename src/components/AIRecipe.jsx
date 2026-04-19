@@ -84,6 +84,25 @@ function isProteinRow(row) {
   return false;
 }
 
+// State-shaped words that some bundled canonicals baked into their
+// display name ("Ground Beef", "Chicken (whole)"). Per the identity
+// hierarchy in CLAUDE.md, state is a SEPARATE axis from canonical —
+// the registry got this wrong, but until the data refactor lands
+// we clean the label client-side so the picker doesn't double-show
+// "Ground" with no protein name attached.
+//
+// Prefix form: "Ground Beef" → "Beef", "Sliced Deli Turkey" → "Deli Turkey".
+// Suffix form: "Chicken (whole)" → "Chicken", "Pork (ground)" → "Pork".
+const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
+const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
+function cleanProteinName(raw) {
+  if (!raw) return raw;
+  return String(raw)
+    .replace(STATE_SUFFIX_RE, "")
+    .replace(STATE_PREFIX_RE, "")
+    .trim() || String(raw);
+}
+
 export default function AIRecipe({
   pantry = [],
   profile,          // viewer's profile row (dietary, level, skill_levels, …)
@@ -153,11 +172,15 @@ export default function AIRecipe({
       if (!slug) continue;
       if (!byCanonical.has(slug)) {
         const canon = findIngredient(slug);
+        const rawName = canon?.name || row.name || slug;
         byCanonical.set(slug, {
           id: slug,
-          // Full name first; shortName was causing "Ground Beef" and
-          // "Ground Pork" to both render as "Ground."
-          label: canon?.name || row.name || slug,
+          // cleanProteinName strips the state prefix / suffix that
+          // some bundled canonicals baked into their display names.
+          // Proper fix is a data refactor (base canonical + state
+          // alias) — this is the interim stop-gap so the picker
+          // reads right today.
+          label: cleanProteinName(rawName),
           emoji: row.emoji || canon?.emoji || "🍖",
           category: canon?.category || null,
           slug,
