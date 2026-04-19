@@ -2311,7 +2311,11 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         <div
           onClick={() => setBrandChooserOpen(false)}
           style={{
-            position: "fixed", inset: 0, zIndex: 220,
+            // Must render above ItemCard's own z-index (Z.card = 320),
+            // otherwise the sheet sits behind the card and clicks
+            // pass straight through. Z.picker (340) is the layer
+            // LinkIngredient uses for the same over-card reason.
+            position: "fixed", inset: 0, zIndex: 345,
             background: "rgba(0,0,0,0.6)",
             display: "flex", alignItems: "flex-end", justifyContent: "center",
           }}

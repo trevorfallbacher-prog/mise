@@ -283,7 +283,11 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 300,
+      // Full-screen overlay — must win over every possible parent
+      // modal (AddItemModal = 160, ItemCard = 320, LinkIngredient = 340).
+      // Confirm layer (350) is the next tier up; stay just below so
+      // destructive confirmations can still overlay the scanner.
+      position: "fixed", inset: 0, zIndex: 348,
       background: "#000",
       display: "flex", flexDirection: "column",
     }}>
