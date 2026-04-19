@@ -464,43 +464,130 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
             <div style={{ fontSize: 40, flexShrink: 0 }}>{item.emoji || "🥫"}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              {/* BRAND kicker moved INLINE into the CANONICAL row
-                  (see ~40 lines below). Brand + canonical together
-                  read as one identity phrase ("DelDuca Prosciutto")
-                  so they belong on the same visual row. The
-                  separate kicker above the name read as disconnected
-                  metadata; killing it. */}
-              {editingField === "name" ? (
-                <input
-                  type="text"
-                  autoFocus
-                  defaultValue={item.name}
-                  onBlur={e => commit({ name: e.target.value.trim() || item.name })}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") e.target.blur();
-                    if (e.key === "Escape") setEditingField(null);
-                  }}
+              {/* + ADD BRAND affordance — only rendered when brand
+                  is unset. Positioned ABOVE the big italic header so
+                  we don't leave a weird empty slot inline when brand
+                  is absent. Once a brand is set, this affordance
+                  disappears and brand slots into the header as a
+                  clickable prefix. Pattern per user design call:
+                  "Canonical header if no brand name set. If brand
+                  name set (click to add is above…) once brand is
+                  set it appears on the inline block before canonical." */}
+              {!readOnly && !item.brand && editingField !== "brand" && (
+                <div
+                  onClick={() => startEdit("brand")}
                   style={{
-                    width: "100%", boxSizing: "border-box",
-                    fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
-                    color: "#f5c842", fontWeight: 400, lineHeight: 1.2,
-                    background: "#0a0a0a", border: "1px solid #f5c842",
-                    borderRadius: 8, padding: "4px 10px", outline: "none",
-                  }}
-                />
-              ) : (
-                <h2
-                  onClick={() => startEdit("name")}
-                  style={{
-                    fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
-                    color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2,
-                    overflow: "hidden", textOverflow: "ellipsis",
-                    cursor: readOnly ? "default" : "text",
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#555", letterSpacing: "0.12em",
+                    cursor: "pointer", marginBottom: 4,
+                    width: "fit-content",
+                    borderBottom: "1px dashed #2a2a2a",
                   }}
                 >
-                  {item.name}
-                </h2>
+                  + ADD BRAND
+                </div>
               )}
+
+              {/* Big italic HEADER — derived from brand + canonical
+                  when both are set ("DelDuca Prosciutto"), falls back
+                  to canonical alone, then to the user-typed
+                  item.name. Each segment is its own tap target:
+                  brand → inline rename, canonical → opens
+                  LinkIngredient picker, free-text name (no canonical)
+                  → legacy tap-to-edit. Replaces the pure
+                  item.name-driven header per user design call:
+                  typos like "Proscuitto" no longer fossilize as the
+                  row's title when the registry knows it's
+                  "Prosciutto". item.name stays in the DB as the
+                  fallback for pre-canonical / free-text rows. */}
+              <h2
+                style={{
+                  fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                  color: "#f0ece4", fontWeight: 400, margin: 0, lineHeight: 1.2,
+                  overflow: "hidden", textOverflow: "ellipsis",
+                  display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap",
+                }}
+              >
+                {/* BRAND segment — only when set. Clicking swaps
+                    inline to a text input; blur commits or clears. */}
+                {editingField === "brand" ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    defaultValue={item.brand || ""}
+                    onBlur={e => {
+                      const v = e.target.value.trim();
+                      commit({ brand: v || null });
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setEditingField(null);
+                    }}
+                    placeholder="Brand…"
+                    style={{
+                      fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                      color: "#f5c842", fontWeight: 400, lineHeight: 1.2,
+                      background: "#0a0a0a", border: "1px solid #f5c842",
+                      borderRadius: 8, padding: "2px 8px", outline: "none",
+                      minWidth: 120, width: "40%",
+                    }}
+                  />
+                ) : item.brand ? (
+                  <span
+                    onClick={() => !readOnly && startEdit("brand")}
+                    style={{
+                      cursor: readOnly ? "default" : "text",
+                      color: "#d4c9ac",
+                    }}
+                    title={readOnly ? undefined : "Tap to edit brand"}
+                  >
+                    {item.brand}
+                  </span>
+                ) : null}
+
+                {/* CANONICAL / fallback segment. When canonical is
+                    set, tap opens the LinkIngredient picker (via the
+                    existing setCanonicalPickerOpen handler used by
+                    the axis row below). When no canonical, fall back
+                    to the user-typed item.name with tap-to-rename
+                    (legacy path for free-text rows). */}
+                {currentCanonical ? (
+                  <span
+                    onClick={() => !readOnly && setCanonicalPickerOpen(true)}
+                    style={{
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                    title={readOnly ? undefined : "Tap to change canonical"}
+                  >
+                    {currentCanonical.name}
+                  </span>
+                ) : editingField === "name" ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    defaultValue={item.name}
+                    onBlur={e => commit({ name: e.target.value.trim() || item.name })}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setEditingField(null);
+                    }}
+                    style={{
+                      flex: 1, minWidth: 0,
+                      fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                      color: "#f5c842", fontWeight: 400, lineHeight: 1.2,
+                      background: "#0a0a0a", border: "1px solid #f5c842",
+                      borderRadius: 8, padding: "2px 8px", outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span
+                    onClick={() => !readOnly && startEdit("name")}
+                    style={{ cursor: readOnly ? "default" : "text" }}
+                  >
+                    {item.name || "Unnamed"}
+                  </span>
+                )}
+              </h2>
               {/* CANONICAL — tan badge. Reserved color across the app
                   for the canonical-identity axis. When canonicalId is
                   set but the registry doesn't know about it (user-
@@ -523,58 +610,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       flexWrap: "wrap",
                     }}
                   >
-                    {/* BRAND chip — rides at the start of the
-                        CANONICAL row because brand + canonical
-                        together read as one identity ("DelDuca
-                        Prosciutto"). Gray styling (not tan) signals
-                        different axis while visual adjacency signals
-                        "modifies the thing to its right". Clicking
-                        swaps to an inline editor; empty input on
-                        blur clears. When unset, a dashed "+ BRAND"
-                        affordance occupies the same slot so position
-                        stays consistent. */}
-                    {editingField === "brand" ? (
-                      <input
-                        type="text"
-                        autoFocus
-                        defaultValue={item.brand || ""}
-                        onBlur={e => {
-                          const v = e.target.value.trim();
-                          commit({ brand: v || null });
-                        }}
-                        onKeyDown={e => {
-                          if (e.key === "Enter") e.currentTarget.blur();
-                          if (e.key === "Escape") setEditingField(null);
-                        }}
-                        placeholder="Kerrygold…"
-                        onClick={e => e.stopPropagation()}
-                        style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 10,
-                          color: "#f5c842", letterSpacing: "0.12em",
-                          background: "#0a0a0a", border: "1px solid #f5c842",
-                          borderRadius: 6, padding: "2px 8px", outline: "none",
-                          textTransform: "uppercase",
-                          width: 140,
-                        }}
-                      />
-                    ) : (
-                      <span
-                        onClick={e => { e.stopPropagation(); startEdit("brand"); }}
-                        style={{
-                          fontFamily: "'DM Mono',monospace", fontSize: 10,
-                          color: item.brand ? "#aaa" : "#555",
-                          letterSpacing: "0.12em",
-                          background: "#141414",
-                          border: `1px solid ${item.brand ? "#2a2a2a" : "#262626"}`,
-                          borderStyle: item.brand ? "solid" : "dashed",
-                          borderRadius: 6, padding: "2px 8px",
-                          cursor: "pointer", whiteSpace: "nowrap",
-                          textTransform: "uppercase",
-                        }}
-                      >
-                        {item.brand || "+ brand"}
-                      </span>
-                    )}
+                    {/* BRAND chip removed from this row — brand is
+                        now part of the big italic title above
+                        ("DelDuca Prosciutto"), with an "+ ADD BRAND"
+                        affordance rendered above the title when
+                        unset. Leaves the CANONICAL row pure-tan
+                        again. */}
                     <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
                     {linked ? (
                       <>
