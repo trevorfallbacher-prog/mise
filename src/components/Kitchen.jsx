@@ -226,6 +226,13 @@ const SCAN_EMOJI_OPTIONS = [
 function Scanner({ userId, onItemsScanned, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
+  // Barcode mode — skips the Claude-vision upload path and uses
+  // the dedicated BarcodeScanner (zxing + photo-capture fallback).
+  // Result feeds a single prefilled scanned-item into the existing
+  // confirm/review flow so adds land with one more tap.
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
+  const [barcodeBusy,        setBarcodeBusy]        = useState(false);
+  const { rows: brandNutritionRowsForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
   // Admin bypass for the PENDING status. Admins approve canonicals
   // themselves, so when they create one we auto-upsert the
   // ingredient_info stub (same shape AdminPanel.approveCustom writes)
@@ -783,28 +790,183 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:32, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>{activeMode.title}</h2>
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666" }}>{activeMode.blurb}</p>
           </div>
-          <div onClick={() => fileRef.current?.click()} style={{ flex:1, border:`2px dashed ${imagePreview?"#f5c84255":"#2a2a2a"}`, borderRadius:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background: imagePreview?"#0f0d08":"#0f0f0f", overflow:"hidden", position:"relative", minHeight:280, transition:"all 0.3s" }}>
-            {imagePreview ? (
-              <>
-                <img src={imagePreview} alt="Receipt" style={{ width:"100%", height:"100%", objectFit:"contain", maxHeight:400 }} />
-                <div style={{ position:"absolute", bottom:12, right:12, background:"#f5c842", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#111", fontWeight:600 }}>TAP TO CHANGE</div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize:48, marginBottom:16 }}>{activeMode.icon}</div>
-                <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>
-                  Tap to upload {activeMode.id === "receipt" ? "receipt" : "photo"}
-                </div>
-                <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>Photo or screenshot works</div>
-              </>
-            )}
-          </div>
+          {mode === "barcode" ? (
+            // Barcode mode — no image upload, no Claude vision call.
+            // The dedicated BarcodeScanner (zxing live + photo-capture
+            // + typed fallback) handles the decode, then we hand off
+            // to lookupBarcode + canonicalResolver to build a single
+            // prefilled scan row that lands in the confirm screen.
+            <div
+              onClick={() => !barcodeBusy && setBarcodeScannerOpen(true)}
+              style={{
+                flex:1, border:`2px dashed ${barcodeBusy?"#f5c84255":"#2a2a2a"}`,
+                borderRadius:20,
+                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                cursor: barcodeBusy ? "wait" : "pointer",
+                background:"#0f0f0f",
+                minHeight:280, transition:"all 0.3s",
+              }}
+            >
+              <div style={{ fontSize:48, marginBottom:16 }}>📷</div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color: barcodeBusy ? "#f5c842" : "#555", fontStyle:"italic" }}>
+                {barcodeBusy ? "Looking up…" : "Tap to open the camera"}
+              </div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>
+                Live scan, photo capture, or type the digits
+              </div>
+            </div>
+          ) : (
+            <div onClick={() => fileRef.current?.click()} style={{ flex:1, border:`2px dashed ${imagePreview?"#f5c84255":"#2a2a2a"}`, borderRadius:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background: imagePreview?"#0f0d08":"#0f0f0f", overflow:"hidden", position:"relative", minHeight:280, transition:"all 0.3s" }}>
+              {imagePreview ? (
+                <>
+                  <img src={imagePreview} alt="Receipt" style={{ width:"100%", height:"100%", objectFit:"contain", maxHeight:400 }} />
+                  <div style={{ position:"absolute", bottom:12, right:12, background:"#f5c842", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#111", fontWeight:600 }}>TAP TO CHANGE</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize:48, marginBottom:16 }}>{activeMode.icon}</div>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>
+                    Tap to upload {activeMode.id === "receipt" ? "receipt" : "photo"}
+                  </div>
+                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>Photo or screenshot works</div>
+                </>
+              )}
+            </div>
+          )}
           <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e=>handleFile(e.target.files[0])} />
           {error && <div style={{ marginTop:12, padding:"12px 14px", background:"#1a0f0f", border:"1px solid #3a1a1a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f87171" }}>{error}</div>}
+          {mode !== "barcode" && (
           <button onClick={imagePreview ? runScan : ()=>fileRef.current?.click()} style={{ marginTop:20, width:"100%", padding:"16px", background: imagePreview?"#f5c842":"#1a1a1a", color: imagePreview?"#111":"#444", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", transition:"all 0.3s", boxShadow: imagePreview?"0 0 30px #f5c84233":"none" }}>
             {imagePreview ? activeMode.cta : "CHOOSE PHOTO"}
           </button>
+          )}
+          {mode === "barcode" && (
+            <button
+              onClick={() => !barcodeBusy && setBarcodeScannerOpen(true)}
+              disabled={barcodeBusy}
+              style={{
+                marginTop:20, width:"100%", padding:"16px",
+                background: barcodeBusy ? "#2a2a2a" : "#f5c842",
+                color: barcodeBusy ? "#666" : "#111",
+                border:"none", borderRadius:14,
+                fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600,
+                letterSpacing:"0.08em",
+                cursor: barcodeBusy ? "wait" : "pointer",
+                transition:"all 0.3s",
+                boxShadow: barcodeBusy ? "none" : "0 0 30px #f5c84233",
+              }}
+            >
+              {barcodeBusy ? "LOOKING UP…" : "SCAN BARCODE →"}
+            </button>
+          )}
         </div>
+      )}
+      {barcodeScannerOpen && (
+        <BarcodeScanner
+          onCancel={() => setBarcodeScannerOpen(false)}
+          onDetected={async (barcode) => {
+            setBarcodeScannerOpen(false);
+            setBarcodeBusy(true);
+            setError(null);
+            try {
+              const res = await lookupBarcode(barcode, { brandNutritionRows: brandNutritionRowsForScan });
+              if (!res?.found) {
+                const msg = res?.reason === "edge_fn_not_deployed"
+                  ? "Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode"
+                  : res?.reason === "fetch_failed"
+                    ? `Barcode lookup failed (${res?.status || "network"}).`
+                    : res?.reason === "no_nutriments"
+                      ? `Found ${barcode} but Open Food Facts has no nutrition data for it.`
+                      : `No match for ${barcode} in Open Food Facts.`;
+                setError(msg);
+                return;
+              }
+              // Brand: OFF brands field first, parseIdentity over
+              // productName as fallback (same pattern as AddItemModal).
+              let effectiveBrand = res.brand || null;
+              if (!effectiveBrand && res.productName) {
+                const parsed = parseIdentity(res.productName);
+                if (parsed?.brand) effectiveBrand = parsed.brand;
+              }
+              // Canonical resolution + state + size + attributes.
+              const match = resolveCanonicalFromScan({
+                brand:         res.brand,
+                productName:   res.productName,
+                categoryHints: res.categoryHints || [],
+                findIngredient,
+              });
+              const rawState = parseStateFromText(res.productName, res.categoryHints || []);
+              const state = match?.canonical
+                ? stateForCanonical(rawState, match.canonical)
+                : null;
+              const packageSize = parsePackageSize(res.quantity);
+              const attributes = buildAttributesFromScan({
+                productName:   res.productName,
+                categoryHints: res.categoryHints || [],
+                originTags:    res.originTags  || [],
+                countryTags:   res.countryTags || [],
+                labelTags:     res.labelTags   || [],
+              });
+              // Build a single scan row that matches the shape the
+              // rest of the confirm flow expects (same fields scan-
+              // receipt / scan-shelf produce). Canonical-derived
+              // fields populate when match present; else fall back
+              // to productName as the raw display.
+              const canon = match?.canonical || null;
+              const freshId = (typeof crypto !== "undefined" && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              const row = {
+                id:            freshId,
+                name:          res.productName || canon?.name || `Barcode ${barcode}`,
+                emoji:         canon?.emoji || "🥫",
+                brand:         effectiveBrand || null,
+                category:      canon?.category || "pantry",
+                confidence:    match?.autoApply ? "high" : match ? "medium" : "low",
+                canonicalId:   canon?.id || null,
+                ingredientId:  canon?.id || null,
+                ingredientIds: canon?.id ? [canon.id] : [],
+                amount:        packageSize?.amount ?? 1,
+                unit:          packageSize?.unit ?? (canon?.defaultUnit || "count"),
+                max:           packageSize?.amount ?? null,
+                state:         state || null,
+                attributes:    attributes || null,
+                // Source metadata so the stock step can trace the
+                // row back to an OFF / barcode origin.
+                scanRaw:       res.productName || null,
+                barcodeUpc:    barcode,
+                priceCents:    null,
+                autoLinked:    !!match,
+              };
+              setScannedItems([row]);
+              setReceiptMeta({ store: null, date: null, totalCents: null });
+              setPhase("confirm");
+              // Stash brand_nutrition payload for post-add upsert —
+              // written after user confirms the row and it lands in
+              // pantry, so a brand-less scan doesn't write an orphan
+              // row to brand_nutrition.
+              if (res.nutrition && effectiveBrand && canon?.id) {
+                // Fire-and-forget — brand_nutrition is public-read
+                // reference data and safe to write whether or not
+                // the user ends up confirming the pantry row (the
+                // brand / canonical pairing stays valid regardless).
+                upsertBrandNutritionForScan?.({
+                  canonicalId: canon.id,
+                  brand:       effectiveBrand,
+                  nutrition:   res.nutrition,
+                  barcode:     res.barcode,
+                  source:      res.source || "openfoodfacts",
+                  sourceId:    res.sourceId || res.barcode,
+                }).catch(() => { /* logged upstream */ });
+              }
+            } catch (e) {
+              console.error("[scanner:barcode] lookup failed:", e);
+              setError("Barcode lookup failed. Try again.");
+            } finally {
+              setBarcodeBusy(false);
+            }
+          }}
+        />
       )}
 
       {phase === "scanning" && (
