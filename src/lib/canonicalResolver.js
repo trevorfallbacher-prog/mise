@@ -224,6 +224,10 @@ export function resolveCanonicalFromScan({
   // THINK it might be X — tap to confirm or pick something else"
   // rather than silently showing nothing. Confidence "low" — the card
   // styles this more tentatively than high/medium.
+  //
+  // Reuses the `cleaned` variable from Tier 3 above so we don't run
+  // cleanProductName twice. If Tier 3 was skipped (cleaned was
+  // falsy) the cleaned-name branch below silently skips.
   const weakCandidates = [];
   for (const tag of (categoryHints || [])) {
     const phrase = tagToPhrase(tag);
@@ -231,7 +235,6 @@ export function resolveCanonicalFromScan({
     const hit = bestMatchAboveFloor(phrase, 30);   // very permissive floor
     if (hit) weakCandidates.push({ hit, reason: `tag:${tag}`, matchedOn: phrase });
   }
-  const cleaned = cleanProductName(productName, brand);
   if (cleaned) {
     const hit = bestMatchAboveFloor(cleaned, 30);
     if (hit) weakCandidates.push({ hit, reason: "name-cleaned", matchedOn: cleaned });
