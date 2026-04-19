@@ -11,23 +11,48 @@ import { supabase } from "./supabase";
 /**
  * Ask Claude to draft a recipe from the current pantry.
  *
+ * Two modes:
+ *   "final" (default) — full recipe with title + ingredients + steps.
+ *                       Same shape as bundled recipes; CookMode-ready.
+ *   "sketch"          — title + IDEAL + PANTRY ingredient lists, no
+ *                       steps. Fast cheap pass for the tweak loop;
+ *                       user reviews + swaps before we commit to a
+ *                       full cook.
+ *
  * @param {object} opts
+ * @param {"sketch"|"final"} [opts.mode]     — default "final"
  * @param {Array<object>} opts.pantry        — curated pantry rows (see src/lib/aiContext.js)
- * @param {object}        [opts.prefs]       — { cuisine?, difficulty?, time?, notes? }
+ * @param {object}        [opts.prefs]       — { cuisine?, difficulty?, time?,
+ *                                              mealPrompt?, mealTiming?, course?,
+ *                                              starIngredientIds?, recipeFeedback? }
  * @param {Array<string>} [opts.avoidTitles] — recent drafts to steer away from on REGEN
  * @param {object}        [opts.context]     — rich context (profile slice + cook history
  *                                             summary); omit or pass null on REGEN to keep
  *                                             the model from re-anchoring on the same
  *                                             pairings as the first draft.
- * @returns {Promise<{ recipe: object }>}
+ * @param {Array<object>} [opts.lockedIngredients] — only meaningful in "final" mode;
+ *                                             the user's tweaked ingredient list from
+ *                                             the sketch phase. Claude builds steps
+ *                                             around this set verbatim.
+ * @returns {Promise<{ recipe?: object, sketch?: object }>}
+ *          — `recipe` when mode = "final", `sketch` when mode = "sketch"
  */
-export async function generateRecipe({ pantry = [], prefs, avoidTitles, context } = {}) {
+export async function generateRecipe({
+  mode = "final",
+  pantry = [],
+  prefs,
+  avoidTitles,
+  context,
+  lockedIngredients,
+} = {}) {
   const { data, error } = await supabase.functions.invoke("generate-recipe", {
     body: {
+      mode,
       pantry,
       prefs: prefs || {},
       avoidTitles: Array.isArray(avoidTitles) ? avoidTitles : [],
       context: context || null,
+      lockedIngredients: Array.isArray(lockedIngredients) ? lockedIngredients : [],
     },
   });
 
@@ -51,8 +76,12 @@ export async function generateRecipe({ pantry = [], prefs, avoidTitles, context 
     throw new Error(msg);
   }
 
-  if (!data?.recipe) {
-    throw new Error("Recipe draft succeeded but response was empty");
+  // Sketch responses come back as { sketch }; final as { recipe }.
+  // Caller handles the shape.
+  if (mode === "sketch") {
+    if (!data?.sketch) throw new Error("Sketch succeeded but response was empty");
+  } else {
+    if (!data?.recipe) throw new Error("Recipe draft succeeded but response was empty");
   }
 
   return data;

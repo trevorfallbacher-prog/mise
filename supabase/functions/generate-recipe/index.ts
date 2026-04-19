@@ -92,6 +92,24 @@ type Prefs = {
   // Canonical ids the user explicitly chose to build around. Must
   // appear in the recipe as primary components, not garnishes.
   starIngredientIds?: string[];
+  // Revision instruction from the tweak phase — what to change in
+  // technique / seasoning / approach when going from sketch to
+  // final cook. Only meaningful in mode = "final".
+  recipeFeedback?: string;
+};
+
+// One ingredient line in the sketch's "what we're locking in"
+// payload. Sent on the FINAL call so Claude builds steps around the
+// exact set the user approved (after their swaps / adds / shopping
+// promotions) instead of re-resolving from pantry.
+type LockedIngredient = {
+  name: string;
+  amount?: string | number | null;
+  unit?: string | null;
+  ingredientId?: string | null;     // canonical slug if known
+  pantryItemId?: string | null;     // matched pantry row, or null = shopping
+  source?: "pantry" | "shopping" | "added";
+  note?: string | null;             // e.g. "subbed from mozzarella"
 };
 
 type RichContext = {
@@ -110,7 +128,11 @@ type RichContext = {
   } | null;
 } | null;
 
-function buildPrompt(
+// Shared preamble for both sketch and final prompts: PRECEDENCE
+// rules, pantry table, user prefs, profile, history, avoid list,
+// and a per-call nonce. Both modes need exactly this header; the
+// modes differ only in the JSON schema they request below.
+function assemblePromptHeader(
   pantry: PantryItem[],
   prefs: Prefs,
   avoidTitles: string[],
@@ -145,13 +167,8 @@ function buildPrompt(
         })
         .join("\n");
 
-  // Hero input — Meal Prompt (new field) with legacy `notes` as
-  // fallback so stale clients that haven't been bumped still route
-  // their string through. Remove the alias next release.
   const mealPrompt = prefs.mealPrompt || prefs.notes || "";
 
-  // Resolve star slugs into their pantry display names so the prompt
-  // can reference them by name, not opaque canonical ids.
   const starPantryNames = Array.isArray(prefs.starIngredientIds) && prefs.starIngredientIds.length
     ? prefs.starIngredientIds
         .map((slug) => {
@@ -176,16 +193,9 @@ function buildPrompt(
     prefs.time ? `- time preference: ${prefs.time}` : "",
   ].filter(Boolean).join("\n") || "(none — use your judgment)";
 
-  // Profile + cook-history blocks — only present on first-draft calls.
-  // REGEN deliberately drops these so the second draft isn't pulled
-  // back toward the same flavor-profile pairings as the first.
   const profileBlock = context?.profile ? profileSection(context.profile) : "";
   const historyBlock = context?.history ? historySection(context.history) : "";
 
-  // Avoid-list + random nonce — together these are what make REGEN
-  // actually produce a different dish rather than the model's single
-  // most-likely output for this pantry. Temperature alone isn't enough;
-  // we also tell the model explicitly what it already handed us.
   const avoidBlock = avoidTitles.length > 0
     ? `\nRECENTLY SUGGESTED — pick a genuinely different dish, not a variant:\n${
         avoidTitles.map((t) => `- ${t}`).join("\n")
@@ -233,7 +243,119 @@ ${pantryLines}
 
 USER PREFERENCES:
 ${prefLines}
-${profileBlock}${historyBlock}
+${profileBlock}${historyBlock}`;
+}
+
+// SKETCH mode prompt — title + dual IDEAL/PANTRY ingredient lists,
+// no steps. Used for the rough-draft pass so the user can tweak
+// proteins / cheeses / noodles before we burn the full token budget
+// writing a step-by-step.
+function buildSketchPrompt(
+  pantry: PantryItem[],
+  prefs: Prefs,
+  avoidTitles: string[],
+  context: RichContext,
+): string {
+  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context)}
+This is a SKETCH PASS. Return only enough for the user to confirm
+the dish concept and ingredient direction — they'll tweak (swap a
+protein, sub a cheese, add a side ingredient, mark something for
+shopping) before we draft the full step-by-step. NO cooking
+instructions, NO plating notes, NO cultural commentary.
+
+Return ONLY a single JSON object (no markdown, no prose) with this
+exact shape:
+
+{
+  "slug":         "<kebab-case-title>",
+  "title":        "<short display title>",
+  "subtitle":     "<one-line dish description>",         // optional, can be null
+  "emoji":        "🍝",
+  "cuisine":     "italian" | "french" | "mexican" | "american" | "japanese" | "thai" | "indian" | "chinese" | "mediterranean" | "other",
+  "mealTiming":  "breakfast" | "lunch" | "dinner" | null,
+  "course":      "main" | "side" | "dessert" | null,
+  "serves":      <integer 1..12>,
+  "estimatedTime": { "prep": <minutes>, "cook": <minutes> },
+  "ideal": [
+    {
+      "name":   "<canonical ingredient name, e.g. 'mozzarella'>",
+      "amount": "<display, e.g. '8 oz'>",
+      "role":   "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
+    },
+    ...
+  ],
+  "pantry": [
+    {
+      "name":             "<display name as shown in the user's pantry>",
+      "amount":           "<display, e.g. '1 lb'>",
+      "pantryItemId":     "<the pantry row id you grabbed, or null when shopping>",
+      "ingredientId":     "<canonical id from pantry if matched, else null>",
+      "subbedFrom":       "<name of the IDEAL item this replaced, or null>",
+      "missingFromIdeal": <true | false>
+    },
+    ...
+  ],
+  "aiRationale": "<1-2 sentences in second person — what the dish is and why it fits this pantry. Skip generic food-writing prose.>"
+}
+
+IDEAL is the classical version of the dish — what an ideal pantry
+would have. PANTRY is what the user can actually make right now,
+substituting pantry rows where their kitchen forces a swap and
+flagging what's missing. Always emit BOTH arrays even when they're
+identical.
+
+Rules:
+  - Same precedence rules as the header above.
+  - Every PANTRY entry that uses a real pantry row MUST set
+    "pantryItemId" to that row's id (the "id:..." token in the
+    PANTRY table). null only when this ingredient is something the
+    user would need to shop for.
+  - "subbedFrom" tells the user "we used Parmesan because you
+    didn't have Mozzarella." null when the pantry item matches the
+    ideal directly.
+  - "missingFromIdeal: true" only when you ADDED something beyond
+    the classical recipe (rare — e.g., the user starred an extra
+    protein that doesn't traditionally go in this dish).
+  - 4-12 ideal ingredients, 4-12 pantry ingredients.
+  - Keep the rationale short — this is a sketch. Detail comes on
+    the FINAL pass.
+
+Return the JSON object and nothing else.`;
+}
+
+// FINAL mode prompt — full recipe with steps. Same shape Claude
+// returned before the sketch / final split. Optionally accepts a
+// LOCKED INGREDIENTS list (from the user's tweak phase) that
+// supersedes pantry-driven choices: the model writes steps AROUND
+// these exact ingredients verbatim instead of re-resolving from
+// the pantry.
+function buildFinalPrompt(
+  pantry: PantryItem[],
+  prefs: Prefs,
+  avoidTitles: string[],
+  context: RichContext,
+  lockedIngredients: LockedIngredient[] = [],
+): string {
+  const lockedBlock = lockedIngredients.length > 0
+    ? `\nLOCKED INGREDIENTS — the user already approved this exact set during the
+sketch tweak. You MUST use ALL of them, with these names and amounts. Do NOT
+add new ingredients beyond this list (other than assumed staples: salt, pepper,
+oil, water). Do NOT swap or substitute.
+
+${lockedIngredients.map((i) => {
+  const amount = i.amount != null ? `${i.amount}${i.unit ? ` ${i.unit}` : ""}` : "";
+  const note = i.note ? ` (${i.note})` : "";
+  const src = i.source === "shopping" ? " [user will shop for]" : "";
+  return `- ${i.name}${amount ? ` · ${amount}` : ""}${src}${note}`;
+}).join("\n")}\n`
+    : "";
+
+  const feedbackBlock = (prefs.recipeFeedback || "").trim()
+    ? `\nRECIPE FEEDBACK (most recent revision instruction — apply on top of everything above except dietary + locked ingredients):
+${prefs.recipeFeedback!.trim()}\n`
+    : "";
+
+  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context)}${lockedBlock}${feedbackBlock}
 Return ONLY a single JSON object (no markdown, no prose) with this
 exact shape. Every field is REQUIRED unless marked optional.
 
@@ -296,61 +418,70 @@ exact shape. Every field is REQUIRED unless marked optional.
 
 Rules (in priority order — higher rules beat lower ones on conflict):
 
-  1. USER NOTES WIN. If the user asked for a specific protein, dish,
-     or cuisine in their notes, honor it even if nothing in the pantry
-     supports it. Non-pantry ingredients are fine in that case — just
-     list them plainly. Do NOT redirect to a pantry-fitting dish when
-     the user has a clear ask.
+  1. LOCKED INGREDIENTS (when present) are the FINAL set. Use every
+     one verbatim. No additions beyond assumed staples (salt,
+     pepper, oil, water). No substitutions.
 
-  2. Respect dietary constraints in the PROFILE block if present. If
-     the user is vegetarian/vegan, do not propose meat or fish even
-     if the pantry contains it (their family may have added it) AND
-     even if the user's notes mention one. Dietary beats notes — call
-     out the conflict in the aiRationale.
+  2. RECIPE FEEDBACK (when present) is the most recent revision
+     directive. Apply it as a hard rule for technique / seasoning /
+     timing — the only things it CAN'T override are dietary
+     constraints and the locked ingredient list.
 
-  3. When the user has NOT asked for something specific, prefer
+  3. USER NOTES / MEAL PROMPT WIN. If the user asked for a specific
+     protein, dish, or cuisine, honor it even if nothing in the
+     pantry supports it. Non-pantry ingredients are fine in that
+     case — just list them plainly. Do NOT redirect to a pantry-
+     fitting dish when the user has a clear ask.
+
+  4. Respect dietary constraints in the PROFILE block if present.
+     If the user is vegetarian/vegan, do not propose meat or fish
+     even if the pantry contains it (their family may have added
+     it) AND even if the user's notes mention one. Dietary beats
+     notes — call out the conflict in the aiRationale.
+
+  5. When the user has NOT asked for something specific, prefer
      recipes that use pantry items marked "EXPIRED" or "expires in Nd"
      where N is small. Reducing waste is the default goal.
 
-  4. EVERY pantry item you use must appear as an ingredient with the
-     matching "ingredientId" when the pantry item carried a
+  6. EVERY pantry item you use must appear as an ingredient with
+     the matching "ingredientId" when the pantry item carried a
      canonicalId. Leave "ingredientId" null for staples you assumed
      (salt, pepper, oil) and for any non-pantry ingredients you
      added because the user asked for them.
 
-  5. ALWAYS produce at least 4 steps and 4 ingredients.
+  7. ALWAYS produce at least 4 steps and 4 ingredients.
 
-  5a. EVERY step must carry a "uses" array listing the ingredients
-     consumed AT that step with the amount used at that step. If an
-     ingredient spans multiple steps (eggs split between batter and
-     wash), it legitimately appears in more than one step with
-     partial amounts that sum to the top-level ingredients[] amount.
-     If a step is purely action-only (plate, rest, serve), "uses"
-     may be an empty array.
+  7a. EVERY step must carry a "uses" array listing the ingredients
+      consumed AT that step with the amount used at that step. If
+      an ingredient spans multiple steps (eggs split between batter
+      and wash), it legitimately appears in more than one step
+      with partial amounts that sum to the top-level ingredients[]
+      amount. If a step is purely action-only (plate, rest, serve),
+      "uses" may be an empty array.
 
-  5b. Add "heat" whenever a step involves a burner/oven/grill — it
-     helps the cook dial in the stove without rereading the prose.
-     Omit for prep steps.
+  7b. Add "heat" whenever a step involves a burner/oven/grill — it
+      helps the cook dial in the stove without rereading the prose.
+      Omit for prep steps.
 
-  5c. Add "doneCue" whenever the step has a qualitative readiness
-     signal ("onions translucent, not brown"; "pasta has 1 minute
-     less than package says"). Skip for trivial steps.
+  7c. Add "doneCue" whenever the step has a qualitative readiness
+      signal ("onions translucent, not brown"; "pasta has 1 minute
+      less than package says"). Skip for trivial steps.
 
-  6. Keep total time reasonable — prep + cook ≤ 90 min unless the user
-     asked for a long recipe.
+  8. Keep total time reasonable — prep + cook ≤ 90 min unless the
+     user asked for a long recipe.
 
-  7. Keep the slug short, lowercase, hyphenated. No trailing hyphens.
+  9. Keep the slug short, lowercase, hyphenated. No trailing hyphens.
 
-  8. Respect the skill level implied by profile.level and topSkills. A
-     "beginner" shouldn't get a five-step braise; an "advanced" cook
-     is bored by scrambled eggs.
+  10. Respect the skill level implied by profile.level and
+      topSkills. A "beginner" shouldn't get a five-step braise; an
+      "advanced" cook is bored by scrambled eggs.
 
-  9. The aiRationale field is how the user finds out WHY you picked
-     this dish. Make it specific and grounded in what you saw in the
-     context. If you honored an explicit user ask OVER the expiring
-     items, say so ("You asked for shrimp, so I skipped the cream
-     that's about to turn — save it for a pasta tomorrow"). Don't
-     pad with generic food-writing prose.
+  11. The aiRationale field is how the user finds out WHY you picked
+      this dish. Make it specific and grounded in what you saw in
+      the context. If you honored an explicit user ask OVER the
+      expiring items, say so ("You asked for shrimp, so I skipped
+      the cream that's about to turn — save it for a pasta
+      tomorrow"). Don't pad with generic food-writing prose.
 
 Return the JSON object and nothing else.`;
 }
@@ -407,10 +538,12 @@ Deno.serve(async (req) => {
   }
 
   let body: {
+    mode?: "sketch" | "final";
     pantry?: PantryItem[];
     prefs?: Prefs;
     avoidTitles?: string[];
     context?: RichContext;
+    lockedIngredients?: LockedIngredient[];
   };
   try {
     body = await req.json();
@@ -420,9 +553,16 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Default mode = "final" so existing callers (and the legacy
+  // single-pass flow) keep working unchanged. Sketch mode is opt-in
+  // from the new tweak-loop UI.
+  const mode: "sketch" | "final" = body.mode === "sketch" ? "sketch" : "final";
   const pantry = Array.isArray(body.pantry) ? body.pantry : [];
   const prefs = body.prefs || {};
   const context = body.context || null;
+  const lockedIngredients = Array.isArray(body.lockedIngredients)
+    ? body.lockedIngredients.filter((x): x is LockedIngredient => !!x && typeof x === "object")
+    : [];
   // Truncate the avoid list so a long regen session doesn't blow out
   // the prompt. The last five titles are plenty to steer away from
   // whatever the user actually saw most recently.
@@ -454,13 +594,25 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 2500,
+        // Sketch is title + dual ingredient lists only (no steps).
+        // Trim the budget so the rough draft is fast and cheap; the
+        // full cook gets the original 2500 budget on the second
+        // call.
+        max_tokens: mode === "sketch" ? 1000 : 2500,
         // temperature=1 is the API default but we set it explicitly so
         // nobody accidentally pins it to 0 during debugging and wipes
         // out regen variety without realizing why.
         temperature: 1,
         messages: [
-          { role: "user", content: [{ type: "text", text: buildPrompt(pantry, prefs, avoidTitles, context) }] },
+          {
+            role: "user",
+            content: [{
+              type: "text",
+              text: mode === "sketch"
+                ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
+                : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients),
+            }],
+          },
         ],
       }),
     });
@@ -496,9 +648,41 @@ Deno.serve(async (req) => {
     );
   }
 
-  // Light shape check — anything catastrophically wrong comes back as
-  // a 502 so the client can surface "try again" rather than feeding
-  // garbage into CookMode.
+  // Sketch mode response — narrower shape. Title + IDEAL + PANTRY
+  // arrays only. No steps, no tools, no per-step uses. Validator
+  // gets a relaxed schema so an answer missing `steps` doesn't
+  // 502 the way it would for a full cook.
+  if (mode === "sketch") {
+    if (!recipe || typeof recipe !== "object" ||
+        typeof recipe.title !== "string" ||
+        !Array.isArray(recipe.ideal) ||
+        !Array.isArray(recipe.pantry)) {
+      return new Response(
+        JSON.stringify({ error: "sketch returned an unexpected shape", raw }),
+        { status: 502, headers: JSON_HEADERS },
+      );
+    }
+    const sketch = {
+      slug:        recipe.slug       || slugify(recipe.title as string),
+      title:       recipe.title,
+      subtitle:    recipe.subtitle   ?? null,
+      emoji:       recipe.emoji      || "🍽️",
+      cuisine:     recipe.cuisine    || "other",
+      mealTiming:  recipe.mealTiming ?? null,
+      course:      recipe.course     ?? null,
+      serves:      clampInt(recipe.serves, 1, 12, 2),
+      estimatedTime: recipe.estimatedTime || recipe.time || { prep: 10, cook: 20 },
+      ideal:       Array.isArray(recipe.ideal)  ? recipe.ideal  : [],
+      pantry:      Array.isArray(recipe.pantry) ? recipe.pantry : [],
+      aiRationale: typeof recipe.aiRationale === "string"
+        ? String(recipe.aiRationale).slice(0, 400).trim() || null
+        : null,
+    };
+    return new Response(JSON.stringify({ sketch }), { headers: JSON_HEADERS });
+  }
+
+  // FINAL mode response — full recipe with steps. Same validation as
+  // before the mode split.
   if (!recipe || typeof recipe !== "object" ||
       typeof recipe.title !== "string" ||
       !Array.isArray(recipe.ingredients) ||
