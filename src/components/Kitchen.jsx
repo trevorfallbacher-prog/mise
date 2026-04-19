@@ -2354,38 +2354,23 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 })()}
               </div>
               <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
-                  ITEM
-                </div>
+                {/* ITEM kicker removed — it did nothing for the
+                    structure, and the big italic header below
+                    (derived from brand + canonical) is already the
+                    primary identity surface. No redundant label
+                    needed. */}
 
                 {/* Header MIRRORS ItemCard exactly:
-                      - "+ ADD BRAND" affordance above header (when brand unset)
-                      - Big italic header = [Brand] [Canonical] derived,
-                        with brand tap→inline rename and canonical tap→picker
-                      - Free-text fallback input when no canonical (user
-                        types what it is, inferCanonicalFromName resolves)
-                      - "+ LINK CANONICAL" affordance below header (when null)
+                      - Big italic header = [Brand] [Canonical] derived
+                      - Free-text fallback input when no canonical
+                        (tan-tinted to signal "this is the canonical
+                        slot — you're setting the thing's identity")
+                      - "+ ADD BRAND" affordance BELOW the header (when
+                        brand unset) — brand is secondary to canonical,
+                        so its affordance sits subordinate
                     Same three-state rendering as ItemCard's header;
                     uses customBrandOpen / customCanonicalOpen toggles
                     the same way ItemCard uses editingField. */}
-
-                {/* + ADD BRAND above the header when brand is unset.
-                    Generous marginTop so it doesn't feel jammed
-                    against the ITEM kicker above. */}
-                {!customBrand && !customBrandOpen && (
-                  <div
-                    onClick={() => setCustomBrandOpen(true)}
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 9,
-                      color: "#555", letterSpacing: "0.12em",
-                      cursor: "pointer", marginTop: 8,
-                      width: "fit-content",
-                      borderBottom: "1px dashed #2a2a2a",
-                    }}
-                  >
-                    + ADD BRAND
-                  </div>
-                )}
 
                 {/* Big italic header — [Brand] [Canonical or free-text name] */}
                 <div style={{
@@ -2475,13 +2460,36 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                         border: "none", outline: "none",
                         fontFamily: "'Fraunces',serif",
                         fontSize: 26, fontStyle: "italic", fontWeight: 300,
-                        color: "#f0ece4",
+                        color: "#b8a878",
                         padding: "2px 0 0",
                         boxSizing: "border-box",
                       }}
                     />
                   )}
                 </div>
+
+                {/* + ADD BRAND BELOW the header (moved from above).
+                    Brand is secondary to canonical — canonical IS
+                    the thing's identity, brand modifies it. Visual
+                    order reflects that hierarchy: canonical header
+                    first, optional brand affordance subordinate
+                    below. Only renders when brand is unset; once
+                    set, brand inlines into the header above as the
+                    prefix segment. */}
+                {!customBrand && !customBrandOpen && (
+                  <div
+                    onClick={() => setCustomBrandOpen(true)}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#555", letterSpacing: "0.12em",
+                      cursor: "pointer", marginTop: 6,
+                      width: "fit-content",
+                      borderBottom: "1px dashed #2a2a2a",
+                    }}
+                  >
+                    + ADD BRAND
+                  </div>
+                )}
 
                 {/* Canonical typeahead — only renders while the user
                     is typing into the "what is it?" fallback input
@@ -2665,143 +2673,180 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   );
                 })()}
 
-                {/* + LINK CANONICAL below the header when unset */}
-                {!customCanonicalId && (
-                  <div
-                    onClick={() => setCustomCanonicalOpen(true)}
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 9,
-                      color: "#8a7f6e", letterSpacing: "0.12em",
-                      cursor: "pointer", marginTop: 4,
-                      width: "fit-content",
-                      borderBottom: "1px dashed #3a2f1044",
-                    }}
-                  >
-                    + LINK CANONICAL
-                  </div>
-                )}
+                {/* + LINK CANONICAL removed — the typeahead above
+                    already shows matching canonicals AND a "+ CREATE"
+                    row for fresh slugs, so a duplicate below-header
+                    affordance just added noise. User is already
+                    performing the link via the typeahead. */}
 
               {/* Identity stack — per CLAUDE.md (updated). Row order:
-                    1. HEADER (brand + canonical) — ABOVE this block,
-                       in the derived italic title
+                    1. HEADER (brand + canonical) — ABOVE this block
                     2. CATEGORIES  — orange
                     3. STORED IN   — blue
                     4. STATE       — purple
                     5. INGREDIENTS — yellow
-                  CANONICAL axis row was deleted because the header
-                  above already shows the canonical + carries a
-                  "+ LINK CANONICAL" affordance under it when unset.
-                  Duplicative otherwise. */}
 
-              {/* FOOD CATEGORY — orange. */}
-              <div
-                onClick={() => setTypePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#e07a3a",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#e07a3a" }}>{LABEL_KICKER("category")}:</span>
-                {customTypeId ? (
+                  Progressive color cascade: each row stays GREY until
+                  either its predecessor is set OR the field itself
+                  has been auto-filled. The second half matters —
+                  canonical binding often cascades straight into
+                  stored-in + location via cascadeFromCanonical, so
+                  stored-in gets a value without the user ever
+                  touching CATEGORY. Auto-filled values surface in
+                  their own color to signal "this was linked from
+                  the canonical" (per user directive: "if they auto
+                  fill make sure to fill their color as well to
+                  signify linkage"). Cascade order stays
+                  canonical → (brand, optional) → category →
+                  stored-in → state → ingredients. */}
+              {(() => {
+                const DISABLED_CLR = "#3a3a3a";
+                const hasCan  = !!customCanonicalId;
+                const hasCat  = !!customTypeId;
+                const hasTile = !!customTileId;
+                const hasSt   = !!customState;
+                const hasIng  = (customComponents?.length || 0) > 0;
+                // Color = axis color when (predecessor met) OR (self
+                // already filled). The self-filled arm handles
+                // auto-fills, which can skip steps — a tile bound by
+                // cascadeFromCanonical stays blue even if the user
+                // hasn't picked a CATEGORY above it.
+                const colCat  = (hasCan  || hasCat)  ? "#e07a3a" : DISABLED_CLR;
+                const colTile = (hasCat  || hasTile) ? "#7eb8d4" : DISABLED_CLR;
+                const colSt   = (hasTile || hasSt)   ? "#c7a8d4" : DISABLED_CLR;
+                const colIng  = (hasSt   || hasIng)  ? "#f5c842" : DISABLED_CLR;
+                // Row is tappable when its color is live (colored,
+                // not DISABLED_CLR). Any filled field is always
+                // editable.
+                const liveCat  = (hasCan  || hasCat);
+                const liveTile = (hasCat  || hasTile);
+                const liveSt   = (hasTile || hasSt);
+                const liveIng  = (hasSt   || hasIng);
+                const canClick = (enabled) => enabled ? "pointer" : "not-allowed";
+                return (
                   <>
-                    <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
-                    <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
-                      {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
-                    </span>
+                    {/* FOOD CATEGORY — orange when canonical set OR
+                        already filled; else grey. */}
+                    <div
+                      onClick={() => liveCat && setTypePickerOpen(v => !v)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colCat,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveCat),
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: liveCat ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colCat }}>{LABEL_KICKER("category")}:</span>
+                      {customTypeId ? (
+                        <>
+                          <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
+                          <span style={{ color: colCat, borderBottom: `1px dashed ${colCat}44` }}>
+                            {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ color: colCat, borderBottom: `1px dashed ${colCat}44` }}>
+                          + SET CATEGORY
+                        </span>
+                      )}
+                    </div>
+
+                    {/* STORED IN — blue when category set OR already
+                        filled (common via auto-cascade); else grey. */}
+                    <div
+                      onClick={() => liveTile && setTilePickerOpen(v => !v)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colTile,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveTile),
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: liveTile ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colTile }}>{LABEL_KICKER("storedIn")}:</span>
+                      {customTileId ? (() => {
+                        const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                        const found = allBuiltIns.find(t => t.id === customTileId);
+                        return (
+                          <>
+                            <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
+                            <span style={{ color: colTile, borderBottom: `1px dashed ${colTile}44` }}>
+                              {(found?.label || "CUSTOM TILE").toUpperCase()}
+                            </span>
+                          </>
+                        );
+                      })() : (
+                        <span style={{ color: colTile, borderBottom: `1px dashed ${colTile}44` }}>
+                          + SET LOCATION
+                        </span>
+                      )}
+                    </div>
+
+                    {/* STATE — purple when stored-in set OR already
+                        filled; else grey. */}
+                    <div
+                      onClick={() => liveSt && setStatePickerOpen(v => !v)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colSt,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveSt),
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: liveSt ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colSt }}>{LABEL_KICKER("state")}:</span>
+                      {customState ? (
+                        <span style={{ color: colSt, borderBottom: `1px dashed ${colSt}44` }}>
+                          {customState.toUpperCase()}
+                        </span>
+                      ) : (
+                        <span style={{ color: colSt, borderBottom: `1px dashed ${colSt}44` }}>
+                          + SET STATE
+                        </span>
+                      )}
+                    </div>
+
+                    {/* INGREDIENTS — yellow when state set OR
+                        already filled; else grey. Composition tags
+                        (multi-tag items). */}
+                    <div
+                      onClick={() => liveIng && setCustomComponentsOpen(true)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colIng,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveIng),
+                        display: "flex", alignItems: "center", gap: 6,
+                        flexWrap: "wrap",
+                        opacity: liveIng ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colIng }}>{LABEL_KICKER("ingredients")}:</span>
+                      {customComponents.length === 0 ? (
+                        <span style={{ color: colIng, borderBottom: `1px dashed ${colIng}44` }}>
+                          + ADD
+                        </span>
+                      ) : (
+                        <>
+                          {customComponents.slice(0, 4).map((c, i) => (
+                            <span key={c.id} style={{ color: colIng, borderBottom: `1px dashed ${colIng}44` }}>
+                              {i > 0 && <span style={{ color: "#444", marginRight: 4 }}>·</span>}
+                              {(c.canonical?.name || c.id).toUpperCase()}
+                            </span>
+                          ))}
+                          {customComponents.length > 4 && (
+                            <span style={{ color: "#888" }}>+{customComponents.length - 4}</span>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </>
-                ) : (
-                  <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
-                    + SET CATEGORY
-                  </span>
-                )}
-              </div>
-
-              {/* STORED IN — blue. */}
-              <div
-                onClick={() => setTilePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#7eb8d4",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#7eb8d4" }}>{LABEL_KICKER("storedIn")}:</span>
-                {customTileId ? (() => {
-                  const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
-                  const found = allBuiltIns.find(t => t.id === customTileId);
-                  return (
-                    <>
-                      <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
-                      <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
-                        {(found?.label || "CUSTOM TILE").toUpperCase()}
-                      </span>
-                    </>
-                  );
-                })() : (
-                  <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
-                    + SET LOCATION
-                  </span>
-                )}
-              </div>
-
-              {/* STATE — muted purple. */}
-              <div
-                onClick={() => setStatePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#c7a8d4",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#c7a8d4" }}>{LABEL_KICKER("state")}:</span>
-                {customState ? (
-                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
-                    {customState.toUpperCase()}
-                  </span>
-                ) : (
-                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
-                    + SET STATE
-                  </span>
-                )}
-              </div>
-
-              {/* INGREDIENTS — yellow. Composition tags (multi-tag). */}
-              <div
-                onClick={() => setCustomComponentsOpen(true)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ color: "#f5c842" }}>{LABEL_KICKER("ingredients")}:</span>
-                {customComponents.length === 0 ? (
-                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
-                    + ADD
-                  </span>
-                ) : (
-                  <>
-                    {customComponents.slice(0, 4).map((c, i) => (
-                      <span key={c.id} style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
-                        {i > 0 && <span style={{ color: "#444", marginRight: 4 }}>·</span>}
-                        {(c.canonical?.name || c.id).toUpperCase()}
-                      </span>
-                    ))}
-                    {customComponents.length > 4 && (
-                      <span style={{ color: "#888" }}>+{customComponents.length - 4}</span>
-                    )}
-                  </>
-                )}
+                );
+              })()}
               </div>
 
               {/* Typeahead suggestion dropdown REMOVED. It used to fan
