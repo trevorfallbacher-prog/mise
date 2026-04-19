@@ -779,19 +779,10 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
                 const hasCurrent = units.some(u => u.id === item.unit);
                 const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
-                // Slider only makes sense when a container size has
-                // been declared (item.max > 0). Without an explicit
-                // package, "full" is undefined — the slider would be
-                // lying. Gate the render on hasPackage so the tile
-                // collapses cleanly to just amount + unit when the
-                // user hasn't declared a package yet.
-                const hasPackage = Number(item.max) > 0;
-                const maxVal = hasPackage ? Number(item.max) : 0;
-                const ratio = hasPackage ? Math.min(1, (Number(item.amount) || 0) / maxVal) : 0;
-                const sliderColor = ratio <= 0.25 ? "#ef4444"
-                  : ratio <= 0.5 ? "#f59e0b"
-                  : "#7ec87e";
-                const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
+                // Package math (hasPackage / maxVal / ratio / slider
+                // color + step) moved to the standalone PACKAGE
+                // section below the grid. QUANTITY's edit block now
+                // just handles amount + unit.
                 return (
                   <div
                     style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
@@ -816,43 +807,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       }, 150);
                     }}
                   >
-                    {/* Packaging chip row for edit-mode — same typical
-                        sizes that show up in AddItemModal, now available
-                        when you're modifying an existing row's quantity.
-                        Tap sets both amount AND unit; falls back silently
-                        when the canonical has no packaging data. */}
-                    {(() => {
-                      const canonSlug = item.canonicalId || item.ingredientId;
-                      const pkg = canonSlug ? getDbInfo(canonSlug)?.packaging : null;
-                      const sizes = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
-                      if (sizes.length === 0) return null;
-                      return (
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          {sizes.map((s, i) => {
-                            const active = String(s.amount) === String(item.amount) && (s.unit || "") === (item.unit || "");
-                            return (
-                              <button
-                                key={`${s.amount}-${s.unit}-${i}`}
-                                onClick={() => commit({ amount: Number(s.amount), unit: s.unit || item.unit, max: Math.max(Number(s.amount), 1) })}
-                                style={{
-                                  padding: "4px 10px",
-                                  background: active ? "#1a1608" : "transparent",
-                                  border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                                  color: active ? "#f5c842" : "#aaa",
-                                  borderRadius: 14,
-                                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                                  letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
-                                }}
-                              >
-                                {s.amount} {s.unit}
-                                {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()}
-
+                    {/* Package suggestion chips + FULL PKG input + slider
+                        moved OUT of QUANTITY into the standalone PACKAGE
+                        section below the grid — QUANTITY is now strictly
+                        "how much is left" and PACKAGE defines "what 100%
+                        means." Keeps the two concerns orthogonal in the
+                        UI instead of burying package inside quantity. */}
                     <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                       <input
                         type="number" inputMode="decimal" min="0" step="any"
@@ -957,66 +917,10 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                         </span>
                       )}
                     </div>
-                    {/* Package-size input — explicit user-settable
-                        "full container" size. Without this the
-                        slider has no reference for 100%. Leaving
-                        the field blank keeps max null (slider
-                        stays hidden). Typing a number commits it
-                        live; the slider then appears below. Chip
-                        tap above also fills this (chip commits
-                        both amount and max together). */}
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      marginTop: 2, paddingTop: 6,
-                      borderTop: "1px dashed #222",
-                    }}>
-                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", flexShrink: 0 }}>
-                        FULL PKG
-                      </span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0" step="any"
-                        value={hasPackage ? item.max : ""}
-                        placeholder="set size"
-                        onChange={e => {
-                          const v = e.target.value;
-                          // 0 (not null) = undeclared. DB column is
-                          // NOT NULL default 1; sending null would
-                          // be rejected.
-                          if (v === "") { commit({ max: 0 }); return; }
-                          const n = parseFloat(v);
-                          if (Number.isFinite(n) && n >= 0) commit({ max: n });
-                        }}
-                        onClick={e => e.stopPropagation()}
-                        style={{
-                          width: 64, padding: "3px 6px",
-                          background: "#0a0a0a",
-                          border: `1px solid ${hasPackage ? "#f5c842" : "#2a2a2a"}`,
-                          color: hasPackage ? "#f5c842" : "#888",
-                          borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
-                        }}
-                      />
-                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#888" }}>
-                        {item.unit || ""} {hasPackage ? "· full" : "· tells the slider what 100% means"}
-                      </span>
-                    </div>
-
-                    {/* Slide-to-estimate. Only renders when a
-                        package is defined. Half a bag of chips is
-                        eaten, nobody's weighing what's left — drag
-                        to what looks right. */}
-                    {hasPackage && (
-                      <input
-                        type="range"
-                        min="0" max={maxVal} step={step}
-                        value={Number(item.amount) || 0}
-                        onChange={e => commit({ amount: Number(e.target.value) })}
-                        aria-label={`Estimate ${item.name} remaining`}
-                        style={{ width: "100%", accentColor: sliderColor }}
-                      />
-                    )}
+                    {/* FULL PKG input + slide-to-estimate moved OUT —
+                        see the standalone PACKAGE section below the
+                        grid. QUANTITY's edit mode is now just the
+                        amount + unit pair. */}
                   </div>
                 );
               })() : (
@@ -1137,6 +1041,173 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               )}
             </div>
           </div>
+
+          {/* PACKAGE — top-level section (no longer buried in QUANTITY
+              edit). Defines what 100% means for this row's gauge:
+              "the bag holds 12oz, I have 6oz left" = half-full. Pairs
+              with QUANTITY (what's left) as orthogonal concepts.
+
+              Always visible, always user-editable — the FULL PKG
+              input writes straight to pantry_items.max, no admin
+              approval. Canonical-provided chips (from
+              ingredient_info.packaging.sizes) are SUGGESTIONS only;
+              the user can type any custom value in the free-text
+              input. Slider/gauge surfaces once a package size is
+              declared so "what's left" gets a visual reference.
+
+              Hidden in readOnly (scan preview) since the whole point
+              is direct inline editing. */}
+          {!readOnly && (() => {
+            const hasPackage = Number(item.max) > 0;
+            const canonSlug  = item.canonicalId || item.ingredientId;
+            const pkg        = canonSlug ? getDbInfo(canonSlug)?.packaging : null;
+            const sizes      = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
+            const maxVal     = hasPackage ? Number(item.max) : 0;
+            const ratio      = hasPackage ? Math.min(1, (Number(item.amount) || 0) / maxVal) : 0;
+            const sliderColor = ratio <= 0.25 ? "#ef4444"
+              : ratio <= 0.5 ? "#f59e0b"
+              : "#7ec87e";
+            const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
+            const amountDisplay = Number(item.amount || 0);
+            const pct = Math.round(ratio * 100);
+            return (
+              <div style={{
+                padding: "12px 14px", marginBottom: 12,
+                background: "#0f0f0f", border: "1px solid #1e1e1e",
+                borderRadius: 10,
+              }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#f5c842", letterSpacing: "0.08em",
+                  }}>
+                    PACKAGE
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                    color: "#888",
+                  }}>
+                    {hasPackage
+                      ? `${amountDisplay.toFixed(Number.isInteger(amountDisplay) ? 0 : 1)} of ${maxVal} ${item.unit || ""} · ${pct}% full`
+                      : "defines 100% for this row — tap FULL PKG to set size"}
+                  </div>
+                </div>
+
+                {/* FULL PKG input — free-text, always editable, no admin
+                    approval. Writes pantry_items.max directly. */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  marginBottom: (sizes.length > 0 || hasPackage) ? 10 : 0,
+                  flexWrap: "wrap",
+                }}>
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#666", letterSpacing: "0.08em", flexShrink: 0,
+                  }}>
+                    FULL PKG
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0" step="any"
+                    value={hasPackage ? item.max : ""}
+                    placeholder="set size"
+                    onChange={e => {
+                      const v = e.target.value;
+                      // 0 (not null) = undeclared. DB column is NOT NULL
+                      // default 1; sending null would be rejected.
+                      if (v === "") { commit({ max: 0 }); return; }
+                      const n = parseFloat(v);
+                      if (Number.isFinite(n) && n >= 0) commit({ max: n });
+                    }}
+                    onClick={e => e.stopPropagation()}
+                    style={{
+                      width: 80, padding: "4px 8px",
+                      background: "#0a0a0a",
+                      border: `1px solid ${hasPackage ? "#f5c842" : "#2a2a2a"}`,
+                      color: hasPackage ? "#f5c842" : "#888",
+                      borderRadius: 6,
+                      fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                    }}
+                  />
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: hasPackage ? "#aaa" : "#555",
+                  }}>
+                    {item.unit || ""}
+                  </span>
+                  {hasPackage && (
+                    <button
+                      onClick={e => { e.stopPropagation(); commit({ max: 0 }); }}
+                      style={{
+                        padding: "3px 8px",
+                        background: "transparent", border: "1px solid #2a2a2a",
+                        color: "#888", borderRadius: 4,
+                        fontFamily: "'DM Mono',monospace", fontSize: 9,
+                        letterSpacing: "0.06em", cursor: "pointer", marginLeft: "auto",
+                      }}
+                    >
+                      CLEAR
+                    </button>
+                  )}
+                </div>
+
+                {/* Canonical-provided suggestion chips. Tap fills
+                    max + unit in one shot. Admin-curated
+                    (ingredient_info.packaging.sizes) — shown as
+                    quick-picks ONLY; the user is never forced to
+                    pick from here, the free-text input above
+                    accepts any value. */}
+                {sizes.length > 0 && (
+                  <div style={{
+                    display: "flex", gap: 6, flexWrap: "wrap",
+                    marginBottom: hasPackage ? 10 : 0,
+                  }}>
+                    {sizes.map((s, i) => {
+                      const active = String(s.amount) === String(item.max) && (s.unit || "") === (item.unit || "");
+                      return (
+                        <button
+                          key={`${s.amount}-${s.unit}-${i}`}
+                          onClick={e => {
+                            e.stopPropagation();
+                            commit({ max: Number(s.amount), unit: s.unit || item.unit });
+                          }}
+                          style={{
+                            padding: "4px 10px",
+                            background: active ? "#1a1608" : "transparent",
+                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                            color: active ? "#f5c842" : "#aaa",
+                            borderRadius: 14,
+                            fontFamily: "'DM Mono',monospace", fontSize: 10,
+                            letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
+                          }}
+                        >
+                          {s.amount} {s.unit}
+                          {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Slide-to-estimate — only renders when a package is
+                    declared so the gauge has a reference for 100%.
+                    Half a bag of chips is eaten, nobody's weighing
+                    what's left; drag to what looks right. */}
+                {hasPackage && (
+                  <input
+                    type="range"
+                    min="0" max={maxVal} step={step}
+                    value={Number(item.amount) || 0}
+                    onChange={e => commit({ amount: Number(e.target.value) })}
+                    onClick={e => e.stopPropagation()}
+                    aria-label={`Estimate ${item.name} remaining`}
+                    style={{ width: "100%", accentColor: sliderColor }}
+                  />
+                )}
+              </div>
+            );
+          })()}
 
           {/* + 1 PACKAGE — duplicate this row in place. The grid then
               renders the pair as a stacked card (×2 + fan). Hidden

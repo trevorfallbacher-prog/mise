@@ -2736,61 +2736,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               );
             })()}
 
-            {/* Packaging chips — only render when the chosen canonical
-                carries `packaging.sizes` in its ingredient_info.
-                Tapping a chip pre-fills amount + unit with the
-                typical package size so the user doesn't have to
-                re-type what "1 can of black beans" means. The chip
-                also primes `max` so the gauge represents one
-                package, matching how the reserves stepper expects
-                package-mode rows to be shaped. */}
-            {(() => {
-              const primaryId = (customComponents[0]?.canonical?.id) || null;
-              const pkg = primaryId ? dbMap?.[primaryId]?.packaging : null;
-              const sizes = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
-              if (sizes.length === 0) return null;
-              const selectedIdx = sizes.findIndex(
-                s => String(s.amount) === String(amount) && (s.unit || "") === (customUnit || "")
-              );
-              return (
-                <div style={{
-                  padding: "10px 12px", marginBottom: 10,
-                  background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10,
-                }}>
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em", marginBottom: 6 }}>
-                    PACKAGE SIZE
-                  </div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {sizes.map((s, i) => {
-                      const active = i === selectedIdx;
-                      return (
-                        <button
-                          key={`${s.amount}-${s.unit}-${i}`}
-                          onClick={() => {
-                            setAmount(String(s.amount));
-                            setCustomUnit(s.unit || "");
-                          }}
-                          style={{
-                            padding: "6px 10px",
-                            background: active ? "#1a1608" : "transparent",
-                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                            color: active ? "#f5c842" : "#bbb",
-                            borderRadius: 16,
-                            fontFamily: "'DM Mono',monospace", fontSize: 10,
-                            letterSpacing: "0.04em",
-                            cursor: "pointer",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {s.amount} {s.unit}
-                          {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })()}
+            {/* PACKAGE + STACKING moved BELOW the quantity grid into
+                their own standalone sections — they used to live
+                buried inside the QUANTITY tile (FULL PKG + × instance
+                stepper) which made package feel like a subfield of
+                quantity. They're orthogonal: QUANTITY = how much I'm
+                adding; PACKAGE = how big the container is; STACKING =
+                how many containers I'm adding. */}
 
             {/* Quantity + Location + Expires — 3-column grid mirroring
                 ItemCard's inline edit row. Location (fridge/pantry/freezer)
@@ -2827,85 +2779,9 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   />
                 </div>
 
-                {/* PACKAGE SIZE — optional "full container" declaration.
-                    Drives the ItemCard slider and the SEALED vs OPENED
-                    signal (amount == max → sealed; amount < max →
-                    opened). Blank = undeclared. */}
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
-                }}>
-                  <span style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: packageSize ? "#f5c842" : "#555",
-                    letterSpacing: "0.1em", flexShrink: 0,
-                  }}>
-                    FULL PKG
-                  </span>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0" step="any"
-                    value={packageSize}
-                    onChange={e => setPackageSize(e.target.value)}
-                    placeholder="optional"
-                    style={{
-                      flex: 1, minWidth: 0,
-                      background: "transparent", border: "none", outline: "none",
-                      fontFamily: "'DM Mono',monospace", fontSize: 12,
-                      color: packageSize ? "#f5c842" : "#888",
-                      padding: 0,
-                    }}
-                  />
-                </div>
-
-                {/* Instance-count stepper. "+N" sibling rows this save
-                    creates, so the render layer stacks a 50-can Costco
-                    run into one card. See migration 0057's fan-out
-                    for the receipt-scan equivalent. */}
-                <div style={{
-                  display: "flex", alignItems: "center", justifyContent: "space-between",
-                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
-                }}>
-                  <span style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: instanceCount > 1 ? "#f5c842" : "#555",
-                    letterSpacing: "0.1em",
-                  }}>
-                    {instanceCount > 1 ? `×${instanceCount} PACKAGES` : "1 PACKAGE"}
-                  </span>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    <button
-                      onClick={() => setInstanceCount(n => Math.max(1, n - 1))}
-                      disabled={instanceCount <= 1}
-                      aria-label="decrement packages"
-                      style={{
-                        width: 22, height: 22,
-                        background: "transparent",
-                        border: "1px solid #2a2a2a",
-                        color: instanceCount <= 1 ? "#333" : "#888",
-                        borderRadius: 4, cursor: instanceCount <= 1 ? "not-allowed" : "pointer",
-                        fontFamily: "'DM Mono',monospace", fontSize: 12,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        lineHeight: 1, padding: 0,
-                      }}
-                    >−</button>
-                    <button
-                      onClick={() => setInstanceCount(n => n + 1)}
-                      aria-label="increment packages"
-                      style={{
-                        width: 22, height: 22,
-                        background: "transparent",
-                        border: "1px solid #2a2a2a",
-                        color: "#888",
-                        borderRadius: 4, cursor: "pointer",
-                        fontFamily: "'DM Mono',monospace", fontSize: 12,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        lineHeight: 1, padding: 0,
-                      }}
-                    >+</button>
-                  </div>
-                </div>
+                {/* FULL PKG input + instance stepper moved OUT of
+                    QUANTITY into the standalone PACKAGE + STACKING
+                    sections below the grid. */}
               </div>
 
               <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
@@ -2959,6 +2835,210 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     padding: "4px 0 0", marginTop: 0,
                   }}
                 />
+              </div>
+            </div>
+
+            {/* PACKAGE — top-level section (no longer buried in
+                QUANTITY). Defines what 100% means for this row's
+                gauge; pairs with QUANTITY ("how much" I'm adding
+                right now) as orthogonal concepts. Per-item value
+                writes straight to pantry_items.max on save, no
+                admin approval. Canonical-provided chips (admin-
+                curated ingredient_info.packaging.sizes) are
+                suggestions only — the free-text FULL PKG input
+                accepts any user value. */}
+            {(() => {
+              const primaryId = (customComponents[0]?.canonical?.id) || null;
+              const pkg       = primaryId ? dbMap?.[primaryId]?.packaging : null;
+              const sizes     = Array.isArray(pkg?.sizes) ? pkg.sizes : [];
+              const pkgN      = parseFloat(packageSize);
+              const hasPkg    = Number.isFinite(pkgN) && pkgN > 0;
+              const amtN      = parseFloat(amount);
+              const hasAmt    = Number.isFinite(amtN) && amtN >= 0;
+              const pct       = (hasPkg && hasAmt)
+                ? Math.round(Math.min(1, amtN / pkgN) * 100)
+                : null;
+              return (
+                <div style={{
+                  padding: "12px 14px", marginBottom: 14,
+                  background: "#0f0f0f", border: "1px solid #1e1e1e",
+                  borderRadius: 10,
+                }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+                    <div style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: "#f5c842", letterSpacing: "0.08em",
+                    }}>
+                      PACKAGE
+                    </div>
+                    <div style={{
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                      color: "#888",
+                    }}>
+                      {hasPkg
+                        ? (pct != null
+                            ? `${amtN} of ${pkgN} ${customUnit || ""} · ${pct}% full at save`
+                            : `full size: ${pkgN} ${customUnit || ""}`)
+                        : "optional — set a full package size and QUANTITY becomes % filled"}
+                    </div>
+                  </div>
+
+                  {/* FULL PKG — free-text, user-settable, no canonical
+                      required. Drives the ItemCard slider + SEALED vs
+                      OPENED signal after save. */}
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    marginBottom: sizes.length > 0 ? 10 : 0,
+                    flexWrap: "wrap",
+                  }}>
+                    <span style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#666", letterSpacing: "0.08em", flexShrink: 0,
+                    }}>
+                      FULL PKG
+                    </span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0" step="any"
+                      value={packageSize}
+                      onChange={e => setPackageSize(e.target.value)}
+                      placeholder="set size"
+                      style={{
+                        width: 90, padding: "4px 8px",
+                        background: "#0a0a0a",
+                        border: `1px solid ${hasPkg ? "#f5c842" : "#2a2a2a"}`,
+                        color: hasPkg ? "#f5c842" : "#888",
+                        borderRadius: 6,
+                        fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                      }}
+                    />
+                    <span style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      color: hasPkg ? "#aaa" : "#555",
+                    }}>
+                      {customUnit || ""}
+                    </span>
+                    {hasPkg && (
+                      <button
+                        onClick={() => setPackageSize("")}
+                        style={{
+                          padding: "3px 8px",
+                          background: "transparent", border: "1px solid #2a2a2a",
+                          color: "#888", borderRadius: 4,
+                          fontFamily: "'DM Mono',monospace", fontSize: 9,
+                          letterSpacing: "0.06em", cursor: "pointer", marginLeft: "auto",
+                        }}
+                      >
+                        CLEAR
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Canonical suggestion chips (admin-curated).
+                      Tap fills both PACKAGE SIZE and QUANTITY unit
+                      in one shot. Skipped when the canonical has no
+                      packaging bank. */}
+                  {sizes.length > 0 && (
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {sizes.map((s, i) => {
+                        const active = String(s.amount) === String(packageSize)
+                          && (s.unit || "") === (customUnit || "");
+                        return (
+                          <button
+                            key={`${s.amount}-${s.unit}-${i}`}
+                            onClick={() => {
+                              setPackageSize(String(s.amount));
+                              if (s.unit) setCustomUnit(s.unit);
+                            }}
+                            style={{
+                              padding: "4px 10px",
+                              background: active ? "#1a1608" : "transparent",
+                              border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                              color: active ? "#f5c842" : "#bbb",
+                              borderRadius: 14,
+                              fontFamily: "'DM Mono',monospace", fontSize: 10,
+                              letterSpacing: "0.04em", cursor: "pointer", whiteSpace: "nowrap",
+                            }}
+                          >
+                            {s.amount} {s.unit}
+                            {s.label ? <span style={{ color: "#777", marginLeft: 4 }}>· {s.label}</span> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* STACKING — how many identical packages the save
+                creates as sibling rows (the render layer groups
+                them into one stacked card). Also moved out of
+                QUANTITY — this is a different axis from "how much
+                is in one package." */}
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "12px 14px", marginBottom: 14,
+              background: "#0f0f0f", border: "1px solid #1e1e1e",
+              borderRadius: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: instanceCount > 1 ? "#f5c842" : "#888",
+                  letterSpacing: "0.08em",
+                }}>
+                  STACKING
+                </div>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                  color: "#888", marginTop: 2,
+                }}>
+                  {instanceCount > 1
+                    ? `Adding ×${instanceCount} identical packages as sibling rows`
+                    : "Adding 1 package — tap + to add multiple (Costco run)"}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                <button
+                  onClick={() => setInstanceCount(n => Math.max(1, n - 1))}
+                  disabled={instanceCount <= 1}
+                  aria-label="decrement packages"
+                  style={{
+                    width: 28, height: 28,
+                    background: "transparent",
+                    border: "1px solid #2a2a2a",
+                    color: instanceCount <= 1 ? "#333" : "#bbb",
+                    borderRadius: 6,
+                    cursor: instanceCount <= 1 ? "not-allowed" : "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1, padding: 0,
+                  }}
+                >−</button>
+                <div style={{
+                  minWidth: 32, padding: "0 6px",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: "'DM Mono',monospace", fontSize: 12,
+                  color: instanceCount > 1 ? "#f5c842" : "#aaa",
+                }}>
+                  ×{instanceCount}
+                </div>
+                <button
+                  onClick={() => setInstanceCount(n => n + 1)}
+                  aria-label="increment packages"
+                  style={{
+                    width: 28, height: 28,
+                    background: "transparent",
+                    border: "1px solid #2a2a2a",
+                    color: "#bbb",
+                    borderRadius: 6, cursor: "pointer",
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    lineHeight: 1, padding: 0,
+                  }}
+                >+</button>
               </div>
             </div>
 
