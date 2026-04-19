@@ -228,7 +228,8 @@ export const INGREDIENTS = [
     defaultUnit: "quart",
   },
   {
-    id: "heavy_cream", name: "Heavy Cream", emoji: "🥛", category: "dairy",
+    id: "heavy_cream", name: "Heavy Cream", shortName: "Heavy",
+    parentId: "milk_hub", emoji: "🥛", category: "dairy",
     units: [
       { id: "pint",  label: "pints", toBase: 473 },
       { id: "quart", label: "quarts", toBase: 946 },
