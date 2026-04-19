@@ -476,14 +476,14 @@ export default function CreateMenu({
     );
   }
 
-  // Default — the chooser. Cards grouped into QUICK COOK (library,
-  // AI draft, custom builder) and QUICK KITCHEN ADD (scan, manual).
-  // Order within QUICK COOK: pick-a-recipe first (fastest path when
-  // you know what you want), AI second (when you don't), custom
-  // last (you're authoring from scratch). Scan is top of the add
-  // group since it's faster for packaged goods; manual is the
-  // fallback. No sub-phases — every card is one tap from the
-  // chooser to the action.
+  // Default — the chooser. Cards grouped into QUICK COOK (AI draft,
+  // library, custom builder) and QUICK KITCHEN ADD (scan, manual).
+  // Order within QUICK COOK: AI first (the new / featured path —
+  // user directive), pick-a-recipe second (library when you know
+  // what you want), custom last (authoring from scratch). Scan is
+  // top of the add group since it's faster for packaged goods;
+  // manual is the fallback. No sub-phases — every card is one tap
+  // from the chooser to the action.
   return (
     <div style={OVERLAY_STYLE}>
       <div style={{ padding: "24px 20px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -505,6 +505,13 @@ export default function CreateMenu({
         <SectionDivider label="QUICK COOK" />
 
         <BigCard
+          emoji="✨"
+          accent="#c7a8d4"
+          title="AI recipe from pantry"
+          blurb="Claude drafts a recipe using what's on your shelves. Tweak it, then cook."
+          onClick={() => setMode("ai")}
+        />
+        <BigCard
           emoji="📖"
           accent="#7eb8d4"
           title="Pick a recipe or meal"
@@ -514,13 +521,6 @@ export default function CreateMenu({
               : ""
           }${RECIPES.length} bundled templates.`}
           onClick={() => setMode("template")}
-        />
-        <BigCard
-          emoji="✨"
-          accent="#c7a8d4"
-          title="AI recipe from pantry"
-          blurb="Claude drafts a recipe using what's on your shelves. Tweak it, then cook."
-          onClick={() => setMode("ai")}
         />
         <BigCard
           emoji="✏️"
