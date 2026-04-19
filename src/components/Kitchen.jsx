@@ -2550,7 +2550,22 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 )}
               </div>
 
+              {/* Typeahead suggestion dropdown REMOVED. It used to fan
+                  out template + canonical substring matches below the
+                  name input, but it was a firehose — showing 10+
+                  cheese canonicals when the user typed "f" buries
+                  the signal. Per user: "item names are the most
+                  throw-away thing we have." Canonical binding now
+                  happens via the explicit CANONICAL tap line which
+                  opens LinkIngredient (targeted picker, not
+                  dump-everything). Free-text name still lands as-is
+                  if the user doesn't bind a canonical. The original
+                  dropdown JSX below is kept as a short-circuited
+                  no-op so the surrounding closure + braces still
+                  balance; it renders nothing. */}
               {(() => {
+                return null;
+                // eslint-disable-next-line no-unreachable
                 const typed = (customName || "").trim().toLowerCase();
                 if (!typed) return null;
 
@@ -2767,40 +2782,64 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 replaces the old 6-chip food-category row; that field was
                 the ingredient classification, which now lives in the
                 FOOD CATEGORY tap line above. */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 18 }}>
-              <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={e => setAmount(e.target.value)}
-                    placeholder="0"
-                    style={{
-                      width: "100%",
-                      background: "transparent", border: "none", outline: "none",
-                      fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4",
-                      padding: 0, minWidth: 0,
-                    }}
-                  />
-                  <input
-                    value={customUnit}
-                    onChange={e => setCustomUnit(e.target.value)}
-                    placeholder="unit"
-                    style={{
-                      width: 48,
-                      background: "transparent", border: "none", outline: "none",
-                      fontFamily: "'DM Mono',monospace", fontSize: 12, color: "#aaa",
-                      padding: 0, minWidth: 0,
-                    }}
-                  />
-                </div>
+            {(() => {
+              // Gate flag for the QUANTITY tile. Until the user has
+              // declared PACKAGE SIZE, there's no denominator for
+              // "how much is left" — disable the input rather than
+              // let the user type a number that can't be contextualized.
+              const gridPkgN   = parseFloat(packageSize);
+              const gridHasPkg = Number.isFinite(gridPkgN) && gridPkgN > 0;
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 18 }}>
+                  <div style={{
+                    padding: "10px 12px",
+                    background: gridHasPkg ? "#0f0f0f" : "#0a0a0a",
+                    border: "1px solid #1e1e1e",
+                    borderRadius: 10,
+                    opacity: gridHasPkg ? 1 : 0.55,
+                  }}>
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
+                    {gridHasPkg ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          value={amount}
+                          onChange={e => setAmount(e.target.value)}
+                          placeholder="0"
+                          style={{
+                            width: "100%",
+                            background: "transparent", border: "none", outline: "none",
+                            fontFamily: "'DM Mono',monospace", fontSize: 14, color: "#f0ece4",
+                            padding: 0, minWidth: 0,
+                          }}
+                        />
+                        {/* Unit is STATIC here — it's declared in the
+                            PACKAGE section below and inherited into
+                            QUANTITY as a read-only label. Package
+                            defines the measurement, quantity just
+                            reports how much of it remains. */}
+                        <span style={{
+                          fontFamily: "'DM Mono',monospace", fontSize: 12,
+                          color: "#aaa", flexShrink: 0, paddingLeft: 4,
+                        }}>
+                          {customUnit || "—"}
+                        </span>
+                      </div>
+                    ) : (
+                      <div style={{
+                        marginTop: 4,
+                        fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                        color: "#666", fontStyle: "italic",
+                      }}>
+                        set PACKAGE SIZE below first
+                      </div>
+                    )}
 
-                {/* FULL PKG input + instance stepper moved OUT of
-                    QUANTITY into the standalone PACKAGE + STACKING
-                    sections below the grid. */}
-              </div>
+                    {/* FULL PKG input + instance stepper moved OUT of
+                        QUANTITY into the standalone PACKAGE + STACKING
+                        sections below the grid. */}
+                  </div>
 
               <div style={{ padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>LOCATION</div>
@@ -2854,7 +2893,9 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                   }}
                 />
               </div>
-            </div>
+                </div>
+              );
+            })()}
 
             {/* PACKAGE — top-level section (no longer buried in
                 QUANTITY). Defines what 100% means for this row's
@@ -2949,12 +2990,23 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                         fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
                       }}
                     />
-                    <span style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 11,
-                      color: hasPkg ? "#aaa" : "#555",
-                    }}>
-                      {customUnit || ""}
-                    </span>
+                    {/* UNIT input lives here, not in QUANTITY. Package
+                        size declares the measurement; QUANTITY inherits
+                        it as static text. Free-text so the user can type
+                        any unit (oz, lb, g, cup, bottle, etc.). */}
+                    <input
+                      value={customUnit}
+                      onChange={e => setCustomUnit(e.target.value)}
+                      placeholder="unit"
+                      style={{
+                        width: 70, padding: "4px 8px",
+                        background: "#0a0a0a",
+                        border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
+                        color: customUnit ? "#f5c842" : "#888",
+                        borderRadius: 6,
+                        fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                      }}
+                    />
                     {hasPkg && (
                       <button
                         onClick={() => setPackageSize("")}
