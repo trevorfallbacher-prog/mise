@@ -1,21 +1,19 @@
 import { useEffect, useRef, useState } from "react";
+import { decodeBarcodeFromImage } from "../lib/lookupBarcode";
 
-// Barcode reader. Uses the native BarcodeDetector API when available
-// (Chrome, Edge, Android WebView, recent Safari/iOS) and falls back
-// to a typed-input surface when it isn't — the user reads the barcode
-// off the package and types it in.
+// Barcode reader with three fallback layers:
+//   1. Live BarcodeDetector (Chrome/Edge/Android, Safari 17+ proper).
+//   2. Photo-capture via <input type="file" capture="environment"> →
+//      Claude vision decodes the human-readable digits printed below
+//      the bars. Works on iOS PWA standalone mode and any browser
+//      with camera access, even when BarcodeDetector is missing.
+//   3. Typed input — the user reads the digits and types them.
 //
 // Emits on the `onDetected(barcode)` callback once per session (the
 // stream stops immediately after the first read so we don't spam the
 // caller with duplicates). `onCancel` closes without firing. The
 // component renders as a full-screen overlay; the caller decides
 // when to mount/unmount it.
-//
-// Supported formats map to the EAN/UPC families that OFF indexes:
-//   ean_13, ean_8, upc_a, upc_e, itf (ITF-14 for cases of goods)
-// QR / pdf_417 / etc are deliberately OMITTED — the lookup edge fn
-// validates digits-only 8-14 chars, and we don't want to show a
-// hit on a QR code that routes somewhere irrelevant.
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
 
@@ -24,9 +22,12 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
   const streamRef  = useRef(null);
   const detectorRef = useRef(null);
   const tickRef    = useRef(null);
+  const photoInputRef = useRef(null);
   const [typed, setTyped]     = useState("");
   const [state, setState]     = useState("init");  // init | scanning | native_unavailable | camera_denied | error
   const [errMsg, setErrMsg]   = useState("");
+  const [decoding, setDecoding] = useState(false);
+  const [decodeMsg, setDecodeMsg] = useState("");
 
   // Native-first boot. Extracted into a ref-stable function so the
   // "TRY CAMERA AGAIN" button in the denied state can re-run the
@@ -153,6 +154,54 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
     onDetected?.(clean);
   }
 
+  // Photo-capture fallback. Native camera via <input type="file"
+  // capture="environment"> — same mechanism the meal-photo upload
+  // uses, which works in every iOS browser including PWA standalone
+  // mode (where BarcodeDetector + getUserMedia can both be blocked).
+  // File → base64 → decode-barcode-image edge fn (Claude vision reads
+  // the digits) → onDetected with the returned barcode.
+  async function handlePhotoCapture(e) {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    // Reset the input so selecting the same file twice re-fires onChange.
+    if (photoInputRef.current) photoInputRef.current.value = "";
+    const mediaType = file.type && /^image\/(jpeg|png|webp)$/.test(file.type)
+      ? file.type
+      : "image/jpeg";
+    setDecoding(true);
+    setDecodeMsg("Reading the barcode…");
+    try {
+      const base64 = await fileToBase64(file);
+      const res = await decodeBarcodeFromImage(base64, mediaType);
+      if (res?.found && res.barcode) {
+        stopStream();
+        onDetected?.(res.barcode);
+        return;
+      }
+      // Human-facing reason map — the edge fn returns machine strings.
+      const reason = res?.reason === "no_barcode_visible"
+        ? "No barcode found in the photo. Try again with the barcode filling more of the frame."
+        : res?.reason === "not_a_product"
+          ? "That looks like a QR code or something else, not a product barcode."
+          : res?.reason === "unreadable"
+            ? "Barcode too blurry or cut off. Hold steady, fill the frame, plenty of light."
+            : "Couldn't decode that photo. Try again or type the digits.";
+      setDecodeMsg(reason);
+    } catch (err) {
+      console.error("[barcode] photo decode failed:", err);
+      setDecodeMsg("Photo decode failed. Try again or type the digits.");
+    } finally {
+      setDecoding(false);
+    }
+  }
+
+  // Trigger the hidden file input. Separated from the button's inline
+  // onClick for clarity and so the same helper can fire from multiple
+  // surfaces (native_unavailable state, camera_denied state, etc.).
+  function openPhotoCapture() {
+    if (photoInputRef.current) photoInputRef.current.click();
+  }
+
   const showTyped = state === "native_unavailable" || state === "camera_denied" || state === "error";
 
   return (
@@ -217,8 +266,52 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
             fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 300,
             fontStyle: "italic", color: "#f0ece4", marginBottom: 10,
           }}>
-            {state === "camera_denied" ? "Camera blocked by browser" : "Type the barcode"}
+            {state === "camera_denied" ? "Camera blocked by browser" : "Scan the barcode"}
           </div>
+          {/* Photo-capture CTA — works on every mobile browser that
+              allows the native camera via <input type="file" capture>.
+              The same mechanism the app's meal-photo upload uses, so
+              iOS PWA standalones that can't do live BarcodeDetector
+              still get a working path. On decode miss, inline message
+              tells the user why and lets them retry. */}
+          <button
+            type="button"
+            onClick={openPhotoCapture}
+            disabled={decoding}
+            style={{
+              width: "100%", padding: "14px",
+              background: decoding
+                ? "#2a2a2a"
+                : "linear-gradient(135deg, #c7a8d4 0%, #a389b8 100%)",
+              color: decoding ? "#666" : "#111",
+              border: "none", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+              letterSpacing: "0.1em",
+              cursor: decoding ? "wait" : "pointer",
+              marginBottom: 12,
+            }}
+          >
+            {decoding ? "READING…" : "📸 TAKE PHOTO OF BARCODE"}
+          </button>
+          {decodeMsg && !decoding && (
+            <div style={{
+              marginBottom: 14, padding: "10px 12px",
+              background: "#1a1510", border: "1px solid #3a2820",
+              borderRadius: 10,
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+              color: "#e0b090", lineHeight: 1.5,
+            }}>
+              {decodeMsg}
+            </div>
+          )}
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handlePhotoCapture}
+            style={{ display: "none" }}
+          />
           {state === "camera_denied" ? (
             // Denied-state UX. The browser saves "block" per origin
             // and there's no JS API to force-forget it — users have
@@ -268,24 +361,24 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
               >
                 ↻ TRY CAMERA AGAIN
               </button>
-              <div style={{
-                fontFamily: "'DM Mono',monospace", fontSize: 9,
-                color: "#666", letterSpacing: "0.1em",
-                marginBottom: 10,
-              }}>
-                OR TYPE THE BARCODE
-              </div>
             </>
           ) : (
             <div style={{
               fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888",
-              lineHeight: 1.5, marginBottom: 20,
+              lineHeight: 1.5, marginBottom: 16,
             }}>
               {state === "native_unavailable"
-                ? "Your browser doesn't support camera barcode scanning. Read the digits off the package and type them here."
-                : "Something went wrong with the camera. Type it in."}
+                ? "Your browser can't do live barcode scanning. Snap a photo instead — we'll read the digits off it. Or type them yourself."
+                : "Something went wrong with the live scanner. Take a photo instead, or type the digits."}
             </div>
           )}
+          <div style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            color: "#666", letterSpacing: "0.1em",
+            marginBottom: 10,
+          }}>
+            OR TYPE THE BARCODE
+          </div>
           <form onSubmit={handleManualSubmit}>
             <input
               autoFocus
@@ -332,6 +425,22 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       )}
     </div>
   );
+}
+
+// Read a File as a base64 string (no data: prefix), matching the edge
+// function's expected payload. FileReader's dataURL result is
+// "data:<mime>;base64,<payload>"; we strip through the first comma.
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
 }
 
 const iconBtn = {

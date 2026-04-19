@@ -16,6 +16,31 @@
 
 import { supabase } from "./supabase";
 
+// Photo-capture fallback for devices that can't do live BarcodeDetector
+// (iOS PWA standalones, Firefox mobile, older browsers). Sends a photo
+// to the decode-barcode-image edge function, which uses Claude vision
+// to read the human-readable digits printed below every UPC/EAN
+// barcode. Returns { found: true, barcode } or { found: false, reason }.
+//
+// `image` is a base64 string WITHOUT the data: prefix. `mediaType`
+// is one of image/jpeg | image/png | image/webp.
+export async function decodeBarcodeFromImage(image, mediaType = "image/jpeg") {
+  if (!image) return { found: false, reason: "no_image" };
+  const { data, error } = await supabase.functions.invoke("decode-barcode-image", {
+    body: { image, mediaType },
+  });
+  if (error) {
+    let detail = "";
+    const ctx = error.context;
+    if (ctx && typeof ctx.text === "function") {
+      try { detail = await ctx.text(); } catch { /* noop */ }
+    }
+    console.error("[decode-barcode-image] edge fn failed:", error.message, detail);
+    return { found: false, reason: "decode_failed" };
+  }
+  return data || { found: false, reason: "empty_response" };
+}
+
 export async function lookupBarcode(barcode, { brandNutritionRows = [] } = {}) {
   const normalized = String(barcode || "").trim();
   if (!/^\d{8,14}$/.test(normalized)) {
