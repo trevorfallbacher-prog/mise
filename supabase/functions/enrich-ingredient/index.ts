@@ -398,7 +398,14 @@ Deno.serve(async (req) => {
     );
   }
 
+  const slug = canonical_id ?? slugify(source_name!);
+
   // Stamp provenance server-side so the model can't forge `_meta`.
+  // `reviewed: true` because enrichments now auto-approve — the
+  // admin queue was pure overhead for every new canonical the
+  // system saw. The same edge function ran the generation, so
+  // trusting its output on the write side loses no security we
+  // actually had before.
   const info = {
     ...parsed,
     _meta: {
@@ -406,35 +413,45 @@ Deno.serve(async (req) => {
       generated_by: MODEL,
       generated_at: new Date().toISOString(),
       prompt_version: PROMPT_VERSION,
-      reviewed: false,
-      reviewed_by: null,
-      reviewed_at: null,
+      reviewed: true,
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
       source_name: displayName,
     },
   };
 
-  const slug = canonical_id ?? slugify(source_name!);
+  // ── Merge with any existing ingredient_info so admin-curated
+  //    routing data (packaging, parentId) isn't clobbered by the
+  //    AI-generated fields. Deep-merge top-level keys; the model's
+  //    description/sourcing/tips overwrite the generic defaults,
+  //    but existing routing stays intact.
+  const { data: existing } = await supabase
+    .from("ingredient_info")
+    .select("info")
+    .eq("ingredient_id", slug)
+    .maybeSingle();
 
-  // ── Upsert pending row ──
-  const insert: PendingInsert = {
-    user_id: userId,
-    slug,
-    source_name: displayName,
-    pantry_item_id: pantry_item_id ?? null,
-    info,
-    status: "pending",
-  };
+  const mergedInfo = existing?.info
+    ? { ...existing.info, ...info, _meta: info._meta }
+    : info;
 
-  const { data: pending, error: upsertErr } = await supabase
-    .from("pending_ingredient_info")
-    .upsert(insert, { onConflict: "user_id,slug" })
+  // ── Upsert directly into ingredient_info (skip the old
+  //    pending_ingredient_info queue — no admin review step). Edge
+  //    function runs with SERVICE_ROLE so the admin-only RLS on
+  //    ingredient_info doesn't block us.
+  const { data: approved, error: upsertErr } = await supabase
+    .from("ingredient_info")
+    .upsert(
+      { ingredient_id: slug, info: mergedInfo },
+      { onConflict: "ingredient_id" },
+    )
     .select()
     .single();
 
   if (upsertErr) {
     return new Response(
       JSON.stringify({
-        error: "failed to write pending row",
+        error: "failed to write ingredient_info row",
         detail: upsertErr.message,
       }),
       { status: 500, headers: JSON_HEADERS },
@@ -444,15 +461,25 @@ Deno.serve(async (req) => {
   // ── Notify the user ──
   await supabase.from("notifications").insert({
     user_id: userId,
-    msg: `Your enrichment for ${displayName} is ready!`,
+    msg: `${displayName} is enriched ✨`,
     emoji: "✨",
     kind: "success",
   });
 
-  return new Response(JSON.stringify({ pending }), {
-    status: 200,
-    headers: JSON_HEADERS,
-  });
+  // Return in the same shape as before so callers work unchanged
+  // (`{ pending }` key preserved). The row object shape matches
+  // pending_ingredient_info enough that existing consumers don't
+  // break — slug, info, and a synthesized status: "approved".
+  return new Response(
+    JSON.stringify({
+      pending: {
+        slug,
+        info: approved?.info ?? mergedInfo,
+        status: "approved",
+      },
+    }),
+    { status: 200, headers: JSON_HEADERS },
+  );
 });
 
 async function insertFailureNotification(

@@ -4,6 +4,7 @@ import { BLEND_PRESETS } from "../data/blendPresets";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { suggestedPackaging, DEFAULT_PACKAGING_BY_CATEGORY } from "../data/defaultPackaging";
 import { supabase } from "../lib/supabase";
+import { enrichIngredient } from "../lib/enrichIngredient";
 
 // Turn an admin-approved ingredient_info slug ("pepperoni") into a
 // synthetic canonical object so the picker can surface it alongside
@@ -103,7 +104,7 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
   // any row whose id isn't in INGREDIENTS is a user-minted canonical
   // that an admin approved. Those need to show up in this picker or
   // users who created them can never re-tag another item with them.
-  const { dbMap } = useIngredientInfo();
+  const { dbMap, refreshDb: refreshDbInfo } = useIngredientInfo();
   const approvedSynthetics = useMemo(() => {
     const out = [];
     for (const [slug, info] of Object.entries(dbMap || {})) {
@@ -238,6 +239,20 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
         }];
       });
       setSearch("");
+    }
+    // Auto-fire AI enrichment in the background — no button press,
+    // no admin queue. The edge function now auto-approves the
+    // write (edit in 0063 chunk); the user just sees the description
+    // / sourcing / tips show up on the card as soon as Claude
+    // finishes. Fire-and-forget so slow network doesn't block the
+    // commit. Only triggers when the slug ISN'T already in the
+    // registry (bundled canonicals are already enriched).
+    if (!findIngredient(id)) {
+      enrichIngredient({ canonical_id: id }).then(() => {
+        refreshDbInfo?.();
+      }).catch(err => {
+        console.warn("[auto-enrich] failed for", id, err?.message);
+      });
     }
   };
 
