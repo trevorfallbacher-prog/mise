@@ -1918,6 +1918,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     if (!ing) return;
     const category = ing.category || "pantry";
     setCustomCategory(category);
+    // Unit inference — bind the canonical's defaultUnit when the
+    // user hasn't already picked a unit. Otherwise leave their
+    // pick alone. Vinegar → fl_oz, milk → gallon, butter → oz,
+    // meats → lb, etc. — each bundled canonical carries its own
+    // default that's more accurate than a category-wide guess.
+    if (ing.defaultUnit) {
+      setCustomUnit(prev => prev || ing.defaultUnit);
+    }
     setCustomLocation(prev => {
       if (prev) return prev;
       const loc = defaultLocationForCategory(category);
@@ -3125,21 +3133,71 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                           boxSizing: "border-box",
                         }}
                       />
-                      <input
-                        value={customUnit}
-                        onChange={e => setCustomUnit(e.target.value)}
-                        placeholder="unit"
-                        style={{
-                          width: "100%",
-                          padding: "4px 8px",
-                          background: "#0a0a0a",
-                          border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
-                          color: customUnit ? "#f5c842" : "#888",
-                          borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
-                          boxSizing: "border-box",
-                        }}
-                      />
+                      {/* Unit dropdown — derived from the bound
+                          canonical's units ladder when set, else
+                          inferred from emoji+category via the
+                          existing inferUnitsForScanned helper. No
+                          more free-text typing: vinegar → fl_oz /
+                          bottle / ml; milk → gallon / quart / pint /
+                          cup; meat → lb / oz / kg. Auto-pre-selects
+                          the canonical's defaultUnit on bind so the
+                          user just picks PACKAGE SIZE number and
+                          saves. Falls through to a free-text input
+                          only when the user picks "+ custom…" for
+                          an off-ladder unit (pack, wheel, sleeve). */}
+                      {(() => {
+                        const canon = customCanonicalId ? findIngredient(customCanonicalId) : null;
+                        const units = canon?.units
+                          || inferUnitsForScanned({
+                            emoji: canon?.emoji || "",
+                            category: canon?.category || customCategory || "pantry",
+                            unit: customUnit,
+                          }).units;
+                        const hasCurrent = units.some(u => u.id === customUnit);
+                        const opts = hasCurrent
+                          ? units
+                          : customUnit
+                            ? [{ id: customUnit, label: customUnit, toBase: 1 }, ...units]
+                            : units;
+                        return (
+                          <select
+                            value={customUnit || ""}
+                            onChange={e => {
+                              if (e.target.value === "__custom") {
+                                const typed = window.prompt("Custom unit (pack, wheel, sleeve, …):");
+                                const v = (typed || "").trim();
+                                if (v) setCustomUnit(v);
+                                return;
+                              }
+                              setCustomUnit(e.target.value);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "4px 22px 4px 8px",
+                              background: "#0a0a0a",
+                              border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
+                              color: customUnit ? "#f5c842" : "#888",
+                              borderRadius: 6,
+                              fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
+                              boxSizing: "border-box",
+                              cursor: "pointer",
+                              appearance: "none",
+                              WebkitAppearance: "none",
+                              MozAppearance: "none",
+                              backgroundImage: "linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%)",
+                              backgroundPosition: "calc(100% - 12px) 50%, calc(100% - 7px) 50%",
+                              backgroundSize: "5px 5px, 5px 5px",
+                              backgroundRepeat: "no-repeat",
+                            }}
+                          >
+                            {!customUnit && <option value="" style={{ background: "#141414" }}>unit…</option>}
+                            {opts.map(u => (
+                              <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label || u.id}</option>
+                            ))}
+                            <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
+                          </select>
+                        );
+                      })()}
                     </div>
                   </div>
 
