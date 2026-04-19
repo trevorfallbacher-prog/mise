@@ -2601,8 +2601,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   sourceId:    res.sourceId || res.barcode,
                 });
                 pushToast(`Nutrition saved for ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
-              } else if (!canonId) {
+              } else if (!canonId && brandForWrite) {
                 pushToast(`Brand set to ${brandForWrite}. Assign a canonical to pin nutrition to it.`, { emoji: "🏷️", kind: "info", ttl: 5000 });
+              } else if (!brandForWrite) {
+                // Open Food Facts didn't have brand data for this
+                // product AND parseIdentity couldn't pull it from
+                // the productName. Be explicit so the user doesn't
+                // think it's a bug — it's OFF's data gap for this
+                // specific UPC (common for store-brand and regional
+                // products).
+                pushToast(
+                  `Scanned ${res.productName || res.barcode}, but Open Food Facts has no brand info for this UPC. Tap "+ ADD BRAND" to type it in.`,
+                  { emoji: "🏷️", kind: "warn", ttl: 6000 },
+                );
               } else {
                 pushToast(`Brand set to ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
               }

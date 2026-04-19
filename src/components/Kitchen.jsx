@@ -2553,7 +2553,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     if (!res.cached) {
                       setScannedPayload({
                         barcode:     res.barcode,
-                        brand:       res.brand,
+                        brand:       effectiveBrand,       // parseIdentity fallback already applied
                         productName: res.productName,
                         nutrition:   res.nutrition,
                         source:      res.source,
@@ -2567,9 +2567,18 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                         // and don't need confirmation).
                         attributes,
                       });
+                      // Diagnostic toast — show WHAT we extracted so
+                      // an OFF-data miss ("they don't have the brand
+                      // for this one") reads differently from a
+                      // client-side bug. Brand line says "brand:
+                      // <name>" on hit or "(no brand in OFF)" when
+                      // both res.brand and parseIdentity missed.
+                      const brandLine = effectiveBrand
+                        ? `brand: ${effectiveBrand}`
+                        : "(no brand in OFF or productName)";
                       pushToastFromScan(
-                        `Found: ${res.productName || res.brand || res.barcode}`,
-                        { emoji: "✨", kind: "success", ttl: 3500 },
+                        `Found: ${res.productName || res.barcode}\n${brandLine}`,
+                        { emoji: "✨", kind: "success", ttl: 5500 },
                       );
                     } else {
                       pushToastFromScan(
