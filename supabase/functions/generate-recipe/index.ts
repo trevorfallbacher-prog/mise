@@ -594,16 +594,12 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        // Sketch is title + dual ingredient lists only (no steps).
-        // Trim the budget so the rough draft is fast and cheap; the
-        // full cook gets the original 2500 budget on the second
-        // call.
-        // Sketch bumped from 1000 → 1600 because large pantries
-        // generated ideal+pantry arrays that consistently ran past
-        // 1000 tokens and Claude's output truncated mid-JSON. 1600
-        // is still cheaper than final (2500) but gives enough
-        // headroom for 10+ ingredients in each array.
-        max_tokens: mode === "sketch" ? 1600 : 2500,
+        // Both modes get the full 2500-token budget. Earlier attempts
+        // to trim sketch to 1000 / 1600 kept truncating mid-JSON on
+        // larger pantries (10+ ingredients × IDEAL+PANTRY arrays).
+        // Token cost is secondary to not failing; a truncated draft
+        // is worse than an expensive one.
+        max_tokens: 2500,
         // temperature=1 is the API default but we set it explicitly so
         // nobody accidentally pins it to 0 during debugging and wipes
         // out regen variety without realizing why.
@@ -617,6 +613,15 @@ Deno.serve(async (req) => {
                 ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
                 : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients),
             }],
+          },
+          // Prefill the assistant with "{" so Claude MUST continue
+          // from valid-JSON start. No preface ("Here's your recipe:"),
+          // no markdown fences, no trailing commentary. Handles the
+          // couldn't-parse 502s we were seeing from a chatty model.
+          // We prepend "{" back to the response before parsing.
+          {
+            role: "assistant",
+            content: [{ type: "text", text: "{" }],
           },
         ],
       }),
@@ -640,14 +645,17 @@ Deno.serve(async (req) => {
   }
 
   const data = await anthropicResp.json();
-  const raw = data?.content?.[0]?.text ?? "{}";
+  // The request prefilled the assistant with "{", so Claude returns
+  // the body AFTER the opening brace. Prepend it back so we parse
+  // a whole object. Fall back to "{}" if Anthropic gave us nothing.
+  const rawBody = data?.content?.[0]?.text ?? "";
+  const raw = rawBody ? `{${rawBody}` : "{}";
 
-  // Tolerant JSON extraction. Claude occasionally wraps the object in
-  // markdown fences or prefaces it with a sentence ("Here's a recipe
-  // for you:"). Strip fences first; if a direct parse fails, carve
-  // out the substring between the first { and last } and try that.
-  // Fixes the "couldn't parse model output as JSON" 502s we were
-  // seeing when the model decided to be chatty.
+  // Tolerant JSON extraction as a safety net. Even with prefill,
+  // Claude may still wrap output in fences or produce a truncated
+  // response on a complex pantry. Strip fences first; if a direct
+  // parse fails, carve out between the first { and last } and try
+  // that. Catches both chatty-model and mid-JSON-truncation cases.
   const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
   let recipe: Record<string, unknown>;
   try {
