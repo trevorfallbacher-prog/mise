@@ -455,18 +455,21 @@ export default function CreateMenu({
 
       <div style={{ padding: "24px 20px 40px", display: "flex", flexDirection: "column", gap: 12 }}>
         <BigCard
-          emoji="✏️"
-          accent="#f5c842"
-          title="Custom recipe"
-          blurb="Write your own — ingredients, steps, photos. Save it so you can cook it again."
-          onClick={() => setMode("custom")}
-        />
-        <BigCard
           emoji="✨"
           accent="#c7a8d4"
           title="AI recipe from pantry"
           blurb="Claude drafts a recipe using what's on your shelves. Tweak it, then cook."
           onClick={() => setMode("ai")}
+        />
+
+        <SectionDivider label="QUICK COOK" />
+
+        <BigCard
+          emoji="✏️"
+          accent="#f5c842"
+          title="Custom recipe"
+          blurb="Write your own — ingredients, steps, photos. Save it so you can cook it again."
+          onClick={() => setMode("custom")}
         />
         <BigCard
           emoji="📖"
@@ -477,6 +480,9 @@ export default function CreateMenu({
             : ""}${RECIPES.length} bundled templates.`}
           onClick={() => setMode("template")}
         />
+
+        <SectionDivider label="QUICK KITCHEN ADD" />
+
         <BigCard
           emoji="🥫"
           accent="#4ade80"
@@ -485,6 +491,24 @@ export default function CreateMenu({
           onClick={() => setMode("addIntent")}
         />
       </div>
+    </div>
+  );
+}
+
+function SectionDivider({ label }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10,
+      marginTop: 6, marginBottom: 0,
+    }}>
+      <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
+      <div style={{
+        fontFamily: "'DM Mono',monospace", fontSize: 9,
+        color: "#666", letterSpacing: "0.14em",
+      }}>
+        {label}
+      </div>
+      <div style={{ flex: 1, height: 1, background: "#2a2a2a" }} />
     </div>
   );
 }

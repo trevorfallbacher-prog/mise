@@ -203,6 +203,42 @@ function assemblePromptHeader(
     : "";
   const nonce = crypto.randomUUID();
 
+  // Hoist meal timing / course into their own HARD CONSTRAINTS block at
+  // the top of the prompt. Buried at the bottom of USER PREFERENCES the
+  // model was treating them as soft nuance; promoting them to a standalone
+  // block (with explicit violation callouts) makes breakfast-vs-dinner and
+  // main-vs-side-vs-dessert actually swing the output.
+  const hardConstraintLines: string[] = [];
+  if (prefs.mealTiming && prefs.mealTiming !== "any") {
+    const t = prefs.mealTiming;
+    const examples = t === "breakfast"
+      ? "egg dishes, pancakes, oatmeal, breakfast burritos, shakshuka, frittatas, breakfast sandwiches, yogurt bowls"
+      : t === "lunch"
+        ? "sandwiches, wraps, grain bowls, soups, salads, lighter mains"
+        : t === "dinner"
+          ? "substantial mains, braises, roasts, pastas, stir-fries, hearty entrées"
+          : "";
+    hardConstraintLines.push(
+      `- MEAL TIMING = ${t.toUpperCase()}. The dish MUST read unmistakably as a ${t} dish.${examples ? ` Think: ${examples}.` : ""} Do NOT draft a dinner entrée when the user asked for breakfast, or vice versa.`,
+    );
+  }
+  if (prefs.course && prefs.course !== "any") {
+    const c = prefs.course;
+    const roleDesc = c === "main"
+      ? "a meal-carrying entrée, substantial enough to stand alone on the plate"
+      : c === "side"
+        ? "a supporting side dish — smaller scale, meant to sit alongside a main; do NOT draft a full entrée"
+        : c === "dessert"
+          ? "a sweet dessert — do NOT draft a savory main or appetizer"
+          : "";
+    hardConstraintLines.push(
+      `- COURSE = ${c.toUpperCase()}. The dish MUST function as ${roleDesc}.`,
+    );
+  }
+  const hardConstraintsBlock = hardConstraintLines.length > 0
+    ? `\nHARD CONSTRAINTS — violating these is a failure, not a stylistic choice:\n${hardConstraintLines.join("\n")}\n`
+    : "";
+
   return `You are drafting a single recipe for a home cook.
 
 PRECEDENCE (hard → soft). Earlier beats later when they conflict:
@@ -237,7 +273,7 @@ omelette) are a failure mode; reach for something the user might not
 have thought of themselves.
 
 Variety seed: ${nonce}
-${avoidBlock}
+${hardConstraintsBlock}${avoidBlock}
 PANTRY:
 ${pantryLines}
 
