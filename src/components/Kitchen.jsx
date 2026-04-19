@@ -223,7 +223,7 @@ const SCAN_EMOJI_OPTIONS = [
 ];
 
 // ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
-function Scanner({ userId, shoppingList = [], onItemsScanned, onClose }) {
+function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
   // Barcode mode — skips the Claude-vision upload path and uses
@@ -841,23 +841,49 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onClose }) {
           </button>
           )}
           {mode === "barcode" && (
-            <button
-              onClick={() => !barcodeBusy && setBarcodeScannerOpen(true)}
-              disabled={barcodeBusy}
-              style={{
-                marginTop:20, width:"100%", padding:"16px",
-                background: barcodeBusy ? "#2a2a2a" : "#f5c842",
-                color: barcodeBusy ? "#666" : "#111",
-                border:"none", borderRadius:14,
-                fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600,
-                letterSpacing:"0.08em",
-                cursor: barcodeBusy ? "wait" : "pointer",
-                transition:"all 0.3s",
-                boxShadow: barcodeBusy ? "none" : "0 0 30px #f5c84233",
-              }}
-            >
-              {barcodeBusy ? "LOOKING UP…" : "SCAN BARCODE →"}
-            </button>
+            <>
+              <button
+                onClick={() => !barcodeBusy && setBarcodeScannerOpen(true)}
+                disabled={barcodeBusy}
+                style={{
+                  marginTop:20, width:"100%", padding:"16px",
+                  background: barcodeBusy ? "#2a2a2a" : "#f5c842",
+                  color: barcodeBusy ? "#666" : "#111",
+                  border:"none", borderRadius:14,
+                  fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600,
+                  letterSpacing:"0.08em",
+                  cursor: barcodeBusy ? "wait" : "pointer",
+                  transition:"all 0.3s",
+                  boxShadow: barcodeBusy ? "none" : "0 0 30px #f5c84233",
+                }}
+              >
+                {barcodeBusy ? "LOOKING UP…" : "SCAN BARCODE →"}
+              </button>
+              {/* Escape hatch when the barcode is unreadable — torn
+                  label, shrink-wrapped, hand-printed, or no barcode
+                  at all. Closes the Scanner and opens AddItemModal
+                  for a fully manual entry. Secondary-weight so it
+                  doesn't compete with the primary scan CTA above. */}
+              {onManualEntry && (
+                <button
+                  type="button"
+                  onClick={onManualEntry}
+                  disabled={barcodeBusy}
+                  style={{
+                    marginTop:10, width:"100%", padding:"12px",
+                    background:"transparent",
+                    border:"1px solid #2a2a2a",
+                    color:"#aaa", borderRadius:12,
+                    fontFamily:"'DM Mono',monospace", fontSize:11,
+                    fontWeight:600, letterSpacing:"0.08em",
+                    cursor: barcodeBusy ? "not-allowed" : "pointer",
+                    opacity: barcodeBusy ? 0.5 : 1,
+                  }}
+                >
+                  CAN'T SCAN? ADD MANUALLY →
+                </button>
+              )}
+            </>
           )}
         </div>
       )}
@@ -5994,7 +6020,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     );
   };
 
-  if (scanning) return <Scanner userId={userId} shoppingList={shoppingList} onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
+  if (scanning) return <Scanner
+    userId={userId}
+    shoppingList={shoppingList}
+    onItemsScanned={addScannedItems}
+    onClose={() => setScanning(false)}
+    onManualEntry={() => { setScanning(false); setAddingTo("pantry"); }}
+  />;
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
