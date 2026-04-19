@@ -5214,14 +5214,51 @@ function scoreIngredientMatch(needle, ing) {
 // Public API: ranked matches for a free-text string. Returns at most `limit`
 // candidates with a non-zero score. Caller decides the threshold for
 // "confident enough to auto-link" (suggested: 70+).
-export function fuzzyMatchIngredient(text, limit = 5) {
+//
+// Optional `shoppingListItems` biases scoring toward items the user is
+// actively buying. Rationale: if "ricotta" is on the shopping list for a
+// recipe, a receipt line resembling ricotta (e.g. "RCTTA CHS") should
+// preferentially bind to ricotta over any other canonical. Two tiers:
+//
+//   * +30 when the candidate canonical's id matches a list item's
+//     ingredientId (strong signal — user already linked the list
+//     entry to a canonical, so we're certain what they're buying).
+//   * +20 when the candidate's name/shortName substring-matches a
+//     free-text list item's name (weaker — the user typed a label
+//     without linking, so noisier).
+//
+// Bonus only applies when the base score is already > 0 — we don't
+// rescue a score of zero to avoid matching completely unrelated
+// canonicals just because they're on the list.
+export function fuzzyMatchIngredient(text, limit = 5, shoppingListItems = []) {
   if (!text || typeof text !== "string") return [];
+  // Pre-compute the list-bias sets once so the per-ingredient loop is O(1)
+  // lookups. Guarded for empty / missing input so existing call sites
+  // (no third arg) keep working unchanged.
+  const listIds = new Set(
+    (shoppingListItems || [])
+      .map(s => s?.ingredientId || s?.canonicalId)
+      .filter(Boolean)
+  );
+  const listNames = (shoppingListItems || [])
+    .map(s => (s?.name || "").toLowerCase().trim())
+    .filter(n => n.length >= 3);
+
   const scored = [];
   for (const ing of INGREDIENTS) {
     // Skip hubs — they're UI groupings, not real pantry items.
     if (ing.parentId === undefined && ing.id.endsWith("_hub")) continue;
-    const score = scoreIngredientMatch(text, ing);
-    if (score > 0) scored.push({ ingredient: ing, score });
+    let score = scoreIngredientMatch(text, ing);
+    if (score <= 0) continue;
+    if (listIds.has(ing.id)) {
+      score += 30;
+    } else if (listNames.length > 0) {
+      const ingName = (ing.name || "").toLowerCase();
+      const ingShort = (ing.shortName || "").toLowerCase();
+      const hit = listNames.some(n => ingName.includes(n) || ingShort.includes(n));
+      if (hit) score += 20;
+    }
+    scored.push({ ingredient: ing, score });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.slice(0, limit);

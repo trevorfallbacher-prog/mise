@@ -677,7 +677,13 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         // the top TWO from the bundled side so we can measure the
         // score gap against the runner-up and skip auto-link when
         // multiple canonicals tie (the "BREAST" ambiguity case).
-        const bundled = fuzzyMatchIngredient(needle, 5);
+        //
+        // shoppingList bias: canonicals that appear on the user's
+        // active shopping list get +30 (ingredientId match) or +20
+        // (free-text name match) added to their base score. This
+        // shifts ambiguous cases toward what the user went shopping
+        // for without overriding strong independent matches.
+        const bundled = fuzzyMatchIngredient(needle, 5, shoppingList);
         const synthScored = [];
         for (const canon of approvedSynthetics) {
           const score = scoreSyntheticForAuto(needle, canon);
@@ -1807,16 +1813,6 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // prior brand until they explicitly clear it (matches how
   // customTypeId / customTileId behave).
   const [customBrand, setCustomBrand] = useState(null);
-  // Observation-learned PACKAGE SIZE chips — replaces the admin-
-  // curated ingredient_info.packaging.sizes bank. Keyed on the
-  // live (brand, canonical) pair so the chips update as the user
-  // types a brand-containing name or picks a canonical. Hook has
-  // to live at component top level; IIFE in the PACKAGE section
-  // reads popularPackages.rows.
-  const primaryCanonicalId = customCanonicalId
-    || (customComponents[0]?.canonical?.id)
-    || null;
-  const popularPackages = usePopularPackages(customBrand, primaryCanonicalId, 5);
   // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
   // packages the user has beyond the one they're treating as "open"
   // (the amount field). Stays zero for liquid-mode rows; >0 flips
@@ -1866,6 +1862,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // customComponentsOpen because the CANONICAL axis is one-of (identity)
   // and the components axis is many-of (composition).
   const [customCanonicalOpen, setCustomCanonicalOpen] = useState(false);
+
+  // Observation-learned PACKAGE SIZE chips — replaces the admin-
+  // curated ingredient_info.packaging.sizes bank. Keyed on the
+  // live (brand, canonical) pair so the chips update as the user
+  // types a brand-containing name or picks a canonical. Declared
+  // AFTER customCanonicalId + customComponents so the closure sees
+  // the initialized values (TDZ violation if declared above).
+  const primaryCanonicalId = customCanonicalId
+    || (customComponents[0]?.canonical?.id)
+    || null;
+  const popularPackages = usePopularPackages(customBrand, primaryCanonicalId, 5);
 
   // Family-shared user templates, newest-first. Empty until the user
   // (or any family member) saves their first custom item; grows as
@@ -4258,6 +4265,26 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       });
       return next;
     });
+
+    // Close the shopping-list loop. Any confirmed scan row whose
+    // canonical_id matches a still-open shopping-list entry gets
+    // that entry dropped. User typed "ricotta" onto their list for
+    // a recipe → scanned the receipt → ricotta's in pantry → list
+    // entry removed. No duplicate tap-to-check required. Only the
+    // canonical-id match path fires here — free-text list entries
+    // (e.g. "organic eggs from the farmer's market") stay put so a
+    // receipt that generically matches "eggs" doesn't accidentally
+    // delete them.
+    const scannedCanonicalIds = new Set(
+      fannedItems
+        .map(s => s.canonicalId || s.ingredientId)
+        .filter(Boolean)
+    );
+    if (scannedCanonicalIds.size > 0) {
+      setShoppingList(prev =>
+        prev.filter(s => !(s.ingredientId && scannedCanonicalIds.has(s.ingredientId)))
+      );
+    }
 
     // Summary toast — sits above the bottom nav for 4.5s. Keep it short:
     // small receipts (1–3 items) get the name roll-call; big receipts
