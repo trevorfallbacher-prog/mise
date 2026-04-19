@@ -65,6 +65,7 @@ import {
   parseStateFromText,
   stateForCanonical,
   buildAttributesFromScan,
+  cleanProductName,
 } from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages } from "../lib/usePopularPackages";
@@ -232,6 +233,15 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
   // confirm/review flow so adds land with one more tap.
   const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
   const [barcodeBusy,        setBarcodeBusy]        = useState(false);
+  // When the resolver misses but OFF gave us enough signal to
+  // suggest a new canonical name (from genericName / productName /
+  // categoryHints), park the would-be scan row here and show a
+  // "Create canonical: X?" prompt. User can accept, edit, or skip.
+  // Null when the resolver resolved cleanly or when no signal
+  // existed at all (in which case we land in confirm with the
+  // fallback-named row directly).
+  const [canonicalCreatePrompt, setCanonicalCreatePrompt] = useState(null);
+  //   { suggestedName, pendingRow, pendingBrandNutrition }
   const { rows: brandNutritionRowsForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
   // Admin bypass for the PENDING status. Admins approve canonicals
   // themselves, so when they create one we auto-upsert the
@@ -887,6 +897,79 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           )}
         </div>
       )}
+      {canonicalCreatePrompt && (
+        <CanonicalCreatePrompt
+          initialName={canonicalCreatePrompt.suggestedName}
+          sourceHint={canonicalCreatePrompt.pendingResolverReason}
+          onCreate={async (finalName) => {
+            // Slugify the user's confirmed name + write to
+            // pending_ingredient_info via enrichIngredient so the
+            // canonical enters the admin queue with AI-generated
+            // metadata. In the meantime we link the pantry row to
+            // the slug so it displays with the name the user just
+            // approved instead of the barcode fallback.
+            const slug = (finalName || "")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "_")
+              .replace(/^_+|_+$/g, "")
+              .slice(0, 80);
+            const canonEmoji = canonicalCreatePrompt.pendingRow.emoji || "✨";
+            const canonCategory = canonicalCreatePrompt.pendingRow.category || "pantry";
+            const patchedRow = {
+              ...canonicalCreatePrompt.pendingRow,
+              name:          finalName.trim(),
+              emoji:         canonEmoji,
+              canonicalId:   slug,
+              ingredientId:  slug,
+              ingredientIds: [slug],
+              category:      canonCategory,
+              autoLinked:    true,
+            };
+            setScannedItems([patchedRow]);
+            setReceiptMeta({ store: null, date: null, totalCents: null });
+            // Fire enrichment for the new slug — queues an admin-
+            // reviewable pending_ingredient_info row with full
+            // Claude-generated metadata. User doesn't wait for it.
+            try {
+              await enrichIngredient({
+                source_name:  finalName.trim(),
+                canonical_id: slug,
+              });
+            } catch (e) {
+              console.warn("[scanner:barcode] enrich new canonical failed:", e);
+            }
+            // brand_nutrition upsert now that we have a canonical
+            // to pin against.
+            if (canonicalCreatePrompt.pendingBrandNutrition) {
+              upsertBrandNutritionForScan?.({
+                canonicalId: slug,
+                ...canonicalCreatePrompt.pendingBrandNutrition,
+              }).catch(() => { /* logged upstream */ });
+            }
+            setCanonicalCreatePrompt(null);
+            setPhase("confirm");
+          }}
+          onSkip={() => {
+            // User opted not to create a canonical — still land in
+            // confirm with the fallback-named row so they can stock
+            // it without a linked identity. They can assign a
+            // canonical later from the ItemCard if they want.
+            setScannedItems([canonicalCreatePrompt.pendingRow]);
+            setReceiptMeta({ store: null, date: null, totalCents: null });
+            if (canonicalCreatePrompt.pendingBrandNutrition) {
+              // Without canonical, brand_nutrition can't be written
+              // (PK requires it). Payload is dropped; a future scan
+              // that resolves the same brand+canonical will refetch.
+            }
+            setCanonicalCreatePrompt(null);
+            setPhase("confirm");
+          }}
+          onCancel={() => {
+            // Back out entirely — no scan row created.
+            setCanonicalCreatePrompt(null);
+          }}
+        />
+      )}
       {barcodeScannerOpen && (
         <BarcodeScanner
           onCancel={() => setBarcodeScannerOpen(false)}
@@ -986,6 +1069,49 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 priceCents:    null,
                 autoLinked:    !!match,
               };
+              const pendingBrandNutrition = (res.nutrition && effectiveBrand)
+                ? {
+                    nutrition: res.nutrition,
+                    brand:     effectiveBrand,
+                    barcode:   res.barcode,
+                    source:    res.source || "openfoodfacts",
+                    sourceId:  res.sourceId || res.barcode,
+                  }
+                : null;
+              // If the resolver missed (no canonical at all) but OFF
+              // still gave us SOME identifying signal, surface a
+              // "create new canonical?" prompt before landing in
+              // confirm. Users shouldn't have to end up with a
+              // "Barcode 8500..." row when OFF had genericName or
+              // a tag we could have suggested as a canonical name.
+              //
+              // Suggestion priority: genericName (cleanest, often
+              // "Greek yogurt" vs productName's "Chobani Zero
+              // Vanilla Greek Yogurt 5.3oz") > cleaned productName
+              // via resolver's helper > top categoryHint
+              // title-cased > null.
+              const cleanedName = res.productName
+                ? cleanProductName(res.productName, effectiveBrand)
+                : "";
+              const suggestedName =
+                (res.genericName && res.genericName.trim())
+                  ? res.genericName.trim().replace(/\b\w/g, c => c.toUpperCase())
+                  : (cleanedName
+                      ? cleanedName.replace(/\b\w/g, c => c.toUpperCase())
+                      : firstHintPretty);
+              if (!canon && suggestedName) {
+                setCanonicalCreatePrompt({
+                  suggestedName,
+                  pendingRow: row,
+                  pendingBrandNutrition,
+                  pendingResolverReason: {
+                    productName:   res.productName,
+                    genericName:   res.genericName,
+                    topTag:        res.categoryHints?.[0] || null,
+                  },
+                });
+                return;   // stay on upload screen until user decides
+              }
               setScannedItems([row]);
               setReceiptMeta({ store: null, date: null, totalCents: null });
               setPhase("confirm");
@@ -993,18 +1119,10 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // written after user confirms the row and it lands in
               // pantry, so a brand-less scan doesn't write an orphan
               // row to brand_nutrition.
-              if (res.nutrition && effectiveBrand && canon?.id) {
-                // Fire-and-forget — brand_nutrition is public-read
-                // reference data and safe to write whether or not
-                // the user ends up confirming the pantry row (the
-                // brand / canonical pairing stays valid regardless).
+              if (pendingBrandNutrition && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
-                  brand:       effectiveBrand,
-                  nutrition:   res.nutrition,
-                  barcode:     res.barcode,
-                  source:      res.source || "openfoodfacts",
-                  sourceId:    res.sourceId || res.barcode,
+                  ...pendingBrandNutrition,
                 }).catch(() => { /* logged upstream */ });
               }
             } catch (e) {
@@ -1820,6 +1938,130 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
 }
 
 // Single-row picker button used in the AddItem modal's ingredient lists.
+// Shared icon-button style for the Canonical Create prompt's
+// back/dismiss buttons. Matches the pattern elsewhere in the app;
+// inlined here because Kitchen.jsx doesn't import the shared token.
+const promptIconBtn = {
+  background: "#161616", border: "1px solid #2a2a2a",
+  borderRadius: 18, width: 34, height: 34,
+  color: "#aaa", fontSize: 16, cursor: "pointer",
+  display: "flex", alignItems: "center", justifyContent: "center",
+  lineHeight: 1,
+};
+
+// "We don't have a canonical for this — create one?" prompt shown
+// after a barcode scan when OFF returned enough signal to suggest
+// a name but nothing matched our registry. Renders as a full-screen
+// sheet over the Scanner; user can accept the suggestion, edit the
+// name, or skip (stocks the item without a canonical link).
+function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCancel }) {
+  const [name, setName] = useState(initialName || "");
+  const trimmed = name.trim();
+  const hintLine = sourceHint?.topTag
+    ? `OFF tag: ${sourceHint.topTag}`
+    : sourceHint?.genericName
+      ? `OFF generic: ${sourceHint.genericName}`
+      : sourceHint?.productName
+        ? `OFF name: ${sourceHint.productName}`
+        : null;
+  return (
+    <div style={{
+      position:"fixed", inset:0, zIndex:345,
+      background:"#0b0b0b",
+      display:"flex", flexDirection:"column",
+      maxWidth:480, margin:"0 auto",
+    }}>
+      <div style={{ padding:"24px 20px 12px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #1e1e1e" }}>
+        <button onClick={onCancel} style={promptIconBtn}>←</button>
+        <div style={{ flex:1, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#c7a8d4", letterSpacing:"0.12em" }}>
+          NEW CANONICAL?
+        </div>
+        <button onClick={onCancel} style={promptIconBtn}>✕</button>
+      </div>
+      <div style={{ flex:1, padding:"28px 20px", overflowY:"auto" }}>
+        <div style={{ fontSize:44, marginBottom:14 }}>✨</div>
+        <h1 style={{
+          fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300,
+          fontStyle:"italic", color:"#f0ece4", margin:"0 0 10px",
+        }}>
+          We don't have this in our registry
+        </h1>
+        <div style={{
+          fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888",
+          lineHeight:1.55, marginBottom:20,
+        }}>
+          Open Food Facts had the product but nothing in our canonical
+          list matched it. Want to create a new canonical so this item
+          (and future scans of similar products) has a proper identity?
+        </div>
+
+        <div style={{
+          fontFamily:"'DM Mono',monospace", fontSize:10,
+          color:"#c7a8d4", letterSpacing:"0.12em", marginBottom:8,
+        }}>
+          WE RECOMMEND
+        </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Canonical name"
+          autoFocus
+          style={{
+            width:"100%", padding:"14px 16px",
+            background:"#1a1a1a", border:"1px solid #2a2a2a",
+            borderRadius:12, color:"#f0ece4", boxSizing:"border-box",
+            fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic",
+            outline:"none",
+          }}
+        />
+        {hintLine && (
+          <div style={{
+            marginTop:8,
+            fontFamily:"'DM Mono',monospace", fontSize:9,
+            color:"#666", letterSpacing:"0.08em",
+          }}>
+            SUGGESTED FROM · {hintLine.toUpperCase()}
+          </div>
+        )}
+
+        <div style={{ marginTop:26, display:"flex", flexDirection:"column", gap:10 }}>
+          <button
+            type="button"
+            onClick={() => trimmed && onCreate(trimmed)}
+            disabled={!trimmed}
+            style={{
+              padding:"14px",
+              background: trimmed
+                ? "linear-gradient(135deg, #c7a8d4 0%, #a389b8 100%)"
+                : "#2a2a2a",
+              color: trimmed ? "#111" : "#666",
+              border:"none", borderRadius:12,
+              fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+              letterSpacing:"0.1em",
+              cursor: trimmed ? "pointer" : "not-allowed",
+            }}
+          >
+            ✨ CREATE {(trimmed || "").toUpperCase()}
+          </button>
+          <button
+            type="button"
+            onClick={onSkip}
+            style={{
+              padding:"12px",
+              background:"transparent", border:"1px solid #2a2a2a",
+              color:"#aaa", borderRadius:12,
+              fontFamily:"'DM Mono',monospace", fontSize:11,
+              letterSpacing:"0.08em", cursor:"pointer",
+            }}
+          >
+            SKIP — STOCK WITHOUT CANONICAL
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // `useShortName` is set when we're inside a hub drill so the row reads
 // "Breast" / "Thigh" instead of "Chicken Breast" / "Chicken Thighs".
 function IngredientRow({ ing, onPick, useShortName = false }) {
