@@ -2439,10 +2439,23 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   try {
                     const res = await lookupBarcode(barcode, { brandNutritionRows });
                     if (!res?.found) {
-                      pushToastFromScan(
-                        "No match in Open Food Facts. Fill in manually.",
-                        { emoji: "🔍", kind: "warn", ttl: 4500 },
-                      );
+                      // Distinguish failure modes so the user knows
+                      // whether they have a deploy problem, a network
+                      // problem, or just a barcode OFF doesn't know.
+                      const msg = res?.reason === "edge_fn_not_deployed"
+                        ? `Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode`
+                        : res?.reason === "fetch_failed"
+                          ? `Barcode lookup failed (${res?.status || "network"}). Check your connection.`
+                          : res?.reason === "no_nutriments"
+                            ? `Found ${barcode} but Open Food Facts has no nutrition data for it.`
+                            : res?.reason === "off_unavailable"
+                              ? `Open Food Facts is having a rough moment. Try again in a sec.`
+                              : `No match for ${barcode} in Open Food Facts.`;
+                      pushToastFromScan(msg, {
+                        emoji: res?.reason === "edge_fn_not_deployed" ? "⚙️" : "🔍",
+                        kind: "warn",
+                        ttl: res?.reason === "edge_fn_not_deployed" ? 9000 : 5500,
+                      });
                       setScanBusy(false);
                       return;
                     }

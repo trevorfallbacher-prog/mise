@@ -31,12 +31,17 @@ export async function decodeBarcodeFromImage(image, mediaType = "image/jpeg") {
   });
   if (error) {
     let detail = "";
+    let status = null;
     const ctx = error.context;
-    if (ctx && typeof ctx.text === "function") {
-      try { detail = await ctx.text(); } catch { /* noop */ }
+    if (ctx) {
+      status = ctx.status ?? null;
+      if (typeof ctx.text === "function") {
+        try { detail = await ctx.text(); } catch { /* noop */ }
+      }
     }
-    console.error("[decode-barcode-image] edge fn failed:", error.message, detail);
-    return { found: false, reason: "decode_failed" };
+    console.error("[decode-barcode-image] edge fn failed:", { message: error.message, status, detail });
+    const reason = status === 404 ? "edge_fn_not_deployed" : "decode_failed";
+    return { found: false, reason, status, detail: detail || error.message };
   }
   return data || { found: false, reason: "empty_response" };
 }
@@ -75,14 +80,23 @@ export async function lookupBarcode(barcode, { brandNutritionRows = [] } = {}) {
   });
   if (error) {
     // supabase-js wraps the upstream Response in error.context.
-    // Extract the detail for a readable error surface.
+    // Extract the detail for a readable error surface + pass through
+    // so the caller can distinguish "edge fn not deployed" (404) from
+    // "edge fn threw" (500) from "network broken" (no status).
     let detail = "";
+    let status = null;
     const ctx = error.context;
-    if (ctx && typeof ctx.text === "function") {
-      try { detail = await ctx.text(); } catch { /* noop */ }
+    if (ctx) {
+      status = ctx.status ?? null;
+      if (typeof ctx.text === "function") {
+        try { detail = await ctx.text(); } catch { /* noop */ }
+      }
     }
-    console.error("[lookup-barcode] edge fn failed:", error.message, detail);
-    return { found: false, barcode: normalized, reason: "fetch_failed" };
+    console.error("[lookup-barcode] edge fn failed:", { message: error.message, status, detail });
+    // 404 from supabase usually means the function is not deployed;
+    // flag that distinctly so the UI can tell the user what to do.
+    const reason = status === 404 ? "edge_fn_not_deployed" : "fetch_failed";
+    return { found: false, barcode: normalized, reason, status, detail: detail || error.message };
   }
   return { ...data, cached: false };
 }
