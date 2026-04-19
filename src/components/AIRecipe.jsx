@@ -84,24 +84,15 @@ function isProteinRow(row) {
   return false;
 }
 
-// State-shaped words that some bundled canonicals baked into their
-// display name ("Ground Beef", "Chicken (whole)"). Per the identity
-// hierarchy in CLAUDE.md, state is a SEPARATE axis from canonical —
-// the registry got this wrong, but until the data refactor lands
-// we clean the label client-side so the picker doesn't double-show
-// "Ground" with no protein name attached.
-//
-// Prefix form: "Ground Beef" → "Beef", "Sliced Deli Turkey" → "Deli Turkey".
-// Suffix form: "Chicken (whole)" → "Chicken", "Pork (ground)" → "Pork".
+// State-shaped words for normalizeForMatch below. The bundled
+// registry is clean after migration 0060 (CANONICAL_ALIASES routes
+// the legacy ground_* slugs to base + state), but user-typed or
+// OCR'd display names can still bake state into the string. The
+// regexes give normalizeForMatch something to strip when it's
+// pairing "Ground Beef Patties" (user-entered) against the "beef"
+// canonical.
 const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
 const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
-function cleanProteinName(raw) {
-  if (!raw) return raw;
-  return String(raw)
-    .replace(STATE_SUFFIX_RE, "")
-    .replace(STATE_PREFIX_RE, "")
-    .trim() || String(raw);
-}
 
 // Normalize an ingredient name for fuzzy matching. Strips known
 // brand prefixes, size labels, state prefixes, special characters,
@@ -236,16 +227,14 @@ export default function AIRecipe({
       const slug = row.ingredientId || row.canonicalId;
       if (!slug) continue;
       if (!byCanonical.has(slug)) {
+        // findIngredient resolves through CANONICAL_ALIASES, so a
+        // legacy `ground_beef` slug comes back as the `beef` base
+        // canonical with its clean "Beef" name. No UI stripping
+        // needed post-migration 0060.
         const canon = findIngredient(slug);
-        const rawName = canon?.name || row.name || slug;
         byCanonical.set(slug, {
           id: slug,
-          // cleanProteinName strips the state prefix / suffix that
-          // some bundled canonicals baked into their display names.
-          // Proper fix is a data refactor (base canonical + state
-          // alias) — this is the interim stop-gap so the picker
-          // reads right today.
-          label: cleanProteinName(rawName),
+          label: canon?.name || row.name || slug,
           emoji: row.emoji || canon?.emoji || "🍖",
           category: canon?.category || null,
           slug,
