@@ -2563,7 +2563,30 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   ? { state: stateForCanonical(rawState, match.canonical) }
                   : null;
                 const packageSize = parsePackageSize(res.quantity);
-                if (match) {
+                if (match && match.autoApply) {
+                  // Near-exact match — skip the confirmation card and
+                  // patch the row directly. Same payload the USE
+                  // button would have built.
+                  const canon = match.canonical;
+                  const autoPatch = {
+                    ingredientId: canon.id,
+                    ...(item.ingredientIds && item.ingredientIds.length > 0
+                      ? {}
+                      : { ingredientIds: [canon.id] }),
+                    ...(item.category ? {} : { category: canon.category || "pantry" }),
+                  };
+                  if (inferredState?.state) autoPatch.state = inferredState.state;
+                  if (packageSize) {
+                    autoPatch.amount = packageSize.amount;
+                    autoPatch.unit   = packageSize.unit;
+                  } else if (canon.defaultUnit && !item.unit) {
+                    autoPatch.unit = canon.defaultUnit;
+                  }
+                  onUpdate?.(autoPatch);
+                  // brand_nutrition write follows a few lines down
+                  // (same path as when user taps USE) — no special
+                  // handling needed here.
+                } else if (match) {
                   setCanonicalSuggestion({
                     match,
                     inferredState: inferredState?.state ? inferredState : null,
@@ -2581,13 +2604,17 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 }
               }
               // Write brand_nutrition when we can — needs a canonical
-              // to pin against. If the user accepts the suggestion
-              // card's canonical below, the suggestion's USE handler
-              // writes brand_nutrition with the pending payload there.
-              // Use effectiveBrand (parseIdentity fallback already
-              // applied) so OFF's missing `brands` field doesn't
-              // prevent the write.
-              const canonId = currentCanonId;
+              // to pin against. Three paths:
+              //   1. Row already had a canonical (currentCanonId set)
+              //   2. We just auto-applied one (autoApply branch above)
+              //   3. User will tap USE on the suggestion card — that
+              //      handler writes brand_nutrition itself with its
+              //      pending payload.
+              // Check auto-applied case explicitly so a silent
+              // canonical resolution still gets its brand_nutrition
+              // row written immediately, not only when user taps USE.
+              const canonId = currentCanonId
+                || (match?.autoApply ? match.canonical?.id : null);
               const brandForWrite = effectiveBrand;
               if (res.cached) {
                 pushToast("Already in the nutrition database.", { emoji: "💾", kind: "info", ttl: 3500 });

@@ -153,7 +153,9 @@ export function resolveCanonicalFromScan({
   learnedTagLookup = null,   // (offTag) => canonicalId|null, or null
   findIngredient   = null,   // (id) => ingredient, or null — pulled from ingredients.js
 }) {
-  // Tier 1 — learned tag map.
+  // Tier 1 — learned tag map. Always auto-apply: the mapping was
+  // explicitly confirmed by a prior user (or seeded by admin), no
+  // value in re-confirming the same answer.
   if (typeof learnedTagLookup === "function") {
     for (const tag of (categoryHints || [])) {
       const canonicalId = learnedTagLookup(tag);
@@ -165,6 +167,7 @@ export function resolveCanonicalFromScan({
             confidence: "exact",
             reason: "learned",
             matchedOn: tag,
+            autoApply: true,
           };
         }
       }
@@ -174,6 +177,12 @@ export function resolveCanonicalFromScan({
   // Tier 2 — fuzzy match each categoryHint against the registry.
   // Score floor of 70 matches the "confident enough to auto-link"
   // threshold suggested in fuzzyMatchIngredient's own comment.
+  //
+  // autoApply trips at score >= 95 — essentially a name-normalized
+  // exact match. "heavy-cream" tag fuzzing against the "Heavy Cream"
+  // canonical scores 100 (exact after normalization) + small bonus
+  // and makes the user's confirmation tap pointless. Below 95,
+  // suggestion card surfaces so the user can verify.
   for (const tag of (categoryHints || [])) {
     const phrase = tagToPhrase(tag);
     if (!phrase) continue;
@@ -185,12 +194,16 @@ export function resolveCanonicalFromScan({
         reason: `tag:${tag}`,
         matchedOn: phrase,
         score: hit.score,
+        autoApply: hit.score >= 95,
       };
     }
   }
 
   // Tier 3 — fuzzy match the cleaned productName. Lower floor (60)
   // because we're matching against a denser, messier phrase.
+  // autoApply trips at 95+: a scan where cleanProductName returns
+  // the exact canonical name ("Heavy Cream" → "heavy cream" →
+  // Heavy Cream canonical norm'd "heavy cream") — no tap needed.
   const cleaned = cleanProductName(productName, brand);
   if (cleaned) {
     const hit = bestMatchAboveFloor(cleaned, 60);
@@ -201,6 +214,7 @@ export function resolveCanonicalFromScan({
         reason: "name-cleaned",
         matchedOn: cleaned,
         score: hit.score,
+        autoApply: hit.score >= 95,
       };
     }
   }

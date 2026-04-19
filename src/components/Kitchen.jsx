@@ -2532,7 +2532,20 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                       countryTags:   res.countryTags || [],
                       labelTags:     res.labelTags   || [],
                     });
-                    if (match) {
+                    if (match && match.autoApply) {
+                      // Near-exact match ("Heavy Cream" scan → "Heavy
+                      // Cream" canonical). User's tap-to-confirm would
+                      // just be friction; apply silently and skip the
+                      // suggestion card. Same cascade path the USE
+                      // button would have run.
+                      setCustomCanonicalId(match.canonical.id);
+                      cascadeFromCanonical(match.canonical);
+                      if (inferredState?.state) setCustomState(inferredState.state);
+                      if (packageSize) {
+                        setAmount(String(packageSize.amount));
+                        setCustomUnit(packageSize.unit);
+                      }
+                    } else if (match) {
                       setCanonicalSuggestion({
                         match,
                         inferredState: inferredState?.state ? inferredState : null,
