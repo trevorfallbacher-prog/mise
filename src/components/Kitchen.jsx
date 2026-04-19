@@ -30,7 +30,7 @@ function tilesForTab(tab) {
 }
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import TypePicker from "./TypePicker";
-import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
+import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
@@ -1918,6 +1918,18 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     if (!ing) return;
     const category = ing.category || "pantry";
     setCustomCategory(category);
+    // Auto-pin WWEIA food type (orange CATEGORY row) the instant
+    // we know the canonical. Per user directive: "the SECOND it
+    // knows it's a category type it should pin — I shouldn't
+    // have to click on the category to see a star then click
+    // again." Works for bundled canonicals via the 1:1
+    // canonicalId bridge and for synthetic (user-minted)
+    // canonicals via name-alias inference ("apple cider vinegar"
+    // → wweia_vinegars). Never clobbers an explicit user pick.
+    const inferredType = typeIdForCanonical(ing);
+    if (inferredType) {
+      setCustomTypeId(prev => prev || inferredType);
+    }
     // Unit inference — bind the canonical's defaultUnit when the
     // user hasn't already picked a unit. Otherwise leave their
     // pick alone. Vinegar → fl_oz, milk → gallon, butter → oz,
@@ -3146,13 +3158,27 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                           only when the user picks "+ custom…" for
                           an off-ladder unit (pack, wheel, sleeve). */}
                       {(() => {
+                        // Units derived from CATEGORY, not the
+                        // canonical's bespoke ladder. Per user
+                        // directive: "measurements based on
+                        // category. Cause vinegars are probably
+                        // gonna be fl oz." inferUnitsForScanned
+                        // reads emoji + category and returns a
+                        // category-appropriate ladder (cheese,
+                        // dairy liquid, meat, bread, dry weight,
+                        // etc.). Bound canonical contributes its
+                        // emoji + category to the inference but
+                        // its own per-ingredient units[] is
+                        // intentionally NOT consulted — the unit
+                        // set should stay consistent within a
+                        // category so the user always sees the
+                        // same options for similar items.
                         const canon = customCanonicalId ? findIngredient(customCanonicalId) : null;
-                        const units = canon?.units
-                          || inferUnitsForScanned({
-                            emoji: canon?.emoji || "",
-                            category: canon?.category || customCategory || "pantry",
-                            unit: customUnit,
-                          }).units;
+                        const { units } = inferUnitsForScanned({
+                          emoji: canon?.emoji || "",
+                          category: canon?.category || customCategory || "pantry",
+                          unit: customUnit,
+                        });
                         const hasCurrent = units.some(u => u.id === customUnit);
                         const opts = hasCurrent
                           ? units

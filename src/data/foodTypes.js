@@ -518,6 +518,33 @@ export function canonicalIdForType(typeId) {
   return t && t.canonicalId ? t.canonicalId : null;
 }
 
+// Reverse of canonicalIdForType — given a canonical ingredient
+// (bundled OR synthetic / user-minted) return the best-fit WWEIA
+// food type. Two-pass:
+//   1. Exact match on FOOD_TYPES[].canonicalId. Covers bundled
+//      canonicals with clean 1:1 identity mappings
+//      (mayo, ketchup, hot_dog, pizza, olive_oil, …).
+//   2. Alias infer on the canonical's name — catches synthetic
+//      canonicals ("apple cider vinegar" → wweia_vinegars via
+//      the "vinegar" alias) and bundled canonicals without an
+//      explicit canonicalId bridge ("cheddar" → wweia_cheese).
+// Feeds the AddItemModal cascade so the second a canonical is
+// chosen, CATEGORY auto-pins without the user tapping it.
+const canonicalIdToType = (() => {
+  const m = new Map();
+  for (const t of FOOD_TYPES) {
+    if (t.canonicalId && !m.has(t.canonicalId)) m.set(t.canonicalId, t.id);
+  }
+  return m;
+})();
+export function typeIdForCanonical(canonical) {
+  if (!canonical) return null;
+  const id = typeof canonical === "string" ? canonical : canonical.id;
+  if (id && canonicalIdToType.has(id)) return canonicalIdToType.get(id);
+  const name = typeof canonical === "string" ? id : canonical.name;
+  return inferFoodTypeFromName(name);
+}
+
 export function inferFoodTypeFromName(name) {
   const lower = (name || "").toLowerCase().trim();
   if (lower.length < 3) return null;
