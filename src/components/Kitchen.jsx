@@ -55,6 +55,9 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { lookupBarcode } from "../lib/lookupBarcode";
+import BarcodeScanner from "./BarcodeScanner";
 import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
@@ -1751,6 +1754,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   // ingredient_info, we let the user tap a typical size instead of
   // typing amount+unit from scratch.
   const { refreshDb, dbMap } = useIngredientInfo();
+  // Barcode scanner + brand-nutrition write path. Scanning prefills
+  // brand + name from Open Food Facts; the nutrition payload is
+  // stashed on a ref and written to `brand_nutrition` after the item
+  // save resolves a canonical_id (brand_nutrition's PK requires it,
+  // so we wait until we know what to key against).
+  const { upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannedPayload, setScannedPayload] = useState(null);
+  //   { barcode, brand, nutrition, source, sourceId, productName } | null
+  const [scanBusy, setScanBusy] = useState(false);
+  const { push: pushToastFromScan } = useToast();
   const [amount, setAmount] = useState("");
   // Optional "full package size" the user declares at add-time.
   // Empty string = undeclared (max stays null on save, slider hidden).
@@ -2189,6 +2203,29 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
       onAdd({ ...item, id: freshId });
     }
     setSaveAttempted(false);
+
+    // Brand-nutrition upsert. Fires only when the user both (a)
+    // scanned a barcode during this add AND (b) resolved a canonical
+    // for the row — brand_nutrition's PK requires canonical_id. If the
+    // canonical is still null we drop the payload silently rather than
+    // writing a row that can't be looked up later. The write is fire-
+    // and-forget; a transient failure just means the next household
+    // member to scan the same UPC re-fetches from OFF.
+    const resolvedCanonical = item.ingredientId || item.canonicalId || null;
+    const brandForWrite = item.brand || scannedPayload?.brand;
+    if (scannedPayload && resolvedCanonical && brandForWrite) {
+      upsertBrandNutrition({
+        canonicalId: resolvedCanonical,
+        brand:       brandForWrite,
+        nutrition:   scannedPayload.nutrition,
+        barcode:     scannedPayload.barcode,
+        source:      scannedPayload.source || "openfoodfacts",
+        sourceId:    scannedPayload.sourceId || scannedPayload.barcode,
+      }).catch((e) => {
+        console.warn("[brand_nutrition] upsert after add failed:", e);
+      });
+    }
+    setScannedPayload(null);
     // Full-screen success. User taps DONE to dismiss → onClose fires.
     // Gives them a beat to absorb "yes, it saved, here's where it
     // went" instead of the modal snapping shut. Destination string
@@ -2349,6 +2386,108 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 dump redundant noise. fillFromTemplate is still wired
                 through the typeahead row's onClick. */}
             {/* (removed — see comment above) */}
+
+            {/* Barcode scan — fast path for packaged goods. Prefills
+                brand + name from Open Food Facts and stashes the OFF
+                nutrition payload; once the user picks a canonical and
+                saves, the nutrition writes to brand_nutrition. If the
+                product isn't in OFF or scanning isn't supported,
+                user can type the number or just skip this and use
+                the free-text name input below. */}
+            <button
+              type="button"
+              onClick={() => setScannerOpen(true)}
+              disabled={scanBusy}
+              style={{
+                width: "100%", padding: "11px 14px",
+                background: "linear-gradient(135deg, #1a1a1a 0%, #141414 100%)",
+                border: `1px solid ${scannedPayload ? "#c7a8d4" : "#2a2a2a"}`,
+                borderRadius: 10, marginBottom: 14,
+                display: "flex", alignItems: "center", gap: 10,
+                cursor: scanBusy ? "wait" : "pointer",
+                textAlign: "left",
+                opacity: scanBusy ? 0.6 : 1,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>📷</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: scannedPayload ? "#c7a8d4" : "#aaa",
+                  letterSpacing: "0.12em",
+                }}>
+                  {scanBusy ? "LOOKING UP…" : scannedPayload ? "SCANNED ✓" : "SCAN BARCODE"}
+                </div>
+                <div style={{
+                  marginTop: 2,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#777", lineHeight: 1.4,
+                }}>
+                  {scannedPayload
+                    ? `${scannedPayload.productName || "Product"}${scannedPayload.brand ? ` · ${scannedPayload.brand}` : ""}`
+                    : "Open Food Facts has 2M+ products — one tap fills name + brand + nutrition."}
+                </div>
+              </div>
+              <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+            </button>
+            {scannerOpen && (
+              <BarcodeScanner
+                onCancel={() => setScannerOpen(false)}
+                onDetected={async (barcode) => {
+                  setScannerOpen(false);
+                  setScanBusy(true);
+                  try {
+                    const res = await lookupBarcode(barcode, { brandNutritionRows });
+                    if (!res?.found) {
+                      pushToastFromScan(
+                        "No match in Open Food Facts. Fill in manually.",
+                        { emoji: "🔍", kind: "warn", ttl: 4500 },
+                      );
+                      setScanBusy(false);
+                      return;
+                    }
+                    // Prefill the form. Don't blow away user-typed
+                    // text if they already started — only fill empty
+                    // slots so a mid-form scan is additive, not
+                    // destructive.
+                    setCustomBrand(prev => prev || res.brand || null);
+                    setCustomName(prev => prev || res.productName || "");
+                    // Stash the payload for the post-save
+                    // brand_nutrition upsert. If the scan was cached
+                    // (same barcode seen before) the row already
+                    // exists and we don't need to write again.
+                    if (!res.cached) {
+                      setScannedPayload({
+                        barcode:     res.barcode,
+                        brand:       res.brand,
+                        productName: res.productName,
+                        nutrition:   res.nutrition,
+                        source:      res.source,
+                        sourceId:    res.sourceId,
+                        canonicalId: res.canonicalId || null,
+                      });
+                      pushToastFromScan(
+                        `Found: ${res.productName || res.brand || res.barcode}`,
+                        { emoji: "✨", kind: "success", ttl: 3500 },
+                      );
+                    } else {
+                      pushToastFromScan(
+                        "Pulled from cache — nutrition already known.",
+                        { emoji: "💾", kind: "info", ttl: 3000 },
+                      );
+                    }
+                  } catch (e) {
+                    console.error("[barcode] lookup failed:", e);
+                    pushToastFromScan(
+                      "Barcode lookup failed. Fill in manually.",
+                      { emoji: "⚠️", kind: "warn", ttl: 4500 },
+                    );
+                  } finally {
+                    setScanBusy(false);
+                  }
+                }}
+              />
+            )}
 
             {/* Name input + typeahead. As the user types, filter the
                 family's templates by substring match and surface a

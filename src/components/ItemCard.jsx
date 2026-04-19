@@ -6,6 +6,9 @@ import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
 import { useIngredientInfo, slugifyIngredientName, isMeaningfullyEnriched } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { lookupBarcode } from "../lib/lookupBarcode";
+import BarcodeScanner from "./BarcodeScanner";
+import { useToast } from "../lib/toast";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
@@ -2294,20 +2297,105 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
 // Phase 3 will add a "scan barcode" affordance here to fill gaps).
 function NutritionChip({ item, getInfo, getBrandNutrition }) {
   const [expanded, setExpanded] = useState(false);
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const { upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  const { push: pushToast } = useToast();
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
   // This lets the hook change its internal representation without
   // touching every render path.
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
+  const canonicalId = item?.ingredientId || item?.canonicalId || null;
   const { nutrition, source, brand } = pantryItemNutrition(
     {
-      ingredientId: item?.ingredientId || item?.canonicalId || null,
+      ingredientId: canonicalId,
       brand: item?.brand || null,
       nutritionOverride: item?.nutritionOverride || null,
     },
     { getInfo, brandNutrition: brandNutritionMap },
   );
-  if (!nutrition) return null;
+  // Shared scan handler — used by both the unknown-state CTA and
+  // (later, Phase 4) a "wrong? update" path from the expanded sheet.
+  // Writes straight to brand_nutrition since the canonical_id is
+  // already resolved on this row (no form to fill out).
+  const handleScan = async (barcode) => {
+    setScannerOpen(false);
+    setScanBusy(true);
+    try {
+      const res = await lookupBarcode(barcode, { brandNutritionRows });
+      if (!res?.found) {
+        pushToast("No match in Open Food Facts.", { emoji: "🔍", kind: "warn", ttl: 4500 });
+        return;
+      }
+      if (res.cached) {
+        pushToast("Already in the database — nutrition should now show.", { emoji: "💾", kind: "info", ttl: 3500 });
+        return;
+      }
+      if (!canonicalId) {
+        pushToast("Set the canonical first so nutrition pins to the right ingredient.", { emoji: "🏷️", kind: "warn", ttl: 5000 });
+        return;
+      }
+      const brandForWrite = item?.brand || res.brand;
+      if (!brandForWrite) {
+        pushToast("Set a brand first so the nutrition can attach to it.", { emoji: "🏷️", kind: "warn", ttl: 5000 });
+        return;
+      }
+      await upsertBrandNutrition({
+        canonicalId,
+        brand:     brandForWrite,
+        nutrition: res.nutrition,
+        barcode:   res.barcode,
+        source:    res.source || "openfoodfacts",
+        sourceId:  res.sourceId || res.barcode,
+      });
+      pushToast(`Nutrition saved for ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+    } catch (e) {
+      console.error("[nutrition] scan lookup failed:", e);
+      pushToast("Lookup failed. Try again.", { emoji: "⚠️", kind: "warn", ttl: 4500 });
+    } finally {
+      setScanBusy(false);
+    }
+  };
+  // Unknown state — offer a scan CTA instead of hiding the whole
+  // band. Surfaces that we know we DON'T know, and gives the user
+  // a one-tap path to fix it without leaving the card.
+  if (!nutrition) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <button
+          type="button"
+          onClick={() => setScannerOpen(true)}
+          disabled={scanBusy}
+          style={{
+            width: "100%", padding: "10px 12px",
+            background: "#141414",
+            border: "1px dashed #2a2a2a",
+            borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            cursor: scanBusy ? "wait" : "pointer",
+            textAlign: "left", opacity: scanBusy ? 0.6 : 1,
+          }}
+        >
+          <span style={{ fontSize: 16 }}>📷</span>
+          <span style={{
+            flex: 1,
+            fontFamily: "'DM Mono',monospace", fontSize: 10,
+            color: "#888", letterSpacing: "0.1em",
+          }}>
+            {scanBusy ? "LOOKING UP…" : "SCAN BARCODE FOR NUTRITION"}
+          </span>
+          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>→</span>
+        </button>
+        {scannerOpen && (
+          <BarcodeScanner
+            onCancel={() => setScannerOpen(false)}
+            onDetected={handleScan}
+          />
+        )}
+      </div>
+    );
+  }
   const badge = sourceBadge(source);
   const per = nutrition.per === "100g" ? "per 100g"
             : nutrition.per === "count" ? "per item"
