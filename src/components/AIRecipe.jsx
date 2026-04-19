@@ -112,6 +112,12 @@ export default function AIRecipe({
   onSave,           // (recipe) => Promise — persist privately, then close
   onSchedule,       // (recipe) => Promise — parent persists + opens SchedulePicker
   onSaveAndCook,    // (recipe) => Promise — existing save + cook path
+  onShoppingAdd,    // (items[]) => void — receives the locked ingredients
+                    // promoted to shopping in the tweak phase so the
+                    // parent can merge them into the shoppingList state.
+                    // Optional — when absent the promotions still show
+                    // in the recipe with a "user will pick up" note
+                    // but don't land on the actual shopping list.
 }) {
   const [phase,  setPhase]  = useState("setup");     // setup | sketch_loading | tweak | final_loading | preview | error
   const [recipe, setRecipe] = useState(null);
@@ -366,6 +372,19 @@ export default function AIRecipe({
       setRecipe(drafted);
       if (drafted?.title) {
         setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
+      }
+      // Push shopping-source locked items into the parent's shopping
+      // list. Happens only after the final cook actually lands so a
+      // user who cancels mid-tweak doesn't pollute their list.
+      const shoppingItems = locked.filter(l => l.source === "shopping");
+      if (shoppingItems.length > 0 && onShoppingAdd) {
+        onShoppingAdd(shoppingItems.map(l => ({
+          name: l.name,
+          amount: typeof l.amount === "string" ? parseFloat(l.amount) || 1 : (Number(l.amount) || 1),
+          unit: l.unit || (typeof l.amount === "string" ? String(l.amount).replace(/[\d.\s]+/, "").trim() : "") || "count",
+          ingredientId: l.ingredientId || null,
+          source: "ai-recipe",
+        })));
       }
       setPhase("preview");
     } catch (e) {

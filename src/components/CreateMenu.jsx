@@ -234,6 +234,27 @@ export default function CreateMenu({
           onSave={handleSave("ai")}
           onSchedule={handleSchedule("ai")}
           onSaveAndCook={handleSaveAndCook("ai")}
+          onShoppingAdd={(items) => {
+            // Items come in as { name, amount, unit, ingredientId,
+            // source: "ai-recipe" }. Merge into shoppingList with
+            // fresh uuids so useSyncedList persists them.
+            if (!items || items.length === 0) return;
+            setShoppingList(prev => [
+              ...prev,
+              ...items.map(i => ({
+                id: (typeof crypto !== "undefined" && crypto.randomUUID)
+                  ? crypto.randomUUID()
+                  : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                name: i.name,
+                emoji: "🥫",
+                amount: i.amount,
+                unit: i.unit,
+                ingredientId: i.ingredientId || null,
+                category: "pantry",
+                source: "ai-recipe",
+              })),
+            ]);
+          }}
         />
         {scheduling && (
           <SchedulePicker
