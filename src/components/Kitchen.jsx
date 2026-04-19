@@ -30,7 +30,7 @@ function tilesForTab(tab) {
 }
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import TypePicker from "./TypePicker";
-import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType } from "../data/foodTypes";
+import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
 import ItemCard from "./ItemCard";
@@ -55,6 +55,7 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
@@ -1742,7 +1743,7 @@ function formatAgo(d) {
 }
 
 
-function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
+function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingList = [], onClose, onAdd }) {
   // Pulled for admin-approve writes so the session's dbMap updates
   // immediately after an admin mints a new canonical here. dbMap
   // also feeds the packaging-chip row below the quantity field —
@@ -1813,6 +1814,12 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // prior brand until they explicitly clear it (matches how
   // customTypeId / customTileId behave).
   const [customBrand, setCustomBrand] = useState(null);
+  // BRAND row inline-edit mode — flips true when the user taps the
+  // BRAND row above the CANONICAL tap line. Input autofocuses,
+  // blur commits + closes. Separate from customBrand so the row can
+  // freely toggle between display and edit without losing the
+  // stored value.
+  const [customBrandOpen, setCustomBrandOpen] = useState(false);
   // Reserve-unit count (migration 0054). How many ADDITIONAL sealed
   // packages the user has beyond the one they're treating as "open"
   // (the amount field). Stays zero for liquid-mode rows; >0 flips
@@ -1911,6 +1918,26 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     if (!ing) return;
     const category = ing.category || "pantry";
     setCustomCategory(category);
+    // Auto-pin WWEIA food type (orange CATEGORY row) the instant
+    // we know the canonical. Per user directive: "the SECOND it
+    // knows it's a category type it should pin — I shouldn't
+    // have to click on the category to see a star then click
+    // again." Works for bundled canonicals via the 1:1
+    // canonicalId bridge and for synthetic (user-minted)
+    // canonicals via name-alias inference ("apple cider vinegar"
+    // → wweia_vinegars). Never clobbers an explicit user pick.
+    const inferredType = typeIdForCanonical(ing);
+    if (inferredType) {
+      setCustomTypeId(prev => prev || inferredType);
+    }
+    // Unit inference — bind the canonical's defaultUnit when the
+    // user hasn't already picked a unit. Otherwise leave their
+    // pick alone. Vinegar → fl_oz, milk → gallon, butter → oz,
+    // meats → lb, etc. — each bundled canonical carries its own
+    // default that's more accurate than a category-wide guess.
+    if (ing.defaultUnit) {
+      setCustomUnit(prev => prev || ing.defaultUnit);
+    }
     setCustomLocation(prev => {
       if (prev) return prev;
       const loc = defaultLocationForCategory(category);
@@ -2347,208 +2374,499 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 })()}
               </div>
               <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
-                  ITEM
-                </div>
-              <input
-                value={customName}
-                onChange={e => {
-                  const next = e.target.value;
-                  setCustomName(next);
-                  // Opportunistic brand harvest (migration 0061).
-                  // parseIdentity peels BRAND off raw text — if the
-                  // user typed / pasted "KERRYGOLD UNSALTED BUTTER",
-                  // stamp Kerrygold without requiring a picker. Only
-                  // fills when the user hasn't already set a brand;
-                  // never clears a prior pick (matches how the
-                  // canonical + type fields stay sticky).
-                  if (!customBrand) {
-                    const parsed = parseIdentity(next);
-                    if (parsed.brand) setCustomBrand(parsed.brand);
-                  }
-                }}
-                placeholder="Add an item"
-                style={{
-                  width: "100%",
-                  background: "transparent",
-                  border: "none", outline: "none",
+                {/* ITEM kicker removed — it did nothing for the
+                    structure, and the big italic header below
+                    (derived from brand + canonical) is already the
+                    primary identity surface. No redundant label
+                    needed. */}
+
+                {/* Header MIRRORS ItemCard exactly:
+                      - Big italic header = [Brand] [Canonical] derived
+                      - Free-text fallback input when no canonical
+                        (tan-tinted to signal "this is the canonical
+                        slot — you're setting the thing's identity")
+                      - "+ ADD BRAND" affordance BELOW the header (when
+                        brand unset) — brand is secondary to canonical,
+                        so its affordance sits subordinate
+                    Same three-state rendering as ItemCard's header;
+                    uses customBrandOpen / customCanonicalOpen toggles
+                    the same way ItemCard uses editingField. */}
+
+                {/* Big italic header — [Brand] [Canonical or free-text name] */}
+                <div style={{
                   fontFamily: "'Fraunces',serif", fontSize: 26,
                   fontStyle: "italic", fontWeight: 300,
-                  color: "#f0ece4",
-                  padding: "2px 0 0",
-                  boxSizing: "border-box",
-                }}
-              />
+                  color: "#f0ece4", margin: "6px 0 0", lineHeight: 1.2,
+                  display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap",
+                }}>
+                  {/* BRAND segment — inline editable on tap */}
+                  {customBrandOpen ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      defaultValue={customBrand || ""}
+                      onBlur={e => {
+                        const v = e.target.value.trim();
+                        setCustomBrand(v || null);
+                        setCustomBrandOpen(false);
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Escape") setCustomBrandOpen(false);
+                      }}
+                      placeholder="Brand…"
+                      style={{
+                        fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                        color: "#f5c842", fontWeight: 400, lineHeight: 1.2,
+                        background: "#0a0a0a", border: "1px solid #f5c842",
+                        borderRadius: 8, padding: "2px 8px", outline: "none",
+                        minWidth: 120, width: "40%",
+                      }}
+                    />
+                  ) : customBrand ? (
+                    <span
+                      onClick={() => setCustomBrandOpen(true)}
+                      style={{ cursor: "pointer", color: "#d4c9ac" }}
+                      title="Tap to edit brand"
+                    >
+                      {customBrand}
+                    </span>
+                  ) : null}
 
-              {/* Identity stack order — UNIVERSAL (see CLAUDE.md):
-                    1. CUSTOM NAME (input above)
-                    2. CANONICAL       (tan     #b8a878)
-                    3. FOOD CATEGORY   (orange  #e07a3a)
-                    4. STORED IN       (blue    #7eb8d4)
-                    5. STATE           (purple  #c7a8d4)
-                    6. INGREDIENTS     (yellow  #f5c842)
-                  Never reorder. Every entry-point (ItemCard,
-                  AddItemModal, scan rows) renders them in this order. */}
+                  {/* CANONICAL / fallback segment — when canonical
+                      bound, show its name (tap opens picker). When
+                      unset, show an editable text input so user can
+                      type what it is; blur tries inferCanonicalFromName
+                      to auto-resolve. */}
+                  {customCanonicalId ? (
+                    <span
+                      onClick={() => setCustomCanonicalOpen(true)}
+                      style={{ cursor: "pointer" }}
+                      title="Tap to change canonical"
+                    >
+                      {findIngredient(customCanonicalId)?.name
+                        || customCanonicalId.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                    </span>
+                  ) : (
+                    <input
+                      value={customName}
+                      onChange={e => {
+                        const next = e.target.value;
+                        setCustomName(next);
+                        if (!customBrand) {
+                          const parsed = parseIdentity(next);
+                          if (parsed.brand) setCustomBrand(parsed.brand);
+                        }
+                      }}
+                      onBlur={e => {
+                        // Defer the blur-resolution one tick so a tap
+                        // on a canonical-typeahead row below can bind
+                        // the canonical before this handler clears
+                        // customName or runs inferCanonicalFromName.
+                        // Without the defer, the onMouseDown on a
+                        // dropdown row fires blur first and the tap's
+                        // click event never registers.
+                        const typed = e.target.value.trim();
+                        setTimeout(() => {
+                          if (!typed || customCanonicalId) return;
+                          const inferredId = inferCanonicalFromName(typed);
+                          if (inferredId) setCustomCanonicalId(inferredId);
+                        }, 180);
+                      }}
+                      placeholder="What is it?"
+                      style={{
+                        flex: "1 1 auto", minWidth: 0,
+                        background: "transparent",
+                        border: "none", outline: "none",
+                        fontFamily: "'Fraunces',serif",
+                        fontSize: 26, fontStyle: "italic", fontWeight: 300,
+                        color: "#b8a878",
+                        padding: "2px 0 0",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  )}
+                </div>
 
-              {/* CANONICAL — tan. Tap opens LinkIngredient single
-                  mode; empty state falls back to the derived preview
-                  (name-match > category default) with a · AUTO chip
-                  so users see the inferred identity before committing. */}
-              <div
-                onClick={() => setCustomCanonicalOpen(true)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#b8a878",
-                  letterSpacing: "0.08em", marginTop: 6,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
-                {(() => {
-                  const explicit = customCanonicalId;
-                  const derivedPreview = explicit
-                    ? null
-                    : (inferCanonicalFromName(customName.trim()) || canonicalIdForType(customTypeId));
-                  const id = explicit || derivedPreview;
-                  if (!id) {
-                    return (
-                      <span style={{ color: "#b8a878", borderBottom: "1px dashed #b8a87844" }}>
-                        + SET CANONICAL
-                      </span>
-                    );
+                {/* + ADD BRAND BELOW the header (moved from above).
+                    Brand is secondary to canonical — canonical IS
+                    the thing's identity, brand modifies it. Visual
+                    order reflects that hierarchy: canonical header
+                    first, optional brand affordance subordinate
+                    below. Only renders when brand is unset; once
+                    set, brand inlines into the header above as the
+                    prefix segment. */}
+                {!customBrand && !customBrandOpen && (
+                  <div
+                    onClick={() => setCustomBrandOpen(true)}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#555", letterSpacing: "0.12em",
+                      cursor: "pointer", marginTop: 6,
+                      width: "fit-content",
+                      borderBottom: "1px dashed #2a2a2a",
+                    }}
+                  >
+                    + ADD BRAND
+                  </div>
+                )}
+
+                {/* Canonical typeahead — only renders while the user
+                    is typing into the "what is it?" fallback input
+                    AND no canonical is bound yet. Shows up to 5
+                    fuzzy-matched bundled canonicals. Tap → binds the
+                    canonical (sets customCanonicalId, hides this
+                    whole block since the input collapses to the tan
+                    canonical display above). Shopping-list bias
+                    passed in so items on the active list float to
+                    the top — same +30 tier used by receipt scan
+                    matching. */}
+                {!customCanonicalId && customName.trim().length >= 2 && (() => {
+                  const needle = customName.trim();
+                  const bundled = fuzzyMatchIngredient(needle, 5, shoppingList);
+
+                  // User-minted canonicals (Spam, Furikake, etc.) live
+                  // in dbMap as admin-approved ingredient_info rows,
+                  // NOT in the bundled INGREDIENTS array that
+                  // fuzzyMatchIngredient searches. Mirror the merge
+                  // Kitchen's autoStar does so synthetics surface in
+                  // the typeahead alongside bundled canonicals.
+                  const n = needle.toLowerCase();
+                  const synthScored = [];
+                  for (const [slug, info] of Object.entries(dbMap || {})) {
+                    if (!slug || findIngredient(slug)) continue;
+                    const displayOverride = info?.display_name;
+                    const name = (typeof displayOverride === "string" && displayOverride.trim())
+                      ? displayOverride.trim()
+                      : slug.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                    const nameLow = name.toLowerCase();
+                    const slugLow = slug.toLowerCase();
+                    let score = 0;
+                    if (nameLow === n || slugLow === n) score = 100;
+                    else if (slugLow === n.replace(/\s+/g, "_")) score = 100;
+                    else if (nameLow.startsWith(n) || slugLow.startsWith(n.replace(/\s+/g, "_"))) score = 85;
+                    else if (nameLow.includes(n) || slugLow.includes(n.replace(/\s+/g, "_"))) score = 70;
+                    if (score <= 0) continue;
+                    synthScored.push({
+                      ingredient: {
+                        id: slug,
+                        name,
+                        emoji: info?.emoji || "✨",
+                        category: info?.category || "user",
+                      },
+                      score,
+                    });
                   }
-                  const canon = findIngredient(id);
-                  const name = canon?.name || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-                  const emoji = canon?.emoji || "✨";
+
+                  const matches = [...bundled, ...synthScored]
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 5);
+
+                  // "+ CREATE" row — always rendered so the user can
+                  // mint a fresh canonical for anything the typeahead
+                  // didn't surface. Exact-slug match suppresses the
+                  // row so we don't show "+ CREATE prosciutto" when
+                  // prosciutto is already bound / top hit.
+                  const wouldSlug = slugifyIngredientName(needle);
+                  const alreadyExists = matches.some(
+                    m => m.ingredient.id === wouldSlug
+                  );
+                  const showCreate = wouldSlug && !alreadyExists;
+                  if (matches.length === 0 && !showCreate) return null;
                   return (
-                    <>
-                      <span style={{ fontSize: 12 }}>{emoji}</span>
-                      <span style={{
-                        color: explicit ? "#b8a878" : "#6a5f48",
-                        borderBottom: `1px dashed ${explicit ? "#b8a87844" : "#3a2f1044"}`,
-                      }}>
-                        {name.toUpperCase()}
-                      </span>
-                      {!explicit && (
-                        <span style={{ color: "#555", fontSize: 9, fontStyle: "italic" }}>· AUTO</span>
+                    <div style={{
+                      marginTop: 6,
+                      background: "#0a0a0a",
+                      border: "1px solid #2a2a2a",
+                      borderRadius: 10,
+                      padding: 4,
+                      display: "flex", flexDirection: "column", gap: 2,
+                    }}>
+                      {matches.map(m => (
+                        <button
+                          key={m.ingredient.id}
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            setCustomCanonicalId(m.ingredient.id);
+                            setCustomName(m.ingredient.name || customName);
+                            cascadeFromCanonical(m.ingredient);
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px",
+                            background: "transparent",
+                            border: "1px solid transparent",
+                            color: "#f0ece4",
+                            borderRadius: 8,
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "#141414"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>{m.ingredient.emoji || "✨"}</span>
+                          <span style={{
+                            flex: 1, overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {m.ingredient.name}
+                          </span>
+                          <span style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#555", letterSpacing: "0.08em",
+                            flexShrink: 0,
+                          }}>
+                            TAP TO LINK
+                          </span>
+                        </button>
+                      ))}
+
+                      {/* + CREATE NEW CANONICAL — escape hatch when
+                          the typeahead doesn't surface what the user
+                          has in mind. Tap → slugify(typed) becomes
+                          the new canonical id, set it on the row,
+                          fire enrichment in the background (auto-
+                          approves + lands in ingredient_info so
+                          future users get the canonical for free).
+                          Matches LinkIngredient's createNewFromQuery
+                          semantics so both entry points mint
+                          identical rows. */}
+                      {showCreate && (
+                        <button
+                          key="__create"
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            const id = wouldSlug;
+                            setCustomCanonicalId(id);
+                            setCustomName(needle);
+                            // Synthesize a minimal canonical object
+                            // for cascade (routing fields fall back
+                            // to defaults since we don't know the
+                            // category yet — enrichment will fill it).
+                            cascadeFromCanonical({
+                              id,
+                              name: needle,
+                              emoji: "✨",
+                              category: "pantry",
+                            });
+                            // Fire-and-forget enrichment so Claude
+                            // fills description/packaging/etc. behind
+                            // the scenes. Mirrors
+                            // LinkIngredient.createNewFromQuery.
+                            if (!findIngredient(id)) {
+                              enrichIngredient({ canonical_id: id })
+                                .then(() => { refreshDb?.(); })
+                                .catch(err => console.warn("[auto-enrich] failed for", id, err?.message));
+                            }
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "8px 10px",
+                            background: "transparent",
+                            border: `1px dashed #f5c84244`,
+                            color: "#f5c842",
+                            borderRadius: 8,
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                            cursor: "pointer", textAlign: "left",
+                            marginTop: 4,
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = "#1a1608"; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span style={{ fontSize: 18, flexShrink: 0 }}>➕</span>
+                          <span style={{
+                            flex: 1, overflow: "hidden",
+                            textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            Create <strong style={{ color: "#f5c842" }}>"{needle}"</strong> as a new canonical
+                          </span>
+                          <span style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#f5c842", letterSpacing: "0.08em",
+                            flexShrink: 0,
+                          }}>
+                            TAP TO CREATE
+                          </span>
+                        </button>
                       )}
-                    </>
+                    </div>
                   );
                 })()}
-              </div>
 
-              {/* FOOD CATEGORY — orange. */}
-              <div
-                onClick={() => setTypePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#e07a3a",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#e07a3a" }}>{LABEL_KICKER("category")}:</span>
-                {customTypeId ? (
+                {/* + LINK CANONICAL removed — the typeahead above
+                    already shows matching canonicals AND a "+ CREATE"
+                    row for fresh slugs, so a duplicate below-header
+                    affordance just added noise. User is already
+                    performing the link via the typeahead. */}
+
+              {/* Identity stack — per CLAUDE.md (updated). Row order:
+                    1. HEADER (brand + canonical) — ABOVE this block
+                    2. CATEGORIES  — orange
+                    3. STORED IN   — blue
+                    4. STATE       — purple
+                    5. INGREDIENTS — yellow
+
+                  Progressive color cascade: each row stays GREY until
+                  either its predecessor is set OR the field itself
+                  has been auto-filled. The second half matters —
+                  canonical binding often cascades straight into
+                  stored-in + location via cascadeFromCanonical, so
+                  stored-in gets a value without the user ever
+                  touching CATEGORY. Auto-filled values surface in
+                  their own color to signal "this was linked from
+                  the canonical" (per user directive: "if they auto
+                  fill make sure to fill their color as well to
+                  signify linkage"). Cascade order stays
+                  canonical → (brand, optional) → category →
+                  stored-in → state → ingredients. */}
+              {(() => {
+                const DISABLED_CLR = "#3a3a3a";
+                const hasCan  = !!customCanonicalId;
+                const hasCat  = !!customTypeId;
+                const hasTile = !!customTileId;
+                const hasSt   = !!customState;
+                const hasIng  = (customComponents?.length || 0) > 0;
+                // Color = axis color when (predecessor met) OR (self
+                // already filled). The self-filled arm handles
+                // auto-fills, which can skip steps — a tile bound by
+                // cascadeFromCanonical stays blue even if the user
+                // hasn't picked a CATEGORY above it.
+                const colCat  = (hasCan  || hasCat)  ? "#e07a3a" : DISABLED_CLR;
+                const colTile = (hasCat  || hasTile) ? "#7eb8d4" : DISABLED_CLR;
+                const colSt   = (hasTile || hasSt)   ? "#c7a8d4" : DISABLED_CLR;
+                const colIng  = (hasSt   || hasIng)  ? "#f5c842" : DISABLED_CLR;
+                // Row is tappable when its color is live (colored,
+                // not DISABLED_CLR). Any filled field is always
+                // editable.
+                const liveCat  = (hasCan  || hasCat);
+                const liveTile = (hasCat  || hasTile);
+                const liveSt   = (hasTile || hasSt);
+                const liveIng  = (hasSt   || hasIng);
+                const canClick = (enabled) => enabled ? "pointer" : "not-allowed";
+                return (
                   <>
-                    <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
-                    <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
-                      {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
-                    </span>
+                    {/* FOOD CATEGORY — orange when canonical set OR
+                        already filled; else grey. */}
+                    <div
+                      onClick={() => liveCat && setTypePickerOpen(v => !v)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colCat,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveCat),
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: liveCat ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colCat }}>{LABEL_KICKER("category")}:</span>
+                      {customTypeId ? (
+                        <>
+                          <span style={{ fontSize: 12 }}>{findFoodType(customTypeId)?.emoji || "🏷️"}</span>
+                          <span style={{ color: colCat, borderBottom: `1px dashed ${colCat}44` }}>
+                            {(findFoodType(customTypeId)?.label || "Custom").toUpperCase()}
+                          </span>
+                        </>
+                      ) : (
+                        <span style={{ color: colCat, borderBottom: `1px dashed ${colCat}44` }}>
+                          + SET CATEGORY
+                        </span>
+                      )}
+                    </div>
+
+                    {/* STORED IN — blue when category set OR already
+                        filled (common via auto-cascade); else grey. */}
+                    <div
+                      onClick={() => liveTile && setTilePickerOpen(v => !v)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colTile,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveTile),
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: liveTile ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colTile }}>{LABEL_KICKER("storedIn")}:</span>
+                      {customTileId ? (() => {
+                        const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
+                        const found = allBuiltIns.find(t => t.id === customTileId);
+                        return (
+                          <>
+                            <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
+                            <span style={{ color: colTile, borderBottom: `1px dashed ${colTile}44` }}>
+                              {(found?.label || "CUSTOM TILE").toUpperCase()}
+                            </span>
+                          </>
+                        );
+                      })() : (
+                        <span style={{ color: colTile, borderBottom: `1px dashed ${colTile}44` }}>
+                          + SET LOCATION
+                        </span>
+                      )}
+                    </div>
+
+                    {/* STATE — purple when stored-in set OR already
+                        filled; else grey. */}
+                    <div
+                      onClick={() => liveSt && setStatePickerOpen(v => !v)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colSt,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveSt),
+                        display: "flex", alignItems: "center", gap: 6,
+                        opacity: liveSt ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colSt }}>{LABEL_KICKER("state")}:</span>
+                      {customState ? (
+                        <span style={{ color: colSt, borderBottom: `1px dashed ${colSt}44` }}>
+                          {customState.toUpperCase()}
+                        </span>
+                      ) : (
+                        <span style={{ color: colSt, borderBottom: `1px dashed ${colSt}44` }}>
+                          + SET STATE
+                        </span>
+                      )}
+                    </div>
+
+                    {/* INGREDIENTS — yellow when state set OR
+                        already filled; else grey. Composition tags
+                        (multi-tag items). */}
+                    <div
+                      onClick={() => liveIng && setCustomComponentsOpen(true)}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: colIng,
+                        letterSpacing: "0.08em", marginTop: 3,
+                        cursor: canClick(liveIng),
+                        display: "flex", alignItems: "center", gap: 6,
+                        flexWrap: "wrap",
+                        opacity: liveIng ? 1 : 0.65,
+                      }}
+                    >
+                      <span style={{ color: colIng }}>{LABEL_KICKER("ingredients")}:</span>
+                      {customComponents.length === 0 ? (
+                        <span style={{ color: colIng, borderBottom: `1px dashed ${colIng}44` }}>
+                          + ADD
+                        </span>
+                      ) : (
+                        <>
+                          {customComponents.slice(0, 4).map((c, i) => (
+                            <span key={c.id} style={{ color: colIng, borderBottom: `1px dashed ${colIng}44` }}>
+                              {i > 0 && <span style={{ color: "#444", marginRight: 4 }}>·</span>}
+                              {(c.canonical?.name || c.id).toUpperCase()}
+                            </span>
+                          ))}
+                          {customComponents.length > 4 && (
+                            <span style={{ color: "#888" }}>+{customComponents.length - 4}</span>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </>
-                ) : (
-                  <span style={{ color: "#e07a3a", borderBottom: "1px dashed #e07a3a44" }}>
-                    + SET CATEGORY
-                  </span>
-                )}
-              </div>
-
-              {/* STORED IN — blue. */}
-              <div
-                onClick={() => setTilePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#7eb8d4",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#7eb8d4" }}>{LABEL_KICKER("storedIn")}:</span>
-                {customTileId ? (() => {
-                  const allBuiltIns = [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES];
-                  const found = allBuiltIns.find(t => t.id === customTileId);
-                  return (
-                    <>
-                      <span style={{ fontSize: 12 }}>{found?.emoji || "🗂️"}</span>
-                      <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
-                        {(found?.label || "CUSTOM TILE").toUpperCase()}
-                      </span>
-                    </>
-                  );
-                })() : (
-                  <span style={{ color: "#7eb8d4", borderBottom: "1px dashed #7eb8d444" }}>
-                    + SET LOCATION
-                  </span>
-                )}
-              </div>
-
-              {/* STATE — muted purple. */}
-              <div
-                onClick={() => setStatePickerOpen(v => !v)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#c7a8d4",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                }}
-              >
-                <span style={{ color: "#c7a8d4" }}>{LABEL_KICKER("state")}:</span>
-                {customState ? (
-                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
-                    {customState.toUpperCase()}
-                  </span>
-                ) : (
-                  <span style={{ color: "#c7a8d4", borderBottom: "1px dashed #c7a8d444" }}>
-                    + SET STATE
-                  </span>
-                )}
-              </div>
-
-              {/* INGREDIENTS — yellow. Composition tags (multi-tag). */}
-              <div
-                onClick={() => setCustomComponentsOpen(true)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#f5c842",
-                  letterSpacing: "0.08em", marginTop: 3,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ color: "#f5c842" }}>{LABEL_KICKER("ingredients")}:</span>
-                {customComponents.length === 0 ? (
-                  <span style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
-                    + ADD
-                  </span>
-                ) : (
-                  <>
-                    {customComponents.slice(0, 4).map((c, i) => (
-                      <span key={c.id} style={{ color: "#f5c842", borderBottom: "1px dashed #f5c84244" }}>
-                        {i > 0 && <span style={{ color: "#444", marginRight: 4 }}>·</span>}
-                        {(c.canonical?.name || c.id).toUpperCase()}
-                      </span>
-                    ))}
-                    {customComponents.length > 4 && (
-                      <span style={{ color: "#888" }}>+{customComponents.length - 4}</span>
-                    )}
-                  </>
-                )}
-              </div>
+                );
+              })()}
 
               {/* Typeahead suggestion dropdown REMOVED. It used to fan
                   out template + canonical substring matches below the
@@ -2827,21 +3145,85 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                           boxSizing: "border-box",
                         }}
                       />
-                      <input
-                        value={customUnit}
-                        onChange={e => setCustomUnit(e.target.value)}
-                        placeholder="unit"
-                        style={{
-                          width: "100%",
-                          padding: "4px 8px",
-                          background: "#0a0a0a",
-                          border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
-                          color: customUnit ? "#f5c842" : "#888",
-                          borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
-                          boxSizing: "border-box",
-                        }}
-                      />
+                      {/* Unit dropdown — derived from the bound
+                          canonical's units ladder when set, else
+                          inferred from emoji+category via the
+                          existing inferUnitsForScanned helper. No
+                          more free-text typing: vinegar → fl_oz /
+                          bottle / ml; milk → gallon / quart / pint /
+                          cup; meat → lb / oz / kg. Auto-pre-selects
+                          the canonical's defaultUnit on bind so the
+                          user just picks PACKAGE SIZE number and
+                          saves. Falls through to a free-text input
+                          only when the user picks "+ custom…" for
+                          an off-ladder unit (pack, wheel, sleeve). */}
+                      {(() => {
+                        // Units derived from CATEGORY, not the
+                        // canonical's bespoke ladder. Per user
+                        // directive: "measurements based on
+                        // category. Cause vinegars are probably
+                        // gonna be fl oz." inferUnitsForScanned
+                        // reads emoji + category and returns a
+                        // category-appropriate ladder (cheese,
+                        // dairy liquid, meat, bread, dry weight,
+                        // etc.). Bound canonical contributes its
+                        // emoji + category to the inference but
+                        // its own per-ingredient units[] is
+                        // intentionally NOT consulted — the unit
+                        // set should stay consistent within a
+                        // category so the user always sees the
+                        // same options for similar items.
+                        const canon = customCanonicalId ? findIngredient(customCanonicalId) : null;
+                        const { units } = inferUnitsForScanned({
+                          emoji: canon?.emoji || "",
+                          category: canon?.category || customCategory || "pantry",
+                          unit: customUnit,
+                        });
+                        const hasCurrent = units.some(u => u.id === customUnit);
+                        const opts = hasCurrent
+                          ? units
+                          : customUnit
+                            ? [{ id: customUnit, label: customUnit, toBase: 1 }, ...units]
+                            : units;
+                        return (
+                          <select
+                            value={customUnit || ""}
+                            onChange={e => {
+                              if (e.target.value === "__custom") {
+                                const typed = window.prompt("Custom unit (pack, wheel, sleeve, …):");
+                                const v = (typed || "").trim();
+                                if (v) setCustomUnit(v);
+                                return;
+                              }
+                              setCustomUnit(e.target.value);
+                            }}
+                            style={{
+                              width: "100%",
+                              padding: "4px 22px 4px 8px",
+                              background: "#0a0a0a",
+                              border: `1px solid ${customUnit ? "#f5c842" : "#2a2a2a"}`,
+                              color: customUnit ? "#f5c842" : "#888",
+                              borderRadius: 6,
+                              fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
+                              boxSizing: "border-box",
+                              cursor: "pointer",
+                              appearance: "none",
+                              WebkitAppearance: "none",
+                              MozAppearance: "none",
+                              backgroundImage: "linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%)",
+                              backgroundPosition: "calc(100% - 12px) 50%, calc(100% - 7px) 50%",
+                              backgroundSize: "5px 5px, 5px 5px",
+                              backgroundRepeat: "no-repeat",
+                            }}
+                          >
+                            {!customUnit && <option value="" style={{ background: "#141414" }}>unit…</option>}
+                            {opts.map(u => (
+                              <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label || u.id}</option>
+                            ))}
+                            <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
+                          </select>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -3142,16 +3524,39 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
               </div>
             </div>
 
-            {/* Inline pickers — shown when the FOOD CATEGORY or STORED IN
-                tap lines are tapped. The full label/preview UI moved to
-                the tap lines at the top of the modal, so these are the
-                picker-only renders. */}
+            {/* FOOD CATEGORY + STORED IN pickers — wrapped in
+                ModalSheet so they present as dimmed-backdrop overlays
+                that pop up at eye-level instead of rendering inline
+                at the bottom of the modal (where the user couldn't
+                tell focus had moved and scrolled-off content was
+                hidden). Mirrors the exact pattern used for the
+                scan-confirm row pickers (Kitchen.jsx ~line 1476 and
+                ~1515) so the interaction feels consistent across the
+                two surfaces. Headline + purpose line above each
+                picker tells the user why they're here and where to
+                start typing. */}
             {typePickerOpen && (
-              <div style={{ marginBottom: 16 }}>
+              <ModalSheet onClose={() => setTypePickerOpen(false)} maxHeight="86vh">
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:10 }}>
+                  CATEGORY
+                </div>
+                <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 6px", lineHeight:1.2 }}>
+                  What category does {customName.trim() || "this item"} belong to?
+                </h2>
+                <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", lineHeight:1.5, margin:"0 0 14px" }}>
+                  Category drives the state picker (sliced / ground / whole / ...) and the default tile — pick the one that best matches.
+                </p>
                 <TypePicker
                   userId={userId}
                   selectedTypeId={customTypeId}
-                  suggestedTypeId={inferFoodTypeFromName(customName)}
+                  // Bound canonical is the authority when it exists —
+                  // "Cheddar" canonical starrs wweia_cheese even if the
+                  // user's typed name doesn't contain the word. Falls
+                  // back to name-alias inference for free-text rows.
+                  suggestedTypeId={
+                    typeIdForCanonical(customCanonicalId ? findIngredient(customCanonicalId) : null)
+                    || inferFoodTypeFromName(customName)
+                  }
                   onPick={(typeId, defaultTileId, defaultLocation) => {
                     setCustomTypeId(typeId);
                     if (defaultTileId && !customTileId) setCustomTileId(defaultTileId);
@@ -3165,11 +3570,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     setTypePickerOpen(false);
                   }}
                 />
-              </div>
+              </ModalSheet>
             )}
 
             {tilePickerOpen && (
-              <div style={{ marginBottom: 16 }}>
+              <ModalSheet onClose={() => setTilePickerOpen(false)} maxHeight="86vh">
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em", marginBottom:10 }}>
+                  STORED IN
+                </div>
+                <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+                  Where does {customName.trim() || "this item"} live?
+                </h2>
                 <IdentifiedAsPicker
                   userId={userId}
                   locationHint={customLocation}
@@ -3181,7 +3592,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     setTilePickerOpen(false);
                   }}
                 />
-              </div>
+              </ModalSheet>
             )}
 
         <div style={{ display:"flex", gap:10 }}>
@@ -4505,6 +4916,30 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     <span style={{ color:"#666", fontWeight:400 }}> · {canonicalLabel}</span>
                   )}
                 </span>
+                {/* BRAND tag — parallel to the STATE tag below. Uses
+                    neutral gray styling since brand is orthogonal to
+                    the six colored identity axes per CLAUDE.md. Keeps
+                    "Butter · Kerrygold" scannable at the tile-card
+                    level without opening the item. Hidden when brand
+                    is null (most rows). */}
+                {item.brand && (
+                  <span
+                    title={`Brand: ${item.brand}`}
+                    style={{
+                      fontFamily:"'DM Mono',monospace", fontSize:9,
+                      color:"#aaa",
+                      background:"#161616",
+                      border:"1px solid #2a2a2a",
+                      borderRadius:4,
+                      padding:"1px 6px",
+                      letterSpacing:"0.08em",
+                      flexShrink:0,
+                      textTransform:"uppercase",
+                    }}
+                  >
+                    {item.brand}
+                  </span>
+                )}
                 {item.state && (
                   <span
                     title={`State: ${stateLabel(item.state)}`}
@@ -5651,6 +6086,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           tileContext={addingTo === "pantry" ? addingToTile : null}
           userId={userId}
           isAdmin={isAdmin}
+          shoppingList={shoppingList}
           onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
             if (addingTo === "shopping") {

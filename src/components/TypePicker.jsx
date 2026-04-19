@@ -106,9 +106,34 @@ export default function TypePicker({
   const current = selectedTypeId ? byId.get(selectedTypeId) : null;
 
   const needle = search.trim().toLowerCase();
+  // Rows the user will see below the starred + current picks.
+  //
+  // No search typed → the full catalog minus whatever's already
+  // pinned as the star or current pick (those render in dedicated
+  // rows above; no duplicates here). Always-on browse list so the
+  // user can see alternatives without needing to guess the right
+  // search term.
+  //
+  // Search typed → filter the same baseline list by label /
+  // aliases. If zero match, we DON'T collapse to a dead "Nothing
+  // matched" state — we keep the unfiltered list visible + render
+  // a small info chip above so the user still has options in view.
+  // (User: "don't collapse to zero recommendations… I want to see
+  // recommendations outside of the chosen one or starred.")
+  const excludeIds = useMemo(() => {
+    const s = new Set();
+    if (suggestedTypeId) s.add(suggestedTypeId);
+    if (selectedTypeId)  s.add(selectedTypeId);
+    return s;
+  }, [suggestedTypeId, selectedTypeId]);
+
+  const baselineList = useMemo(() => (
+    catalog.filter(t => !excludeIds.has(t.id))
+  ), [catalog, excludeIds]);
+
   const searchMatches = useMemo(() => {
     if (!needle) return [];
-    return catalog
+    return baselineList
       .filter(t => {
         if (t.label.toLowerCase().includes(needle)) return true;
         if (t.aliases.some(a => a.toLowerCase().includes(needle))) return true;
@@ -117,7 +142,9 @@ export default function TypePicker({
       // Keep user types first in results (catalog is already ordered
       // custom → bundled), and cap so the modal doesn't explode.
       .slice(0, 20);
-  }, [catalog, needle]);
+  }, [baselineList, needle]);
+  const hasSearchHits = needle.length > 0 && searchMatches.length > 0;
+  const hasSearchMiss = needle.length > 0 && searchMatches.length === 0;
 
   const handleCreate = async () => {
     if (!newLabel.trim()) return;
@@ -350,23 +377,31 @@ export default function TypePicker({
         />
       </div>
 
-      {/* Search results — only render when typing. Empty state is
-          a gentle nudge; full results list caps at 20 so the sheet
-          stays a one-thumb scroll. */}
-      {needle && searchMatches.length === 0 && (
+      {/* Result list area — ALWAYS shows recommendations. Three
+          modes, stacked in this order so the user is never staring
+          at a blank sheet:
+            1. Search has hits → render just those matches (filtered)
+            2. Search typed but zero hits → render a small "nothing
+               matched" note, then the baseline list below so the
+               user can still browse
+            3. No search typed → render the full baseline list
+          Baseline = full catalog minus whatever's already pinned
+          as ⭐ star or current pick (those sit above; no duplicates
+          down here). Cap at 20 so the sheet stays a one-thumb scroll. */}
+      {hasSearchMiss && (
         <div style={{
-          padding: "12px 14px",
+          padding: "10px 12px",
           background: COLOR.deep, border: `1px dashed ${COLOR.border}`,
           borderRadius: RADIUS.md,
-          fontFamily: FONT.sans, fontSize: 12, color: COLOR.muted,
+          fontFamily: FONT.sans, fontSize: 11, color: COLOR.muted,
           fontStyle: "italic", lineHeight: 1.5,
         }}>
-          Nothing matched "{search.trim()}". Try a shorter term —
-          categories are fixed to the USDA list so we can give every
-          item the right state vocabulary (sliced, ground, whole, …).
+          Nothing matched "{search.trim()}" — browsing the full list below.
         </div>
       )}
-      {searchMatches.map(t => renderTypeRow(t, "search"))}
+      {hasSearchHits
+        ? searchMatches.map(t => renderTypeRow(t, "search"))
+        : baselineList.slice(0, 20).map(t => renderTypeRow(t, "recommendation"))}
     </div>
   );
 }

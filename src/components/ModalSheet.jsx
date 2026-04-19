@@ -85,21 +85,31 @@ export default function ModalSheet({
   const internalScrollRef = useRef(null);
   const scrollRef = scrollRefFromProps || internalScrollRef;
 
+  // stopPropagation on every touch handler — nested ModalSheets
+  // (e.g. TypePicker opened from inside AddItemModal) otherwise
+  // let touches bubble to the parent sheet's handlers, so a
+  // swipe-down on the inner picker drags the outer AddItemModal
+  // too and both dismiss at once.
   const onTouchStart = (e) => {
     if (!swipeable) return;
+    e.stopPropagation();
     const el = scrollRef.current;
     if (!el) return;
     if (el.scrollTop > 0) return;  // let the user scroll up first
     dragStartRef.current = { y: e.touches[0].clientY };
   };
   const onTouchMove = (e) => {
-    if (!swipeable || !dragStartRef.current) return;
+    if (!swipeable) return;
+    e.stopPropagation();
+    if (!dragStartRef.current) return;
     const diff = e.touches[0].clientY - dragStartRef.current.y;
     if (diff <= 0) { setDragY(0); return; }  // upward drags don't count
     setDragY(diff);
   };
-  const onTouchEnd = () => {
-    if (!swipeable || !dragStartRef.current) return;
+  const onTouchEnd = (e) => {
+    if (!swipeable) return;
+    e?.stopPropagation?.();
+    if (!dragStartRef.current) return;
     const finalY = dragY;
     dragStartRef.current = null;
     if (finalY >= DISMISS_THRESHOLD) {
