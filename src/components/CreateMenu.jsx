@@ -29,7 +29,7 @@ import { useBrandNutrition } from "../lib/useBrandNutrition";
 //   custom     → multi-step recipe builder, saves to user_recipes
 //   ai         → Claude-drafted recipe from the pantry
 //   template   → browseable picker over YOUR RECIPES + AI DRAFTS + bundled
-//   addIntent  → two sub-cards (SCAN / ADD MANUALLY) + back link
+//   (scan / manual promoted to the main chooser; no sub-phase needed)
 //   cook       → hands the resolved recipe to CookMode
 // (orthogonal) scheduling → SchedulePicker overlaid on any mode
 //
@@ -48,7 +48,7 @@ export default function CreateMenu({
   // the feature yet (backwards-compat during rollout).
   onRequestPantryAction,
 }) {
-  const [mode, setMode] = useState("choose");        // choose | custom | ai | template | addIntent | cook
+  const [mode, setMode] = useState("choose");        // choose | custom | ai | template | cook
   const [activeRecipe, setActiveRecipe] = useState(null);
   // When set, the meal-detail overlay is shown (rendered on top of
   // the template picker) so the user can inspect pieces + cook one.
@@ -359,60 +359,9 @@ export default function CreateMenu({
     );
   }
 
-  // ADD TO PANTRY sub-phase — user tapped the 4th tile and we need to
-  // pick between "scan something" and "add manually." Both entries
-  // fire onRequestPantryAction back to App, which flips to the
-  // pantry tab and opens the matching Kitchen flow (Scanner or
-  // AddItemModal). CreateMenu closes immediately so the user isn't
-  // staring at a dim overlay while the tab switches behind it.
-  if (mode === "addIntent") {
-    const dispatchPantryAction = (kind) => {
-      if (onRequestPantryAction) onRequestPantryAction(kind);
-      else onClose?.();
-    };
-    return (
-      <div style={OVERLAY_STYLE}>
-        <div style={{ padding: "24px 20px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <button
-            onClick={() => setMode("choose")}
-            style={{
-              background: "transparent", border: "none",
-              color: "#aaa", fontFamily: "'DM Mono',monospace",
-              fontSize: 11, letterSpacing: "0.08em", cursor: "pointer",
-              padding: "4px 0",
-            }}
-          >
-            ← BACK
-          </button>
-          <button onClick={onClose} style={iconBtn}>✕</button>
-        </div>
-        <div style={{ padding: "12px 20px 0" }}>
-          <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 34, fontWeight: 300, fontStyle: "italic", color: "#f0ece4", letterSpacing: "-0.02em", margin: 0 }}>
-            How are you adding it?
-          </h1>
-          <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888", lineHeight: 1.5 }}>
-            Scan a receipt or a shelf photo, or type a single item by hand.
-          </div>
-        </div>
-        <div style={{ padding: "24px 20px 40px", display: "flex", flexDirection: "column", gap: 12 }}>
-          <BigCard
-            emoji="🧾"
-            accent="#7eb8d4"
-            title="Scan something"
-            blurb="Receipt, fridge shelf, pantry, or freezer — snap a photo and we'll read the items."
-            onClick={() => dispatchPantryAction("scan")}
-          />
-          <BigCard
-            emoji="➕"
-            accent="#f5c842"
-            title="Add manually"
-            blurb="Type one item in — name, amount, category, where it lives. For when a scan would be overkill."
-            onClick={() => dispatchPantryAction("add")}
-          />
-        </div>
-      </div>
-    );
-  }
+  // The addIntent sub-phase was deleted — scan + manual are now top-
+  // level cards on the main chooser (one tap, not two). onRequestPantryAction
+  // is still the dispatch path; the chooser cards call it directly.
 
   if (mode === "template") {
     const totalResults =
@@ -527,11 +476,11 @@ export default function CreateMenu({
     );
   }
 
-  // Default — the chooser. Four big cards matching the nav color
-  // language: custom is italic/yellow (authoring), AI is gradient
-  // (Claude), template is neutral (library), ADD TO PANTRY is green
-  // (the pantry's own accent). Tapping the fourth drills into the
-  // addIntent sub-phase, which offers SCAN / MANUAL entry points.
+  // Default — the chooser. Cards grouped into QUICK COOK (AI draft,
+  // custom builder, pick-a-recipe) and QUICK KITCHEN ADD (scan,
+  // manual). Scan is top of the add group since it's faster for
+  // packaged goods; manual is the fallback. No sub-phases — every
+  // card is one tap from the chooser to the action.
   return (
     <div style={OVERLAY_STYLE}>
       <div style={{ padding: "24px 20px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -581,12 +530,31 @@ export default function CreateMenu({
 
         <SectionDivider label="QUICK KITCHEN ADD" />
 
+        {/* Scan + manual promoted out of the addIntent sub-phase so
+            pantry adds are one tap from the create menu instead of
+            two. Scan on top — it's faster for packaged goods
+            (receipt, shelf, or the single-item barcode mode inside
+            Scanner all feed into the same confirm flow). Manual
+            below for the cases where a photo would be overkill. */}
         <BigCard
-          emoji="🥫"
+          emoji="🧾"
+          accent="#7eb8d4"
+          title="Scan something"
+          blurb="Receipt, fridge, pantry, or a single barcode — snap a photo, we read it."
+          onClick={() => {
+            if (onRequestPantryAction) onRequestPantryAction("scan");
+            else onClose?.();
+          }}
+        />
+        <BigCard
+          emoji="➕"
           accent="#4ade80"
-          title="Add to pantry"
-          blurb="Scan a receipt, capture a shelf, or type a single item in manually."
-          onClick={() => setMode("addIntent")}
+          title="Add manually"
+          blurb="Type one item — name, amount, category, where it lives."
+          onClick={() => {
+            if (onRequestPantryAction) onRequestPantryAction("add");
+            else onClose?.();
+          }}
         />
       </div>
     </div>
