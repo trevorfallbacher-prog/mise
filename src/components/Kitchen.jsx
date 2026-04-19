@@ -2902,7 +2902,25 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                       inputMode="decimal"
                       min="0" step="any"
                       value={packageSize}
-                      onChange={e => setPackageSize(e.target.value)}
+                      onChange={e => {
+                        const v = e.target.value;
+                        setPackageSize(v);
+                        // Setting PACKAGE SIZE auto-fills QUANTITY to
+                        // match — a freshly declared package starts
+                        // sealed at 100%. Only fires when amount is
+                        // empty OR was previously equal to packageSize
+                        // (sealed carry-over after resizing); if the
+                        // user has already set a specific amount that
+                        // differs, we leave it alone.
+                        const n = parseFloat(v);
+                        if (!Number.isFinite(n) || n <= 0) return;
+                        const amtN = parseFloat(amount);
+                        const prevN = parseFloat(packageSize);
+                        const wasSealed = Number.isFinite(amtN) && Number.isFinite(prevN) && amtN === prevN;
+                        if (amount === "" || !Number.isFinite(amtN) || wasSealed) {
+                          setAmount(String(n));
+                        }
+                      }}
                       placeholder="set size"
                       style={{
                         width: 90, padding: "4px 8px",
@@ -4348,17 +4366,24 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   const removeShoppingItem = id => setShoppingList(prev => prev.filter(i => i.id !== id));
   const removePantryItem = id => setPantry(prev => prev.filter(i => i.id !== id));
 
-  // Patch a pantry row in place. Also bump `max` up if the user set an amount
-  // bigger than the current max (otherwise the progress bar caps at 100% and
-  // lies about how much they have).
+  // Patch a pantry row in place. No implicit field coupling — the
+  // patch writes exactly the fields the caller sent, nothing else.
+  //
+  // We used to auto-bump `max` to `amount` whenever amount was edited
+  // ("so the progress bar doesn't cap at 100% and lie"), but that
+  // silently clobbered the user's declared package size. Someone
+  // types amount=1000 on a 500g package and the package flips to
+  // 1000 behind their back. Now amount and max move independently.
+  // If amount > max, the slider saturates at 100% — that's honest:
+  // the user told us the package is 500g and they have 1000g; the
+  // package number is the one to fix, not amount.
+  //
+  // lowThreshold also dropped out of auto-recompute; it's derived at
+  // add-time in AddItemModal and stays stable after unless the user
+  // edits it explicitly.
   const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
     if (p.id !== id) return p;
-    const next = { ...p, ...patch };
-    if (typeof patch.amount === "number") {
-      next.max = Math.max(p.max, next.amount);
-      next.lowThreshold = Math.max(next.max * 0.25, 0.25);
-    }
-    return next;
+    return { ...p, ...patch };
   }));
 
   // Render one pantry-item row. Used both for standalone items and for items
