@@ -16,6 +16,7 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useCookLog } from "../lib/useCookLog";
 import { useToast } from "../lib/toast";
 import { mealNutrition, formatMacros } from "../lib/nutrition";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
 
 // CreateMenu — full-screen overlay launched by the center ➕ in the
 // tab bar. Universal creation hub: launches either a COOK flow
@@ -71,6 +72,14 @@ export default function CreateMenu({
   // here lets AIRecipe's context builder look up flavorProfile/pairs/
   // diet per pantry item without re-fetching.
   const ingredientInfo = useIngredientInfo();
+  // Brand-nutrition lookup — wrapped in a Map-like shape for the
+  // resolver in nutrition.js. Shared by the MealDetail totals card
+  // and anywhere else in this overlay that renders macros.
+  const { get: getBrandNutrition } = useBrandNutrition();
+  const brandNutrition = useMemo(
+    () => ({ get: (k) => getBrandNutrition?.(k) || null }),
+    [getBrandNutrition],
+  );
   // Cook logs feed the AI-context "recent history" summary. Lazily
   // loaded at the CreateMenu level so users who never open the overlay
   // don't pay for the subscription. Cookbook's own useCookLog call
@@ -492,6 +501,7 @@ export default function CreateMenu({
             meal={viewingMeal}
             pantry={pantry}
             ingredientInfo={ingredientInfo}
+            brandNutrition={brandNutrition}
             onClose={() => setViewingMeal(null)}
             onCookPiece={(pieceRecipe) => {
               // Tap a piece inside the meal detail to cook just that
@@ -783,14 +793,14 @@ function MealRow({ meal, onClick }) {
 // individual pieces via the existing CookMode; a future "cook whole
 // meal" mode would sequence the pieces. Includes a delete action
 // that cascades only to meal_recipes (pieces stay in the library).
-function MealDetail({ meal, pantry = [], ingredientInfo, onClose, onCookPiece, onDelete }) {
+function MealDetail({ meal, pantry = [], ingredientInfo, brandNutrition, onClose, onCookPiece, onDelete }) {
   const pieceCount = (meal.pieces || []).length;
   // Sum of per-serving macros across each piece. Hidden when no piece
   // resolves (coverage.ingredients.resolved === 0) so we don't render
   // a misleading zero card on a meal where no nutrition data exists.
   const macros = useMemo(
-    () => mealNutrition(meal, { pantry, getInfo: ingredientInfo?.getInfo }),
-    [meal, pantry, ingredientInfo],
+    () => mealNutrition(meal, { pantry, getInfo: ingredientInfo?.getInfo, brandNutrition }),
+    [meal, pantry, ingredientInfo, brandNutrition],
   );
   const showMacros = macros && macros.coverage.ingredients.resolved > 0;
   return (

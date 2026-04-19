@@ -4,6 +4,7 @@ import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 import { findIngredient, INGREDIENTS } from "../data/ingredients";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -213,6 +214,14 @@ export default function AIRecipe({
   userRecipes = [], // [{ id, recipe, source }, ...] from useUserRecipes
   bundledRecipes = [],
 }) {
+  // Brand-nutrition lookup for the per-serving rollup. Wrapped in a
+  // Map-like shape so the resolver's signature stays source-agnostic.
+  const { get: getBrandNutrition } = useBrandNutrition();
+  const brandNutrition = useMemo(
+    () => ({ get: (k) => getBrandNutrition?.(k) || null }),
+    [getBrandNutrition],
+  );
+
   const [phase,  setPhase]  = useState("setup");     // setup | sketch_loading | tweak | final_loading | preview | error
   const [recipe, setRecipe] = useState(null);
   const [errMsg, setErrMsg] = useState("");
@@ -1545,7 +1554,7 @@ export default function AIRecipe({
                 the ingredients list. `coverage` discloses gaps so we
                 don't pretend a recipe is 100% known when some lines
                 didn't resolve. */}
-            <RecipeNutritionLine recipe={recipe} pantry={pantry} ingredientInfo={ingredientInfo} />
+            <RecipeNutritionLine recipe={recipe} pantry={pantry} ingredientInfo={ingredientInfo} brandNutrition={brandNutrition} />
           </div>
 
           {recipe.aiRationale && (
@@ -2503,10 +2512,10 @@ function PickExistingPicker({
 // we don't surface a fake "0 kcal" on a recipe the nutrition data
 // doesn't cover. Coverage ratio ("based on 7 of 9") is always shown
 // when partial so the user knows we're estimating.
-function RecipeNutritionLine({ recipe, pantry, ingredientInfo }) {
+function RecipeNutritionLine({ recipe, pantry, ingredientInfo, brandNutrition }) {
   const summary = useMemo(
-    () => recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo }),
-    [recipe, pantry, ingredientInfo],
+    () => recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo, brandNutrition }),
+    [recipe, pantry, ingredientInfo, brandNutrition],
   );
   if (!summary || summary.coverage.resolved === 0) return null;
   const { resolved, total } = summary.coverage;

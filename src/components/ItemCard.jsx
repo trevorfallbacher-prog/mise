@@ -5,6 +5,7 @@ import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
 import { useIngredientInfo, slugifyIngredientName, isMeaningfullyEnriched } from "../lib/useIngredientInfo";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
@@ -263,6 +264,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // the composite product. Single-tag items skip this line since
   // the deep-dive already shows the same info.
   const { getInfo: getDbInfo, getPendingInfo, refreshDb } = useIngredientInfo();
+  const { get: getBrandNutrition } = useBrandNutrition();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
     const intensityRank = { mild: 1, moderate: 2, intense: 3 };
@@ -839,7 +841,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               a source-of-signal badge. Hidden when no resolver tier
               returns numbers — the coverage story reads honestly
               instead of faking zeros. */}
-          <NutritionChip item={item} getInfo={getDbInfo} />
+          <NutritionChip item={item} getInfo={getDbInfo} getBrandNutrition={getBrandNutrition} />
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -2290,11 +2292,20 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
 // stays consistent across every surface. Hidden when no signal tier
 // produces numbers (better to show nothing than a fake zero — and
 // Phase 3 will add a "scan barcode" affordance here to fill gaps).
-function NutritionChip({ item, getInfo }) {
+function NutritionChip({ item, getInfo, getBrandNutrition }) {
   const [expanded, setExpanded] = useState(false);
+  // Wrap the brand-lookup function in a Map-like shape so the resolver
+  // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
+  // This lets the hook change its internal representation without
+  // touching every render path.
+  const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
   const { nutrition, source, brand } = pantryItemNutrition(
-    { ingredientId: item?.ingredientId || item?.canonicalId || null, brand: item?.brand || null, nutritionOverride: item?.nutritionOverride || null },
-    { getInfo },
+    {
+      ingredientId: item?.ingredientId || item?.canonicalId || null,
+      brand: item?.brand || null,
+      nutritionOverride: item?.nutritionOverride || null,
+    },
+    { getInfo, brandNutrition: brandNutritionMap },
   );
   if (!nutrition) return null;
   const badge = sourceBadge(source);
