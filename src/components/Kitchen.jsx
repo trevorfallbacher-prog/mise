@@ -2368,14 +2368,16 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     uses customBrandOpen / customCanonicalOpen toggles
                     the same way ItemCard uses editingField. */}
 
-                {/* + ADD BRAND above the header when brand is unset */}
+                {/* + ADD BRAND above the header when brand is unset.
+                    Generous marginTop so it doesn't feel jammed
+                    against the ITEM kicker above. */}
                 {!customBrand && !customBrandOpen && (
                   <div
                     onClick={() => setCustomBrandOpen(true)}
                     style={{
                       fontFamily: "'DM Mono',monospace", fontSize: 9,
                       color: "#555", letterSpacing: "0.12em",
-                      cursor: "pointer", marginTop: 2,
+                      cursor: "pointer", marginTop: 8,
                       width: "fit-content",
                       borderBottom: "1px dashed #2a2a2a",
                     }}
@@ -2388,7 +2390,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 <div style={{
                   fontFamily: "'Fraunces',serif", fontSize: 26,
                   fontStyle: "italic", fontWeight: 300,
-                  color: "#f0ece4", margin: "2px 0 0", lineHeight: 1.2,
+                  color: "#f0ece4", margin: "6px 0 0", lineHeight: 1.2,
                   display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap",
                 }}>
                   {/* BRAND segment — inline editable on tap */}
@@ -2560,65 +2562,17 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   </div>
                 )}
 
-              {/* Identity stack order — UNIVERSAL (see CLAUDE.md):
-                    1. CUSTOM NAME (input above)
-                    2. CANONICAL       (tan     #b8a878)
-                    3. FOOD CATEGORY   (orange  #e07a3a)
-                    4. STORED IN       (blue    #7eb8d4)
-                    5. STATE           (purple  #c7a8d4)
-                    6. INGREDIENTS     (yellow  #f5c842)
-                  Never reorder. Every entry-point (ItemCard,
-                  AddItemModal, scan rows) renders them in this order. */}
-
-              {/* CANONICAL tap line — BRAND chip was merged here in
-                  an earlier commit, now pulled out to the kicker
-                  above the name input (mirrors ItemCard's header
-                  pattern where brand lives with the name, not with
-                  canonical). CANONICAL stays pure-tan. */}
-              <div
-                onClick={() => setCustomCanonicalOpen(true)}
-                style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 10,
-                  color: "#b8a878",
-                  letterSpacing: "0.08em", marginTop: 6,
-                  cursor: "pointer",
-                  display: "flex", alignItems: "center", gap: 6,
-                  flexWrap: "wrap",
-                }}
-              >
-                <span style={{ color: "#b8a878" }}>{LABEL_KICKER("canonical")}:</span>
-                {(() => {
-                  const explicit = customCanonicalId;
-                  const derivedPreview = explicit
-                    ? null
-                    : (inferCanonicalFromName(customName.trim()) || canonicalIdForType(customTypeId));
-                  const id = explicit || derivedPreview;
-                  if (!id) {
-                    return (
-                      <span style={{ color: "#b8a878", borderBottom: "1px dashed #b8a87844" }}>
-                        + SET CANONICAL
-                      </span>
-                    );
-                  }
-                  const canon = findIngredient(id);
-                  const name = canon?.name || id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
-                  const emoji = canon?.emoji || "✨";
-                  return (
-                    <>
-                      <span style={{ fontSize: 12 }}>{emoji}</span>
-                      <span style={{
-                        color: explicit ? "#b8a878" : "#6a5f48",
-                        borderBottom: `1px dashed ${explicit ? "#b8a87844" : "#3a2f1044"}`,
-                      }}>
-                        {name.toUpperCase()}
-                      </span>
-                      {!explicit && (
-                        <span style={{ color: "#555", fontSize: 9, fontStyle: "italic" }}>· AUTO</span>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
+              {/* Identity stack — per CLAUDE.md (updated). Row order:
+                    1. HEADER (brand + canonical) — ABOVE this block,
+                       in the derived italic title
+                    2. CATEGORIES  — orange
+                    3. STORED IN   — blue
+                    4. STATE       — purple
+                    5. INGREDIENTS — yellow
+                  CANONICAL axis row was deleted because the header
+                  above already shows the canonical + carries a
+                  "+ LINK CANONICAL" affordance under it when unset.
+                  Duplicative otherwise. */}
 
               {/* FOOD CATEGORY — orange. */}
               <div
