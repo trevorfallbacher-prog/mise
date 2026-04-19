@@ -2493,7 +2493,45 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     the top — same +30 tier used by receipt scan
                     matching. */}
                 {!customCanonicalId && customName.trim().length >= 2 && (() => {
-                  const matches = fuzzyMatchIngredient(customName.trim(), 5, shoppingList);
+                  const needle = customName.trim();
+                  const bundled = fuzzyMatchIngredient(needle, 5, shoppingList);
+
+                  // User-minted canonicals (Spam, Furikake, etc.) live
+                  // in dbMap as admin-approved ingredient_info rows,
+                  // NOT in the bundled INGREDIENTS array that
+                  // fuzzyMatchIngredient searches. Mirror the merge
+                  // Kitchen's autoStar does so synthetics surface in
+                  // the typeahead alongside bundled canonicals.
+                  const n = needle.toLowerCase();
+                  const synthScored = [];
+                  for (const [slug, info] of Object.entries(dbMap || {})) {
+                    if (!slug || findIngredient(slug)) continue;
+                    const displayOverride = info?.display_name;
+                    const name = (typeof displayOverride === "string" && displayOverride.trim())
+                      ? displayOverride.trim()
+                      : slug.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+                    const nameLow = name.toLowerCase();
+                    const slugLow = slug.toLowerCase();
+                    let score = 0;
+                    if (nameLow === n || slugLow === n) score = 100;
+                    else if (slugLow === n.replace(/\s+/g, "_")) score = 100;
+                    else if (nameLow.startsWith(n) || slugLow.startsWith(n.replace(/\s+/g, "_"))) score = 85;
+                    else if (nameLow.includes(n) || slugLow.includes(n.replace(/\s+/g, "_"))) score = 70;
+                    if (score <= 0) continue;
+                    synthScored.push({
+                      ingredient: {
+                        id: slug,
+                        name,
+                        emoji: info?.emoji || "✨",
+                        category: info?.category || "user",
+                      },
+                      score,
+                    });
+                  }
+
+                  const matches = [...bundled, ...synthScored]
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 5);
                   if (matches.length === 0) return null;
                   return (
                     <div style={{
