@@ -1742,7 +1742,7 @@ function formatAgo(d) {
 }
 
 
-function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, onAdd }) {
+function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingList = [], onClose, onAdd }) {
   // Pulled for admin-approve writes so the session's dbMap updates
   // immediately after an admin mints a new canonical here. dbMap
   // also feeds the packaging-chip row below the quantity field —
@@ -5878,6 +5878,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           tileContext={addingTo === "pantry" ? addingToTile : null}
           userId={userId}
           isAdmin={isAdmin}
+          shoppingList={shoppingList}
           onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
             if (addingTo === "shopping") {
