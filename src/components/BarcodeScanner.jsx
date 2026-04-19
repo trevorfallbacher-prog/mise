@@ -178,14 +178,23 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
         onDetected?.(res.barcode);
         return;
       }
-      // Human-facing reason map — the edge fn returns machine strings.
+      // Human-facing reason map. Two buckets — model-readable misses
+      // (photo was fine, barcode just wasn't) vs infrastructure
+      // failures (edge fn down, API key missing, etc.). The second
+      // bucket needs deploy/config action, not a retake.
       const reason = res?.reason === "no_barcode_visible"
-        ? "No barcode found in the photo. Try again with the barcode filling more of the frame."
+        ? "No barcode found in the photo. Retake with the barcode filling more of the frame."
         : res?.reason === "not_a_product"
           ? "That looks like a QR code or something else, not a product barcode."
           : res?.reason === "unreadable"
             ? "Barcode too blurry or cut off. Hold steady, fill the frame, plenty of light."
-            : "Couldn't decode that photo. Try again or type the digits.";
+            : res?.reason === "edge_fn_not_deployed"
+              ? "decode-barcode-image edge function isn't deployed. Run: supabase functions deploy decode-barcode-image"
+              : res?.reason === "decode_failed"
+                ? `Edge function error${res?.status ? ` (${res.status})` : ""}. Check that ANTHROPIC_API_KEY is set: supabase secrets set ANTHROPIC_API_KEY=sk-ant-…${res?.detail ? `\n\nDetail: ${String(res.detail).slice(0, 200)}` : ""}`
+                : res?.reason === "empty_response"
+                  ? "Decode function returned an empty response. Try redeploying."
+                  : `Couldn't decode that photo. ${res?.reason ? `(reason: ${res.reason})` : ""} Try again or type the digits.`;
       setDecodeMsg(reason);
     } catch (err) {
       console.error("[barcode] photo decode failed:", err);
