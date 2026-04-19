@@ -37,10 +37,25 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
   const tickRef    = useRef(null);
   const photoInputRef = useRef(null);
   const [typed, setTyped]     = useState("");
-  const [state, setState]     = useState("init");  // init | scanning | native_unavailable | camera_denied | error
+  const [state, setState]     = useState("init");  // init | scanning | native_unavailable | camera_denied | error | verify_photo
   const [errMsg, setErrMsg]   = useState("");
   const [decoding, setDecoding] = useState(false);
   const [decodeMsg, setDecodeMsg] = useState("");
+  // Zoom + torch capabilities — populated after getUserMedia lands
+  // and we've probed the video track. Null = unsupported on this
+  // device/browser, don't render the control.
+  const [zoomCaps,      setZoomCaps]      = useState(null);   // { min, max, step } | null
+  const [zoomValue,     setZoomValue]     = useState(1);      // current zoom level
+  const [torchSupported,setTorchSupported]= useState(false);
+  const [torchOn,       setTorchOn]       = useState(false);
+  const videoTrackRef = useRef(null);                          // MediaStreamTrack for applyConstraints
+  // Struggling-nudge state. After N seconds of active scanning with
+  // no hit, surface a prominent "try photo instead" suggestion on
+  // the live view. Pro barcode apps do this (Walmart, Instacart) —
+  // saves the user when their phone can't focus close enough for a
+  // small UPC.
+  const [strugglingNudge, setStrugglingNudge] = useState(false);
+  const struggleTimerRef = useRef(null);
 
   // Live-scanner boot. Request the camera first, then pick the best
   // detector we can: native BarcodeDetector (free, fastest) if
@@ -58,10 +73,25 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
     // Camera access first — needed by EITHER detector. If this
     // fails with a denial, fall through to the photo-capture path
     // without wasting a zxing load.
+    //
+    // Resolution hint: request 1920x1080 (ideal) instead of the
+    // browser default (~640x480). Zxing decodes bar patterns by
+    // counting pixels per module (bar) — a small UPC at 640p may
+    // have 1-2px per bar, which is below the decode threshold;
+    // at 1080p it has 3-5px per bar, which decodes reliably.
+    // focusMode "continuous" asks supporting cameras to keep
+    // refocusing as the user moves closer / farther, critical for
+    // small barcodes that need to be close to fill the frame.
     let stream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
+        video: {
+          facingMode: { ideal: "environment" },
+          width:      { ideal: 1920 },
+          height:     { ideal: 1080 },
+          focusMode:  { ideal: "continuous" },
+          frameRate:  { ideal: 30 },
+        },
         audio: false,
       });
     } catch (e) {
@@ -78,7 +108,37 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       videoRef.current.srcObject = stream;
       try { await videoRef.current.play(); } catch { /* autoplay blocked; user tap resumes */ }
     }
+    // Probe track capabilities for zoom + torch. Not every browser
+    // exposes these (Safari does, Chrome on Android does, Firefox
+    // doesn't). Silently skip when absent — the core scanning path
+    // doesn't need them, they just help for edge cases.
+    try {
+      const track = stream.getVideoTracks?.()[0];
+      if (track && typeof track.getCapabilities === "function") {
+        const caps = track.getCapabilities();
+        if (caps?.zoom && typeof caps.zoom.min === "number") {
+          setZoomCaps({ min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
+          setZoomValue(caps.zoom.min);
+          videoTrackRef.current = track;
+        }
+        if (caps?.torch) {
+          setTorchSupported(true);
+          videoTrackRef.current = track;
+        }
+      }
+    } catch (e) {
+      // getCapabilities is flaky on some browsers; not fatal.
+      console.warn("[barcode] track caps probe failed:", e);
+    }
     setState("scanning");
+    // Kick off the struggling-nudge timer. If no decode fires within
+    // 8s, surface the "try photo instead" hint. Cleared on successful
+    // decode, cancel, or scanner teardown.
+    if (struggleTimerRef.current) window.clearTimeout(struggleTimerRef.current);
+    setStrugglingNudge(false);
+    struggleTimerRef.current = window.setTimeout(() => {
+      if (!cancelledRef.current) setStrugglingNudge(true);
+    }, 8000);
 
     // Prefer native BarcodeDetector — zero dependency cost, fastest.
     const hasNative = typeof window !== "undefined" && "BarcodeDetector" in window;
@@ -182,7 +242,48 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    videoTrackRef.current = null;
+    setZoomCaps(null);
+    setZoomValue(1);
+    setTorchSupported(false);
+    setTorchOn(false);
+    if (struggleTimerRef.current) {
+      window.clearTimeout(struggleTimerRef.current);
+      struggleTimerRef.current = null;
+    }
+    setStrugglingNudge(false);
   }
+
+  // Apply a zoom level to the live video track. Most modern mobile
+  // browsers support digital zoom via MediaStreamTrack constraints;
+  // we probed the capabilities after getUserMedia and stored them
+  // in zoomCaps. Zxing decodes the zoomed frames automatically — no
+  // recalibration needed, the video stream's pixel data just shifts.
+  const applyZoom = async (next) => {
+    const track = videoTrackRef.current;
+    if (!track || !zoomCaps) return;
+    const clamped = Math.max(zoomCaps.min, Math.min(zoomCaps.max, Number(next)));
+    setZoomValue(clamped);
+    try {
+      await track.applyConstraints({ advanced: [{ zoom: clamped }] });
+    } catch (e) {
+      console.warn("[barcode] zoom apply failed:", e);
+    }
+  };
+
+  // Flashlight toggle for dim-lit barcodes. Same MediaStreamTrack
+  // constraint path as zoom, different capability.
+  const toggleTorch = async () => {
+    const track = videoTrackRef.current;
+    if (!track || !torchSupported) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next }] });
+      setTorchOn(next);
+    } catch (e) {
+      console.warn("[barcode] torch apply failed:", e);
+    }
+  };
 
   function handleManualSubmit(e) {
     e?.preventDefault?.();
@@ -220,13 +321,18 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
         // Populate the typed field with the decoded digits and ask
         // the user to confirm before we hit OFF. Even zxing can
         // misread a damaged label; a quick eyeball check against
-        // the printed digits under the bars is cheap.
+        // the printed digits under the bars is cheap. Kill the live
+        // stream + flip to the verify view so the user actually sees
+        // the digits (if they came here from live scanning, they'd
+        // otherwise still be staring at the camera feed).
+        stopStream();
         setTyped(zxingRes.barcode);
         setDecodeMsg(
           `Read: ${formatBarcodeDigits(zxingRes.barcode)}\n\n` +
           `Check it matches the digits printed under the barcode on your package. ` +
           `Fix any wrong digits, then tap LOOK UP.`,
         );
+        setState("verify_photo");
         return;
       }
 
@@ -238,12 +344,14 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       const base64 = await fileToBase64(file);
       const res = await decodeBarcodeFromImage(base64, mediaType);
       if (res?.found && res.barcode) {
+        stopStream();
         setTyped(res.barcode);
         setDecodeMsg(
           `Read: ${formatBarcodeDigits(res.barcode)}\n\n` +
           `Check it matches the digits printed under the barcode on your package. ` +
           `Fix any wrong digits, then tap LOOK UP.`,
         );
+        setState("verify_photo");
         return;
       }
       // Human-facing reason map. Two buckets — model-readable misses
@@ -279,7 +387,7 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
     if (photoInputRef.current) photoInputRef.current.click();
   }
 
-  const showTyped = state === "native_unavailable" || state === "camera_denied" || state === "error";
+  const showTyped = state === "native_unavailable" || state === "camera_denied" || state === "error" || state === "verify_photo";
 
   return (
     <div style={{
@@ -330,6 +438,109 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
               boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)",
             }} />
           </div>
+
+          {/* Top-right control column — torch + photo-instead.
+              Always available during live scanning so users can
+              proactively escape the live path without waiting for
+              the struggle nudge. */}
+          <div style={{
+            position: "absolute", top: 14, right: 14,
+            display: "flex", flexDirection: "column", gap: 8,
+          }}>
+            {torchSupported && (
+              <button
+                type="button"
+                onClick={toggleTorch}
+                style={{
+                  width: 44, height: 44, borderRadius: 22,
+                  background: torchOn ? "#f5c842" : "rgba(0,0,0,0.6)",
+                  color: torchOn ? "#111" : "#f5c842",
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  fontSize: 18, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}
+                title={torchOn ? "Torch on" : "Torch off"}
+              >
+                {torchOn ? "💡" : "🔦"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={openPhotoCapture}
+              style={{
+                width: 44, height: 44, borderRadius: 22,
+                background: "rgba(0,0,0,0.6)",
+                color: "#c7a8d4",
+                border: "1px solid rgba(255,255,255,0.2)",
+                fontSize: 18, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+              title="Take a photo instead"
+            >
+              📸
+            </button>
+          </div>
+
+          {/* Zoom slider — lives at the bottom edge of the video.
+              Only rendered when the device's camera supports digital
+              zoom via MediaStreamTrack constraints (most modern
+              mobile, some desktop webcams). Pulling zoom up lets the
+              user fill the reticle with a small barcode without
+              moving physically closer (which often puts the code
+              under the phone's minimum focal distance). */}
+          {zoomCaps && (
+            <div style={{
+              position: "absolute", bottom: 78, left: 20, right: 20,
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "8px 12px",
+              background: "rgba(0,0,0,0.55)",
+              borderRadius: 20,
+            }}>
+              <span style={{ color: "#c7a8d4", fontSize: 14 }}>🔍</span>
+              <input
+                type="range"
+                min={zoomCaps.min}
+                max={zoomCaps.max}
+                step={zoomCaps.step}
+                value={zoomValue}
+                onChange={(e) => applyZoom(Number(e.target.value))}
+                style={{ flex: 1, accentColor: "#c7a8d4" }}
+              />
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                color: "#e0d4b8", minWidth: 36, textAlign: "right",
+              }}>
+                {zoomValue.toFixed(1)}×
+              </span>
+            </div>
+          )}
+
+          {/* Struggling-nudge banner. Fires 8s into active scanning
+              without a hit. Pro barcode apps do this (Walmart,
+              Instacart) — small barcodes often can't be decoded live
+              because the phone's minimum focal distance is longer
+              than the distance needed to fill the frame. A still
+              photo with dedicated autofocus usually works. */}
+          {strugglingNudge && state === "scanning" && (
+            <button
+              type="button"
+              onClick={openPhotoCapture}
+              style={{
+                position: "absolute", top: 18, left: 18, right: 76,
+                padding: "10px 12px",
+                background: "rgba(199,168,212,0.95)",
+                color: "#111",
+                border: "none", borderRadius: 12,
+                fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                fontWeight: 600, lineHeight: 1.35,
+                textAlign: "left", cursor: "pointer",
+                boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
+              }}
+            >
+              Small barcode? Try a photo instead — usually works when live scanning struggles. Tap here →
+            </button>
+          )}
+
           <div style={{
             position: "absolute", bottom: 18, left: 0, right: 0,
             textAlign: "center",
@@ -337,8 +548,18 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
             textShadow: "0 1px 2px rgba(0,0,0,0.8)",
           }}>
             {state === "init"     && "Starting camera…"}
-            {state === "scanning" && "Point at the barcode on the package"}
+            {state === "scanning" && !strugglingNudge && "Point at the barcode on the package"}
           </div>
+          {/* Hidden photo input — the torch/photo buttons and the
+              struggling nudge all trigger this via openPhotoCapture(). */}
+          <input
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handlePhotoCapture}
+            style={{ display: "none" }}
+          />
         </div>
       )}
       {showTyped && (
@@ -347,7 +568,9 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
             fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 300,
             fontStyle: "italic", color: "#f0ece4", marginBottom: 10,
           }}>
-            {state === "camera_denied" ? "Camera blocked by browser" : "Scan the barcode"}
+            {state === "camera_denied" ? "Camera blocked by browser"
+              : state === "verify_photo" ? "Verify the barcode"
+              : "Scan the barcode"}
           </div>
           {/* Photo-capture CTA — works on every mobile browser that
               allows the native camera via <input type="file" capture>.
