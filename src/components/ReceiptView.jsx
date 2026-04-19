@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
+import { Z } from "../lib/tokens";
 
 // ReceiptView — modal that opens when the user taps the provenance line
 // on an ItemCard. Renders one of two scan-artifact kinds:
@@ -22,7 +23,7 @@ import { findIngredient, unitLabel } from "../data/ingredients";
 //   pantry               — full pantry array (for filtering related items)
 //   onClose()            — dismiss
 //   onOpenItem(item)     — open a specific pantry row in ItemCard
-export default function ReceiptView({ receiptId, scanId, pantry = [], userId, onClose, onOpenItem }) {
+export default function ReceiptView({ receiptId, scanId, pantry = [], userId, familyIds = [], onClose, onOpenItem }) {
   const [receipt, setReceipt] = useState(null);
   const [imageUrl, setImageUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,14 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
   // realtime event rehydrates the `_live` field.
   const [restoring, setRestoring] = useState(new Set());
   const [restoreError, setRestoreError] = useState(null);
+  // Access denied = the loaded receipt belongs to someone else. Family
+  // sharing lets rows SURFACE across users (e.g. a row whose
+  // source_receipt_id points at a spouse's receipt), but opening the
+  // receipt itself is not in scope here — a non-owner viewer should
+  // not see a stranger's grocery list, price totals, or RESTORE
+  // affordance. When this flag trips, we render an empty sheet and
+  // call onClose() via effect so the user lands back where they were.
+  const [accessDenied, setAccessDenied] = useState(false);
   // Inline "arm then confirm" pattern for destructive delete — swap
   // out window.confirm so the delete flow stays inside the sheet
   // with the actual receipt context visible, rather than ripping the
@@ -55,6 +64,24 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Access denied → close immediately. No card, no flash. The
+  // receipt must never enter the viewer's view of the app, not even
+  // as a dismissing placeholder. Upstream gates (ItemCard chevron +
+  // Kitchen onOpenProvenance) should already prevent reaching this,
+  // but as last-resort insurance we close without rendering anything.
+  useEffect(() => {
+    if (!accessDenied) return undefined;
+    onClose?.();
+    return undefined;
+  }, [accessDenied, onClose]);
+
+  // Is the viewer the owner of this artifact? Gates every WRITE path
+  // (header edit, delete, restore) — family members can READ but not
+  // mutate someone else's receipt, and a restored row always belongs
+  // to its owner (never forge a pantry_items row stamped with
+  // someone else's receipt_id).
+  const isOwner = !!(receipt?.user_id && receipt.user_id === userId);
+
   // Persist a patch to the receipts row. Optimistic local update so the
   // header re-renders immediately; real-world latency on Supabase update
   // is usually sub-200ms but an empty spinner flash looked broken. If
@@ -64,6 +91,9 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
   // receipt-kind artifacts (pantry_scan has no editable header).
   const commitReceiptPatch = async (patch) => {
     if (kind !== "receipt" || !artifactId) { setEditingField(null); return; }
+    // Owner-only. The RLS policy may also block non-owner UPDATEs,
+    // but bail early so a family viewer's edits don't even try.
+    if (!isOwner) { setEditingField(null); return; }
     setSaving(true);
     setReceipt(prev => prev ? { ...prev, ...patch } : prev);
     setEditingField(null);
@@ -84,6 +114,10 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
   // lets admins wipe other people's receipts from the admin portal.
   const deleteArtifact = async () => {
     if (!artifactId || deleting) return;
+    // Owner-only. Family members can read but can't nuke each
+    // other's receipts — RLS should also reject, but bail early so
+    // the request never leaves the client.
+    if (!isOwner) return;
     setDeleting(true);
     const table = kind === "pantry_scan" ? "pantry_scans" : "receipts";
     const fkCol  = kind === "pantry_scan" ? "source_scan_id" : "source_receipt_id";
@@ -122,6 +156,13 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
   // or the ✕ button, the DB DELETE follows automatically).
   const restoreSnapshotRow = async (snapshotIdx, snapshot) => {
     if (!userId || !snapshot) return;
+    // Owner-only. RESTORE forges a pantry_items row linked to
+    // source_receipt_id — that's only meaningful when the viewer
+    // owns the receipt. A family viewer restoring from someone
+    // else's receipt would mint a row in THEIR pantry stamped with
+    // a sibling's receipt id, which is not something we want to
+    // create.
+    if (!isOwner) return;
     setRestoring(prev => new Set(prev).add(snapshotIdx));
     setRestoreError(null);
     try {
@@ -137,7 +178,9 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
         emoji: snapshot.emoji || "🥫",
         amount: amt,
         unit: snapshot.unit || "count",
-        max: Math.max(amt * 2, 1),
+        // Packaging undeclared — slider stays hidden until user
+        // sets a size. 0 because the DB column is NOT NULL.
+        max: 0,
         low_threshold: Math.max(amt * 0.25, 0.25),
         category: snapshot.category || "pantry",
         price_cents: snapshot.priceCents ?? null,
@@ -145,7 +188,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
         purchased_at: new Date().toISOString(),
         // Source provenance — pointer back to THIS artifact so the row
         // shows up under its "Items from this scan" list on next open.
-        source_kind: kind === "pantry_scan" ? "pantry_scan" : "receipt",
+        source_kind: kind === "pantry_scan" ? "pantry_scan" : "receipt_scan",
         [fkCol]: artifactId,
         // Identity/composition — carry forward everything the snapshot
         // knew so merge heuristics don't re-collide with other rows.
@@ -192,9 +235,15 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
       // receipt's contents. Falls back to null on pre-0050 rows; the
       // UI layers it over the pantry-derived view so legacy receipts
       // don't read empty.
+      // user_id is loaded so we can gate ownership-sensitive actions
+      // (RESTORE, DELETE, header edits) on the viewer being the
+      // original owner. RLS lets family members READ each other's
+      // receipts, but MUTATING another user's receipt — or forging a
+      // pantry_items row stamped with their receipt_id — is not
+      // something this view should ever do.
       const selectCols = kind === "pantry_scan"
-        ? "id, kind, scanned_at, item_count, image_path, scan_items"
-        : "id, store_name, receipt_date, scanned_at, total_cents, item_count, image_path, scan_items";
+        ? "id, user_id, kind, scanned_at, item_count, image_path, scan_items"
+        : "id, user_id, store_name, receipt_date, scanned_at, total_cents, item_count, image_path, scan_items";
       const { data, error } = await supabase
         .from(table)
         .select(selectCols)
@@ -203,6 +252,18 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
       if (!alive) return;
       if (error) {
         console.warn(`[${table}] load failed:`, error.message);
+        setReceipt(null);
+        setLoading(false);
+        return;
+      }
+      // Ownership gate. The RLS policy on receipts / pantry_scans
+      // permits reads for family members, so data can come back for
+      // a row the viewer doesn't own. Allow the owner and any
+      // explicit family member through; everyone else gets bounced.
+      const ownerId = data?.user_id;
+      const allowed = ownerId === userId || familyIds.includes(ownerId);
+      if (!allowed) {
+        setAccessDenied(true);
         setReceipt(null);
         setLoading(false);
         return;
@@ -285,9 +346,22 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
     ? `$${(receipt.total_cents / 100).toFixed(2)}`
     : null;
 
+  // Render nothing at all when access is denied — the effect above
+  // has already fired onClose, we just need to keep the DOM empty
+  // for the tick before the parent unmounts us. Also suppress the
+  // shell during the initial load when we don't yet know if the
+  // viewer is allowed: rendering the drag-handle + ✕ over a blank
+  // sheet would still be a visible flash.
+  if (accessDenied) return null;
+  if (loading && !receipt) return null;
+
   return (
     <div style={{
-      position: "fixed", inset: 0, background: "#000000dd", zIndex: 318,
+      // Z.picker (340) sits ABOVE Z.card (320) where ItemCard
+      // renders. Tapping a provenance link on an open ItemCard
+      // must pop ReceiptView on top — previously stuck behind at
+      // zIndex 318, forcing the user to close the ItemCard first.
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: Z.picker,
       display: "flex", alignItems: "flex-end",
       maxWidth: 480, margin: "0 auto",
     }}>
@@ -474,7 +548,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#7eb8d4", letterSpacing: "0.12em" }}>
                 ITEMS FROM THIS SCAN ({relatedItems.length})
               </div>
-              {missingCount > 0 && userId && (
+              {missingCount > 0 && userId && isOwner && (
                 <button
                   onClick={() => restoreAllMissing(missingList)}
                   style={{
@@ -567,7 +641,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
                       )}
                     </div>
                   </div>
-                  {missing && userId ? (
+                  {missing && userId && isOwner ? (
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -606,7 +680,7 @@ export default function ReceiptView({ receiptId, scanId, pantry = [], userId, on
             what gets removed; second tap commits. Cancel button dismisses
             the armed state cleanly. Only renders once the artifact has
             loaded (nothing to delete otherwise). */}
-        {receipt && (
+        {receipt && isOwner && (
           <div style={{ marginTop: 22, paddingTop: 14, borderTop: "1px solid #1f1f1f" }}>
             {!armingDelete ? (
               <button

@@ -519,7 +519,13 @@ export const INGREDIENTS = [
 
   // ── meat / pork / seafood ───────────────────────────────────────────────
   {
-    id: "chicken", name: "Chicken (whole)", shortName: "Whole",
+    // `chicken` is the BASE canonical (the species). Whether a
+    // specific pantry row is "whole," "ground," "diced," etc. is
+    // carried on pantry_items.state (a separate axis per CLAUDE.md
+    // identity hierarchy). Previously the display read "Chicken
+    // (whole)" which baked state into the name; shortName is now
+    // empty so the registry isn't lying about its role.
+    id: "chicken", name: "Chicken", shortName: null,
     parentId: "chicken_hub", emoji: "🍗", category: "meat",
     units: [
       { id: "lb", label: "lb", toBase: 453.6 },
@@ -632,6 +638,26 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
+    // BASE canonical for all beef cuts / forms. Pantry rows carry
+    // state (ground, whole, cubed, etc.) on the state column —
+    // NOT as a separate canonical. Legacy `ground_beef` slug is
+    // aliased below to this canonical + state='ground'.
+    id: "beef", name: "Beef", shortName: "Beef",
+    parentId: "beef_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "kg", label: "kg", toBase: 1000 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    // DEPRECATED — state ("ground") baked into canonical id. Kept
+    // in the registry for back-compat so findIngredient continues
+    // to resolve old pantry_items rows; CANONICAL_ALIASES routes
+    // this slug to { base: "beef", state: "ground" }. Migration
+    // 0060 rewrites existing rows to the base slug. New code
+    // should NOT reference this id.
     id: "ground_beef", name: "Ground Beef", shortName: "Ground",
     parentId: "beef_hub", emoji: "🥩", category: "meat",
     units: [
@@ -642,6 +668,18 @@ export const INGREDIENTS = [
   },
 
   // Pork ───────────────────
+  {
+    // BASE canonical for all pork cuts / forms. See beef comment
+    // above — same pattern. Aliased slugs: ground_pork.
+    id: "pork", name: "Pork", shortName: "Pork",
+    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "kg", label: "kg", toBase: 1000 },
+    ],
+    defaultUnit: "lb",
+  },
   {
     id: "pork_chop", name: "Pork Chops", shortName: "Chops",
     parentId: "pork_hub", emoji: "🥩", category: "meat",
@@ -671,6 +709,8 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
+    // DEPRECATED — see ground_beef. Aliased to { base: "pork",
+    // state: "ground" }. Migration 0060 rewrites existing rows.
     id: "ground_pork", name: "Ground Pork", shortName: "Ground",
     parentId: "pork_hub", emoji: "🥩", category: "meat",
     units: [
@@ -751,6 +791,20 @@ export const INGREDIENTS = [
 
   // Turkey ───────────────────
   {
+    // BASE canonical for all turkey cuts / forms. See beef comment
+    // above — same pattern. Aliased slugs: ground_turkey.
+    id: "turkey", name: "Turkey", shortName: "Turkey",
+    parentId: "turkey_hub", emoji: "🦃", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "kg", label: "kg", toBase: 1000 },
+    ],
+    defaultUnit: "lb",
+  },
+  {
+    // DEPRECATED — see ground_beef. Aliased to { base: "turkey",
+    // state: "ground" }. Migration 0060 rewrites existing rows.
     id: "ground_turkey", name: "Ground Turkey", shortName: "Ground",
     parentId: "turkey_hub", emoji: "🦃", category: "meat",
     units: [
@@ -2122,8 +2176,50 @@ for (const ing of INGREDIENTS) {
 
 const byId = new Map(INGREDIENTS.map(i => [i.id, i]));
 
+// Canonical aliases — legacy slugs where STATE was baked into the
+// canonical id ("ground_beef", "ground_pork", "ground_turkey").
+// Per CLAUDE.md the identity hierarchy keeps state as a SEPARATE
+// axis (purple), so these deprecated slugs resolve to the BASE
+// canonical + a state hint. findIngredient falls through so
+// pantry_items rows written under an old slug still render
+// correctly until migration 0060 rewrites them to the base.
+//
+// Shape: { [legacySlug]: { base: <baseSlug>, state: <stateToken> } }
+export const CANONICAL_ALIASES = {
+  ground_beef:   { base: "beef",   state: "ground" },
+  ground_pork:   { base: "pork",   state: "ground" },
+  ground_turkey: { base: "turkey", state: "ground" },
+};
+
+/**
+ * Look up an ingredient by slug. Transparently resolves aliased
+ * legacy slugs (ground_beef → beef). Returns null when the slug
+ * doesn't match any bundled canonical OR alias.
+ *
+ * This keeps existing pantry_items.canonical_id values working
+ * even after migration 0060 rewrites them; the deprecated slugs
+ * resolve to the same underlying ingredient object.
+ */
 export function findIngredient(id) {
-  return id ? byId.get(id) || null : null;
+  if (!id) return null;
+  const alias = CANONICAL_ALIASES[id];
+  if (alias) return byId.get(alias.base) || null;
+  return byId.get(id) || null;
+}
+
+/**
+ * Resolve a canonical slug into its { canonical, state } pair.
+ * Callers that want the state axis (pantry row hydration, UI
+ * chips) use this instead of findIngredient's flattening lookup.
+ *
+ * Non-aliased slugs return the slug with state = null so callers
+ * can treat every identity uniformly.
+ */
+export function resolveCanonicalIdentity(id) {
+  if (!id) return { canonical: null, state: null };
+  const alias = CANONICAL_ALIASES[id];
+  if (alias) return { canonical: alias.base, state: alias.state };
+  return { canonical: id, state: null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -132,7 +132,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, onUpdate, onDelete, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -345,6 +345,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
+  // Flips true when the user picks "+ custom…" in the unit dropdown.
+  // Replaces the <select> with a free-text <input> so they can type a
+  // unit that isn't in the canonical's ladder ("pack", "wheel",
+  // etc). Cleared when editingField closes.
+  const [customUnitOpen, setCustomUnitOpen] = useState(false);
+  useEffect(() => { if (editingField !== "qty") setCustomUnitOpen(false); }, [editingField]);
 
   if (!itemProp) return null;
 
@@ -763,21 +769,25 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 cursor: readOnly ? "default" : "pointer",
               }}
             >
-              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>QUANTITY</div>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.1em" }}>
+                QUANTITY
+                {editingField === "qty" && (
+                  <span style={{ color: "#7eb8d4", marginLeft: 6 }}>· TAP UNIT TO CHANGE</span>
+                )}
+              </div>
               {editingField === "qty" ? (() => {
                 const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
                 const hasCurrent = units.some(u => u.id === item.unit);
                 const opts = hasCurrent ? units : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
-                // Slider range: 0..max (max is the high-water amount
-                // this row has ever held — tracked automatically in
-                // usePantry on adds/restocks). Drag = estimate what's
-                // left after a half-bag-of-chips scenario. Step sized
-                // against max so the slider feels precise on both
-                // small-max items (3 eggs) and large-max items (5 lbs
-                // flour). Color keyed to the same thresholds the
-                // amount-bar already uses for visual consistency.
-                const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);
-                const ratio = Math.min(1, (Number(item.amount) || 0) / maxVal);
+                // Slider only makes sense when a container size has
+                // been declared (item.max > 0). Without an explicit
+                // package, "full" is undefined — the slider would be
+                // lying. Gate the render on hasPackage so the tile
+                // collapses cleanly to just amount + unit when the
+                // user hasn't declared a package yet.
+                const hasPackage = Number(item.max) > 0;
+                const maxVal = hasPackage ? Number(item.max) : 0;
+                const ratio = hasPackage ? Math.min(1, (Number(item.amount) || 0) / maxVal) : 0;
                 const sliderColor = ratio <= 0.25 ? "#ef4444"
                   : ratio <= 0.5 ? "#f59e0b"
                   : "#7ec87e";
@@ -786,17 +796,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   <div
                     style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}
                     onClick={e => e.stopPropagation()}
-                    // When focus leaves the entire edit area (not just
-                    // one sub-input), commit-close the editor. Using
-                    // relatedTarget + contains keeps the editor open
-                    // while you're still moving between the number
-                    // input, the unit select, and the slider — which
-                    // used to slam shut on every inter-element blur
-                    // because the number input's onBlur closed the
-                    // editor directly.
+                    // Keep the editor open across inter-element focus
+                    // moves (number input → unit select → slider →
+                    // package size input). Native <select> on iOS +
+                    // desktop briefly moves focus OFF the subtree
+                    // when its dropdown pops, so a synchronous blur
+                    // check was slamming the editor shut before the
+                    // onChange had a chance to fire. Defer the close
+                    // to the next tick and re-check activeElement
+                    // after the browser settles — if focus landed
+                    // back inside the editor (or inside the child
+                    // <select>'s own dropdown) we leave it open.
                     onBlur={e => {
-                      if (e.currentTarget.contains(e.relatedTarget)) return;
-                      setEditingField(null);
+                      const root = e.currentTarget;
+                      setTimeout(() => {
+                        if (!root || !document.body.contains(root)) return;
+                        if (root.contains(document.activeElement)) return;
+                        setEditingField(null);
+                      }, 150);
                     }}
                   >
                     {/* Packaging chip row for edit-mode — same typical
@@ -816,7 +833,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                             return (
                               <button
                                 key={`${s.amount}-${s.unit}-${i}`}
-                                onClick={() => commit({ amount: Number(s.amount), unit: s.unit || item.unit, max: Math.max(Number(s.amount) * 2, 1) })}
+                                onClick={() => commit({ amount: Number(s.amount), unit: s.unit || item.unit, max: Math.max(Number(s.amount), 1) })}
                                 style={{
                                   padding: "4px 10px",
                                   background: active ? "#1a1608" : "transparent",
@@ -861,34 +878,145 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                           fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
                         }}
                       />
-                      <select
-                        defaultValue={item.unit}
-                        onChange={e => commit({ unit: e.target.value })}
-                        style={{
-                          padding: "3px 2px",
-                          background: "#0a0a0a", border: "1px solid #f5c842",
-                          color: "#f5c842", borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 10, outline: "none",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {opts.map(u => (
-                          <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
-                        ))}
-                      </select>
+                      {customUnitOpen ? (
+                        // Free-text unit input — escape hatch for
+                        // units not in the canonical's ladder (a "pack"
+                        // of Costco chicken breasts, a "wheel" of
+                        // Brie, etc.). Writes verbatim so downstream
+                        // renderers display whatever the user typed.
+                        <input
+                          type="text"
+                          autoFocus
+                          defaultValue={item.unit || ""}
+                          placeholder="type unit…"
+                          onBlur={e => {
+                            const v = e.target.value.trim();
+                            if (v) commit({ unit: v });
+                            setCustomUnitOpen(false);
+                          }}
+                          onKeyDown={e => {
+                            if (e.key === "Enter") {
+                              const v = e.target.value.trim();
+                              if (v) commit({ unit: v });
+                              setCustomUnitOpen(false);
+                            }
+                            if (e.key === "Escape") setCustomUnitOpen(false);
+                          }}
+                          style={{
+                            width: 96, padding: "4px 8px",
+                            background: "#0a0a0a", border: "1px solid #f5c842",
+                            color: "#f5c842", borderRadius: 6,
+                            fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+                          }}
+                        />
+                      ) : (
+                        // Wrapped select so we can overlay a visible
+                        // chevron — iOS Safari hides the native arrow
+                        // by default, leaving the control reading as a
+                        // static text chip instead of a tappable
+                        // dropdown. The wrapper is positioned; the
+                        // select is sized to include room for the
+                        // overlay.
+                        <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+                          <select
+                            defaultValue={item.unit}
+                            onChange={e => {
+                              if (e.target.value === "__custom") {
+                                setCustomUnitOpen(true);
+                                return;
+                              }
+                              commit({ unit: e.target.value });
+                            }}
+                            style={{
+                              padding: "4px 22px 4px 10px",
+                              background: "#0a0a0a", border: "1px solid #f5c842",
+                              color: "#f5c842", borderRadius: 6,
+                              fontFamily: "'DM Mono',monospace", fontSize: 13, outline: "none",
+                              cursor: "pointer",
+                              appearance: "none",
+                              WebkitAppearance: "none",
+                              MozAppearance: "none",
+                            }}
+                          >
+                            {opts.map(u => (
+                              <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
+                            ))}
+                            <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
+                          </select>
+                          <span
+                            aria-hidden
+                            style={{
+                              position: "absolute", right: 8, top: "50%",
+                              transform: "translateY(-50%)",
+                              fontFamily: "'DM Mono',monospace", fontSize: 10,
+                              color: "#f5c842", pointerEvents: "none",
+                            }}
+                          >
+                            ▾
+                          </span>
+                        </span>
+                      )}
                     </div>
-                    {/* Slide-to-estimate. Half a bag of chips is eaten,
-                        nobody's weighing what's left — drag to what
-                        looks right. Writes live through onUpdate so the
-                        number input + bar color update as you drag. */}
-                    <input
-                      type="range"
-                      min="0" max={maxVal} step={step}
-                      value={Number(item.amount) || 0}
-                      onChange={e => commit({ amount: Number(e.target.value) })}
-                      aria-label={`Estimate ${item.name} remaining`}
-                      style={{ width: "100%", accentColor: sliderColor }}
-                    />
+                    {/* Package-size input — explicit user-settable
+                        "full container" size. Without this the
+                        slider has no reference for 100%. Leaving
+                        the field blank keeps max null (slider
+                        stays hidden). Typing a number commits it
+                        live; the slider then appears below. Chip
+                        tap above also fills this (chip commits
+                        both amount and max together). */}
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      marginTop: 2, paddingTop: 6,
+                      borderTop: "1px dashed #222",
+                    }}>
+                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", flexShrink: 0 }}>
+                        FULL PKG
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0" step="any"
+                        value={hasPackage ? item.max : ""}
+                        placeholder="set size"
+                        onChange={e => {
+                          const v = e.target.value;
+                          // 0 (not null) = undeclared. DB column is
+                          // NOT NULL default 1; sending null would
+                          // be rejected.
+                          if (v === "") { commit({ max: 0 }); return; }
+                          const n = parseFloat(v);
+                          if (Number.isFinite(n) && n >= 0) commit({ max: n });
+                        }}
+                        onClick={e => e.stopPropagation()}
+                        style={{
+                          width: 64, padding: "3px 6px",
+                          background: "#0a0a0a",
+                          border: `1px solid ${hasPackage ? "#f5c842" : "#2a2a2a"}`,
+                          color: hasPackage ? "#f5c842" : "#888",
+                          borderRadius: 6,
+                          fontFamily: "'DM Mono',monospace", fontSize: 12, outline: "none",
+                        }}
+                      />
+                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#888" }}>
+                        {item.unit || ""} {hasPackage ? "· full" : "· tells the slider what 100% means"}
+                      </span>
+                    </div>
+
+                    {/* Slide-to-estimate. Only renders when a
+                        package is defined. Half a bag of chips is
+                        eaten, nobody's weighing what's left — drag
+                        to what looks right. */}
+                    {hasPackage && (
+                      <input
+                        type="range"
+                        min="0" max={maxVal} step={step}
+                        value={Number(item.amount) || 0}
+                        onChange={e => commit({ amount: Number(e.target.value) })}
+                        aria-label={`Estimate ${item.name} remaining`}
+                        style={{ width: "100%", accentColor: sliderColor }}
+                      />
+                    )}
                   </div>
                 );
               })() : (
@@ -1009,6 +1137,48 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               )}
             </div>
           </div>
+
+          {/* + 1 PACKAGE — duplicate this row in place. The grid then
+              renders the pair as a stacked card (×2 + fan). Hidden
+              when no onDuplicate handler is wired (read-only embeds). */}
+          {onDuplicate && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 12px", marginBottom: 12,
+              background: "#0f0f0f", border: "1px solid #1e1e1e",
+              borderRadius: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842", letterSpacing: "0.08em",
+                }}>
+                  STACKING
+                </div>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#888", marginTop: 2,
+                }}>
+                  Add another identical {item.name} as its own row
+                </div>
+              </div>
+              <button
+                onClick={() => onDuplicate()}
+                aria-label={`Duplicate ${item.name}`}
+                style={{
+                  padding: "8px 12px",
+                  background: "#1a1608",
+                  border: "1px solid #f5c84244",
+                  borderRadius: 8,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  color: "#f5c842", letterSpacing: "0.06em",
+                  cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                + 1 PACKAGE
+              </button>
+            </div>
+          )}
 
           {/* Item-level enrichment CTA — always visible so the user has
               an explicit, unambiguous "enrich THIS item" affordance
@@ -1159,11 +1329,22 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               cook log) when there's a linkTo. Rendered as a button element
               when tappable so keyboard users get focus + Enter for free. */}
           {prov && (() => {
-            const canOpen = !!(prov.linkTo && onOpenProvenance);
+            // Tappable provenance chevron is gated on the VIEWER being
+            // allowed to open the linked artifact. The check: is the
+            // item's owner the viewer, in the viewer's family, or
+            // unknown (legacy rows pre-ownerId). An out-of-scope owner
+            // means we render the text but NO chevron and NO onClick —
+            // the receipt must never enter the viewer's view of the
+            // app, not even as a flashing "not yours" card.
+            const ownerId = item?.ownerId;
+            const ownerInScope = !ownerId
+              || ownerId === userId
+              || familyIds.includes(ownerId);
+            const canOpen = !!(prov.linkTo && onOpenProvenance && ownerInScope);
             const As = canOpen ? "button" : "div";
             return (
               <As
-                onClick={canOpen ? () => onOpenProvenance(prov.linkTo) : undefined}
+                onClick={canOpen ? () => onOpenProvenance({ ...prov.linkTo, ownerId }) : undefined}
                 style={{
                   width: "100%", boxSizing: "border-box",
                   padding: "10px 12px", marginBottom: 14,

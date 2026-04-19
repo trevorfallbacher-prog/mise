@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
-import { convert, decrementRow, formatQty } from "../lib/unitConvert";
+import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
+import { identityKey } from "../lib/pantryFormat";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
@@ -61,12 +62,23 @@ export function buildInitialUsedItems(recipe, pantry) {
   const list = Array.isArray(pantry) ? pantry : [];
   return ingredients.map((ing, idx) => {
     const canonical = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
+    // Sort FIFO by expires_at ASC (tie-break: purchased_at ASC) so the
+    // auto-picked default is the oldest-expiring instance — consume
+    // before it spoils. Matches the stack-drilldown FIFO ordering so
+    // the user's mental model ("oldest first") holds across surfaces.
     const matches = ing.ingredientId
       ? list.filter(p =>
           p.ingredientId === ing.ingredientId &&
           (p.kind || "ingredient") === "ingredient" &&
           Number(p.amount) > 0
-        )
+        ).sort((a, b) => {
+          const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+          const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+          if (ea !== eb) return ea - eb;
+          const pa = a.purchasedAt ? new Date(a.purchasedAt).getTime() : 0;
+          const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
+          return pa - pb;
+        })
       : [];
     const defaultMatch = matches[0] || null;
     return {
@@ -95,6 +107,24 @@ export function buildInitialUsedItems(recipe, pantry) {
 //      source: "recipe" | "added" }]
 export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   const lookup = (id) => (pantry || []).find(p => p.id === id) || null;
+  // Siblings of `seed` = rows sharing identity (canonical + state +
+  // composition + name) with a positive amount, sorted FIFO so the
+  // cascade consumes oldest-expires first. Excludes the seed itself —
+  // the caller handles it as the head of the cascade.
+  const siblingsForCascade = (seed) => {
+    if (!seed) return [];
+    const key = identityKey(seed);
+    return (pantry || [])
+      .filter(p => p.id !== seed.id && Number(p.amount) > 0 && identityKey(p) === key)
+      .sort((a, b) => {
+        const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+        const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+        if (ea !== eb) return ea - eb;
+        const pa = a.purchasedAt ? new Date(a.purchasedAt).getTime() : 0;
+        const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
+        return pa - pb;
+      });
+  };
   const out = [];
   for (const row of usedItems) {
     if (row.skipped || !row.selectedRowId) continue;
@@ -103,18 +133,45 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
     const pantryRow = lookup(row.selectedRowId);
     if (!pantryRow) continue;
     const used = { amount: Number(row.usedAmount), unit: row.usedUnit };
-    const newAmount = row.canonical ? decrementRow(pantryRow, used, row.canonical) : null;
-    out.push({
-      pantryRowId: pantryRow.id,
-      pantryRow,
-      ingredient: row.canonical,
-      used,
-      newAmount,
-      convertible: newAmount != null,
-      source: "recipe",
-      displayName: row.canonical?.name || row.recipeIng.item || "Ingredient",
-      displayEmoji: row.canonical?.emoji || row.recipeIng.emoji || "🥣",
-    });
+    const displayName = row.canonical?.name || row.recipeIng.item || "Ingredient";
+    const displayEmoji = row.canonical?.emoji || row.recipeIng.emoji || "🥣";
+    // Cascade: consume the selected row first, then fall through to
+    // sibling instances FIFO when demand exceeds the seed's stock.
+    // Preserves the user's explicit "use this row" pick — we just
+    // cascade AFTER they've drained it.
+    const cascade = row.canonical
+      ? planInstanceDecrement([pantryRow, ...siblingsForCascade(pantryRow)], used, row.canonical)
+      : null;
+    if (!cascade || cascade.entries.length === 0) {
+      // Un-convertible (unit not in ladder) or no canonical — keep
+      // the legacy single-entry, non-convertible signal so the
+      // confirm screen still renders its red warning chip.
+      out.push({
+        pantryRowId: pantryRow.id,
+        pantryRow,
+        ingredient: row.canonical,
+        used,
+        newAmount: null,
+        convertible: false,
+        source: "recipe",
+        displayName,
+        displayEmoji,
+      });
+      continue;
+    }
+    for (const entry of cascade.entries) {
+      out.push({
+        pantryRowId: entry.row.id,
+        pantryRow: entry.row,
+        ingredient: row.canonical,
+        used: { amount: entry.consumedAmount, unit: entry.unit },
+        newAmount: entry.newAmount,
+        convertible: true,
+        source: "recipe",
+        displayName,
+        displayEmoji,
+      });
+    }
   }
   for (const extra of extraRemovals) {
     if (extra.amount == null || !Number.isFinite(Number(extra.amount))) continue;

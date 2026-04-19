@@ -12,7 +12,8 @@ import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { compressImage } from "../lib/compressImage";
-import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice } from "../lib/pantryFormat";
+import { DAYS_MS, daysUntilExpiration, expirationColor, formatDaysUntil, formatPrice, groupByIdentity, isDiscreteInstance, isStackLow, isStackCritical, DISCRETE_COUNT_UNITS } from "../lib/pantryFormat";
+import { addInstance as addStackInstance, removeInstance as removeStackInstance, sortedInstances } from "../lib/useStackEdits";
 import { CONFIDENCE_STYLES, SCAN_MODES, confidenceStyle } from "../lib/scanModes";
 import { useToast } from "../lib/toast";
 import { FRIDGE_TILES, tileIdForItem as fridgeTileIdForItem } from "../lib/fridgeTiles";
@@ -96,16 +97,15 @@ const ADD_CATEGORIES = [
   { id:"frozen",  label:"🧊 Frozen"  },
 ];
 
-const DEDUCTION_EXAMPLE = {
-  dish: "Brown Butter Pasta", emoji: "🍝",
-  deductions: [
-    { name:"Unsalted Butter", used:0.5, unit:"sticks" },
-    { name:"Parmesan",        used:0.25,unit:"cup" },
-    { name:"Spaghetti",       used:8,   unit:"oz" },
-  ]
+// Fill percent for the tile gauge. Only meaningful when the row has
+// a declared package size (max > 0); returns null otherwise so the
+// caller can hide the gauge instead of fabricating a full bar.
+const pct = item => {
+  const max = Number(item.max);
+  if (!(max > 0)) return null;
+  return Math.min((Number(item.amount) || 0) / max * 100, 100);
 };
-
-const pct  = item => Math.min((item.amount / item.max) * 100, 100);
+const hasPackage = item => Number(item.max) > 0;
 const isLow      = item => item.amount <= item.lowThreshold;
 const isCritical = item => item.amount <= item.lowThreshold * 0.5;
 const barColor   = item => isCritical(item) ? "#ef4444" : isLow(item) ? "#f59e0b" : "#4ade80";
@@ -517,33 +517,26 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           if (!validIds.includes(base.unit)) base.unit = inferred.defaultUnit;
         }
         // Apply template override LAST — after canonical + unit
-        // inference so we cleanly overwrite with the user's blessed
-        // identity. The _templateId marker persists through scan
-        // confirm so addScannedItems can bump use_count after
-        // committing the pantry_items INSERT.
+        // inference. Per the item-first architecture (CLAUDE.md identity
+        // stack) a template may only inherit ROUTING (emoji, category,
+        // storage tile/location, food type, default unit). Identity
+        // fields — name and ingredientIds (composition) — belong to the
+        // scan itself; auto-applying a saved blend would collapse a
+        // single-canonical "8oz Mozzarella" line into a prior
+        // multi-canonical "Italian cheese" row. The _templateId marker
+        // persists so addScannedItems can bump use_count after commit.
         if (templateMatch) {
-          base.name = templateMatch.name;  // preserve user's brand casing
           if (templateMatch.emoji)    base.emoji    = templateMatch.emoji;
           if (templateMatch.category) base.category = templateMatch.category;
           if (templateMatch.tileId)   base.tileId   = templateMatch.tileId;
           if (templateMatch.defaultLocation) {
             base.location = templateMatch.defaultLocation;
           }
-          if (Array.isArray(templateMatch.ingredientIds)
-              && templateMatch.ingredientIds.length > 0) {
-            base.ingredientIds = [...templateMatch.ingredientIds];
-            base.ingredientId = templateMatch.ingredientIds[0];
-            // Composed template -> scanned item will be kind='meal'
-            // when it lands in pantry_items (kindForTagCount rule)
-            base.kind = templateMatch.ingredientIds.length >= 2 ? "meal" : "ingredient";
-          }
           if (templateMatch.defaultUnit && (!base.unit || base.unit === "count")) {
             base.unit = templateMatch.defaultUnit;
           }
-          base._templateId = templateMatch.id;
-          // Template propagates type_id too — user already picked it
-          // before, inherit on every subsequent scan.
           if (templateMatch.typeId) base.typeId = templateMatch.typeId;
+          base._templateId = templateMatch.id;
         }
 
         // IDENTIFIED AS + STORED IN auto-inference (chunk 18h). For
@@ -582,17 +575,16 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         const key = normalizeScanText(row.scanRaw?.raw_name || row.name);
         const c = key ? corrections.get(key) : null;
         if (!c) return row;
+        // Per the item-first architecture: a scan correction may route
+        // (emoji, typeId) and remap a SINGLE canonical tag (canonicalId),
+        // but must not auto-apply name or multi-canonical composition.
+        // Identity — name and ingredientIds — belongs to the scan itself.
         const patched = { ...row, learnedCorrectionId: c.id };
-        if (c.correctedName) patched.name = c.correctedName;
         if (c.emoji) patched.emoji = c.emoji;
         if (c.typeId) patched.typeId = c.typeId;
         if (c.canonicalId) {
           patched.canonicalId = c.canonicalId;
           patched.ingredientId = c.canonicalId;
-        }
-        if (Array.isArray(c.ingredientIds) && c.ingredientIds.length > 0) {
-          patched.ingredientIds = c.ingredientIds;
-          patched.ingredientId = c.ingredientIds[0];
         }
         return patched;
       };
@@ -1721,6 +1713,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // typing amount+unit from scratch.
   const { refreshDb, dbMap } = useIngredientInfo();
   const [amount, setAmount] = useState("");
+  // Optional "full package size" the user declares at add-time.
+  // Empty string = undeclared (max stays null on save, slider hidden).
+  // Any positive number = max gets stamped and slider becomes the
+  // consumption gauge on ItemCard. Separate from amount so the user
+  // can say "I have 9 cups out of an 18-cup bag" even when they
+  // haven't opened the bag yet (amount == max = SEALED; amount < max
+  // = OPENED). Keeping it a string here so the input can be blank.
+  const [packageSize, setPackageSize] = useState("");
 
   // Tile-context boost: when the modal opens from a specific tile, we
   // prefer suggestions that classify into that tile. The filter is a
@@ -1774,7 +1774,12 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // the row into package mode on save so the pantry can render
   // per-unit gauges and the cook-decrement can pop reserves instead
   // of deleting the row when the open unit hits zero.
-  const [reserveCount, setReserveCount] = useState(0);
+  // How many physical packages the user is adding. Each one becomes
+  // its own pantry_items row (so `Costco trip of 50 tuna` = 50 rows
+  // the render layer stacks into one card). Supersedes `reserveCount`
+  // from migration 0054 — instead of 1 open + N sealed, we now insert
+  // N independent rows that share identity.
+  const [instanceCount, setInstanceCount] = useState(1);
   // Flipped to true on a save attempt that hit missing fields — lights
   // up the per-field validation reminder panel. Stays latched so the
   // user can actually see which field is red while they fix it;
@@ -1839,29 +1844,20 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
   // display name, slots the canonical as the single component (so
   // the save path records it as a tagged ingredient with a valid
   // ingredient_id), and inherits the emoji + category + default unit.
-  // Amount stays whatever the user had typed — they still need to
-  // enter count even when the identity is resolved.
-  const fillFromCanonical = (ing) => {
+  // Routing cascade fired when a canonical is picked — sets
+  // category and, if the user hasn't already made explicit choices,
+  // stored-in and tile. Keeping this separate from fillFromCanonical
+  // means the LinkIngredient picker (where the user is confirming
+  // identity only, not overwriting their custom name / unit / blend
+  // composition) can still cascade to routing without touching
+  // identity fields.
+  const cascadeFromCanonical = (ing) => {
     if (!ing) return;
-    setCustomName(ing.name || "");
     const category = ing.category || "pantry";
     setCustomCategory(category);
-    if (ing.defaultUnit) setCustomUnit(ing.defaultUnit);
-    setCustomComponents([{ id: ing.id, canonical: ing }]);
-
-    // Cascade: category → location → tile. Only fills when the user
-    // hasn't already made an explicit pick — we never clobber a
-    // conscious choice (e.g., "I know penne is pantry category but
-    // this box lives in the freezer"). Each step gates on the
-    // previous so picking a canonical propagates as far as the
-    // classifier knows, then stops.
     setCustomLocation(prev => {
       if (prev) return prev;
       const loc = defaultLocationForCategory(category);
-      // Derive the tile id from the classifier that matches the
-      // chosen location. We do this inside the setter so the loc
-      // var is in scope for the tile cascade below without an
-      // extra state read race.
       setCustomTileId(prevTile => {
         if (prevTile) return prevTile;
         const classify = loc === "fridge"  ? fridgeTileIdForItem
@@ -1877,6 +1873,22 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       });
       return loc;
     });
+  };
+
+  // Amount stays whatever the user had typed — they still need to
+  // enter count even when the identity is resolved.
+  const fillFromCanonical = (ing) => {
+    if (!ing) return;
+    setCustomName(ing.name || "");
+    if (ing.defaultUnit) setCustomUnit(ing.defaultUnit);
+    setCustomComponents([{ id: ing.id, canonical: ing }]);
+    // Cascade: category → location → tile. Only fills when the user
+    // hasn't already made an explicit pick — we never clobber a
+    // conscious choice (e.g., "I know penne is pantry category but
+    // this box lives in the freezer"). Each step gates on the
+    // previous so picking a canonical propagates as far as the
+    // classifier knows, then stops.
+    cascadeFromCanonical(ing);
   };
 
   const fillFromTemplate = (tpl) => {
@@ -2043,7 +2055,18 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       emoji: primaryComp?.canonical?.emoji || "🥫",
       amount: amt,
       unit: customUnit.trim(),
-      max: Math.max(amt * 2, 1),
+      // `max` = the container's full size. Set ONLY when the user
+      // explicitly declared a package in the PACKAGE SIZE input or
+      // via a packaging chip. 0 = "not declared" (slider stays
+      // hidden; hasPackage checks max > 0 everywhere). We send 0
+      // instead of null because the DB column is NOT NULL default
+      // 1 — null would get rejected, default would fire and lie.
+      // Also powers SEALED vs OPENED: amount === max → sealed,
+      // amount < max → opened.
+      max: (() => {
+        const n = parseFloat(packageSize);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      })(),
       category: customCategory,
       lowThreshold: Math.max(amt * 0.25, 0.25),
       // User's STORED IN (tile) placement — seeded from tileContext
@@ -2066,20 +2089,21 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
       // undefined-as-unset.
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
-      // Packaging + reserves (migration 0054). When the user
-      // specified sealed reserves, snapshot the current amount/unit
-      // as the package size so the pantry treats the row as
-      // package-mode: one open unit + N sealed reserves. Each
-      // reserve pops into the open slot when the open unit hits
-      // zero during cook decrementing.
-      ...(reserveCount > 0 ? {
-        packageAmount: amt,
-        packageUnit: customUnit.trim() || null,
-        reserveCount,
-      } : {}),
     };
 
-    onAdd(item);
+    // Per-instance add: insert N independent rows sharing identity so
+    // the render layer can stack them (×N badge + fan). Each row gets
+    // its own uuid; composition (if multi-tag) is written per-row
+    // below so every instance carries the same blend structure.
+    const count = Math.max(1, Math.floor(Number(instanceCount) || 1));
+    const instanceIds = [];
+    for (let i = 0; i < count; i++) {
+      const freshId = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`;
+      instanceIds.push(freshId);
+      onAdd({ ...item, id: freshId });
+    }
     setSaveAttempted(false);
     // Full-screen success. User taps DONE to dismiss → onClose fires.
     // Gives them a beat to absorb "yes, it saved, here's where it
@@ -2105,8 +2129,12 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
     // Write the structured components tree after onAdd has kicked the
     // parent pantry_items INSERT. setComponentsForParent retries on
     // FK-violation so the race with the parent INSERT is self-healing.
+    // Fan out to every instance so each stacked row carries the same
+    // composition — 5 frozen pizzas = 5 rows, each linked to the full
+    // blend.
     if (compIds.length >= 2) {
-      await setComponentsForParent(item.id, componentsFromIngredientIds(compIds));
+      const tree = componentsFromIngredientIds(compIds);
+      await Promise.all(instanceIds.map(iid => setComponentsForParent(iid, tree)));
     }
 
     // Auto-save a user template. Strict per-family dedup: if a family
@@ -2745,41 +2773,73 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                     }}
                   />
                 </div>
-                {/* Reserves stepper (migration 0054). "+N" sealed
-                    packages beyond the open one above. When N > 0 the
-                    save path snapshots amount/unit as the package size
-                    so the pantry can render reserves + pop them as
-                    the open unit depletes. */}
+
+                {/* PACKAGE SIZE — optional "full container" declaration.
+                    Drives the ItemCard slider and the SEALED vs OPENED
+                    signal (amount == max → sealed; amount < max →
+                    opened). Blank = undeclared. */}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
+                }}>
+                  <span style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: packageSize ? "#f5c842" : "#555",
+                    letterSpacing: "0.1em", flexShrink: 0,
+                  }}>
+                    FULL PKG
+                  </span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0" step="any"
+                    value={packageSize}
+                    onChange={e => setPackageSize(e.target.value)}
+                    placeholder="optional"
+                    style={{
+                      flex: 1, minWidth: 0,
+                      background: "transparent", border: "none", outline: "none",
+                      fontFamily: "'DM Mono',monospace", fontSize: 12,
+                      color: packageSize ? "#f5c842" : "#888",
+                      padding: 0,
+                    }}
+                  />
+                </div>
+
+                {/* Instance-count stepper. "+N" sibling rows this save
+                    creates, so the render layer stacks a 50-can Costco
+                    run into one card. See migration 0057's fan-out
+                    for the receipt-scan equivalent. */}
                 <div style={{
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                   marginTop: 6, paddingTop: 6, borderTop: "1px dashed #1e1e1e",
                 }}>
                   <span style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: reserveCount > 0 ? "#f5c842" : "#555",
+                    color: instanceCount > 1 ? "#f5c842" : "#555",
                     letterSpacing: "0.1em",
                   }}>
-                    + {reserveCount} SEALED
+                    {instanceCount > 1 ? `×${instanceCount} PACKAGES` : "1 PACKAGE"}
                   </span>
                   <div style={{ display: "flex", gap: 4 }}>
                     <button
-                      onClick={() => setReserveCount(n => Math.max(0, n - 1))}
-                      disabled={reserveCount === 0}
-                      aria-label="decrement reserves"
+                      onClick={() => setInstanceCount(n => Math.max(1, n - 1))}
+                      disabled={instanceCount <= 1}
+                      aria-label="decrement packages"
                       style={{
                         width: 22, height: 22,
                         background: "transparent",
                         border: "1px solid #2a2a2a",
-                        color: reserveCount === 0 ? "#333" : "#888",
-                        borderRadius: 4, cursor: reserveCount === 0 ? "not-allowed" : "pointer",
+                        color: instanceCount <= 1 ? "#333" : "#888",
+                        borderRadius: 4, cursor: instanceCount <= 1 ? "not-allowed" : "pointer",
                         fontFamily: "'DM Mono',monospace", fontSize: 12,
                         display: "flex", alignItems: "center", justifyContent: "center",
                         lineHeight: 1, padding: 0,
                       }}
                     >−</button>
                     <button
-                      onClick={() => setReserveCount(n => n + 1)}
-                      aria-label="increment reserves"
+                      onClick={() => setInstanceCount(n => n + 1)}
+                      aria-label="increment packages"
                       style={{
                         width: 22, height: 22,
                         background: "transparent",
@@ -3036,6 +3096,24 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
           const nextId = ids[0] || null;
           setCustomCanonicalId(nextId);
           setCustomCanonicalOpen(false);
+          // Routing cascade — picking a canonical like `mozzarella`
+          // implies a category (dairy) and a default stored-in tile
+          // (cheese / fridge). Mirrors what the TypePicker already
+          // does for category picks. User-created canonicals aren't
+          // in the registry (findIngredient returns null); for those
+          // we fall back to the hub declared via `extra.parentId`
+          // from the create flow — the hub's category + default tile
+          // then flow through the same classifier. No-op when we
+          // can't resolve either (rare; only when a user creates a
+          // canonical without picking a parent hub).
+          if (nextId) {
+            let canon = findIngredient(nextId);
+            if (!canon && extra?.parentId) {
+              const hub = findIngredient(extra.parentId);
+              if (hub) canon = { id: nextId, category: hub.category, parentId: hub.id };
+            }
+            if (canon) cascadeFromCanonical(canon);
+          }
           // Admin auto-approve on user-created slug.
           //
           // Old behavior (pre-v0.13): ALWAYS wrote a bare {_meta}
@@ -3236,7 +3314,7 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 }
 
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
-export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, view = "stock", setView, deepLink, onDeepLinkConsumed }) {
+export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed, pendingPantryAction, onPendingActionConsumed }) {
   const [scanning, setScanning] = useState(false);
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
@@ -3257,7 +3335,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   });
-  const [showDeduction, setShowDeduction] = useState(false);
   const [alertDismissed, setAlertDismissed] = useState(false);
   const [addingTo, setAddingTo] = useState(null); // "pantry" | "shopping" | null
   // When the add modal is opened from inside a tile drill-down, this carries
@@ -3300,6 +3377,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   //     (add-item flow, hub drill-down) where there's no specific row yet.
   const [openItem, setOpenItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
+  // Stack drill-down — set to a bucket ({key, items}) to open, null to
+  // close. Opened by tapping a StackedItemCard; shows each physical
+  // instance as its own ItemCard-ish row so the user can edit per-can
+  // expiration / price / provenance.
+  const [stackDrilldown, setStackDrilldown] = useState(null);
   // Receipt-view modal. Set to a receipt uuid to open; null to close.
   // Driven by ItemCard's provenance line (onOpenProvenance callback)
   // and by a bell notification tap (deepLink prop, routed from App).
@@ -3315,16 +3397,49 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Kitchen tab and setting deepLink = { kind, id }. We open the
   // matching ReceiptView modal and tell App to clear the pointer so
   // re-rendering doesn't re-open the modal if the user dismisses it.
+  // Scope check for provenance opens. A receipt is only openable if
+  // the OWNER is the viewer or in family_ids. Used both by the
+  // ItemCard onOpenProvenance callback and the deepLink effect below
+  // so a stale notification for an ex-family receipt can't reach
+  // ReceiptView at all.
+  const canOpenProvenance = (ownerId) => (
+    !ownerId || ownerId === userId || familyIds.includes(ownerId)
+  );
   useEffect(() => {
     if (!deepLink) return;
+    // Resolve the deep link against the current pantry — a receipt /
+    // scan deep link is in scope iff the viewer currently owns at
+    // least one pantry row pointing at it (which by construction
+    // means the artifact's owner is the viewer or in family). Any
+    // other deep link (stale notification, ex-family receipt id)
+    // gets silently consumed with no modal.
     if (deepLink.kind === "receipt" && deepLink.id) {
-      setOpenReceiptId({ receiptId: deepLink.id });
+      const ownerHit = pantry.find(p => p.sourceReceiptId === deepLink.id);
+      if (ownerHit && canOpenProvenance(ownerHit.ownerId)) {
+        setOpenReceiptId({ receiptId: deepLink.id });
+      }
       onDeepLinkConsumed?.();
     } else if (deepLink.kind === "pantry_scan" && deepLink.id) {
-      setOpenReceiptId({ scanId: deepLink.id });
+      const ownerHit = pantry.find(p => p.sourceScanId === deepLink.id);
+      if (ownerHit && canOpenProvenance(ownerHit.ownerId)) {
+        setOpenReceiptId({ scanId: deepLink.id });
+      }
       onDeepLinkConsumed?.();
     }
-  }, [deepLink, onDeepLinkConsumed]);
+  }, [deepLink, onDeepLinkConsumed, pantry, userId, familyIds]);
+
+  // Consume a pendingPantryAction dispatched by CreateMenu's ADD TO
+  // PANTRY branch. App.jsx flips the tab to "pantry" before setting
+  // the flag, so by the time this effect runs we're already the
+  // active tab. Flip the corresponding modal state open, then clear
+  // the flag so a re-open doesn't double-fire.
+  useEffect(() => {
+    if (!pendingPantryAction) return;
+    if (pendingPantryAction === "scan") setScanning(true);
+    else if (pendingPantryAction === "add") setAddingTo("pantry");
+    onPendingActionConsumed?.();
+  }, [pendingPantryAction, onPendingActionConsumed]);
+
   // Convert-state modal. Set to a pantry item to open; null to close.
   // Drives the "Make crumbs from loaf" / "Shred this block" flow — the
   // user picks a target state + enters how much it yielded, we decrement
@@ -3358,11 +3473,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     return () => clearTimeout(t);
   }, [spendPulse]);
 
-  // Fridge / Pantry / Freezer tab. Default to fridge — the tab users hit
-  // most often. `drilledTile` holds the fridge-tile id the user has tapped
-  // into (null = tile grid view; string = tile detail view). Switching
-  // tabs always resets the drill-down.
-  const [storageTab, setStorageTabRaw] = useState("fridge");
+  // Fridge / Pantry / Freezer tab. Defaults to NULL (nothing
+  // pre-selected) so the landing view isn't secretly filtered to
+  // the fridge — users were reading the fridge tiles as their whole
+  // kitchen and missing items that lived elsewhere. `drilledTile`
+  // holds the tile id the user has tapped into (null = tile grid
+  // view; string = tile detail view). Switching tabs always resets
+  // the drill-down.
+  const [storageTab, setStorageTabRaw] = useState(null);
   const [drilledTile, setDrilledTile] = useState(null);
   // Global-search state for the tile-grid view. Scoped ACROSS all three
   // storage tabs so a user looking for "tortillas" finds them whether they
@@ -3382,7 +3500,18 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   const effectiveLocation = (item) =>
     item.location || defaultLocationForCategory(item.category);
 
-  const lowItems = pantry.filter(isLow);
+  // Low-stock surface — now stack-aware. Each entry is the HEAD row
+  // of a bucket that passes isStackLow (discrete stacks compare
+  // instance count, fractional stacks sum amounts), with the full
+  // bucket attached via _bucket for the restock math. Rendering the
+  // banner chips and addLowStockToList both iterate this list as
+  // one-per-identity rather than one-per-row, so a 5-can tuna stack
+  // contributes one entry, not five.
+  const lowItems = useMemo(() => {
+    return groupByIdentity(pantry)
+      .filter(isStackLow)
+      .map(b => ({ ...b.items[0], _bucket: b }));
+  }, [pantry]);
 
   // Current tab's tile set + classifier. Null when the tab has no tiles
   // wired yet (freezer) — the render path falls back to a flat list.
@@ -3713,9 +3842,43 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     let unitMismatchCount = 0;
     const mergedNames = [];  // for a second toast when short
 
+    // Fan out discrete-count lines with amount > 1 into N instance
+    // rows BEFORE the merge loop. This makes "2 CANS TUNA" (one OCR
+    // line with amount=2) behave identically to two separate lines —
+    // both paths land as 2 siblings the render layer stacks. Keeps
+    // the downstream merge gate simple (isDiscreteInstance only fires
+    // at amount === 1).
+    //
+    // Every FANNED row also gets a sequential receipt_line_index —
+    // the position in the flattened post-expansion output. Migration
+    // 0057's partial unique index keys off (user_id, receipt_id,
+    // line_index) so a re-scanned receipt collides on the second
+    // insert attempt and the client shows an "already imported"
+    // toast instead of double-stacking.
+    const fannedItems = [];
+    let receiptLineCursor = 0;
+    for (const s of (items || [])) {
+      const isDiscrete = s && DISCRETE_COUNT_UNITS.has(s.unit);
+      const qty = Math.max(1, Math.floor(Number(s.amount) || 1));
+      if (isDiscrete && qty > 1) {
+        for (let k = 0; k < qty; k++) {
+          fannedItems.push({
+            ...s,
+            amount: 1,
+            receiptLineIndex: isReceiptScan ? receiptLineCursor++ : undefined,
+          });
+        }
+      } else {
+        fannedItems.push({
+          ...s,
+          receiptLineIndex: isReceiptScan ? receiptLineCursor++ : undefined,
+        });
+      }
+    }
+
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
-      items.forEach(s => {
+      fannedItems.forEach(s => {
         // Default expiration for this scanned item = purchased_at +
         // estimateExpirationDays(storage, location). Returns null when the
         // ingredient has no structured storage info — in which case we leave
@@ -3763,23 +3926,39 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         //      vs scan's "Pepper Jack"), merge into it. The existing
         //      ingredientId-backfill below then upgrades that free-text
         //      row to canonical. Preserves the user's custom name.
+        // Every match path must pass sameIdentity — a single-canonical
+        // scan (e.g. [mozzarella]) and a multi-canonical blend row
+        // (e.g. [mozz, parm, asiago, fontina]) are DIFFERENT items in
+        // the item-first architecture, even if names happen to coincide
+        // via a template or correction.
+        //
+        // Discrete-count gate — scanning 50 cans of tuna should produce
+        // 50 rows (one per physical can) that the render layer groups
+        // into a stacked card. Only merge fractional/mass/volume scans
+        // (grams, tbsp, ml, etc.) where aggregation reads more
+        // naturally than 50 "1 g butter" rows. Shared definition in
+        // pantryFormat so check-off + scan + manual add all agree on
+        // what counts as "a physical package."
         let ex = null;
-        if (s.ingredientId) {
-          ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
-        }
-        if (!ex) {
-          const scanLow = (s.name || "").toLowerCase();
-          ex = next.find(p => (p.name || "").toLowerCase() === scanLow);
-        }
-        if (!ex && s.ingredientId) {
-          const scanCanon = findIngredient(s.ingredientId);
-          const needle = (scanCanon?.shortName || scanCanon?.name || "").toLowerCase().trim();
-          if (needle.length >= 3) {
-            ex = next.find(p => {
-              if (p.ingredientId) return false;
-              const n = (p.name || "").toLowerCase();
-              return n && (n.includes(needle) || needle.includes(n));
-            });
+        if (!isDiscreteInstance(s)) {
+          if (s.ingredientId) {
+            ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
+          }
+          if (!ex) {
+            const scanLow = (s.name || "").toLowerCase();
+            ex = next.find(p => (p.name || "").toLowerCase() === scanLow && sameIdentity(p, s));
+          }
+          if (!ex && s.ingredientId) {
+            const scanCanon = findIngredient(s.ingredientId);
+            const needle = (scanCanon?.shortName || scanCanon?.name || "").toLowerCase().trim();
+            if (needle.length >= 3) {
+              ex = next.find(p => {
+                if (p.ingredientId) return false;
+                const n = (p.name || "").toLowerCase();
+                if (!n || (!n.includes(needle) && !needle.includes(n))) return false;
+                return sameIdentity(p, s);
+              });
+            }
           }
         }
         if (ex) {
@@ -3854,7 +4033,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             emoji: s.emoji,
             amount: s.amount,
             unit: s.unit,
-            max: Math.max(s.amount * 2, 1),
+            // Packaging intentionally undefined — scans don't ask
+            // about container size. 0 = slider stays hidden
+            // (hasPackage check fails); DB column is NOT NULL so
+            // we can't send literal null.
+            max: 0,
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: scanPriceCents,
@@ -3905,6 +4088,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // Both feed ItemCard's provenance deep-link.
             ...(receiptId ? { sourceReceiptId: receiptId } : {}),
             ...(scanId    ? { sourceScanId: scanId       } : {}),
+            // Dedupe position (migration 0057). Only the receipt-scan
+            // path stamps this; pantry-scans + manual + cook rows
+            // sail past the partial unique index with NULL.
+            ...(receiptId && typeof s.receiptLineIndex === "number"
+              ? { receiptLineIndex: s.receiptLineIndex }
+              : {}),
           });
         }
       });
@@ -3942,45 +4131,57 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     setScanning(false);
   };
 
-  const confirmDeduction = () => {
-    setPantry(prev => prev.map(item => {
-      const d = DEDUCTION_EXAMPLE.deductions.find(d => d.name === item.name);
-      if (!d) return item;
-      return { ...item, amount: Math.max(0, item.amount - d.used) };
-    }));
-    setShowDeduction(false);
-  };
-
-  // Push low-stock items onto the shopping list, preserving ingredientId so
-  // recipes still match; de-dupe by ingredientId when possible, else by name.
+  // Push low-stock items onto the shopping list. Stack-aware: for a
+  // discrete stack (5 cans, threshold 8 → low), target the threshold
+  // count so the shopping entry says "need 3 more." For a fractional
+  // stack (or a single row), fall back to "restock to max" using
+  // summed amount across the bucket. Preserves ingredientId so
+  // recipes still match; de-dupes by ingredientId when possible.
   const addLowStockToList = () => {
     setShoppingList(prev => {
       const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
       const toAdd = lowItems
         .filter(l => !existing.has(l.ingredientId || l.name.toLowerCase()))
-        .map(l => ({
-          id: crypto.randomUUID(),
-          ingredientId: l.ingredientId || null,
-          name: l.name,
-          emoji: l.emoji,
-          amount: Math.max(l.max - l.amount, 1),
-          unit: l.unit,
-          category: l.category,
-          source: "low-stock",
-        }));
+        .map(l => {
+          const bucket = l._bucket;
+          const items = bucket?.items || [l];
+          const isDiscrete = DISCRETE_COUNT_UNITS.has(l.unit);
+          let amount;
+          if (isDiscrete) {
+            const target = Math.max(1, Math.ceil(Number(l.lowThreshold) || 1));
+            amount = Math.max(target - items.length, 1);
+          } else {
+            const stacked = items.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+            amount = Math.max(Number(l.max) - stacked, 1);
+          }
+          return {
+            id: crypto.randomUUID(),
+            ingredientId: l.ingredientId || null,
+            name: l.name,
+            emoji: l.emoji,
+            amount,
+            unit: l.unit,
+            category: l.category,
+            source: "low-stock",
+          };
+        });
       return [...prev, ...toAdd];
     });
     setAlertDismissed(true);
   };
 
   // "Got it" on a shopping list item → move to pantry and remove from list.
-  // Matches an existing pantry row by ingredientId when available (so the new
-  // "2 tbsp butter" merges into an existing "1.5 sticks" row), else by name.
+  // Fractional items (2 tbsp butter) still merge into the open row —
+  // the user wants aggregate grams, not a second butter "instance." A
+  // single discrete package (1 can, 1 box) skips the merge so
+  // groupByIdentity stacks it as its own physical instance at render.
   const checkOffShoppingItem = sItem => {
     setPantry(prev => {
-      const ex = sItem.ingredientId
-        ? prev.find(p => p.ingredientId === sItem.ingredientId)
-        : prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
+      const ex = isDiscreteInstance(sItem)
+        ? null
+        : sItem.ingredientId
+          ? prev.find(p => p.ingredientId === sItem.ingredientId)
+          : prev.find(p => p.name.toLowerCase() === sItem.name.toLowerCase());
       if (ex) {
         // If units match we can do a direct sum; if not, just keep the existing
         // amount (the user can reconcile in the UI).
@@ -3997,7 +4198,9 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         emoji: sItem.emoji || "🥫",
         amount: sItem.amount,
         unit: sItem.unit,
-        max: Math.max(sItem.amount * 2, 1),
+        // 0 = packaging undeclared (slider hidden). See
+        // addScannedItems comment for why not null.
+        max: 0,
         category: sItem.category || "pantry",
         lowThreshold: Math.max(sItem.amount * 0.25, 0.25),
       }];
@@ -4388,15 +4591,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 </div>
               );
             }
+            // No package declared → hide the gauge. Can't display a
+            // fill percent against an undefined container size.
+            const fill = pct(item);
+            if (fill == null) return null;
             return (
               <div style={{ height:4, background:"#1e1e1e", borderRadius:2, overflow:"hidden" }}>
-                <div style={{ height:"100%", borderRadius:2, width:`${pct(item)}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
+                <div style={{ height:"100%", borderRadius:2, width:`${fill}%`, background:barColor(item), boxShadow:`0 0 8px ${barColor(item)}66`, transition:"width 0.6s ease" }} />
               </div>
             );
           })()}
         </button>
-        {fillEditingId === item.id && (() => {
-          const maxVal = Number(item.max) > 0 ? Number(item.max) : Math.max(Number(item.amount) || 0, 1);
+        {fillEditingId === item.id && hasPackage(item) && (() => {
+          const maxVal = Number(item.max);
           const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
           const sliderColor = barColor(item);
           return (
@@ -4441,9 +4648,164 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           );
         })()}
+        {/* + 1 PACKAGE — single-item "start stacking" affordance. Tapping
+            duplicates the row; next render groupByIdentity collapses
+            the pair into a StackedItemCard with ×2 + fan. stopPropagation
+            so the click doesn't also open the ItemCard modal. */}
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{ display:"flex", alignItems:"center", gap:8, paddingTop:8, marginTop:8, borderTop:"1px solid #1e1e1e" }}
+        >
+          <button
+            onClick={() => {
+              addStackInstance(setPantry, { key: item.id, items: [item] });
+              pushToast(`Added 1 ${item.name}`, { emoji: item.emoji || "🛒", kind: "success", ttl: 2800 });
+            }}
+            aria-label={`Duplicate ${item.name} — start stacking`}
+            style={{ padding:"5px 10px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+          >
+            + 1 PACKAGE
+          </button>
+          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
+            START STACKING
+          </span>
+        </div>
       </div>
     );
   };
+
+  // Render a stack card — multiple pantry rows sharing identity
+  // (canonical + state + composition + name). The stack is a FIRST-
+  // CLASS edit surface: inline + / − buttons add / remove one physical
+  // instance, tap opens the per-instance drill-down modal, ✕ deletes
+  // the LIFO top. The visual is a "card fan" — two offset cards behind
+  // the main one — so the stack reads as more than one thing without
+  // the count badge doing all the work.
+  const renderStackCard = bucket => {
+    const items = bucket.items;
+    const top = items[0];
+    const n = items.length;
+    const canon = findIngredient(top.ingredientId);
+    const canonicalLabel = canon?.shortName && canon.parentId ? canon.shortName : canon?.name;
+    const showCanonical = canonicalLabel && canonicalLabel.toLowerCase() !== (top.name || "").toLowerCase();
+    // Stack-aware low detection: discrete-count stacks compare INSTANCE
+    // COUNT against the threshold (5 cans vs a restock-at-3 rule);
+    // fractional stacks sum amounts and compare against the head row's
+    // lowThreshold. Legacy per-row `isLow` only read individual
+    // amounts, so a stack of 1-can instances never signaled low even
+    // when the user was down to the last can.
+    const anyLow = isStackLow(bucket);
+    const anyCritical = isStackCritical(bucket);
+    const earliestExpiry = items.reduce((min, p) => {
+      if (!p.expiresAt) return min;
+      const d = p.expiresAt instanceof Date ? p.expiresAt : new Date(p.expiresAt);
+      if (Number.isNaN(d.getTime())) return min;
+      return min == null || d < min ? d : min;
+    }, null);
+    const earliestDays = earliestExpiry ? Math.ceil((earliestExpiry.getTime() - Date.now()) / 86400000) : null;
+    const totalPriceCents = items.reduce((s, p) => s + (typeof p.priceCents === "number" ? p.priceCents : 0), 0);
+    const openDrilldown = () => setStackDrilldown(bucket);
+    return (
+      <div key={bucket.key} style={{ position:"relative", marginBottom:4 }}>
+        {/* Fan layers — two offset cards peek from behind to signal depth. */}
+        <div aria-hidden style={{ position:"absolute", inset:0, transform:"translate(4px,4px)", background:"#0f0f0f", border:"1px solid #1a1a1a", borderRadius:14, pointerEvents:"none" }} />
+        <div aria-hidden style={{ position:"absolute", inset:0, transform:"translate(2px,2px)", background:"#121212", border:"1px solid #1c1c1c", borderRadius:14, pointerEvents:"none" }} />
+        <div
+          onClick={openDrilldown}
+          role="button"
+          tabIndex={0}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrilldown(); } }}
+          style={{ position:"relative", background:"#141414", border:`1px solid ${anyCritical?"#ef444422":anyLow?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor:"pointer" }}
+        >
+          <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
+            <span style={{ fontSize:26, flexShrink:0 }}>{top.emoji}</span>
+            <div style={{ flex:1, minWidth:0 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+                <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
+                  <span style={{ overflow:"hidden", textOverflow:"ellipsis" }}>
+                    {top.name}
+                    {showCanonical && (
+                      <span style={{ color:"#666", fontWeight:400 }}> · {canonicalLabel}</span>
+                    )}
+                  </span>
+                  {top.state && (
+                    <span
+                      title={`State: ${stateLabel(top.state)}`}
+                      style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", background:"#0f1620", border:"1px solid #1f3040", borderRadius:4, padding:"1px 6px", letterSpacing:"0.08em", flexShrink:0, textTransform:"uppercase" }}
+                    >
+                      {stateLabel(top.state)}
+                    </span>
+                  )}
+                </span>
+                <span
+                  title={`${n} identical items stacked`}
+                  style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:6, padding:"2px 8px", letterSpacing:"0.06em", flexShrink:0 }}
+                >
+                  ×{n}
+                </span>
+              </div>
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginTop:2, flexWrap:"wrap" }}>
+                <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#444" }}>{(top.category || "").toUpperCase()}</span>
+                {totalPriceCents > 0 && (
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7ec87e" }} title="Summed last-paid price across the stack">
+                    {formatPrice(totalPriceCents)}
+                  </span>
+                )}
+                {anyLow && (
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color: anyCritical?"#ef4444":"#f59e0b", background: anyCritical?"#ef444422":"#f59e0b22", padding:"1px 6px", borderRadius:4 }}>
+                    {anyCritical?"ALMOST OUT":"RUNNING LOW"}
+                  </span>
+                )}
+                {earliestDays != null && (
+                  <span
+                    style={{ background:`${expirationColor(earliestDays)}22`, color:expirationColor(earliestDays), fontFamily:"'DM Mono',monospace", fontSize:9, padding:"1px 6px", borderRadius:4 }}
+                    title="Earliest expiration in the stack"
+                  >
+                    ⏳ {formatDaysUntil(earliestDays)}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          {/* Stack-level controls. Stop propagation so the buttons don't
+              trigger the drilldown. */}
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ display:"flex", alignItems:"center", gap:8, paddingTop:8, borderTop:"1px solid #1e1e1e" }}
+          >
+            <button
+              onClick={() => {
+                removeStackInstance(setPantry, bucket, "lifo");
+                pushToast(`Removed 1 ${top.name}`, { emoji: top.emoji || "🗑", kind: "info", ttl: 2800 });
+              }}
+              aria-label={`Remove one ${top.name} from the stack`}
+              style={{ padding:"6px 12px", background:"#1a1a1a", border:"1px solid #333", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#aaa", letterSpacing:"0.06em", cursor:"pointer" }}
+            >
+              − 1 PACKAGE
+            </button>
+            <button
+              onClick={() => {
+                addStackInstance(setPantry, bucket);
+                pushToast(`Added 1 ${top.name}`, { emoji: top.emoji || "🛒", kind: "success", ttl: 2800 });
+              }}
+              aria-label={`Add one ${top.name} to the stack`}
+              style={{ padding:"6px 12px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+            >
+              + 1 PACKAGE
+            </button>
+            <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
+              TAP TO EDIT EACH
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Dispatch: single-instance → renderItemCard, multi-instance → renderStackCard.
+  const renderBucket = bucket => (bucket.items.length > 1
+    ? renderStackCard(bucket)
+    : renderItemCard(bucket.items[0]));
 
   // Render a hub group card: tap to expand and show its items. The summary row
   // shows combined weight (in the hub's aggregateUnit) + summed last-paid
@@ -4480,7 +4842,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         </button>
         {expanded && (
           <div style={{ display:"flex", flexDirection:"column", gap:8, borderTop:"1px solid #1e1e1e", paddingTop:10 }}>
-            {items.map(renderItemCard)}
+            {groupByIdentity(items).map(renderBucket)}
           </div>
         )}
       </div>
@@ -4594,111 +4956,26 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
 
       {view === "stock" && (
         <>
-          {/* Low stock */}
-          {!alertDismissed && lowItems.length > 0 && (
-            <div style={{ margin:"12px 20px 0", padding:"14px 16px", background:"#1a0f00", border:"1px solid #f59e0b44", borderRadius:14 }}>
-              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:10 }}>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#f59e0b", letterSpacing:"0.12em" }}>⚠ RUNNING LOW</div>
-                <button onClick={()=>setAlertDismissed(true)} style={{ background:"none", border:"none", color:"#555", fontSize:14, cursor:"pointer" }}>×</button>
-              </div>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:12 }}>
-                {lowItems.map(item => (
-                  <span key={item.id} style={{ display:"inline-flex", alignItems:"center", gap:4, background:"#241a00", border:"1px solid #f59e0b33", borderRadius:20, padding:"4px 10px", fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f59e0b" }}>
-                    {item.emoji} {item.name}
-                  </span>
-                ))}
-              </div>
-              <button onClick={addLowStockToList} style={{ width:"100%", padding:"10px", background:"#f59e0b22", border:"1px solid #f59e0b44", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f59e0b", cursor:"pointer", letterSpacing:"0.08em" }}>
-                ADD ALL TO SHOPPING LIST →
-              </button>
-            </div>
-          )}
+          {/* LOW STOCK alert temporarily removed — the isStackLow /
+              isLow heuristics are firing too aggressively (flagging
+              nearly every row as low) and the banner became clutter
+              instead of a useful signal. The underlying lowItems /
+              addLowStockToList logic stays in place so we can re-
+              mount the surface once the threshold math is right. */}
 
-          {/* Scan CTA — opens the unified scanner. The user picks fridge,
-              pantry, or receipt at the top of that flow. */}
-          <div onClick={()=>setScanning(true)} style={{ margin:"16px 20px 0", padding:"18px 20px", background:"linear-gradient(135deg,#1e1a0e 0%,#141008 100%)", border:"1px solid #f5c84233", borderRadius:16, cursor:"pointer", display:"flex", alignItems:"center", gap:16 }}>
-            <div style={{ fontSize:36, display:"flex", gap:2 }}>
-              <span>🥬</span><span>🥫</span><span>🧾</span>
-            </div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#f0ece4", fontWeight:400, marginBottom:3 }}>Scan something</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Fridge, pantry shelf, or grocery receipt</div>
-            </div>
-            <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
-          </div>
+          {/* Scan / manual-add / deduction CTAs moved to the floating
+              ➕ CreateMenu overlay. Kitchen is now inventory +
+              maintenance only; creation flows live in one place. */}
 
-          {/* Manual add CTA */}
-          <div onClick={() => setAddingTo("pantry")} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ fontSize:24 }}>➕</div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Add an ingredient</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Manually track what you have</div>
-            </div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842" }}>ADD →</div>
-          </div>
-
-          {/* Deduction CTA */}
-          <div onClick={()=>setShowDeduction(true)} style={{ margin:"10px 20px 0", padding:"14px 18px", background:"#141414", border:"1px solid #222", borderRadius:14, cursor:"pointer", display:"flex", alignItems:"center", gap:14 }}>
-            <div style={{ fontSize:28 }}>🍝</div>
-            <div style={{ flex:1 }}>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>Just finished cooking?</div>
-              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#555" }}>Log it and we'll deduct ingredients</div>
-            </div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>TRY IT →</div>
-          </div>
-
-          {/* Fridge / Pantry / Freezer tab strip. Default is Fridge — the
-              tab most users open by reflex. Selecting a tab resets any
-              active tile drill-down (handled in setStorageTab). */}
-          <div style={{ padding:"18px 20px 0" }}>
-            <div style={{ display:"flex", gap:6, background:"#0b0b0b", border:"1px solid #1e1e1e", borderRadius:12, padding:4 }}>
-              {[
-                { id: "fridge",  label: "Fridge",  emoji: "🧊" },
-                { id: "pantry",  label: "Pantry",  emoji: "🥫" },
-                { id: "freezer", label: "Freezer", emoji: "❄️" },
-              ].map(t => {
-                const active = storageTab === t.id;
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setStorageTab(t.id)}
-                    style={{
-                      flex: 1,
-                      padding: "10px 8px",
-                      background: active ? "#1a1a1a" : "transparent",
-                      border: active ? "1px solid #f5c84244" : "1px solid transparent",
-                      borderRadius: 9,
-                      fontFamily: "'DM Mono',monospace",
-                      fontSize: 11,
-                      letterSpacing: "0.08em",
-                      color: active ? "#f5c842" : "#888",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span style={{ fontSize: 14 }}>{t.emoji}</span>
-                    {t.label.toUpperCase()}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Tile grid — any tab that has a tile set (fridge, pantry), no
-              drill-down active. Tapping a tile enters a drill-down view
-              of items in that tile. Empty tiles render greyed-out but
-              remain tappable — the drill-down's empty state surfaces
-              an "Add your first" affordance. */}
-          {currentTiles && drilledTile === null && (
+          {/* Kitchen-wide search — lives ABOVE the location tabs so
+              it's the first thing users reach for when they can't find
+              something, and because it already searches every location
+              regardless of which tab is active. Hidden once the user
+              drills into a specific tile (that view carries its own
+              filter context). */}
+          {drilledTile === null && (
             <div style={{ padding:"14px 20px 0" }}>
-              {/* Sticky tile-grid search. Kept above the grid so it stays
-                  reachable while the tiles are visible; hitting the ✕ or
-                  clearing the text brings the grid back. Typing anything
-                  collapses the grid and shows a flat results list below. */}
-              <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, padding:"10px 14px", background:"#0a0a0a", border:"1px solid #242424", borderRadius:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 14px", background:"#0a0a0a", border:"1px solid #242424", borderRadius:12 }}>
                 <span style={{ fontSize:14, color:"#666" }}>🔍</span>
                 <input
                   type="text"
@@ -4717,12 +4994,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                   </button>
                 )}
               </div>
-            {trimmedSearch ? (
-              // Cross-tile results view. Grouped by STORAGE tab so the user
-              // reads them the way they'd walk the kitchen: fridge items
-              // together, pantry items together, freezer last. Each row's
-              // origin tag tells them where they'd tap to get there the
-              // normal way.
+            </div>
+          )}
+
+          {/* Search results — cross-kitchen, grouped by location. When
+              a query is active these REPLACE the location tabs + tile
+              grid so the user focuses on matches. */}
+          {trimmedSearch && (
+            <div style={{ padding:"14px 20px 0" }}>
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                 {searchResults.length === 0 ? (
                   <div style={{ padding:"32px 12px", textAlign:"center", color:"#555", fontFamily:"'DM Sans',sans-serif", fontSize:13, fontStyle:"italic" }}>
@@ -4741,19 +5020,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                           {rowsAtLoc.map(({ item, tile }) => (
                             <button
                               key={item.id}
-                              onClick={() => {
-                                // Tap a search result → open the full
-                                // ItemCard directly. Editing from here
-                                // is the only way out when an item has
-                                // drifted into a location it can't be
-                                // navigated to (e.g. location=fridge
-                                // with a pantry-side tileId). Clearing
-                                // the search + collapsing the sheet is
-                                // deferred to the card's onClose so
-                                // users can jump back to the list if
-                                // they cancel.
-                                setOpenItem(item);
-                              }}
+                              onClick={() => setOpenItem(item)}
                               style={{
                                 display:"flex", alignItems:"center", gap:10,
                                 padding:"10px 12px",
@@ -4783,7 +5050,80 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                   })
                 )}
               </div>
-            ) : (
+            </div>
+          )}
+
+          {/* Fridge / Pantry / Freezer tab strip. Nothing is pre-
+              selected so users read the landing page as "pick a
+              location" rather than "here's the fridge." Selecting a
+              tab resets any active tile drill-down (handled in
+              setStorageTab). */}
+          {!trimmedSearch && (
+          <div style={{ padding:"18px 20px 0" }}>
+            <div style={{ display:"flex", gap:6, background:"#0b0b0b", border:"1px solid #1e1e1e", borderRadius:12, padding:4 }}>
+              {[
+                { id: "fridge",  label: "Fridge",  emoji: "🧊" },
+                { id: "pantry",  label: "Pantry",  emoji: "🥫" },
+                { id: "freezer", label: "Freezer", emoji: "❄️" },
+              ].map(t => {
+                const active = storageTab === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    // Toggle behavior — tapping the ACTIVE tab closes
+                    // it (null state). Makes the "no tab selected"
+                    // landing reachable after exploring, not just on
+                    // first load.
+                    onClick={() => setStorageTab(active ? null : t.id)}
+                    aria-pressed={active}
+                    title={active ? `Close ${t.label}` : `Open ${t.label}`}
+                    style={{
+                      flex: 1,
+                      padding: "10px 8px",
+                      background: active ? "#1a1a1a" : "transparent",
+                      border: active ? "1px solid #f5c84244" : "1px solid transparent",
+                      borderRadius: 9,
+                      fontFamily: "'DM Mono',monospace",
+                      fontSize: 11,
+                      letterSpacing: "0.08em",
+                      color: active ? "#f5c842" : "#888",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{t.emoji}</span>
+                    {t.label.toUpperCase()}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          )}
+
+          {/* Empty state — no search, no tab selected. Not a silent
+              blank space; cue the user that a location tab is needed
+              to see their stocked items (search is the other
+              navigator, right above). */}
+          {!trimmedSearch && !storageTab && !drilledTile && (
+            <div style={{ padding:"28px 24px 12px", textAlign:"center" }}>
+              <div style={{ fontSize: 30, opacity: 0.6, marginBottom: 6 }}>🧊 🥫 ❄️</div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", lineHeight:1.55 }}>
+                Tap a location above to see what's stocked — or search
+                across your whole kitchen up top.
+              </div>
+            </div>
+          )}
+
+          {/* Tile grid — any tab that has a tile set (fridge, pantry), no
+              drill-down active, no search active. Tapping a tile enters
+              a drill-down view of items in that tile. Empty tiles
+              render greyed-out but remain tappable — the drill-down's
+              empty state surfaces an "Add your first" affordance. */}
+          {!trimmedSearch && currentTiles && drilledTile === null && (
+            <div style={{ padding:"14px 20px 0" }}>
               <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
                 {currentTiles.map(tile => {
                   const count = tileCounts[tile.id] || 0;
@@ -4845,7 +5185,6 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                   );
                 })}
               </div>
-            )}
             </div>
           )}
 
@@ -4885,8 +5224,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
 
           {/* Search + items list. Hidden on the tile-grid view (drilledTile
               === null and the tab has tiles); shown once the user drills
-              into a tile, and on tabs without a tile set (freezer). */}
-          {!(currentTiles && drilledTile === null) && (
+              into a tile, and on tabs without a tile set (freezer).
+              Also requires a tab to actually be selected — otherwise the
+              "Search your ${storageTab}…" / "Nothing in your ${storageTab}"
+              copy interpolates `null` into the placeholder. */}
+          {storageTab && !(currentTiles && drilledTile === null) && (
             <>
               {/* Search — matches item names, category, and hub names,
                   scoped to the current tab/tile. */}
@@ -4945,9 +5287,22 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     Nothing matches "{search}".
                   </div>
                 )}
-                {grouped.map(g =>
-                  g.type === "hub" ? renderHubCard(g) : renderItemCard(g.item)
-                )}
+                {(() => {
+                  // Hubs come first, then loose items (per the grouped
+                  // builder above). Bucketize the loose items by
+                  // identity so 5 cans of tuna render as one stack
+                  // card with ×5 instead of 5 individual cards.
+                  const hubs = grouped.filter(g => g.type === "hub");
+                  const looseBuckets = groupByIdentity(
+                    grouped.filter(g => g.type === "item").map(g => g.item)
+                  );
+                  return (
+                    <>
+                      {hubs.map(renderHubCard)}
+                      {looseBuckets.map(renderBucket)}
+                    </>
+                  );
+                })()}
                 {/* Inline "+ Add X" CTA at the bottom of a populated tile
                     drill-down. Users in the Condiments tile who want to add
                     another condiment get a button that's exactly that — not
@@ -5081,35 +5436,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         />
       )}
 
-      {/* Deduction modal */}
-      {showDeduction && (
-        <div style={{ position:"fixed", inset:0, background:"#000000cc", zIndex:150, display:"flex", alignItems:"flex-end", maxWidth:480, margin:"0 auto" }}>
-          <div style={{ width:"100%", background:"#141414", borderRadius:"20px 20px 0 0", padding:"28px 24px 48px" }}>
-            <div style={{ width:36, height:4, background:"#2a2a2a", borderRadius:2, margin:"0 auto 24px" }} />
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:8 }}>PANTRY DEDUCTION</div>
-            <h3 style={{ fontFamily:"'Fraunces',serif", fontSize:24, color:"#f0ece4", fontWeight:300, fontStyle:"italic", marginBottom:6 }}>You just cooked {DEDUCTION_EXAMPLE.dish}</h3>
-            <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#666", marginBottom:20 }}>Deduct these from your kitchen?</p>
-            <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:20 }}>
-              {DEDUCTION_EXAMPLE.deductions.map((d,i) => (
-                <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", background:"#1a1a1a", borderRadius:10 }}>
-                  <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#ccc" }}>{d.name}</span>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#e07a3a" }}>− {d.used} {d.unit}</span>
-                </div>
-              ))}
-            </div>
-            <div style={{ display:"flex", gap:10 }}>
-              <button onClick={()=>setShowDeduction(false)} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, color:"#666", cursor:"pointer" }}>SKIP</button>
-              <button onClick={confirmDeduction} style={{ flex:2, padding:"14px", background:"#e07a3a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#fff", cursor:"pointer" }}>YES, DEDUCT →</button>
-            </div>
-          </div>
-        </div>
-      )}
       {openReceiptId && (
         <ReceiptView
           receiptId={openReceiptId.receiptId}
           scanId={openReceiptId.scanId}
           pantry={pantry}
           userId={userId}
+          familyIds={familyIds}
           onOpenItem={(item) => setOpenItem(item)}
           onClose={() => setOpenReceiptId(null)}
         />
@@ -5141,7 +5474,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             pantry={pantry}
             userId={userId}
             isAdmin={isAdmin}
+            familyIds={familyIds}
             onUpdate={(patch) => updatePantryItem(fresh.id, patch)}
+            onDuplicate={() => {
+              addStackInstance(setPantry, { key: fresh.id, items: [fresh] });
+              pushToast(`Added 1 ${fresh.name}`, { emoji: fresh.emoji || "🛒", kind: "success", ttl: 2800 });
+            }}
             onDelete={() => {
               // Hand off to the existing deleteCandidate confirmation
               // modal — that's the one surface that shows name + amount
@@ -5154,6 +5492,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             }}
             onEditTags={() => setLinkingItem(fresh)}
             onOpenProvenance={(link) => {
+              // Gate on ownership first — never route to ReceiptView
+              // for an artifact the viewer can't access. The link
+              // descriptor carries ownerId (stamped by ItemCard's
+              // provenance renderer) so we can validate without
+              // another round-trip. Silent drop on out-of-scope;
+              // no toast, no card, no flash.
+              if (!canOpenProvenance(link?.ownerId)) return;
               // kind: 'receipt' and 'scan' both route through ReceiptView
               // (it handles both artifact kinds based on which prop is
               // passed). 'cook' will route to a cook-log detail view
@@ -5166,6 +5511,142 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             }}
             onClose={() => setOpenItem(null)}
           />
+        );
+      })()}
+      {stackDrilldown && (() => {
+        // Re-compute the bucket from the live pantry so add/remove
+        // edits inside the drilldown update the list without a close
+        // + reopen. If every instance was deleted, close the modal.
+        const fresh = groupByIdentity(
+          pantry.filter(p => {
+            // Match the bucket's identity key — simplest: reuse the
+            // stored rows' ids set, fall back to re-grouping on the
+            // fresh pantry and picking the bucket with the same key.
+            return stackDrilldown.items.some(i => i.id === p.id);
+          })
+        );
+        let bucket = fresh[0];
+        if (!bucket) {
+          // All instances deleted elsewhere — close and bail.
+          setStackDrilldown(null);
+          return null;
+        }
+        // Widen the bucket: any OTHER rows that share identity
+        // (e.g. the user just tapped + PACKAGE and we want the new
+        // row in the list) should show up here too. Walk the full
+        // pantry, collect identity-matches via groupByIdentity on a
+        // synthetic seed.
+        const allBuckets = groupByIdentity(pantry);
+        const match = allBuckets.find(b => b.key === stackDrilldown.key);
+        if (match) bucket = match;
+        const ordered = sortedInstances(bucket, "fifo");
+        const top = ordered[0] || bucket.items[0];
+        return (
+          <ModalSheet
+            onClose={() => setStackDrilldown(null)}
+            label={`${top.emoji || ""} ${top.name} · ${ordered.length}`}
+            zIndex={Z.sheet}
+          >
+            <div style={{ padding:"12px 16px 20px", display:"flex", flexDirection:"column", gap:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <button
+                  onClick={() => {
+                    removeStackInstance(setPantry, bucket, "lifo");
+                    pushToast(`Removed 1 ${top.name}`, { emoji: top.emoji || "🗑", kind: "info", ttl: 2800 });
+                  }}
+                  disabled={ordered.length === 0}
+                  style={{ padding:"8px 14px", background:"#1a1a1a", border:"1px solid #333", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#aaa", letterSpacing:"0.06em", cursor: ordered.length === 0 ? "not-allowed" : "pointer", opacity: ordered.length === 0 ? 0.4 : 1 }}
+                >
+                  − 1 PACKAGE
+                </button>
+                <button
+                  onClick={() => {
+                    addStackInstance(setPantry, bucket);
+                    pushToast(`Added 1 ${top.name}`, { emoji: top.emoji || "🛒", kind: "success", ttl: 2800 });
+                  }}
+                  style={{ padding:"8px 14px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+                >
+                  + 1 PACKAGE
+                </button>
+                <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.06em" }}>
+                  ×{ordered.length}
+                </span>
+              </div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", letterSpacing:"0.12em" }}>
+                INSTANCES · FIFO BY EXPIRATION
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {ordered.map(inst => {
+                  // Per-instance provenance chip. Each sibling carries
+                  // its own source_receipt_id / source_scan_id /
+                  // source_cook_log_id, so the drilldown can show
+                  // "🧾 Apr 17" on one can and "🛒 Apr 22" on the next
+                  // without requiring a second tap into ItemCard.
+                  let provIcon = null;
+                  let provText = null;
+                  let provLink = null;
+                  const addedShort = inst.purchasedAt
+                    ? new Date(inst.purchasedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+                    : null;
+                  if (inst.sourceCookLogId) {
+                    provIcon = "🍝";
+                    provText = `COOKED · ${addedShort || ""}`.trim();
+                    provLink = { kind: "cook", id: inst.sourceCookLogId };
+                  } else if (inst.sourceKind === "receipt_scan" && inst.sourceReceiptId) {
+                    provIcon = "🧾";
+                    provText = `RECEIPT · ${addedShort || ""}`.trim();
+                    provLink = { kind: "receipt", id: inst.sourceReceiptId };
+                  } else if (inst.sourceKind === "pantry_scan" && inst.sourceScanId) {
+                    provIcon = "📱";
+                    provText = `PANTRY SCAN · ${addedShort || ""}`.trim();
+                    provLink = { kind: "scan", id: inst.sourceScanId };
+                  } else if (inst.sourceKind === "manual") {
+                    provIcon = "✏️";
+                    provText = `MANUAL · ${addedShort || ""}`.trim();
+                  } else if (addedShort) {
+                    provText = `ADDED · ${addedShort}`;
+                  }
+                  // Out-of-scope provenance (stale cached row for an
+                  // ex-family-member's artifact) drops the tappable
+                  // chip — same rule as ItemCard's chevron.
+                  const ownerInScope = canOpenProvenance(inst.ownerId);
+                  const linkActive = !!(provLink && ownerInScope);
+                  return (
+                    <div key={`drill-${inst.id}`} style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                      {renderItemCard(inst)}
+                      {provText && (
+                        <button
+                          onClick={() => {
+                            if (!linkActive) return;
+                            if (provLink.kind === "receipt") setOpenReceiptId({ receiptId: provLink.id });
+                            else if (provLink.kind === "scan") setOpenReceiptId({ scanId: provLink.id });
+                          }}
+                          disabled={!linkActive}
+                          style={{
+                            alignSelf:"flex-start",
+                            display:"inline-flex", alignItems:"center", gap:6,
+                            padding:"3px 10px",
+                            background: linkActive ? "#0f1620" : "#0f0f0f",
+                            border: `1px solid ${linkActive ? "#1f3040" : "#1a1a1a"}`,
+                            borderRadius: 12,
+                            fontFamily:"'DM Mono',monospace", fontSize: 9,
+                            color: linkActive ? "#7eb8d4" : "#555",
+                            letterSpacing:"0.08em",
+                            cursor: linkActive ? "pointer" : "default",
+                            marginLeft: 6,
+                          }}
+                        >
+                          {provIcon && <span style={{ fontSize: 11 }}>{provIcon}</span>}
+                          {provText}
+                          {linkActive && <span style={{ color:"#7eb8d4aa" }}>→</span>}
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </ModalSheet>
         );
       })()}
       {cardIng && (

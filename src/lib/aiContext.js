@@ -36,8 +36,14 @@ const COOK_HISTORY_LIMIT = 20;   // recent cooks summarized
  * @param {"rich" | "lean"} [args.mode]    — "lean" strips enrichment/profile/history
  *                                           so REGEN doesn't re-anchor on the same
  *                                           pairings as the first draft.
+ * @param {string[]} [args.starIngredientIds] — canonical slugs the user has
+ *                                           explicitly chosen to build around
+ *                                           (from the STAR INGREDIENTS picker).
+ *                                           Boosted to the top of the ranked
+ *                                           pantry + stamped star:true so the
+ *                                           prompt can reference them.
  * @returns {{
- *   pantry:  Array,           // capped, sanitized, expiring-first
+ *   pantry:  Array,           // capped, sanitized, star-first then expiring-first
  *   context: object | null,   // { profile, history } or null in lean mode
  * }}
  */
@@ -47,6 +53,7 @@ export function buildAIContext({
   ingredientInfo,
   cookLogs = [],
   mode = "rich",
+  starIngredientIds = [],
 } = {}) {
   const rich = mode === "rich";
   const now = Date.now();
@@ -54,15 +61,25 @@ export function buildAIContext({
     ? (id) => ingredientInfo.getInfo(id)
     : () => null;
 
-  // Rank pantry: items expiring inside the window first, then by most
-  // recently added. Ties broken by name for stable output.
+  const starSet = new Set(
+    Array.isArray(starIngredientIds) ? starIngredientIds.filter(Boolean) : []
+  );
+
+  // Rank pantry: user-starred items first (beats every other tier —
+  // the user's explicit ask overrides any expiring-soon heuristic),
+  // then expiring-within-window, then by most recently added. Ties
+  // broken by name for stable output.
   const ranked = [...pantry]
     .map(p => ({
       item: p,
+      isStar: starSet.size > 0 && (
+        starSet.has(p.ingredientId) || starSet.has(p.canonicalId)
+      ),
       daysToExpiry: daysUntil(p.expiresAt, now),
       purchasedMs:  p.purchasedAt ? +new Date(p.purchasedAt) : 0,
     }))
     .sort((a, b) => {
+      if (a.isStar !== b.isStar) return a.isStar ? -1 : 1;
       const aSoon = a.daysToExpiry != null && a.daysToExpiry <= EXPIRING_SOON_DAYS;
       const bSoon = b.daysToExpiry != null && b.daysToExpiry <= EXPIRING_SOON_DAYS;
       if (aSoon !== bSoon) return aSoon ? -1 : 1;
@@ -76,7 +93,7 @@ export function buildAIContext({
   // expiresAt / location / ingredientIds[]. In rich mode we add the
   // enrichment triplet (flavorProfile / pairs / diet) because those
   // three fields are what actually drive "what goes with what."
-  const pantryOut = ranked.map(({ item, daysToExpiry }) => {
+  const pantryOut = ranked.map(({ item, daysToExpiry, isStar }) => {
     const out = {
       name:          safeStr(item.name),
       canonicalId:   item.ingredientId || null,
@@ -88,6 +105,10 @@ export function buildAIContext({
       location:      item.location ?? null,
       daysToExpiry:  daysToExpiry,            // negative = already expired
       kind:          item.kind ?? null,       // "ingredient" | "leftovers" | "compound"
+      // Flag for the prompt — "user explicitly wants this in the
+      // recipe." Prompt rules treat starred rows as the anchor
+      // ingredient, overriding the expiring-soon default.
+      ...(isStar ? { star: true } : {}),
     };
     if (rich) {
       const info = getInfo(item.ingredientId);

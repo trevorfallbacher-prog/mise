@@ -4,6 +4,7 @@ import { INGREDIENTS, HUBS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
+import EditPackagingModal from "./EditPackagingModal";
 
 // AdminPanel — elevated-permissions inspector, scoped to profiles
 // where role = 'admin' (see migration 0042). Mounted from Settings
@@ -531,6 +532,10 @@ function CanonicalsList({ viewerId }) {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(null);    // canonical_id mid-op
   const [version, setVersion] = useState(0); // cheap refresh trigger
+  // Packaging editor — opens a ModalSheet over the admin panel,
+  // seeded with the canonical's saved sizes + parentId. Null =
+  // closed; object = the row being edited.
+  const [editPackagingFor, setEditPackagingFor] = useState(null);
   // Refresh the session-level dbMap after every approve/reject/rename
   // so the scan-time auto-star-link and the LinkIngredient picker
   // pick up the admin's changes without a page reload.
@@ -924,6 +929,14 @@ function CanonicalsList({ viewerId }) {
               >
                 {isBusy ? "…" : "RENAME"}
               </button>
+              <button
+                onClick={() => setEditPackagingFor({ slug: r.id, name: r.name || r.bundledName || r.id })}
+                disabled={isBusy}
+                title="Edit the shared package sizes catalog for this canonical"
+                style={adminBtnStyle("#0f1620", "#7eb8d4")}
+              >
+                PACKAGES
+              </button>
               {isCustom && !r.approved && (
                 <button
                   onClick={() => approveCustom(r)}
@@ -1017,8 +1030,24 @@ function CanonicalsList({ viewerId }) {
         stub so the slug stops reading as PENDING, REJECT clears the
         slug from every pantry_items row and drops the stub, RENAME
         rewrites the slug across the board and carries any approval
-        forward.
+        forward. PACKAGES opens the shared-catalog editor for this
+        canonical's typical sizes — pantry_items rows continue to
+        carry their own amount/unit regardless.
       </div>
+
+      {editPackagingFor && (
+        <EditPackagingModal
+          slug={editPackagingFor.slug}
+          name={editPackagingFor.name}
+          viewerId={viewerId}
+          onClose={() => setEditPackagingFor(null)}
+          onSaved={() => {
+            setEditPackagingFor(null);
+            setVersion(v => v + 1);
+            refreshDb?.();
+          }}
+        />
+      )}
     </div>
   );
 }

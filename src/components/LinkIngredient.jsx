@@ -750,31 +750,60 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
 }
 
 // PackagingStep — compact inline form shown in LinkIngredient right
-// after the user taps + CREATE on a brand-new canonical. Captures the
-// typical package sizes (Spam → 12oz can, rice → 5lb bag) so the next
-// person who adds this canonical sees the chips instead of typing
-// amount+unit by hand.
+// after the user taps + CREATE on a brand-new canonical. Also
+// reusable as an EDIT surface (AdminPanel → EditPackagingModal)
+// since it fully round-trips the ingredient_info packaging shape.
+// Captures the typical package sizes (Spam → 12oz can, rice → 5lb
+// bag) so the next person who adds this canonical sees the chips
+// instead of typing amount+unit by hand.
 //
 // Output (maybePackaging handed back via onCommit) is the packaging
 // block shape that ingredient_info consumes:
-//   { sizes: [{ amount, unit, label }, …], defaultIndex }
+//   { sizes: [{ amount, unit, label }, …], defaultIndex, parentId? }
 //
-// Commits either with or without a packaging block — SKIP commits
-// null and the canonical goes in as-is (original createNewFromQuery
-// behavior). SAVE commits the block and the caller stashes it in
-// pending_ingredient_info for admin review.
-function PackagingStep({ name, slug, onCommit, onCancel }) {
+// SKIP commits null (create flow: canonical goes in as-is; edit
+// flow: caller should treat as cancel). SAVE commits the block.
+// Callers decide whether that block lands in pending_ingredient_info
+// (create flow, awaiting admin approval) or directly in
+// ingredient_info (admin edit flow).
+//
+// Props:
+//   name     — the canonical's display name (copy only)
+//   slug     — the canonical's id (copy only)
+//   onCommit — fired with { sizes?, defaultIndex?, parentId? } | null
+//   onCancel — dismiss without committing
+//   initial  — optional { category, sizes, typicalIdx, parentId } to
+//              seed the form for edit flows. Omit for fresh creates.
+export function PackagingStep({ name, slug, onCommit, onCancel, initial }) {
   const CATEGORIES = Object.keys(DEFAULT_PACKAGING_BY_CATEGORY);
-  const [category, setCategory] = useState("canned"); // safest default — most common add
-  const [sizes, setSizes]       = useState(() => suggestedPackaging("canned").sizes);
-  const [typicalIdx, setTypicalIdx] = useState(() => suggestedPackaging("canned").defaultIndex);
+  // Seed from `initial` when provided; otherwise fall back to the
+  // create-flow defaults. Infer category from the initial sizes
+  // (matches a CATEGORY whose default sizes look similar) only if
+  // we don't have an explicit initial.category.
+  const seedCategory = initial?.category
+    || (initial?.sizes?.length ? "canned" : "canned");
+  const [category, setCategory] = useState(seedCategory);
+  const [sizes, setSizes] = useState(() => {
+    if (Array.isArray(initial?.sizes) && initial.sizes.length > 0) {
+      return initial.sizes.map(s => ({
+        amount: Number(s.amount) || 1,
+        unit: String(s.unit || "oz"),
+        label: s.label || "",
+      }));
+    }
+    return suggestedPackaging(seedCategory).sizes;
+  });
+  const [typicalIdx, setTypicalIdx] = useState(() => {
+    if (typeof initial?.typicalIdx === "number") return initial.typicalIdx;
+    if (typeof initial?.defaultIndex === "number") return initial.defaultIndex;
+    return suggestedPackaging(seedCategory).defaultIndex;
+  });
   // PARENT GROUP — optional pointer to one of the 13 bundled hubs
-  // (pasta_hub, bean_hub, etc). When set, the Kitchen tile grouper
-  // wraps this canonical's pantry rows under that hub alongside the
-  // bundled members. Inferred lazily from the canonical's name on
-  // first render so common cases (gemelli → pasta_hub) auto-suggest
-  // without user input.
-  const [parentId, setParentId] = useState(() => inferHubFromName(name));
+  // (pasta_hub, bean_hub, etc). Lazy name-inference only in create
+  // flow; edit flow honors the existing saved value (even null).
+  const [parentId, setParentId] = useState(
+    () => initial ? (initial.parentId || null) : inferHubFromName(name)
+  );
 
   // Re-seed sizes when the user picks a new category — keeps the
   // flow fast if they realize they miscategorized.

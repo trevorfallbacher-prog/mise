@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { signOut } from "../lib/useAuth";
 import { useWebPush } from "../lib/useWebPush";
+import { supabase } from "../lib/supabase";
 
 // Panel header used at the top of each section in Settings.
 function SectionHeader({ label }) {
@@ -112,6 +113,31 @@ export default function Settings({ userId, profile, relationships, upsertProfile
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Pantry maintenance — one-shot legacy split. Migrates bulk rows
+  // (amount=50 unit=can / reserve_count=49) into per-instance siblings
+  // so the StackedItemCard render path can stack them. Idempotent —
+  // re-running on already-split rows is a no-op (the WHERE clause in
+  // the RPC filters to amount>=2 OR reserve_count>0).
+  const [splitBusy, setSplitBusy] = useState(false);
+  const [splitResult, setSplitResult] = useState(null); // { splitCount, totalInstances } | { error } | null
+
+  const runSplit = async () => {
+    if (!userId || splitBusy) return;
+    setSplitBusy(true);
+    setSplitResult(null);
+    const { data, error } = await supabase.rpc("split_aggregate_rows", { p_user_id: userId });
+    setSplitBusy(false);
+    if (error) {
+      setSplitResult({ error: error.message || String(error) });
+      return;
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    setSplitResult({
+      splitCount: Number(row?.split_count) || 0,
+      totalInstances: Number(row?.total_instances) || 0,
+    });
+  };
 
   // Name editor. Prefilled with whatever the profile has (or empty, which is
   // the whole reason this editor exists — magic-link sign-ins have no name).
@@ -364,6 +390,49 @@ export default function Settings({ userId, profile, relationships, upsertProfile
               <span style={{ color:"#7eb8d4" }}>→</span>
             </button>
           </>
+        )}
+
+        {/* Pantry maintenance — opt-in legacy data migrations. Only
+            shown to users who have the per-instance pantry refactor
+            (always today, post-Phase 1). Splits aggregate bulk rows
+            ("amount=50 cans" → 50 sibling rows) so the stacked card
+            view applies to data scanned before the refactor. Safe
+            to re-run; the RPC's WHERE clause already filters to
+            rows that still need splitting. */}
+        <SectionHeader label="PANTRY MAINTENANCE" />
+        <button
+          onClick={runSplit}
+          disabled={splitBusy}
+          style={{
+            width:"100%", padding:"14px",
+            background: splitBusy ? "#1a1608" : "#0f1620",
+            border:"1px solid #1f3040", color:"#7eb8d4",
+            borderRadius:12, fontFamily:"'DM Mono',monospace",
+            fontSize:11, letterSpacing:"0.1em",
+            cursor: splitBusy ? "wait" : "pointer",
+            display:"flex", alignItems:"center", justifyContent:"space-between",
+            marginBottom: splitResult ? 8 : 14,
+          }}
+        >
+          <span>🥫 SPLIT BULK ROWS INTO STACKS</span>
+          <span>{splitBusy ? "…" : "→"}</span>
+        </button>
+        {splitResult && (
+          <div style={{
+            padding:"10px 12px", marginBottom:14,
+            background: splitResult.error ? "#1a0a0a" : "#0a1a0a",
+            border: `1px solid ${splitResult.error ? "#3a1a1a" : "#1e3a1e"}`,
+            borderRadius:10,
+            fontFamily:"'DM Sans',sans-serif", fontSize:12,
+            color: splitResult.error ? "#ef4444" : "#7ec87e",
+            lineHeight: 1.5,
+          }}>
+            {splitResult.error
+              ? `Couldn't split: ${splitResult.error}`
+              : splitResult.splitCount === 0
+                ? "Nothing to split — your pantry is already per-instance."
+                : `Migrated ${splitResult.splitCount} bulk row${splitResult.splitCount === 1 ? "" : "s"} into ${splitResult.totalInstances} stacked instance${splitResult.totalInstances === 1 ? "" : "s"}.`}
+          </div>
         )}
 
         {/* Admin entry — visible only when the viewer's own profile row
