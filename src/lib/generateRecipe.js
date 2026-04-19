@@ -63,37 +63,43 @@ export async function generateRecipe({
     // "Edge Function returned a non-2xx status code" instead of the
     // actual detail from the edge function's error payload.
     let detail = "";
+    let rawFromModel = "";
     const ctx = error.context;
-    if (ctx && typeof ctx.text === "function") {
+    const consumeBody = async () => {
+      if (ctx && typeof ctx.text === "function") {
+        try { return await ctx.text(); } catch { return ""; }
+      }
+      if (ctx?.body) {
+        return typeof ctx.body === "string" ? ctx.body : JSON.stringify(ctx.body);
+      }
+      return "";
+    };
+    const text = await consumeBody();
+    if (text) {
       try {
-        const text = await ctx.text();
-        if (text) {
-          try {
-            const parsed = JSON.parse(text);
-            detail = parsed?.detail || parsed?.error || text;
-          } catch {
-            detail = text;
-          }
+        const parsed = JSON.parse(text);
+        detail = parsed?.detail || parsed?.error || text;
+        // When the edge fn 502s because the model returned non-JSON,
+        // the raw model output rides in parsed.raw — surface a snippet
+        // so the user can tell it was a model hiccup vs an infra
+        // issue without opening devtools.
+        if (parsed?.raw) {
+          rawFromModel = String(parsed.raw).slice(0, 200);
         }
       } catch {
-        // stream already consumed or not readable — fall through
-      }
-    } else if (ctx?.body) {
-      // Older shape: body is a string / object directly on context.
-      try {
-        const parsed = typeof ctx.body === "string" ? JSON.parse(ctx.body) : ctx.body;
-        detail = parsed?.detail || parsed?.error || "";
-      } catch {
-        // ignore
+        detail = text;
       }
     }
-    const msg = detail
+    const msgBase = detail
       ? `Recipe draft failed: ${String(detail).slice(0, 400)}`
       : `Recipe draft failed: ${error.message || "unknown error"}`;
+    const msg = rawFromModel
+      ? `${msgBase}\n\nModel said: ${rawFromModel}${rawFromModel.length >= 200 ? "…" : ""}`
+      : msgBase;
     // Log the full detail so it's accessible in devtools even when
     // the UI truncates it.
     // eslint-disable-next-line no-console
-    console.error("[generate-recipe] edge fn failure", { error, detail });
+    console.error("[generate-recipe] edge fn failure", { error, detail, rawFromModel });
     throw new Error(msg);
   }
 

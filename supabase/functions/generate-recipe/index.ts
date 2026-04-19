@@ -598,7 +598,12 @@ Deno.serve(async (req) => {
         // Trim the budget so the rough draft is fast and cheap; the
         // full cook gets the original 2500 budget on the second
         // call.
-        max_tokens: mode === "sketch" ? 1000 : 2500,
+        // Sketch bumped from 1000 → 1600 because large pantries
+        // generated ideal+pantry arrays that consistently ran past
+        // 1000 tokens and Claude's output truncated mid-JSON. 1600
+        // is still cheaper than final (2500) but gives enough
+        // headroom for 10+ ingredients in each array.
+        max_tokens: mode === "sketch" ? 1600 : 2500,
         // temperature=1 is the API default but we set it explicitly so
         // nobody accidentally pins it to 0 during debugging and wipes
         // out regen variety without realizing why.
@@ -636,16 +641,44 @@ Deno.serve(async (req) => {
 
   const data = await anthropicResp.json();
   const raw = data?.content?.[0]?.text ?? "{}";
-  const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
 
+  // Tolerant JSON extraction. Claude occasionally wraps the object in
+  // markdown fences or prefaces it with a sentence ("Here's a recipe
+  // for you:"). Strip fences first; if a direct parse fails, carve
+  // out the substring between the first { and last } and try that.
+  // Fixes the "couldn't parse model output as JSON" 502s we were
+  // seeing when the model decided to be chatty.
+  const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
   let recipe: Record<string, unknown>;
   try {
     recipe = JSON.parse(cleaned);
   } catch {
-    return new Response(
-      JSON.stringify({ error: "couldn't parse model output as JSON", raw }),
-      { status: 502, headers: JSON_HEADERS },
-    );
+    const first = cleaned.indexOf("{");
+    const last  = cleaned.lastIndexOf("}");
+    if (first >= 0 && last > first) {
+      const sliced = cleaned.slice(first, last + 1);
+      try {
+        recipe = JSON.parse(sliced);
+      } catch {
+        return new Response(
+          JSON.stringify({
+            error: "couldn't parse model output as JSON",
+            detail: "model returned non-JSON content; tried both direct and brace-slice parse",
+            raw,
+          }),
+          { status: 502, headers: JSON_HEADERS },
+        );
+      }
+    } else {
+      return new Response(
+        JSON.stringify({
+          error: "couldn't parse model output as JSON",
+          detail: "no JSON object found in model response",
+          raw,
+        }),
+        { status: 502, headers: JSON_HEADERS },
+      );
+    }
   }
 
   // Sketch mode response — narrower shape. Title + IDEAL + PANTRY
