@@ -300,6 +300,9 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const IDENTITY_KEYS = [
     "name", "ingredientId", "ingredientIds", "canonicalId",
     "emoji", "category", "tileId", "typeId", "kind",
+    // Brand (migration 0062). Edits to the brand chip propagate
+    // across duplicate raw-text rows same as name + canonicalId.
+    "brand",
   ];
   const propagateCorrection = (sourceIdx, patch) => setScannedItems(prev => {
     const source = prev[sourceIdx];
@@ -325,6 +328,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         typeId: merged.typeId,
         canonicalId: merged.canonicalId || merged.ingredientId,
         ingredientIds: merged.ingredientIds,
+        brand: merged.brand,
       }).catch(() => {});
     }
     return prev.map((item, i) => {
@@ -466,10 +470,18 @@ function Scanner({ userId, onItemsScanned, onClose }) {
         const location = activeMode.location || regLocation || defaultLocationForCategory(cat);
         // Three-layer parse: BRAND → STATE → CANONICAL. Pulls brand
         // tokens off the rawText BEFORE state / canonical detection so
-        // "KERRYGOLD SHRD MOZZ" gets cleanly decomposed into brand
-        // Kerrygold + state shredded + mozzarella cheese instead of
-        // the brand tokens drowning out the downstream matches.
+        // "KG SHRD MOZZ" gets cleanly decomposed into brand Kerrygold
+        // + state shredded + mozzarella cheese instead of the brand
+        // tokens drowning out the downstream matches.
+        //
+        // Authority order for the resolved brand (migration 0062):
+        //   1. item.brand    — Claude's scan-time extraction
+        //   2. parsed.brand  — client-side BRAND_ALIASES fallback
+        // Corrections (via applyCorrection below) can override both.
         const parsed = parseIdentity(rawText);
+        const resolvedBrand = (typeof item.brand === "string" && item.brand.trim())
+          ? item.brand.trim()
+          : (parsed.brand || null);
         // State detection — grocery receipts abbreviate heavily ("SHRD
         // MOZZ", "SLCD PROV"), and the scan text is the only place we
         // can recover that information. Detect against rawText (the
@@ -491,7 +503,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           confidence: rawConf || confidence,
           mode: activeMode.id,
           detected_state: detectedState || null,
-          detected_brand: parsed.brand || null,
+          // detected_brand preserves the resolved value (Claude or
+          // fallback) so the ItemCard's "raw scan" panel can surface
+          // it alongside detected_state for debug / trust.
+          detected_brand: resolvedBrand,
           price_cents: typeof item.priceCents === "number" ? item.priceCents : null,
           amount_raw: item.amount != null ? String(item.amount) + (item.unit ? ` ${item.unit}` : "") : null,
           scanned_at: new Date().toISOString(),
@@ -519,7 +534,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           sourceKind,
           scanRaw,
           ...(detectedState ? { state: detectedState } : {}),
-          ...(parsed.brand ? { brand: parsed.brand } : {}),
+          ...(resolvedBrand ? { brand: resolvedBrand } : {}),
         };
         if (!canon) {
           const inferred = inferUnitsForScanned(base);
@@ -597,6 +612,10 @@ function Scanner({ userId, onItemsScanned, onClose }) {
           patched.canonicalId = c.canonicalId;
           patched.ingredientId = c.canonicalId;
         }
+        // Brand (migration 0062). Correction memory overrides the
+        // scan-time brand resolution — a household that taught
+        // "HCF" → H-E-B wins over Claude's null / fallback regex.
+        if (c.brand) patched.brand = c.brand;
         return patched;
       };
       // Auto-link on strong AND unambiguous match. Two gates:
@@ -1315,6 +1334,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
                   typeId: row.typeId,
                   canonicalId: row.canonicalId || row.ingredientId,
                   ingredientIds: row.ingredientIds,
+                  brand: row.brand,
                 }).catch(() => {});
               }
             }

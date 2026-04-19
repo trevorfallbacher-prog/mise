@@ -100,6 +100,30 @@ For each item, return TWO name fields:
     unambiguous match in the canonical registry below. When in doubt,
     canonicalId = null.
 
+  * brand: the manufacturer label, canonicalized to its full brand
+    name, only when you recognize a brand abbreviation in rawText.
+    Receipts abbreviate aggressively — the brand almost never appears
+    spelled out. Common ones:
+      - GV / GRT VALUE     → "Great Value"       (Walmart)
+      - KRK / KIRKLND      → "Kirkland"          (Costco)
+      - TJ / TRDR JOE      → "Trader Joe's"
+      - 365                → "365"               (Whole Foods)
+      - OM / OSCR MYR      → "Oscar Mayer"
+      - KG                 → "Kerrygold"
+      - HZ / HNZ           → "Heinz"
+      - TYSN               → "Tyson"
+      - PRDE               → "Perdue"
+      - BTRBLL             → "Butterball"
+      - PHLLY / PHIL       → "Philadelphia"
+      - CHOB               → "Chobani"
+      - HELL / HLMN        → "Hellmann's"
+      - HUY FNG            → "Huy Fong"
+      - CHOL               → "Cholula"
+      - BRLLA              → "Barilla"
+    Set brand = null unless you are confident. Do NOT invent brands
+    from cut / state / pack-size tokens — "STRP STK" is a cut, not a
+    brand. "SHRD" is a state, not a brand. When in doubt, null.
+
   * confidence: "high" | "medium" | "low" — your self-rating of the
     match.  Be honest — medium/low values are features, not failures.
       - high:   unambiguous (e.g. "MILK 2% GAL" → milk)
@@ -132,16 +156,21 @@ CRITICAL: the big number next to an item is almost always the PRICE
 in USD ($6.53, $3.99), NOT the quantity. Do NOT put the price in the
 amount field. If the receipt doesn't clearly show a quantity, use 1.
 
-Reading examples (showing the new two-name shape):
-  - "MILK 2% GAL 4.29"      → rawText:"MILK 2% GAL",      name:"2% Milk",        canonicalId:"milk",   confidence:"high"
-  - "EGGS LG 18CT 6.53"     → rawText:"EGGS LG 18CT",     name:"Large Eggs",     canonicalId:"eggs",   confidence:"high"
-  - "BANANAS 2.14 LB @ .59" → rawText:"BANANAS",          name:"Bananas",        canonicalId:"bananas",confidence:"high"
-  - "NY STRIP 1.10 LB 15.67"→ rawText:"NY STRIP",         name:"NY Strip Steak", canonicalId:"beef",   confidence:"high"
-  - "BUTTER QTRS 4.99"      → rawText:"BUTTER QTRS",      name:"Butter Quarters",canonicalId:"butter", confidence:"high"
-  - "SHRD MOZZ 8OZ 3.49"    → rawText:"SHRD MOZZ 8OZ",    name:"Shredded Mozzarella",canonicalId:"mozzarella",confidence:"medium"
-  - "ACQUAMAR FLA 3.99"     → rawText:"ACQUAMAR FLA",     name:"ACQUAMAR FLA",   canonicalId:null,     confidence:"low"
-  - "FRANK CHS DOG 2.49"    → rawText:"FRANK CHS DOG",    name:"FRANK CHS DOG",  canonicalId:null,     confidence:"low"
-  - "GNDBF 80/20 5.79"      → rawText:"GNDBF 80/20",      name:"Ground Beef 80/20",canonicalId:"ground_beef",confidence:"medium"
+Reading examples (showing the two-name shape + brand axis):
+  - "MILK 2% GAL 4.29"      → rawText:"MILK 2% GAL",      name:"2% Milk",        canonicalId:"milk",   brand:null,          confidence:"high"
+  - "EGGS LG 18CT 6.53"     → rawText:"EGGS LG 18CT",     name:"Large Eggs",     canonicalId:"eggs",   brand:null,          confidence:"high"
+  - "BANANAS 2.14 LB @ .59" → rawText:"BANANAS",          name:"Bananas",        canonicalId:"bananas",brand:null,          confidence:"high"
+  - "NY STRIP 1.10 LB 15.67"→ rawText:"NY STRIP",         name:"NY Strip Steak", canonicalId:"beef",   brand:null,          confidence:"high"
+  - "BUTTER QTRS 4.99"      → rawText:"BUTTER QTRS",      name:"Butter Quarters",canonicalId:"butter", brand:null,          confidence:"high"
+  - "SHRD MOZZ 8OZ 3.49"    → rawText:"SHRD MOZZ 8OZ",    name:"Shredded Mozzarella",canonicalId:"mozzarella",brand:null,    confidence:"medium"
+  - "GV GRN BNS 14OZ 1.29"  → rawText:"GV GRN BNS 14OZ",  name:"Green Beans",    canonicalId:"green_beans",brand:"Great Value",confidence:"high"
+  - "KG UNSLT BTR 5.49"     → rawText:"KG UNSLT BTR",     name:"Unsalted Butter",canonicalId:"butter", brand:"Kerrygold",   confidence:"high"
+  - "KRK PPR TWLS 18CT"     → rawText:"KRK PPR TWLS 18CT",name:"Paper Towels",   canonicalId:null,     brand:"Kirkland",    confidence:"medium"
+  - "TJ MARINARA 2.99"      → rawText:"TJ MARINARA",      name:"Marinara",       canonicalId:"marinara",brand:"Trader Joe's",confidence:"high"
+  - "OM BACON 16OZ 6.49"    → rawText:"OM BACON 16OZ",    name:"Bacon",          canonicalId:"bacon",  brand:"Oscar Mayer", confidence:"high"
+  - "ACQUAMAR FLA 3.99"     → rawText:"ACQUAMAR FLA",     name:"ACQUAMAR FLA",   canonicalId:null,     brand:null,          confidence:"low"
+  - "FRANK CHS DOG 2.49"    → rawText:"FRANK CHS DOG",    name:"FRANK CHS DOG",  canonicalId:null,     brand:null,          confidence:"low"
+  - "GNDBF 80/20 5.79"      → rawText:"GNDBF 80/20",      name:"Ground Beef 80/20",canonicalId:"ground_beef",brand:null,     confidence:"medium"
 
 Categories (for canonicalId=null items): dairy, produce, dry, meat, pantry, frozen
 
@@ -164,8 +193,9 @@ Return ONLY a JSON object — no markdown fences, no prose — with this shape:
   "date": "2026-04-14" | null,
   "totalCents": 4523 | null,
   "items": [
-    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429,"confidence":"high"},
-    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"emoji":"🥫","amount":1,"unit":"count","category":"pantry","priceCents":399,"confidence":"low"}
+    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","brand":null,"emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429,"confidence":"high"},
+    {"rawText":"GV GRN BNS 14OZ","name":"Green Beans","canonicalId":"green_beans","brand":"Great Value","emoji":"🫛","amount":1,"unit":"can","category":"pantry","priceCents":129,"confidence":"high"},
+    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"brand":null,"emoji":"🥫","amount":1,"unit":"count","category":"pantry","priceCents":399,"confidence":"low"}
   ]
 }
 

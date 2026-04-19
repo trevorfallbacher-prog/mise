@@ -5667,77 +5667,88 @@ export function detectStateFromText(text, ingredient) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // BRAND axis — grocery manufacturer labels that ride along with the
-// free-text name ("KERRYGOLD UNSALTED", "TYSON CHKN TNDRLN"). Pulled
-// onto a separate column via migration 0061 so parseIdentity can
-// strip brand tokens BEFORE running state / canonical detection —
-// otherwise "KERRYGOLD" drowns out the cheese keyword match and
-// "TYSON" leaks into canonical inference as noise.
+// free-text name ("KG UNSLT BTR", "TYSN CHKN TNDRLN"). Pulled onto
+// a separate column via migration 0061 so parseIdentity can strip
+// brand tokens BEFORE running state / canonical detection —
+// otherwise brand abbreviations drown out the canonical keyword
+// match and leak into inference as noise.
 //
 // Shape mirrors STATE_ALIASES: array of { pattern, brand } with a
 // display-cased `brand` (the receipt abbreviation gets folded back
-// to the brand's canonical capitalization so "KERRYGOLD" and
-// "kerrygold" both render as "Kerrygold" in the UI).
+// to the brand's canonical capitalization so "GV" and "GREAT VALUE"
+// both render as "Great Value" in the UI).
 //
-// Small curated list — we cover the brands that recur across our
-// users' receipts rather than every SKU on the shelf. parseIdentity
-// returns null on unknown brands so the rest of the pipeline falls
-// back to the existing behavior unchanged. A future BRANDS registry
-// can extend this from a data file the same way CANONICAL_ALIASES
-// unified state-baked slugs.
+// THIS IS A FALLBACK ONLY. The primary ingestion paths are:
+//   1. scan-receipt Edge Fn — Claude sees the full receipt line
+//      with context (price, unit, store header) and returns brand
+//      per item. Handles the long tail.
+//   2. user_scan_corrections (migration 0062) — household taps-to-
+//      correct the brand chip on a scan row and the mapping sticks
+//      family-wide. Teaches regional / idiosyncratic abbreviations
+//      Claude missed on.
+//   3. This table — what the client-side parseIdentity() uses for
+//      manual-add (AddItemModal) where no scan happened, and as a
+//      safety net when Tier 1 + Tier 2 both miss.
+//
+// Grow this list sparingly. A new abbreviation usually belongs in
+// the correction table (Tier 2), not here. Patterns are abbreviation-
+// first — receipts almost never print the brand in full. Each entry
+// anchors with `\b` word boundaries so short tokens ("GV", "KG")
+// don't match inside longer words ("GIVEN", "KEG").
 // ─────────────────────────────────────────────────────────────────────────────
 export const BRAND_ALIASES = [
-  // dairy
-  { pattern: /\bkerrygold\b/i,                 brand: "Kerrygold" },
-  { pattern: /\bplugr[aá]\b/i,                 brand: "Plugrá" },
-  { pattern: /\borganic\s+valley\b/i,          brand: "Organic Valley" },
-  { pattern: /\bdaisy\b/i,                     brand: "Daisy" },
-  { pattern: /\bchobani\b/i,                   brand: "Chobani" },
-  { pattern: /\bfage\b/i,                      brand: "Fage" },
-  { pattern: /\byoplait\b/i,                   brand: "Yoplait" },
-  { pattern: /\bdannon\b/i,                    brand: "Dannon" },
-  { pattern: /\bphiladelphia\b|\bphilly\s+crm\b/i, brand: "Philadelphia" },
-  { pattern: /\bboursin\b/i,                   brand: "Boursin" },
-  { pattern: /\bsilk\b/i,                      brand: "Silk" },
-  { pattern: /\boatly\b/i,                     brand: "Oatly" },
-  // meat / poultry
-  { pattern: /\btyson\b/i,                     brand: "Tyson" },
-  { pattern: /\bperdue\b/i,                    brand: "Perdue" },
-  { pattern: /\bbutterball\b/i,                brand: "Butterball" },
-  { pattern: /\bjimmy\s+dean\b/i,              brand: "Jimmy Dean" },
-  { pattern: /\boscar\s+mayer\b/i,             brand: "Oscar Mayer" },
-  { pattern: /\bhormel\b/i,                    brand: "Hormel" },
-  { pattern: /\bapplegate\b/i,                 brand: "Applegate" },
-  { pattern: /\bboar'?s\s+head\b/i,            brand: "Boar's Head" },
-  // pantry
-  { pattern: /\bheinz\b/i,                     brand: "Heinz" },
-  { pattern: /\bkraft\b/i,                     brand: "Kraft" },
-  { pattern: /\bhellmann'?s\b/i,               brand: "Hellmann's" },
-  { pattern: /\bduke'?s\b/i,                   brand: "Duke's" },
-  { pattern: /\bjif\b/i,                       brand: "Jif" },
-  { pattern: /\bskippy\b/i,                    brand: "Skippy" },
-  { pattern: /\bsmucker'?s\b/i,                brand: "Smucker's" },
-  { pattern: /\bcampbell'?s\b/i,               brand: "Campbell's" },
-  { pattern: /\bprogresso\b/i,                 brand: "Progresso" },
-  { pattern: /\bmutti\b/i,                     brand: "Mutti" },
-  { pattern: /\bcento\b/i,                     brand: "Cento" },
-  { pattern: /\bde\s+cecco\b/i,                brand: "De Cecco" },
-  { pattern: /\bbarilla\b/i,                   brand: "Barilla" },
-  { pattern: /\brao'?s\b/i,                    brand: "Rao's" },
-  { pattern: /\bkikkoman\b/i,                  brand: "Kikkoman" },
-  { pattern: /\bhuy\s+fong\b/i,                brand: "Huy Fong" },
-  { pattern: /\bcholula\b/i,                   brand: "Cholula" },
-  { pattern: /\btabasco\b/i,                   brand: "Tabasco" },
-  { pattern: /\bfrank'?s\s+redhot\b/i,         brand: "Frank's RedHot" },
-  // store brands — catch last so "KIRKLAND OSCAR MAYER" (rare) still
-  // records the more-specific brand; the longest-matching pattern
-  // isn't enforced here because store brands don't overlap with name
-  // brands in practice.
-  { pattern: /\bkirkland\b/i,                  brand: "Kirkland" },
-  { pattern: /\btrader\s+joe'?s\b/i,           brand: "Trader Joe's" },
-  { pattern: /\bwhole\s+foods\b|\b365\s+(?:by|whole)\b/i, brand: "365" },
-  { pattern: /\bgreat\s+value\b/i,             brand: "Great Value" },
-  { pattern: /\bgood\s+&?\s*gather\b/i,        brand: "Good & Gather" },
-  { pattern: /\bsignature\s+select\b/i,        brand: "Signature Select" },
+  // Store brands — highest-frequency on receipts because every
+  // household buys them. Abbreviations lead; full names listed as
+  // alternatives so manually-typed entries in AddItemModal also
+  // resolve.
+  { pattern: /\bgv\b|\bgrt\s+value\b|\bgreat\s+value\b/i,  brand: "Great Value" },
+  { pattern: /\bkrk\b|\bkirkland\b/i,                       brand: "Kirkland" },
+  { pattern: /\btj\b|\btrdr\s+joe\b|\btrader\s+joe'?s\b/i,  brand: "Trader Joe's" },
+  { pattern: /\b365\b|\bwhole\s+foods\b/i,                  brand: "365" },
+  { pattern: /\bgood\s+(?:&|and)?\s*gather\b/i,             brand: "Good & Gather" },
+  { pattern: /\bsig\s+sel\b|\bsignature\s+select\b/i,       brand: "Signature Select" },
+  // Dairy
+  { pattern: /\bkg\b|\bkerrygold\b/i,                       brand: "Kerrygold" },
+  { pattern: /\bplugr[aá]\b/i,                              brand: "Plugrá" },
+  { pattern: /\borg\s+valley\b|\borganic\s+valley\b/i,      brand: "Organic Valley" },
+  { pattern: /\bdaisy\b/i,                                  brand: "Daisy" },
+  { pattern: /\bchob\b|\bchobani\b/i,                       brand: "Chobani" },
+  { pattern: /\bfage\b/i,                                   brand: "Fage" },
+  { pattern: /\byop\b|\byoplait\b/i,                        brand: "Yoplait" },
+  { pattern: /\bdannon\b/i,                                 brand: "Dannon" },
+  { pattern: /\bphlly\b|\bphilly\s+crm\b|\bphiladelphia\b/i, brand: "Philadelphia" },
+  { pattern: /\bboursin\b/i,                                brand: "Boursin" },
+  { pattern: /\bsilk\b/i,                                   brand: "Silk" },
+  { pattern: /\boatly\b/i,                                  brand: "Oatly" },
+  // Meat / poultry
+  { pattern: /\btysn\b|\btyson\b/i,                         brand: "Tyson" },
+  { pattern: /\bprde\b|\bperdue\b/i,                        brand: "Perdue" },
+  { pattern: /\bbtrbll\b|\bbutterball\b/i,                  brand: "Butterball" },
+  { pattern: /\bjd\b|\bjimmy\s+dean\b/i,                    brand: "Jimmy Dean" },
+  { pattern: /\bom\b|\boscr\s+myr\b|\boscar\s+mayer\b/i,    brand: "Oscar Mayer" },
+  { pattern: /\bhrml\b|\bhormel\b/i,                        brand: "Hormel" },
+  { pattern: /\bapplegate\b/i,                              brand: "Applegate" },
+  { pattern: /\bboar'?s?\s+head\b/i,                        brand: "Boar's Head" },
+  // Pantry
+  { pattern: /\bhz\b|\bhnz\b|\bheinz\b/i,                   brand: "Heinz" },
+  { pattern: /\bkft\b|\bkraft\b/i,                          brand: "Kraft" },
+  { pattern: /\bhell\b|\bhlmn\b|\bhellmann'?s\b/i,          brand: "Hellmann's" },
+  { pattern: /\bduke'?s\b/i,                                brand: "Duke's" },
+  { pattern: /\bjif\b/i,                                    brand: "Jif" },
+  { pattern: /\bskippy\b/i,                                 brand: "Skippy" },
+  { pattern: /\bsmkr\b|\bsmucker'?s\b/i,                    brand: "Smucker's" },
+  { pattern: /\bcmpbll\b|\bcampbell'?s\b/i,                 brand: "Campbell's" },
+  { pattern: /\bprgrs\b|\bprogresso\b/i,                    brand: "Progresso" },
+  { pattern: /\bmutti\b/i,                                  brand: "Mutti" },
+  { pattern: /\bcento\b/i,                                  brand: "Cento" },
+  { pattern: /\bde\s+cecco\b/i,                             brand: "De Cecco" },
+  { pattern: /\bbrlla\b|\bbarilla\b/i,                      brand: "Barilla" },
+  { pattern: /\brao'?s\b/i,                                 brand: "Rao's" },
+  { pattern: /\bkkmn\b|\bkikkoman\b/i,                      brand: "Kikkoman" },
+  { pattern: /\bhuy\s+fng\b|\bhuy\s+fong\b/i,               brand: "Huy Fong" },
+  { pattern: /\bchol\b|\bcholula\b/i,                       brand: "Cholula" },
+  { pattern: /\btabasco\b/i,                                brand: "Tabasco" },
+  { pattern: /\bfrnks\s+rh\b|\bfrank'?s\s+redhot\b/i,       brand: "Frank's RedHot" },
 ];
 
 // Strip every occurrence of `pattern` from `text`, collapse resulting
