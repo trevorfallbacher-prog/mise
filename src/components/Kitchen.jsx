@@ -2356,100 +2356,136 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, onClose, o
                 <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
                   ITEM
                 </div>
-                {/* BRAND affordance ABOVE the name input — mirrors
-                    ItemCard's header pattern. In ItemCard the header
-                    is derived ("Kerrygold Butter") so brand lives
-                    inline; here the header is a live editable input
-                    so brand sits above as a kicker chip. Three
-                    states:
-                      - editing: inline text input, blur commits/clears
-                      - set: gray chip with uppercase brand + ✎, tap
-                        to edit
-                      - unset: small dashed "+ ADD BRAND" affordance */}
-                {customBrandOpen ? (
-                  <input
-                    type="text"
-                    autoFocus
-                    defaultValue={customBrand || ""}
-                    onBlur={e => {
-                      const v = e.target.value.trim();
-                      setCustomBrand(v || null);
-                      setCustomBrandOpen(false);
-                    }}
-                    onKeyDown={e => {
-                      if (e.key === "Enter") e.currentTarget.blur();
-                      if (e.key === "Escape") setCustomBrandOpen(false);
-                    }}
-                    placeholder="Kerrygold…"
-                    style={{
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#f5c842", letterSpacing: "0.12em",
-                      background: "#0a0a0a", border: "1px solid #f5c842",
-                      borderRadius: 6, padding: "2px 8px", outline: "none",
-                      textTransform: "uppercase",
-                      width: 140, marginTop: 2,
-                    }}
-                  />
-                ) : customBrand ? (
-                  <span
+
+                {/* Header MIRRORS ItemCard exactly:
+                      - "+ ADD BRAND" affordance above header (when brand unset)
+                      - Big italic header = [Brand] [Canonical] derived,
+                        with brand tap→inline rename and canonical tap→picker
+                      - Free-text fallback input when no canonical (user
+                        types what it is, inferCanonicalFromName resolves)
+                      - "+ LINK CANONICAL" affordance below header (when null)
+                    Same three-state rendering as ItemCard's header;
+                    uses customBrandOpen / customCanonicalOpen toggles
+                    the same way ItemCard uses editingField. */}
+
+                {/* + ADD BRAND above the header when brand is unset */}
+                {!customBrand && !customBrandOpen && (
+                  <div
                     onClick={() => setCustomBrandOpen(true)}
                     style={{
-                      display: "inline-block", marginTop: 2,
-                      fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: "#aaa", letterSpacing: "0.12em",
-                      background: "#141414",
-                      border: "1px solid #2a2a2a",
-                      borderRadius: 6, padding: "2px 8px",
-                      cursor: "pointer",
-                      textTransform: "uppercase",
-                    }}
-                    title="Tap to edit brand"
-                  >
-                    {customBrand} <span style={{ color: "#555", marginLeft: 4 }}>✎</span>
-                  </span>
-                ) : (
-                  <span
-                    onClick={() => setCustomBrandOpen(true)}
-                    style={{
-                      display: "inline-block", marginTop: 2,
                       fontFamily: "'DM Mono',monospace", fontSize: 9,
                       color: "#555", letterSpacing: "0.12em",
-                      cursor: "pointer",
+                      cursor: "pointer", marginTop: 2,
+                      width: "fit-content",
                       borderBottom: "1px dashed #2a2a2a",
                     }}
                   >
                     + ADD BRAND
-                  </span>
+                  </div>
                 )}
-              <input
-                value={customName}
-                onChange={e => {
-                  const next = e.target.value;
-                  setCustomName(next);
-                  // Opportunistic brand harvest (migration 0061).
-                  // parseIdentity peels BRAND off raw text — if the
-                  // user typed / pasted "KERRYGOLD UNSALTED BUTTER",
-                  // stamp Kerrygold without requiring a picker. Only
-                  // fills when the user hasn't already set a brand;
-                  // never clears a prior pick (matches how the
-                  // canonical + type fields stay sticky).
-                  if (!customBrand) {
-                    const parsed = parseIdentity(next);
-                    if (parsed.brand) setCustomBrand(parsed.brand);
-                  }
-                }}
-                placeholder="Add an item"
-                style={{
-                  width: "100%",
-                  background: "transparent",
-                  border: "none", outline: "none",
+
+                {/* Big italic header — [Brand] [Canonical or free-text name] */}
+                <div style={{
                   fontFamily: "'Fraunces',serif", fontSize: 26,
                   fontStyle: "italic", fontWeight: 300,
-                  color: "#f0ece4",
-                  padding: "2px 0 0",
-                  boxSizing: "border-box",
-                }}
-              />
+                  color: "#f0ece4", margin: "2px 0 0", lineHeight: 1.2,
+                  display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap",
+                }}>
+                  {/* BRAND segment — inline editable on tap */}
+                  {customBrandOpen ? (
+                    <input
+                      type="text"
+                      autoFocus
+                      defaultValue={customBrand || ""}
+                      onBlur={e => {
+                        const v = e.target.value.trim();
+                        setCustomBrand(v || null);
+                        setCustomBrandOpen(false);
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === "Enter") e.currentTarget.blur();
+                        if (e.key === "Escape") setCustomBrandOpen(false);
+                      }}
+                      placeholder="Brand…"
+                      style={{
+                        fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic",
+                        color: "#f5c842", fontWeight: 400, lineHeight: 1.2,
+                        background: "#0a0a0a", border: "1px solid #f5c842",
+                        borderRadius: 8, padding: "2px 8px", outline: "none",
+                        minWidth: 120, width: "40%",
+                      }}
+                    />
+                  ) : customBrand ? (
+                    <span
+                      onClick={() => setCustomBrandOpen(true)}
+                      style={{ cursor: "pointer", color: "#d4c9ac" }}
+                      title="Tap to edit brand"
+                    >
+                      {customBrand}
+                    </span>
+                  ) : null}
+
+                  {/* CANONICAL / fallback segment — when canonical
+                      bound, show its name (tap opens picker). When
+                      unset, show an editable text input so user can
+                      type what it is; blur tries inferCanonicalFromName
+                      to auto-resolve. */}
+                  {customCanonicalId ? (
+                    <span
+                      onClick={() => setCustomCanonicalOpen(true)}
+                      style={{ cursor: "pointer" }}
+                      title="Tap to change canonical"
+                    >
+                      {findIngredient(customCanonicalId)?.name
+                        || customCanonicalId.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                    </span>
+                  ) : (
+                    <input
+                      value={customName}
+                      onChange={e => {
+                        const next = e.target.value;
+                        setCustomName(next);
+                        if (!customBrand) {
+                          const parsed = parseIdentity(next);
+                          if (parsed.brand) setCustomBrand(parsed.brand);
+                        }
+                      }}
+                      onBlur={e => {
+                        const typed = e.target.value.trim();
+                        if (!typed || customCanonicalId) return;
+                        const inferredId = inferCanonicalFromName(typed);
+                        if (inferredId) setCustomCanonicalId(inferredId);
+                      }}
+                      placeholder="what is it?"
+                      style={{
+                        flex: "1 1 auto", minWidth: 0,
+                        background: "transparent",
+                        border: "none", outline: "none",
+                        fontFamily: "'Fraunces',serif",
+                        fontSize: 26, fontStyle: "italic", fontWeight: 300,
+                        color: "#f0ece4",
+                        padding: "2px 0 0",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  )}
+                </div>
+
+                {/* + LINK CANONICAL below the header when unset */}
+                {!customCanonicalId && (
+                  <div
+                    onClick={() => setCustomCanonicalOpen(true)}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 9,
+                      color: "#8a7f6e", letterSpacing: "0.12em",
+                      cursor: "pointer", marginTop: 4,
+                      width: "fit-content",
+                      borderBottom: "1px dashed #3a2f1044",
+                    }}
+                  >
+                    + LINK CANONICAL
+                  </div>
+                )}
 
               {/* Identity stack order — UNIVERSAL (see CLAUDE.md):
                     1. CUSTOM NAME (input above)
