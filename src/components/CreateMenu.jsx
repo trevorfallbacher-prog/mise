@@ -158,6 +158,17 @@ export default function CreateMenu({
     startCooking(recipe);
   };
 
+  // Silent save — persist without toasting or closing. Used by the
+  // compose-a-meal flow in AIRecipe: when the user clicks "+ Add
+  // Side" from the main's preview, we persist the main first (so it's
+  // a real user_recipes row) before re-entering setup for the side.
+  // Returns the stamped recipe (with db-assigned slug) so the caller
+  // can pin it into mealInProgress by its saved identity.
+  const handleSilentSave = (source) => async (recipe, opts = {}) => {
+    const row = await persist(recipe, source, opts);
+    return row?.recipe || null;
+  };
+
   // Cook mode handoff — CookMode can end in exit OR done; we preserve
   // both and route onDone up to the parent (App).
   if (mode === "cook" && activeRecipe) {
@@ -231,8 +242,11 @@ export default function CreateMenu({
           profile={profile}
           cookLogs={cookLogs}
           ingredientInfo={ingredientInfo}
+          userRecipes={userRecipes}
+          bundledRecipes={RECIPES}
           onCancel={backToChoose}
           onSave={handleSave("ai")}
+          onSilentSave={handleSilentSave("ai")}
           onSchedule={handleSchedule("ai")}
           onSaveAndCook={handleSaveAndCook("ai")}
           onShoppingAdd={(items) => {

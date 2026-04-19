@@ -33,11 +33,15 @@ const CATEGORY_OPTIONS = [
 // generate-recipe edge function so a recipe saved from either path
 // filters identically in the library.
 const COURSE_OPTIONS = [
-  { id: "any",       label: "— any —"  },
+  { id: "any",       label: "— any —"   },
   { id: "main",      label: "main"      },
   { id: "side",      label: "side"      },
   { id: "dessert",   label: "dessert"   },
   { id: "appetizer", label: "appetizer" },
+  // Component / pantry-building recipes. Don't belong to a meal slot;
+  // used as ingredients in other recipes.
+  { id: "bake",      label: "bake (bread, pastry)" },
+  { id: "prep",      label: "prep (stock, sauce)"   },
 ];
 const MEAL_TIMING_OPTIONS = [
   { id: "any",       label: "— any —"   },
