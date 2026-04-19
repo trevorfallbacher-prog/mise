@@ -2487,7 +2487,20 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     // name so grade / variant info ("sushi", "wasabi
                     // style") is preserved on the row even when the
                     // canonical snap strips them down to "nori".
-                    setCustomBrand(prev => prev || res.brand || null);
+                    //
+                    // Brand fallback: OFF's `brands` field is missing
+                    // on a non-trivial share of products even when
+                    // the brand is obvious in the productName
+                    // ("Tostitos Scoops..."). Run parseIdentity over
+                    // the productName when OFF didn't give us one,
+                    // same mechanism that already pulls brand off
+                    // receipt-scan strings.
+                    let effectiveBrand = res.brand || null;
+                    if (!effectiveBrand && res.productName) {
+                      const parsed = parseIdentity(res.productName);
+                      if (parsed?.brand) effectiveBrand = parsed.brand;
+                    }
+                    setCustomBrand(prev => prev || effectiveBrand || null);
                     setCustomName(prev => prev || res.productName || "");
                     // Resolve canonical from OFF data. Returns null
                     // when nothing above the confidence floor — in
@@ -2592,9 +2605,25 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 onUse={() => {
                   const { match, inferredState, packageSize } = canonicalSuggestion;
                   setCustomCanonicalId(match.canonical.id);
+                  // Cascade: canonical → category → location → tile
+                  // → food type. Reuses the same fill path the
+                  // typeahead picker uses, so a scan-confirmed
+                  // canonical lands identically to a user-typed
+                  // canonical pick. Doesn't clobber fields the user
+                  // already set — each setter in cascadeFromCanonical
+                  // gates on its own `prev` before writing.
+                  cascadeFromCanonical(match.canonical);
+                  // State comes from productName / categoryHints,
+                  // already filtered against the canonical's allowed
+                  // state vocabulary by resolveCanonicalFromScan.
                   if (inferredState?.state) setCustomState(inferredState.state);
                   if (packageSize) {
                     setAmount(String(packageSize.amount));
+                    // Canonical's defaultUnit already landed via
+                    // cascadeFromCanonical; overwrite only when the
+                    // scanned package size uses a different unit
+                    // (box says "40 g" but butter's defaultUnit is
+                    // "stick" — we want the literal label unit).
                     setCustomUnit(packageSize.unit);
                   }
                   setCanonicalSuggestion(null);

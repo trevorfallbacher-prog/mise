@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -879,11 +879,39 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               attributes={canonicalSuggestion.attributes}
               onUse={async () => {
                 const s = canonicalSuggestion;
-                const patch = { ingredientId: s.match.canonical.id };
+                const canon = s.match.canonical;
+                // Cascade: fill every derived field from the
+                // canonical that's still empty on the row. Same
+                // idea as AddItemModal's cascadeFromCanonical — the
+                // canonical carries a category, default unit, and
+                // composition; without threading those through, the
+                // row reads as "canonical set, everything else
+                // blank" and users have to fill each field
+                // themselves. We only overwrite when the field is
+                // currently empty — conscious user picks stay.
+                const patch = {
+                  ingredientId: canon.id,
+                  // Composition mirrors canonical for single-tag
+                  // rows (the norm). Multi-tag rows already have
+                  // their own ingredientIds and skip this.
+                  ...(item.ingredientIds && item.ingredientIds.length > 0
+                    ? {}
+                    : { ingredientIds: [canon.id] }),
+                  // Category cascades from the canonical's own
+                  // category field (pantry / dairy / meat / etc.)
+                  // when the row hasn't been classified.
+                  ...(item.category ? {} : { category: canon.category || "pantry" }),
+                };
                 if (s.inferredState?.state) patch.state = s.inferredState.state;
+                // Package size wins over the row's current amount/unit
+                // — the scanned label is the ground truth for what's
+                // physically in the container. Without package size,
+                // fill the default unit from canonical if row has none.
                 if (s.packageSize) {
                   patch.amount = s.packageSize.amount;
                   patch.unit   = s.packageSize.unit;
+                } else if (canon.defaultUnit && !item.unit) {
+                  patch.unit = canon.defaultUnit;
                 }
                 onUpdate?.(patch);
                 // With canonical now resolved, write brand_nutrition
@@ -2480,15 +2508,20 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 pushToast(msg, { emoji: "🔍", kind: "warn", ttl: 5500 });
                 return;
               }
-              // Build the patch for the row. Brand always, name only
-              // when the current name looks receipt-auto-generated
-              // (short, all-caps, abbreviated — the typical
-              // "ACQUAMAR FLA" receipt-scan read). Users who typed
-              // a deliberate name keep it. ProductName is kept as
-              // `name` (not canonical) so grade / variant info
-              // ("sushi", "wasabi style") is preserved on the row.
+              // Build the patch for the row. Brand always (with
+              // parseIdentity fallback when OFF missed it), name
+              // only when the current name looks receipt-auto-
+              // generated ("ACQUAMAR FLA" / "CHOBANI YGT" — users
+              // who typed a deliberate name keep it). ProductName
+              // is kept as `name` (not canonical) so grade/variant
+              // info ("sushi", "wasabi style") is preserved.
               const patch = {};
-              if (res.brand) patch.brand = res.brand;
+              let effectiveBrand = res.brand || null;
+              if (!effectiveBrand && res.productName) {
+                const parsed = parseIdentity(res.productName);
+                if (parsed?.brand) effectiveBrand = parsed.brand;
+              }
+              if (effectiveBrand) patch.brand = effectiveBrand;
               if (res.productName && looksReceiptGenerated(item.name)) {
                 patch.name = res.productName;
               }
@@ -2551,8 +2584,11 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               // to pin against. If the user accepts the suggestion
               // card's canonical below, the suggestion's USE handler
               // writes brand_nutrition with the pending payload there.
+              // Use effectiveBrand (parseIdentity fallback already
+              // applied) so OFF's missing `brands` field doesn't
+              // prevent the write.
               const canonId = currentCanonId;
-              const brandForWrite = res.brand;
+              const brandForWrite = effectiveBrand;
               if (res.cached) {
                 pushToast("Already in the nutrition database.", { emoji: "💾", kind: "info", ttl: 3500 });
               } else if (canonId && brandForWrite && res.nutrition) {
