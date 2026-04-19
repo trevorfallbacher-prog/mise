@@ -8,6 +8,13 @@ import { useIngredientInfo, slugifyIngredientName, isMeaningfullyEnriched } from
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
+import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
+import {
+  resolveCanonicalFromScan,
+  parsePackageSize,
+  parseStateFromText,
+  stateForCanonical,
+} from "../lib/canonicalResolver";
 import { useToast } from "../lib/toast";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { useItemComponents } from "../lib/useItemComponents";
@@ -374,6 +381,11 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   const [brandChooserOpen, setBrandChooserOpen] = useState(false);
   const [brandScannerOpen, setBrandScannerOpen] = useState(false);
   const [brandScanBusy,    setBrandScanBusy]    = useState(false);
+  // Canonical suggestion from the brand scan. Rendered as an inline
+  // card at the top of the item card so the user can confirm a
+  // canonical resolution from the scanned product before we lock it
+  // in. Same pattern as AddItemModal.
+  const [canonicalSuggestion, setCanonicalSuggestion] = useState(null);
   // Flips true when the user picks "+ custom…" in the unit dropdown.
   // Replaces the <select> with a free-text <input> so they can type a
   // unit that isn't in the canonical's ladder ("pack", "wheel",
@@ -845,6 +857,58 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               )}
             </div>
           </div>
+
+          {/* Canonical suggestion — renders after a brand scan when
+              the current row has no canonical pinned. User taps USE
+              to accept the resolver's pick (and any inferred state
+              + package size), DIFFERENT to clear it + open the
+              canonical picker for manual selection. */}
+          {canonicalSuggestion && (
+            <CanonicalSuggestionCard
+              match={canonicalSuggestion.match}
+              inferredState={canonicalSuggestion.inferredState}
+              packageSize={canonicalSuggestion.packageSize}
+              onUse={async () => {
+                const s = canonicalSuggestion;
+                const patch = { ingredientId: s.match.canonical.id };
+                if (s.inferredState?.state) patch.state = s.inferredState.state;
+                if (s.packageSize) {
+                  patch.amount = s.packageSize.amount;
+                  patch.unit   = s.packageSize.unit;
+                }
+                onUpdate?.(patch);
+                // With canonical now resolved, write brand_nutrition
+                // if we had a pending payload from the scan.
+                const brandForWrite = item?.brand || canonicalSuggestion.match?.canonical && null;
+                if (s.pendingNutrition && item?.brand) {
+                  try {
+                    await upsertBrandNutrition({
+                      canonicalId: s.match.canonical.id,
+                      brand:       item.brand,
+                      nutrition:   s.pendingNutrition,
+                      barcode:     s.pendingBarcode,
+                      source:      s.pendingSource || "openfoodfacts",
+                      sourceId:    s.pendingSourceId,
+                    });
+                  } catch (e) {
+                    console.error("[itemcard] brand_nutrition upsert after suggestion accept failed:", e);
+                  }
+                }
+                setCanonicalSuggestion(null);
+                pushToast(`Canonical set to ${s.match.canonical.name}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+              }}
+              onDifferent={() => {
+                setCanonicalSuggestion(null);
+                // Open the canonical picker — ItemCard uses
+                // editingField="canonical" + a LinkIngredient flow
+                // triggered from the header's canonical segment.
+                // Keeping DIFFERENT lightweight: dismiss the card
+                // and let the user tap the canonical segment in the
+                // header to open LinkIngredient on their terms.
+                pushToast("Tap the canonical in the header to pick manually.", { emoji: "🏷️", kind: "info", ttl: 4500 });
+              }}
+            />
+          )}
 
           {/* NUTRITION — resolver-based macro chip. Sits as a neutral
               band below the six colored identity axes (not a new axis
@@ -2411,7 +2475,9 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               // when the current name looks receipt-auto-generated
               // (short, all-caps, abbreviated — the typical
               // "ACQUAMAR FLA" receipt-scan read). Users who typed
-              // a deliberate name keep it.
+              // a deliberate name keep it. ProductName is kept as
+              // `name` (not canonical) so grade / variant info
+              // ("sushi", "wasabi style") is preserved on the row.
               const patch = {};
               if (res.brand) patch.brand = res.brand;
               if (res.productName && looksReceiptGenerated(item.name)) {
@@ -2420,12 +2486,44 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               if (Object.keys(patch).length > 0) {
                 onUpdate?.(patch);
               }
+              // Resolve canonical from OFF data. Only surfaces a
+              // suggestion when no canonical is currently set on the
+              // row — if the user's already pinned a canonical we
+              // don't want to second-guess it.
+              const currentCanonId = item.ingredientId || item.canonicalId || null;
+              if (!currentCanonId) {
+                const match = resolveCanonicalFromScan({
+                  brand:         res.brand,
+                  productName:   res.productName,
+                  categoryHints: res.categoryHints || [],
+                  findIngredient,
+                });
+                const rawState = parseStateFromText(res.productName, res.categoryHints || []);
+                const inferredState = match?.canonical
+                  ? { state: stateForCanonical(rawState, match.canonical) }
+                  : null;
+                const packageSize = parsePackageSize(res.quantity);
+                if (match) {
+                  setCanonicalSuggestion({
+                    match,
+                    inferredState: inferredState?.state ? inferredState : null,
+                    packageSize,
+                    pendingNutrition: res.nutrition,   // save with brand_nutrition after canonical confirms
+                    pendingBarcode:   res.barcode,
+                    pendingSource:    res.source || "openfoodfacts",
+                    pendingSourceId:  res.sourceId || res.barcode,
+                  });
+                } else if (packageSize) {
+                  // No canonical match but we got a size — apply
+                  // silently as a helpful prefill on an existing row.
+                  onUpdate?.({ amount: packageSize.amount, unit: packageSize.unit });
+                }
+              }
               // Write brand_nutrition when we can — needs a canonical
-              // to pin against. If canonical is null, we still set
-              // brand on the row above so the user can assign
-              // canonical later and the nutrition will resolve from
-              // brand_nutrition once both are set.
-              const canonId = item.ingredientId || item.canonicalId || null;
+              // to pin against. If the user accepts the suggestion
+              // card's canonical below, the suggestion's USE handler
+              // writes brand_nutrition with the pending payload there.
+              const canonId = currentCanonId;
               const brandForWrite = res.brand;
               if (res.cached) {
                 pushToast("Already in the nutrition database.", { emoji: "💾", kind: "info", ttl: 3500 });

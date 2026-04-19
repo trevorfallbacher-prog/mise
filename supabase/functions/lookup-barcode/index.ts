@@ -246,6 +246,14 @@ Deno.serve(async (req) => {
     );
   }
 
+  // Package-quantity string ("40g", "1 lb", "250 ml", "12 × 50 g").
+  // Client uses this to pre-fill the pantry row's amount + unit so
+  // the user doesn't have to eyeball the label. Free-text by design —
+  // client-side parser handles the variance.
+  const quantityRaw = typeof product.quantity === "string" && product.quantity.trim()
+    ? product.quantity.trim()
+    : null;
+
   const payload = {
     found:         true,
     barcode,
@@ -253,7 +261,15 @@ Deno.serve(async (req) => {
     productName:   (typeof product.product_name === "string" && product.product_name.trim()) ||
                    (typeof product.generic_name === "string" && product.generic_name.trim()) ||
                    null,
+    // Surface both `categoryHints` (stripped of language prefix) and
+    // `genericName` separately from productName — generic_name is
+    // often cleaner than product_name ("Greek yogurt" vs "Chobani
+    // Zero Vanilla Greek Yogurt 5.3oz") and a better fuzz-match target.
+    genericName:   typeof product.generic_name === "string" && product.generic_name.trim()
+                     ? product.generic_name.trim()
+                     : null,
     categoryHints: categoryHints(product.categories_tags),
+    quantity:      quantityRaw,
     nutrition,
     source:        "openfoodfacts",
     sourceId:      typeof data.code === "string" ? data.code : barcode,

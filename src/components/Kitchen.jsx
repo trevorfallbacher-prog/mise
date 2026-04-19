@@ -58,6 +58,13 @@ import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientIn
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
+import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
+import {
+  resolveCanonicalFromScan,
+  parsePackageSize,
+  parseStateFromText,
+  stateForCanonical,
+} from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
@@ -1764,6 +1771,11 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   const [scannedPayload, setScannedPayload] = useState(null);
   //   { barcode, brand, nutrition, source, sourceId, productName } | null
   const [scanBusy, setScanBusy] = useState(false);
+  // Canonical suggestion from the last scan. null = no active
+  // suggestion (either nothing scanned, resolver missed, or user
+  // already actioned it). When set, renders CanonicalSuggestionCard.
+  const [canonicalSuggestion, setCanonicalSuggestion] = useState(null);
+  //   { match, inferredState: {state} | null, packageSize: {amount, unit} | null } | null
   const { push: pushToastFromScan } = useToast();
   const [amount, setAmount] = useState("");
   // Optional "full package size" the user declares at add-time.
@@ -2106,15 +2118,19 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     // then name-match. We deliberately do NOT fall back to
     // canonicalIdForType(customTypeId) — the food category is a broad
     // classification (Pasta), not the item's specific identity
-    // Canonical invariant (v0.13.0): every row must land with a
-    // canonical_id. If the user didn't pick one and the name doesn't
-    // match a registry alias, slugify the display name so free-text
-    // items still get a stable identity. Without this, the hub
-    // grouper and recipe matcher both get an all-null row and the
-    // "loose pile" grows unbounded.
+    // Canonical resolution on save:
+    //   1. User's explicit pick (typeahead / suggestion card).
+    //   2. Registry alias match on the typed name.
+    //   3. null — better than a synthetic. Previous behavior slugified
+    //      the display name into a fresh canonical when nothing else
+    //      matched, which polluted the registry with one-off fake
+    //      canonicals per scanned marketing name ("Ocean's Halo
+    //      O'cean's Organic Sushi Nori Wasabi Style 40G" → a unique
+    //      id per product, no clustering, no hub grouping, no recipe
+    //      matches). Null is the honest answer when resolution fails;
+    //      the hub "loose pile" filter already handles null.
     const canonicalId = customCanonicalId
       || inferCanonicalFromName(customName.trim())
-      || slugifyIngredientName(customName.trim())
       || null;
 
     // Mirror canonical into components when user hasn't tagged
@@ -2462,9 +2478,44 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     // Prefill the form. Don't blow away user-typed
                     // text if they already started — only fill empty
                     // slots so a mid-form scan is additive, not
-                    // destructive.
+                    // destructive. We keep productName as the raw
+                    // name so grade / variant info ("sushi", "wasabi
+                    // style") is preserved on the row even when the
+                    // canonical snap strips them down to "nori".
                     setCustomBrand(prev => prev || res.brand || null);
                     setCustomName(prev => prev || res.productName || "");
+                    // Resolve canonical from OFF data. Returns null
+                    // when nothing above the confidence floor — in
+                    // that case the user gets the existing canonical
+                    // picker with productName as a search seed.
+                    const match = resolveCanonicalFromScan({
+                      brand:         res.brand,
+                      productName:   res.productName,
+                      categoryHints: res.categoryHints || [],
+                      findIngredient,
+                    });
+                    // Extract state + package size opportunistically.
+                    // State only applies when the resolved canonical
+                    // actually supports it (ground beef = yes; ground
+                    // bread = no).
+                    const rawState = parseStateFromText(res.productName, res.categoryHints || []);
+                    const inferredState = match?.canonical
+                      ? { state: stateForCanonical(rawState, match.canonical) }
+                      : null;
+                    const packageSize = parsePackageSize(res.quantity);
+                    if (match) {
+                      setCanonicalSuggestion({
+                        match,
+                        inferredState: inferredState?.state ? inferredState : null,
+                        packageSize,
+                      });
+                    } else if (packageSize) {
+                      // No canonical match but we got a package size —
+                      // apply it silently. Nothing to confirm; just
+                      // helpful prefill.
+                      setAmount(String(packageSize.amount));
+                      setCustomUnit(packageSize.unit);
+                    }
                     // Stash the payload for the post-save
                     // brand_nutrition upsert. If the scan was cached
                     // (same barcode seen before) the row already
@@ -2498,6 +2549,38 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   } finally {
                     setScanBusy(false);
                   }
+                }}
+              />
+            )}
+
+            {/* Canonical suggestion card — renders after a scan when
+                the resolver maps productName + categoryHints to a
+                registry canonical. Always shown (per design: half-a-
+                tap of friction for zero pollution risk). USE applies
+                the canonical + state + package size; DIFFERENT opens
+                the canonical picker and clears the suggestion. */}
+            {canonicalSuggestion && (
+              <CanonicalSuggestionCard
+                match={canonicalSuggestion.match}
+                inferredState={canonicalSuggestion.inferredState}
+                packageSize={canonicalSuggestion.packageSize}
+                onUse={() => {
+                  const { match, inferredState, packageSize } = canonicalSuggestion;
+                  setCustomCanonicalId(match.canonical.id);
+                  if (inferredState?.state) setCustomState(inferredState.state);
+                  if (packageSize) {
+                    setAmount(String(packageSize.amount));
+                    setCustomUnit(packageSize.unit);
+                  }
+                  setCanonicalSuggestion(null);
+                }}
+                onDifferent={() => {
+                  setCanonicalSuggestion(null);
+                  // Open the existing canonical picker surface —
+                  // AddItemModal uses tilePickerOpen for IDENTIFIED AS
+                  // (which flips both type + canonical). User can
+                  // find the right canonical via search from there.
+                  setTilePickerOpen(true);
                 }}
               />
             )}
