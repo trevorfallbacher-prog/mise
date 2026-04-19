@@ -115,7 +115,6 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       cancelled = true;
       stopStream();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function stopStream() {
