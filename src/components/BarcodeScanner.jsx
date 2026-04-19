@@ -28,91 +28,102 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
   const [state, setState]     = useState("init");  // init | scanning | native_unavailable | camera_denied | error
   const [errMsg, setErrMsg]   = useState("");
 
-  // Native-first boot. If the API or the camera grant isn't there,
-  // fall back to the typed-input surface without showing a camera
-  // error — the user can still enter the number manually.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      // Feature detect. `window.BarcodeDetector` is a bare class;
-      // some browsers implement the constructor but not the
-      // getSupportedFormats call, so we guard both.
-      const hasNative = typeof window !== "undefined" && "BarcodeDetector" in window;
-      if (!hasNative) {
+  // Native-first boot. Extracted into a ref-stable function so the
+  // "TRY CAMERA AGAIN" button in the denied state can re-run the
+  // same sequence — useful for the user who came back after
+  // unblocking the camera in browser settings.
+  const cancelledRef = useRef(false);
+  const bootCamera = async () => {
+    cancelledRef.current = false;
+    // Clear any prior stream before re-requesting (retry path).
+    stopStream();
+    setState("init");
+
+    // Feature detect. `window.BarcodeDetector` is a bare class;
+    // some browsers implement the constructor but not the
+    // getSupportedFormats call, so we guard both.
+    const hasNative = typeof window !== "undefined" && "BarcodeDetector" in window;
+    if (!hasNative) {
+      setState("native_unavailable");
+      return;
+    }
+    try {
+      const supported = await window.BarcodeDetector.getSupportedFormats();
+      const formats = BARCODE_FORMATS.filter(f => supported.includes(f));
+      if (formats.length === 0) {
         setState("native_unavailable");
         return;
       }
-      try {
-        // Some browsers advertise BarcodeDetector but don't support
-        // every format. Intersect our request list with what the
-        // browser exposes.
-        const supported = await window.BarcodeDetector.getSupportedFormats();
-        const formats = BARCODE_FORMATS.filter(f => supported.includes(f));
-        if (formats.length === 0) {
-          setState("native_unavailable");
-          return;
-        }
-        detectorRef.current = new window.BarcodeDetector({ formats });
-      } catch (e) {
-        console.warn("[barcode] detector init failed:", e);
-        setState("native_unavailable");
-        return;
-      }
-      // Request the back camera if possible — UPC scanning is a
-      // rear-facing-camera task and `facingMode: "environment"`
-      // tells mobile browsers to default to it.
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" } },
-          audio: false,
-        });
-      } catch (e) {
-        console.warn("[barcode] camera grant failed:", e);
-        if (!cancelled) setState("camera_denied");
-        return;
-      }
-      if (cancelled) {
-        stream.getTracks().forEach(t => t.stop());
-        return;
-      }
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        try { await videoRef.current.play(); } catch { /* autoplay blocked; user tap will resume */ }
-      }
-      setState("scanning");
-      // Detection loop — poll every ~350ms. Native impls are slow
-      // under heavy CPU; tighter polling melts batteries without
-      // improving hit rate.
-      const tick = async () => {
-        if (cancelled) return;
-        const video = videoRef.current;
-        const detector = detectorRef.current;
-        if (video && detector && video.readyState >= 2) {
-          try {
-            const codes = await detector.detect(video);
-            if (codes && codes.length > 0) {
-              const raw = String(codes[0].rawValue || "").trim();
-              if (/^\d{8,14}$/.test(raw)) {
-                // Stop the stream before firing the callback so the
-                // camera indicator drops immediately.
-                stopStream();
-                if (!cancelled) onDetected?.(raw);
-                return;
-              }
+      detectorRef.current = new window.BarcodeDetector({ formats });
+    } catch (e) {
+      console.warn("[barcode] detector init failed:", e);
+      setState("native_unavailable");
+      return;
+    }
+    // Request the back camera — UPC scanning is rear-facing and
+    // `facingMode: "environment"` tells mobile browsers to default
+    // to it.
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+    } catch (e) {
+      console.warn("[barcode] camera grant failed:", e);
+      if (!cancelledRef.current) setState("camera_denied");
+      return;
+    }
+    if (cancelledRef.current) {
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+    streamRef.current = stream;
+    if (videoRef.current) {
+      videoRef.current.srcObject = stream;
+      try { await videoRef.current.play(); } catch { /* autoplay blocked; user tap resumes */ }
+    }
+    setState("scanning");
+    // Detection loop — poll every ~350ms. Native impls are slow
+    // under heavy CPU; tighter polling melts batteries without
+    // improving hit rate.
+    const tick = async () => {
+      if (cancelledRef.current) return;
+      const video = videoRef.current;
+      const detector = detectorRef.current;
+      if (video && detector && video.readyState >= 2) {
+        try {
+          const codes = await detector.detect(video);
+          if (codes && codes.length > 0) {
+            const raw = String(codes[0].rawValue || "").trim();
+            if (/^\d{8,14}$/.test(raw)) {
+              stopStream();
+              if (!cancelledRef.current) onDetected?.(raw);
+              return;
             }
-          } catch (e) {
-            // Detector occasionally throws on a corrupted frame;
-            // swallow and retry.
           }
+        } catch {
+          // Detector occasionally throws on a corrupted frame;
+          // swallow and retry.
         }
-        tickRef.current = window.setTimeout(tick, 350);
-      };
+      }
       tickRef.current = window.setTimeout(tick, 350);
-    })();
+    };
+    tickRef.current = window.setTimeout(tick, 350);
+  };
+
+  // Called by the "TRY CAMERA AGAIN" button in the denied state.
+  // Re-invokes getUserMedia so a user who just unblocked the camera
+  // in browser settings can land right back in the scanning UI
+  // without reopening the whole modal.
+  const retryCamera = () => {
+    bootCamera();
+  };
+
+  useEffect(() => {
+    bootCamera();
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       stopStream();
     };
   }, []);
@@ -206,18 +217,75 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
             fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 300,
             fontStyle: "italic", color: "#f0ece4", marginBottom: 10,
           }}>
-            Type the barcode
+            {state === "camera_denied" ? "Camera blocked by browser" : "Type the barcode"}
           </div>
-          <div style={{
-            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888",
-            lineHeight: 1.5, marginBottom: 20,
-          }}>
-            {state === "native_unavailable"
-              ? "Your browser doesn't support camera barcode scanning. Read the digits off the package and type them here."
-              : state === "camera_denied"
-                ? "Camera access wasn't granted. Type the barcode in, or allow the camera and reopen the scanner."
+          {state === "camera_denied" ? (
+            // Denied-state UX. The browser saves "block" per origin
+            // and there's no JS API to force-forget it — users have
+            // to reset it manually in site settings. Explain that
+            // clearly + offer a retry (useful if they've since
+            // unblocked) + a typed fallback so the scanner's still
+            // useful without the camera.
+            <>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888",
+                lineHeight: 1.55, marginBottom: 14,
+              }}>
+                Your browser saved "Block" for the camera on this site — we can't
+                override that from the app. To unblock:
+              </div>
+              <div style={{
+                padding: "12px 14px", marginBottom: 14,
+                background: "#141414", border: "1px solid #242424",
+                borderRadius: 10,
+                fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#c7b8a8",
+                lineHeight: 1.6,
+              }}>
+                <div style={{ marginBottom: 8 }}>
+                  <span style={{ color: "#c7a8d4", fontWeight: 600 }}>Chrome / Edge / Arc:</span>{" "}
+                  click the 🔒 or ⓘ icon left of the URL → Site settings → Camera → Allow. Reload.
+                </div>
+                <div style={{ marginBottom: 8 }}>
+                  <span style={{ color: "#c7a8d4", fontWeight: 600 }}>Safari (macOS):</span>{" "}
+                  Safari → Settings → Websites → Camera → find this site → Allow. Reload.
+                </div>
+                <div>
+                  <span style={{ color: "#c7a8d4", fontWeight: 600 }}>Firefox:</span>{" "}
+                  🔒 icon left of URL → Connection secure → More information → Permissions → Camera → clear "Use default" or set Allow.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={retryCamera}
+                style={{
+                  width: "100%", padding: "11px",
+                  background: "transparent", border: "1px solid #3a3a3a",
+                  color: "#c7a8d4", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+                  letterSpacing: "0.1em", cursor: "pointer",
+                  marginBottom: 18,
+                }}
+              >
+                ↻ TRY CAMERA AGAIN
+              </button>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                color: "#666", letterSpacing: "0.1em",
+                marginBottom: 10,
+              }}>
+                OR TYPE THE BARCODE
+              </div>
+            </>
+          ) : (
+            <div style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#888",
+              lineHeight: 1.5, marginBottom: 20,
+            }}>
+              {state === "native_unavailable"
+                ? "Your browser doesn't support camera barcode scanning. Read the digits off the package and type them here."
                 : "Something went wrong with the camera. Type it in."}
-          </div>
+            </div>
+          )}
           <form onSubmit={handleManualSubmit}>
             <input
               autoFocus
