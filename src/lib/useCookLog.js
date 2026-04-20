@@ -607,8 +607,21 @@ export function useCookPhotos(cookLogId, viewerId) {
       // Best-effort rollback — if the DB insert fails we shouldn't leave
       // a dangling object in storage that nobody can discover.
       bucket.remove([storagePath]).catch(() => { /* swallow */ });
+      return;
     }
     // Realtime handles the list update.
+
+    // XP: +10 per photo, capped 2/cook by xp_source_values. Fail-soft.
+    supabase
+      .rpc("award_xp", {
+        p_user_id:   viewerId,
+        p_source:    "photo_upload",
+        p_ref_table: "cook_logs",
+        p_ref_id:    cookLogId,
+      })
+      .then(({ error: xpErr }) => {
+        if (xpErr) console.error("[award_xp] photo_upload failed:", xpErr);
+      });
   }, [cookLogId, viewerId, bucket]);
 
   const remove = useCallback(async (photoId) => {
