@@ -15,6 +15,7 @@ import {
   parseStateFromText,
   stateForCanonical,
   buildAttributesFromScan,
+  mergeAttributes,
 } from "../lib/canonicalResolver";
 import { useToast } from "../lib/toast";
 import { usePopularPackages } from "../lib/usePopularPackages";
@@ -147,7 +148,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose, isDraft = false, onStock }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -2387,8 +2388,47 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           sub-pickers that open on top). Any sub-picker should cover
           this footer so its own content isn't clipped — previous
           zIndex: 350 let the footer bleed through a LinkIngredient
-          sheet and hide its + CREATE row. */}
-      {hasPending && (
+          sheet and hide its + CREATE row.
+
+          In DRAFT mode the bar is permanent (the draft row isn't in
+          pantry yet — nothing to "update", everything is pending by
+          definition) and the primary action becomes STOCK IN PANTRY.
+          STOCK commits the merged draft via onStock. DISCARD drops
+          the draft and closes the card (onClose). */}
+      {isDraft ? (
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: Z.card + 1,
+          maxWidth: 480, margin: "0 auto",
+          padding: "10px 14px 14px",
+          background: "linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.97) 30%)",
+          display: "flex", gap: 8,
+        }}>
+          <button
+            onClick={() => { setPendingChanges({}); onClose?.(); }}
+            style={{
+              flex: 1, padding: "14px",
+              background: "#1a1a1a", border: "1px solid #2a2a2a",
+              color: "#888", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12,
+              letterSpacing: "0.1em", cursor: "pointer",
+            }}
+          >
+            DISCARD
+          </button>
+          <button
+            onClick={() => onStock?.(item)}
+            style={{
+              flex: 2, padding: "14px",
+              background: "#7ec87e", border: "none",
+              color: "#0a1a0a", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+              letterSpacing: "0.1em", cursor: "pointer",
+            }}
+          >
+            STOCK IN PANTRY
+          </button>
+        </div>
+      ) : hasPending && (
         <div style={{
           position: "fixed", bottom: 0, left: 0, right: 0, zIndex: Z.card + 1,
           maxWidth: 480, margin: "0 auto",
@@ -2818,40 +2858,6 @@ function AttributePillsRow({ attributes }) {
       ))}
     </div>
   );
-}
-
-// Merge a scanned attribute blob into whatever the row already
-// carries. Origins / flavor get unioned (deduped by lowercase);
-// certifications get unioned (deduped by id). A second scan of the
-// same product is idempotent; a scan of a DIFFERENT product with
-// overlapping attributes adds without removing existing ones.
-function mergeAttributes(existing, incoming) {
-  if (!incoming) return existing || null;
-  if (!existing) return incoming;
-  const out = { ...existing };
-  for (const key of ["origins", "flavor", "claims"]) {
-    const merged = [...(existing[key] || []), ...(incoming[key] || [])];
-    const seen = new Set();
-    const deduped = [];
-    for (const v of merged) {
-      const k = String(v || "").toLowerCase();
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      deduped.push(v);
-    }
-    if (deduped.length > 0) out[key] = deduped;
-  }
-  if (existing.certifications || incoming.certifications) {
-    const seen = new Set();
-    const merged = [];
-    for (const cert of [...(existing.certifications || []), ...(incoming.certifications || [])]) {
-      if (!cert || !cert.id || seen.has(cert.id)) continue;
-      seen.add(cert.id);
-      merged.push(cert);
-    }
-    if (merged.length > 0) out.certifications = merged;
-  }
-  return out;
 }
 
 // Brand chooser sheet button styles — shared between the two options

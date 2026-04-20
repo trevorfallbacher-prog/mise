@@ -836,6 +836,41 @@ export function parseProductClaims(productName) {
   return out;
 }
 
+// Union a fresh attribute blob onto whatever the row already carries.
+// Origins / flavor / claims union by case-insensitive value;
+// certifications union by id. Used both at scan-row build time and
+// on merge into an existing pantry row (so claims like 'ORIGINAL' /
+// 'SCOOPS' survive a re-scan of the same UPC instead of getting
+// wiped by the merge path).
+export function mergeAttributes(existing, incoming) {
+  if (!incoming) return existing || null;
+  if (!existing) return incoming;
+  const out = { ...existing };
+  for (const key of ["origins", "flavor", "claims"]) {
+    const merged = [...(existing[key] || []), ...(incoming[key] || [])];
+    const seen = new Set();
+    const deduped = [];
+    for (const v of merged) {
+      const k = String(v || "").toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(v);
+    }
+    if (deduped.length > 0) out[key] = deduped;
+  }
+  if (existing.certifications || incoming.certifications) {
+    const seen = new Set();
+    const merged = [];
+    for (const cert of [...(existing.certifications || []), ...(incoming.certifications || [])]) {
+      if (!cert || !cert.id || seen.has(cert.id)) continue;
+      seen.add(cert.id);
+      merged.push(cert);
+    }
+    if (merged.length > 0) out.certifications = merged;
+  }
+  return out;
+}
+
 export function buildAttributesFromScan({
   productName   = null,
   categoryHints = [],

@@ -66,6 +66,7 @@ import {
   parseStateFromText,
   stateForCanonical,
   buildAttributesFromScan,
+  mergeAttributes,
   cleanProductName,
 } from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
@@ -972,11 +973,13 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   .then(res => console.log("[upc-debug] 4/write-result", res))
                   .catch(e => console.warn("[upc-debug] write threw:", e));
               }
-              // Single-item barcode scan — commit directly, skip
-              // the "Look right?" confirm screen. Parent's
-              // addScannedItems handles pantry insert + toast.
+              // Single-item barcode scan — hand off as a DRAFT so the
+              // user can confirm identity / axes in ItemCard before
+              // the row actually lands in the pantry. addScannedItems
+              // sees draftMode and stashes the row in Kitchen's
+              // draftItem state; commit happens only on STOCK IN PANTRY.
               setCanonicalCreatePrompt(null);
-              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, draftMode: true });
               console.log("[ramen-debug] 5/committed-via-onItemsScanned");
             } catch (e) {
               console.error("[ramen-debug] onCreate core failed:", e);
@@ -1022,9 +1025,10 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             onClose?.();
           }}
           onSkip={() => {
-            // User opted not to create a canonical — commit the
-            // fallback-named row directly to pantry. They can assign
-            // a canonical later from the ItemCard.
+            // User opted not to create a canonical — hand off the
+            // fallback-named row as a DRAFT. They can assign a
+            // canonical from the same ItemCard (or discard) before
+            // it lands in pantry.
             const skipRow = canonicalCreatePrompt.pendingRow;
             if (canonicalCreatePrompt.pendingBrandNutrition) {
               // Without canonical, brand_nutrition can't be written
@@ -1032,7 +1036,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // that resolves the same brand+canonical will refetch.
             }
             setCanonicalCreatePrompt(null);
-            onItemsScanned([skipRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+            onItemsScanned([skipRow], { store: null, date: null, totalCents: null, draftMode: true });
             onClose?.();
           }}
           onCancel={() => {
@@ -1345,14 +1349,15 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 return;   // stay on upload screen until user decides
               }
               // Barcode scans are single-item by nature — the user
-              // scanned ONE package, we built ONE row. The
-              // multi-item "Look right?" confirm screen is always
-              // "FOUND 1 ITEMS" and the user has to click STOCK MY
-              // PANTRY anyway. Skip it: commit the row directly via
-              // onItemsScanned (parent's addScannedItems handles the
-              // pantry insert + toast), then close the Scanner. User
-              // lands back in Kitchen with the new item stocked.
-              onItemsScanned([row], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              // scanned ONE package, we built ONE row. Skip the
+              // multi-item "Look right?" confirm screen and hand the
+              // row off as a DRAFT instead: addScannedItems sees
+              // draftMode and stashes it so the user gets a full
+              // ItemCard to confirm identity / state / package size
+              // / claims BEFORE anything commits to pantry. STOCK
+              // IN PANTRY is the actual save; DISCARD abandons
+              // the draft with no DB write.
+              onItemsScanned([row], { store: null, date: null, totalCents: null, draftMode: true });
               if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
@@ -5096,6 +5101,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // 'update during render' when the commit happens mid-render of a
   // provider up the tree.
   const [pendingAutoOpenId, setPendingAutoOpenId] = useState(null);
+  // Barcode-scan draft. A single-item barcode scan stashes the built
+  // row here instead of inserting it into pantry — the user sees a
+  // full ItemCard in DRAFT mode and decides whether to stock after
+  // tweaking axes. Only the user's STOCK IN PANTRY tap actually
+  // persists the row (via addScannedItems sans draftMode). DISCARD /
+  // close clears the draft with no DB write.
+  const [draftItem, setDraftItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -5394,6 +5406,20 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // sort it out in the UI. Last-paid priceCents is always overwritten with
   // the freshest receipt price.
   const addScannedItems = async (items, meta = {}) => {
+    // Draft-mode short-circuit for single-item barcode scans. The
+    // scanner used to pass `autoOpenFirst: true` and we'd insert +
+    // open ItemCard on the persisted row — meaning a mis-scanned
+    // item was already in the pantry by the time the user saw it.
+    // Now the scanner passes `draftMode: true`, we stash the built
+    // row as a draft, and render an ItemCard that only commits via
+    // STOCK IN PANTRY. Keeps CLAIMS (SCOOPS / ORIGINAL etc.) on the
+    // row untouched — the same row shape flows through to the
+    // eventual insert when the user confirms.
+    if (meta.draftMode && items?.length === 1) {
+      setDraftItem(items[0]);
+      return;
+    }
+
     // Persist the receipt FIRST (and await it) so the DB-side suppression
     // window in notify_family_pantry() is open before the per-item pantry
     // inserts land. Otherwise a 12-item receipt would fan out 12 individual
@@ -5762,6 +5788,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           // scan_raw also takes last-wins — most recent scan's read is
           // what the user is currently verifying.
           if (s.scanRaw) ex.scanRaw = s.scanRaw;
+          // Union scan-derived attributes (origins / certifications /
+          // flavor / product claims like ORIGINAL / SCOOPS) into the
+          // existing row. Missing this step dropped the fresh scan's
+          // claims on every merge — a re-scan of the same UPC would
+          // keep the existing pill row but silently discard any new
+          // claims OFF surfaced this session.
+          if (s.attributes) {
+            ex.attributes = mergeAttributes(ex.attributes || null, s.attributes);
+          }
         } else {
           addedCount++;
           console.log("[ramen-debug] 6/pantry-row-push", {
@@ -7356,6 +7391,29 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           />
         );
       })()}
+      {draftItem && (
+        <ItemCard
+          item={draftItem}
+          pantry={pantry}
+          userId={userId}
+          isAdmin={isAdmin}
+          familyIds={familyIds}
+          isDraft
+          onUpdate={(patch) => setDraftItem(prev => prev ? { ...prev, ...patch } : prev)}
+          onEditTags={() => setLinkingItem(draftItem)}
+          onStock={(finalDraft) => {
+            // Commit the draft as if it were a fresh scan row —
+            // reusing addScannedItems keeps the merge-on-existing,
+            // expiration-estimate, receipt-line-index, and toast
+            // paths all consistent with the pre-draft flow. No
+            // draftMode / autoOpenFirst this time so it actually
+            // lands in pantry.
+            setDraftItem(null);
+            addScannedItems([finalDraft], { store: null, date: null, totalCents: null });
+          }}
+          onClose={() => setDraftItem(null)}
+        />
+      )}
       {stackDrilldown && (() => {
         // Re-compute the bucket from the live pantry so add/remove
         // edits inside the drilldown update the list without a close
