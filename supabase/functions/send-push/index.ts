@@ -69,7 +69,12 @@ type Notification = {
   target_id?: string | null;
 };
 
-Deno.serve(async (req) => {
+// Top-level wrapper so ANY unhandled throw inside the handler gets
+// caught and returned as a structured JSON error with the stack.
+// Previously unhandled errors bubbled to Deno.serve's default
+// handler, which returns the string "Internal Server Error" to
+// pg_net — opaque and un-diagnosable from SQL.
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
   }
@@ -127,7 +132,28 @@ Deno.serve(async (req) => {
     );
   }
 
-  webpush.setVapidDetails(vapidSubj, vapidPub, vapidPriv);
+  // setVapidDetails throws synchronously on malformed keys or subject
+  // (e.g. subject missing the `mailto:` / `https://` prefix, keys at
+  // the wrong byte length, etc). An unhandled throw here returns a
+  // generic "Internal Server Error" string to pg_net which swallows
+  // it; wrap in try/catch so the next invocation returns a structured
+  // error that actually tells us what's wrong.
+  try {
+    webpush.setVapidDetails(vapidSubj, vapidPub, vapidPriv);
+  } catch (e) {
+    const msg = (e as Error)?.message || String(e);
+    console.error("[send-push] setVapidDetails threw:", msg);
+    return new Response(
+      JSON.stringify({
+        error: "vapid_setup_failed",
+        detail: msg,
+        subjectStartsWith: vapidSubj.slice(0, 8),
+        publicLen: vapidPub.length,
+        privateLen: vapidPriv.length,
+      }),
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
 
   const supabase = createClient(supabaseUrl, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -198,4 +224,22 @@ Deno.serve(async (req) => {
     JSON.stringify({ ok: true, sent, pruned: pruneIds.length }),
     { headers: JSON_HEADERS },
   );
+}
+
+Deno.serve(async (req) => {
+  try {
+    return await handle(req);
+  } catch (e) {
+    const msg = (e as Error)?.message || String(e);
+    const stack = (e as Error)?.stack || "";
+    console.error("[send-push] UNHANDLED:", msg, "\n", stack);
+    return new Response(
+      JSON.stringify({
+        error: "unhandled_exception",
+        detail: msg,
+        stack: stack.split("\n").slice(0, 6).join("\n"),
+      }),
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
 });
