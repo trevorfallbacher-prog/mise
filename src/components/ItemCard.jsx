@@ -644,6 +644,21 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 }
                 variant = variant.replace(/\s+/g, " ").trim();
                 if (!variant || variant.length < 2) return null;
+                // When the residue contains a "<word> flavor" pattern,
+                // narrow to just that — the flavor IS the
+                // variant-defining axis, everything else (product line
+                // descriptors like "protein", size words, etc.) is
+                // noise. "protein chicken flavor" → "chicken flavor".
+                const flavorMatch = variant.match(/([a-z]+(?:\s+[a-z]+)?)\s+flavou?r\b/i);
+                if (flavorMatch) {
+                  // Prefer a single-word modifier when a two-word
+                  // match would pick up a non-flavor descriptor like
+                  // "protein chicken". Regex greediness gives us the
+                  // longest match; take only the last word before
+                  // 'flavor' as the actual flavor name.
+                  const words = flavorMatch[1].split(/\s+/);
+                  variant = `${words[words.length - 1]} flavor`;
+                }
                 const titled = variant.replace(/\b\w/g, (c) => c.toUpperCase());
                 return (
                   <div style={{
