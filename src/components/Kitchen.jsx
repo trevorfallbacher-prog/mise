@@ -1078,7 +1078,14 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 if (parsed?.brand) effectiveBrand = parsed.brand;
               }
               // Tier 0 — UPC correction memory (migration 0067).
+              // If ANY correction exists for this UPC, we trust it
+              // and skip the resolver + prompt entirely. The slug
+              // alone is enough to commit the row; findIngredient
+              // only upgrades the display metadata if the registry
+              // knows the canonical, but the commit never depends
+              // on it.
               let correctionMatch = null;
+              let hadCorrection = false;
               try {
                 const correction = await findBarcodeCorrection(barcode);
                 console.log("[upc-debug] 1/lookup", {
@@ -1088,36 +1095,26 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                     : null,
                 });
                 if (correction && correction.canonicalId) {
-                  let ing = findIngredient(correction.canonicalId);
-                  console.log("[upc-debug] 2/findIngredient", {
+                  hadCorrection = true;
+                  const real = findIngredient(correction.canonicalId);
+                  const readable = correction.canonicalId
+                    .replace(/_/g, " ")
+                    .replace(/\b\w/g, c => c.toUpperCase());
+                  const ing = real || {
+                    id:           correction.canonicalId,
+                    name:         readable,
+                    shortName:    readable,
+                    emoji:        correction.emoji || "✨",
+                    category:     "pantry",
+                    units:        [{ id: "count", label: "count", toBase: 1 }],
+                    defaultUnit:  "count",
+                    _synthetic:   true,
+                  };
+                  console.log("[upc-debug] 2/resolved-ing", {
                     canonicalId: correction.canonicalId,
-                    found: !!ing,
-                    ingName: ing?.name,
+                    synthetic: !real,
+                    name: ing.name,
                   });
-                  // Synthesize a minimal ingredient when dbCanonicals
-                  // hasn't caught up yet. User-created canonicals live
-                  // in ingredient_info and register via a refresh
-                  // cycle; a scan immediately after creation can hit
-                  // Tier 0 before that cycle completes. The slug
-                  // alone is enough to build a stand-in entry so
-                  // auto-pair still works — dbCanonicals will replace
-                  // it with the real entry on next app load.
-                  if (!ing) {
-                    const readable = correction.canonicalId
-                      .replace(/_/g, " ")
-                      .replace(/\b\w/g, c => c.toUpperCase());
-                    ing = {
-                      id:           correction.canonicalId,
-                      name:         readable,
-                      shortName:    readable,
-                      emoji:        correction.emoji || "✨",
-                      category:     "pantry",
-                      units:        [{ id: "count", label: "count", toBase: 1 }],
-                      defaultUnit:  "count",
-                      _synthetic:   true,
-                    };
-                    console.log("[upc-debug] 2b/synthesized-ing", { id: ing.id, name: ing.name });
-                  }
                   correctionMatch = {
                     canonical: ing,
                     confidence: "exact",
@@ -1288,7 +1285,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // means the user types the name themselves instead of
               // accepting a pre-fill. Better than silently stocking
               // a "Barcode 8500…" row.
-              if (!canon) {
+              if (!canon && !hadCorrection) {
                 console.log("[ramen-debug] 2/prompt-opening", {
                   suggestedName: suggestedName || "",
                   pendingRowBrand: row.brand,
