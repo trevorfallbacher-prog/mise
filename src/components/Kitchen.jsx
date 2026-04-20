@@ -2655,14 +2655,26 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   // Ramen" regardless. Only fail the name check when there's no
   // derivation source at all.
   const hasName = !!trimmedName || (!!trimmedBrand && hasCanonical);
+  // PACKAGE SIZE is required AND must be in a mass/volume unit
+  // (grams, oz, ml, etc.) — not an opaque count unit like "pack" or
+  // "count". User spec: "1 package doesn't help us calculate
+  // calories." Nutrition math and serving estimation need a real
+  // weight/volume anchor; "1 pack" carries no such information.
+  const pkgN = parseFloat(packageSize);
+  const pkgUnit = (customUnit || "").trim();
+  const hasPackageSize =
+    Number.isFinite(pkgN) && pkgN > 0 &&
+    !!pkgUnit &&
+    !DISCRETE_COUNT_UNITS.has(pkgUnit);
   const missing = [];
-  if (!hasName)      missing.push("name");
-  if (!hasAmount)    missing.push("amount");
-  if (!hasUnit)      missing.push("unit");
-  if (!hasCanonical) missing.push("canonical");
-  if (!hasCategory)  missing.push("category");
-  if (!hasTile)      missing.push("tile");
-  if (!hasLocation)  missing.push("location");
+  if (!hasName)         missing.push("name");
+  if (!hasAmount)       missing.push("amount");
+  if (!hasUnit)         missing.push("unit");
+  if (!hasPackageSize)  missing.push("packageSize");
+  if (!hasCanonical)    missing.push("canonical");
+  if (!hasCategory)     missing.push("category");
+  if (!hasTile)         missing.push("tile");
+  if (!hasLocation)     missing.push("location");
   const canSave = missing.length === 0;
 
   // Close-attempt interceptor. If the user has started filling out
@@ -4543,13 +4555,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
         the backdrop covers the whole viewport including the nav. */}
     {outcome && outcome.kind === "warning" && (() => {
       const fields = [];
-      if (!hasName)      fields.push({ emoji: "📝", label: LABEL_KICKER("name"),      body: LABELS.name.help });
-      if (!hasAmount)    fields.push({ emoji: "🔢", label: LABEL_KICKER("quantity"),  body: LABELS.quantity.help });
-      if (!hasUnit)      fields.push({ emoji: "📏", label: LABEL_KICKER("unit"),      body: LABELS.unit.help });
-      if (!hasCanonical) fields.push({ emoji: "✨", label: LABEL_KICKER("canonical"), body: LABELS.canonical.help });
-      if (!hasCategory)  fields.push({ emoji: "🧩", label: LABEL_KICKER("category"),  body: LABELS.category.help });
-      if (!hasTile)      fields.push({ emoji: "🗂️", label: LABEL_KICKER("storedIn"),  body: LABELS.storedIn.help });
-      if (!hasLocation)  fields.push({ emoji: "📍", label: LABEL_KICKER("location"),  body: LABELS.location.help });
+      if (!hasName)        fields.push({ emoji: "📝", label: LABEL_KICKER("name"),        body: LABELS.name.help });
+      if (!hasAmount)      fields.push({ emoji: "🔢", label: LABEL_KICKER("quantity"),    body: LABELS.quantity.help });
+      if (!hasUnit)        fields.push({ emoji: "📏", label: LABEL_KICKER("unit"),        body: LABELS.unit.help });
+      if (!hasPackageSize) fields.push({ emoji: "⚖️", label: LABEL_KICKER("packageSize"), body: LABELS.packageSize.help });
+      if (!hasCanonical)   fields.push({ emoji: "✨", label: LABEL_KICKER("canonical"),   body: LABELS.canonical.help });
+      if (!hasCategory)    fields.push({ emoji: "🧩", label: LABEL_KICKER("category"),    body: LABELS.category.help });
+      if (!hasTile)        fields.push({ emoji: "🗂️", label: LABEL_KICKER("storedIn"),    body: LABELS.storedIn.help });
+      if (!hasLocation)    fields.push({ emoji: "📍", label: LABEL_KICKER("location"),    body: LABELS.location.help });
       return (
         <AddItemOutcome
           kind="warning"
