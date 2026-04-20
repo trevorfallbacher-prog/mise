@@ -5362,6 +5362,43 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     // Null-safe: legacy rows may have null category/name fields.
     const matchesSearch = (text) => !q || (text && String(text).toLowerCase().includes(q));
 
+    // Canonical-aware match for an item. Used to hit rows the user
+    // typed a canonical name for even when item.name is the OFF
+    // productName ("Pepsi" matching a search for "soda pop" because
+    // the canonical is soda_pop). Walks: item.name, item.category,
+    // canonicalId slug (humanized), canonical's display name /
+    // shortName from the registry, user-created canonical's
+    // display_name from ingredient_info, brand, each ingredientId
+    // tag's display name. Any hit counts.
+    const itemMatchesSearch = (item) => {
+      if (!q) return true;
+      if (matchesSearch(item.name)) return true;
+      if (matchesSearch(item.category)) return true;
+      if (matchesSearch(item.brand)) return true;
+      const canonId = item.canonicalId || item.ingredientId;
+      if (canonId) {
+        if (matchesSearch(canonId)) return true;
+        if (matchesSearch(String(canonId).replace(/_/g, " "))) return true;
+        const canon = findIngredient(canonId);
+        if (canon) {
+          if (matchesSearch(canon.name)) return true;
+          if (matchesSearch(canon.shortName)) return true;
+        }
+        const dbInfo = kitchenDbMap?.[canonId];
+        if (matchesSearch(dbInfo?.display_name)) return true;
+      }
+      if (Array.isArray(item.ingredientIds)) {
+        for (const tagId of item.ingredientIds) {
+          if (!tagId) continue;
+          if (matchesSearch(tagId)) return true;
+          if (matchesSearch(String(tagId).replace(/_/g, " "))) return true;
+          const tag = findIngredient(tagId);
+          if (tag && (matchesSearch(tag.name) || matchesSearch(tag.shortName))) return true;
+        }
+      }
+      return false;
+    };
+
     const groups = new Map(); // hubId → { hub, items }
     const loose = [];
 
@@ -5397,7 +5434,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     const out = [];
     for (const { hub, items } of groups.values()) {
       const hubMatches = matchesSearch(hub.name);
-      const matchedItems = items.filter(i => matchesSearch(i.name));
+      const matchedItems = items.filter(itemMatchesSearch);
       if (hubMatches || matchedItems.length > 0) {
         // When the hub name matches, include all items; otherwise just matches.
         const shown = hubMatches ? items : matchedItems;
@@ -5425,7 +5462,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
     for (const item of loose) {
-      if (matchesSearch(item.name) || matchesSearch(item.category)) {
+      if (itemMatchesSearch(item)) {
         out.push({ type: "item", item });
       }
     }
