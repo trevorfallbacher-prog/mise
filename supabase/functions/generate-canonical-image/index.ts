@@ -57,11 +57,17 @@ const RECRAFT_ENDPOINT = "https://external.api.recraft.ai/v1/images/generations"
 //   • `recraftv4_pro_vector` returns a real SVG (Content-Type
 //     image/svg+xml), which plays nicely with our hand-drawn
 //     /icons/*.svg set and scales infinitely at any render size.
+//   • V4 Pro is a 4MP model; the 1024x1024 (1MP) size is V4 (non-
+//     pro) only. Passing `"1:1"` (aspect ratio form) instead of a
+//     specific pixel size lets Recraft pick each model's native
+//     resolution (2048x2048-class for Pro, 1024x1024-class for
+//     non-Pro). Since the output is SVG we don't care about the
+//     raster dimensions anyway — scales infinitely.
 // If you need to fall back to V3 for style/substyle control, swap
 // the model to `recraftv3` or `recraftv3_vector` and re-add the
 // `style` + `substyle` fields to the POST body below.
 const RECRAFT_MODEL = "recraftv4_pro_vector";
-const RECRAFT_SIZE = "1024x1024";
+const RECRAFT_SIZE = "1:1";
 
 const BUCKET = "canonical-images";
 
