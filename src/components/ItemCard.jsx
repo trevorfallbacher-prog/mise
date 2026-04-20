@@ -33,6 +33,7 @@ import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import { pantryItemNutrition, formatMacros, sourceBadge } from "../lib/nutrition";
+import { canonicalImageUrlFor } from "../lib/canonicalIcons";
 import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -544,16 +545,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 visual axis. Image tier applies to ItemCard header
                 + IngredientCard hero only, per design call. */}
             {(() => {
-              // Canonical image wins when the admin has stamped one
-              // on ingredient_info.info.imageUrl. Check canonicalId
-              // first (authoritative), then ingredientId (legacy
-              // pantry rows that predate the canonical_id column and
-              // still carry the slug in the old column). Either hit
-              // renders the image; a miss falls back to the pantry
-              // row's emoji.
+              // Canonical image resolver. Three-tier:
+              //   1. Bundled SVG (public/icons/<slug>.svg, registered
+              //      in canonicalIcons.js) — hand-curated, wins.
+              //   2. Admin-generated imageUrl on ingredient_info.
+              //   3. Emoji fallback.
+              // Check canonicalId first (authoritative), then
+              // ingredientId (legacy rows pre canonical_id column).
               const lookupId = item.canonicalId || item.ingredientId || null;
               const canonImage = lookupId
-                ? (getDbInfo(lookupId)?.imageUrl || null)
+                ? canonicalImageUrlFor(lookupId, getDbInfo(lookupId))
                 : null;
               if (canonImage) {
                 return (

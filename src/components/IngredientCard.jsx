@@ -5,6 +5,7 @@ import { SKILL_TREE } from "../data";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import EnrichmentButton from "./EnrichmentButton";
 import GenerateImageButton from "./GenerateImageButton";
+import { canonicalImageUrlFor } from "../lib/canonicalIcons";
 
 // Month labels for seasonality. 1-indexed to match peakMonths convention
 // in the ingredient schema.
@@ -340,21 +341,27 @@ export default function IngredientCard({
                 right corner. Lock pip renders for everyone (not just
                 admins) so family members viewing the canonical see
                 that the image has been sealed — consistency across
-                viewers, not just a curator-only signal. */}
-            <div style={{ position: "relative" }}>
-              {info?.imageUrl ? (
-                <img
-                  src={info.imageUrl}
-                  alt={name}
-                  style={{
-                    width: 72, height: 72, borderRadius: 14,
-                    objectFit: "cover",
-                    background: "#0f0f0f",
-                    border: info?.imageLocked ? "1px solid #2a3a1e" : "1px solid #242424",
-                    display: "block",
-                  }}
-                />
-              ) : (
+                viewers, not just a curator-only signal.
+                Bundled SVG (public/icons/<slug>.svg) wins over the
+                admin-generated imageUrl, per canonicalImageUrlFor's
+                tier order. */}
+            {(() => {
+              const heroImage = canonicalImageUrlFor(viewingId, info);
+              return (
+                <div style={{ position: "relative" }}>
+                  {heroImage ? (
+                    <img
+                      src={heroImage}
+                      alt={name}
+                      style={{
+                        width: 72, height: 72, borderRadius: 14,
+                        objectFit: "cover",
+                        background: "#0f0f0f",
+                        border: info?.imageLocked ? "1px solid #2a3a1e" : "1px solid #242424",
+                        display: "block",
+                      }}
+                    />
+                  ) : (
                 <div style={{
                   width: 72, height: 72, borderRadius: 14,
                   background: "#0f0f0f", border: "1px solid #242424",
@@ -381,6 +388,8 @@ export default function IngredientCard({
                 </span>
               )}
             </div>
+              );
+            })()}
             {viewingId && (
               <GenerateImageButton
                 canonicalId={viewingId}
