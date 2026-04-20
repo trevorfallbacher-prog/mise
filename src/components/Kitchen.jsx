@@ -949,11 +949,12 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 canonicalId: patchedRow.canonicalId,
                 resolvedBrand,
               });
-              setScannedItems([patchedRow]);
-              setReceiptMeta({ store: null, date: null, totalCents: null });
+              // Single-item barcode scan — commit directly, skip
+              // the "Look right?" confirm screen. Parent's
+              // addScannedItems handles pantry insert + toast.
               setCanonicalCreatePrompt(null);
-              setPhase("confirm");
-              console.log("[ramen-debug] 5/phase-advanced-to-confirm");
+              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null });
+              console.log("[ramen-debug] 5/committed-via-onItemsScanned");
             } catch (e) {
               console.error("[ramen-debug] onCreate core failed:", e);
               // Even the core path threw (shouldn't happen, but guard).
@@ -993,21 +994,23 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 console.warn("[scanner:barcode] brand_nutrition upsert threw:", e);
               }
             }
+            // Close the Scanner after commit — single-item scans
+            // have no further review step to show.
+            onClose?.();
           }}
           onSkip={() => {
-            // User opted not to create a canonical — still land in
-            // confirm with the fallback-named row so they can stock
-            // it without a linked identity. They can assign a
-            // canonical later from the ItemCard if they want.
-            setScannedItems([canonicalCreatePrompt.pendingRow]);
-            setReceiptMeta({ store: null, date: null, totalCents: null });
+            // User opted not to create a canonical — commit the
+            // fallback-named row directly to pantry. They can assign
+            // a canonical later from the ItemCard.
+            const skipRow = canonicalCreatePrompt.pendingRow;
             if (canonicalCreatePrompt.pendingBrandNutrition) {
               // Without canonical, brand_nutrition can't be written
               // (PK requires it). Payload is dropped; a future scan
               // that resolves the same brand+canonical will refetch.
             }
             setCanonicalCreatePrompt(null);
-            setPhase("confirm");
+            onItemsScanned([skipRow], { store: null, date: null, totalCents: null });
+            onClose?.();
           }}
           onCancel={() => {
             // Back out entirely — no scan row created.
@@ -1192,19 +1195,22 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 });
                 return;   // stay on upload screen until user decides
               }
-              setScannedItems([row]);
-              setReceiptMeta({ store: null, date: null, totalCents: null });
-              setPhase("confirm");
-              // Stash brand_nutrition payload for post-add upsert —
-              // written after user confirms the row and it lands in
-              // pantry, so a brand-less scan doesn't write an orphan
-              // row to brand_nutrition.
+              // Barcode scans are single-item by nature — the user
+              // scanned ONE package, we built ONE row. The
+              // multi-item "Look right?" confirm screen is always
+              // "FOUND 1 ITEMS" and the user has to click STOCK MY
+              // PANTRY anyway. Skip it: commit the row directly via
+              // onItemsScanned (parent's addScannedItems handles the
+              // pantry insert + toast), then close the Scanner. User
+              // lands back in Kitchen with the new item stocked.
+              onItemsScanned([row], { store: null, date: null, totalCents: null });
               if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
                   ...pendingBrandNutrition,
                 })?.catch?.(() => { /* logged upstream */ });
               }
+              onClose?.();
             } catch (e) {
               console.error("[scanner:barcode] lookup failed:", e);
               setError("Barcode lookup failed. Try again.");
