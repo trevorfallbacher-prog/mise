@@ -52,7 +52,9 @@ export const TILE_KEYWORDS = [
   {
     tileId: "pasta_grains",
     keywords: [
-      "pasta", "noodle", "noodles", "spaghetti", "penne", "rigatoni",
+      "pasta", "noodle", "noodles", "ramen", "udon", "soba",
+      "rice noodle", "rice noodles", "instant noodle", "instant noodles",
+      "spaghetti", "penne", "rigatoni",
       "fettuccine", "cavatappi", "fusilli", "rotini", "farfalle",
       "bow-tie", "bow tie", "macaroni", "bucatini", "linguine",
       "angel hair", "ziti", "orecchiette", "tortellini", "ravioli",
