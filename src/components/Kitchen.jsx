@@ -1338,7 +1338,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // onItemsScanned (parent's addScannedItems handles the
               // pantry insert + toast), then close the Scanner. User
               // lands back in Kitchen with the new item stocked.
-              onScanDraft?.(row);
+              onItemsScanned([row], { store: null, date: null, totalCents: null, autoOpenFirst: true });
               if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
