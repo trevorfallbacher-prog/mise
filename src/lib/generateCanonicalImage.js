@@ -67,7 +67,11 @@ export async function generateCanonicalImage({ canonicalId, canonicalName, hint 
   if (error) {
     // supabase-js wraps the upstream Response in error.context; peel
     // it so a 403 (non-admin) surfaces as "admin-only" rather than a
-    // cryptic network error.
+    // cryptic network error. Parse the detail blob as JSON when we
+    // can so the Recraft/upstream failure reason flows into the
+    // thrown Error message — that way a user-visible toast says
+    // "Recraft returned 400: invalid model" instead of "Image
+    // generation failed."
     let detail = "";
     let status = null;
     const ctx = error.context;
@@ -77,7 +81,13 @@ export async function generateCanonicalImage({ canonicalId, canonicalName, hint 
         try { detail = await ctx.text(); } catch { /* noop */ }
       }
     }
-    console.error("[generate-canonical-image] edge fn failed:", { message: error.message, status, detail });
+    let parsed = null;
+    if (detail) {
+      try { parsed = JSON.parse(detail); } catch { /* noop */ }
+    }
+    console.error("[generate-canonical-image] edge fn failed:", {
+      message: error.message, status, detail, parsed,
+    });
     if (status === 403) {
       throw new Error("Canonical image generation is admin-only.");
     }
@@ -89,6 +99,18 @@ export async function generateCanonicalImage({ canonicalId, canonicalName, hint 
     }
     if (status === 500 && detail && /RECRAFT_API_KEY/.test(detail)) {
       throw new Error("Server missing RECRAFT_API_KEY. Set it with: supabase secrets set RECRAFT_API_KEY=<your-key>");
+    }
+    // Fall through — surface the edge fn's detail (or the parsed
+    // { error, detail } shape) so the real upstream reason reaches
+    // the toast instead of a generic failure message.
+    if (parsed?.detail) {
+      throw new Error(String(parsed.detail));
+    }
+    if (parsed?.error) {
+      throw new Error(String(parsed.error));
+    }
+    if (detail) {
+      throw new Error(detail.slice(0, 300));
     }
     throw new Error(error.message || "Image generation failed. Try again?");
   }

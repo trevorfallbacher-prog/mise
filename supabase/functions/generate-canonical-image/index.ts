@@ -55,7 +55,13 @@ const RECRAFT_ENDPOINT = "https://external.api.recraft.ai/v1/images/generations"
 const RECRAFT_STYLE = "vector_illustration";
 const RECRAFT_SUBSTYLE = "line_art";
 const RECRAFT_SIZE = "1024x1024";
-const RECRAFT_MODEL = "recraftv4pro";
+// Recraft model. `recraftv3` is the known-good default; if you've
+// verified a newer model name against https://www.recraft.ai/docs
+// (e.g. `recraftv4pro`), swap it in — the payload shape is unchanged.
+// Using v3 here until a newer name is confirmed because an unknown
+// model name makes Recraft 400 with a validation error and surfaces
+// to the client as a generic "edge function failed."
+const RECRAFT_MODEL = "recraftv3";
 
 const BUCKET = "canonical-images";
 
