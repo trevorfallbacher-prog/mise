@@ -1088,22 +1088,44 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                     : null,
                 });
                 if (correction && correction.canonicalId) {
-                  const ing = findIngredient(correction.canonicalId);
+                  let ing = findIngredient(correction.canonicalId);
                   console.log("[upc-debug] 2/findIngredient", {
                     canonicalId: correction.canonicalId,
                     found: !!ing,
                     ingName: ing?.name,
                   });
-                  if (ing) {
-                    correctionMatch = {
-                      canonical: ing,
-                      confidence: "exact",
-                      reason: `barcode-${correction.source}`,
-                      matchedOn: barcode,
-                      autoApply: true,
-                      _correction: correction,
+                  // Synthesize a minimal ingredient when dbCanonicals
+                  // hasn't caught up yet. User-created canonicals live
+                  // in ingredient_info and register via a refresh
+                  // cycle; a scan immediately after creation can hit
+                  // Tier 0 before that cycle completes. The slug
+                  // alone is enough to build a stand-in entry so
+                  // auto-pair still works — dbCanonicals will replace
+                  // it with the real entry on next app load.
+                  if (!ing) {
+                    const readable = correction.canonicalId
+                      .replace(/_/g, " ")
+                      .replace(/\b\w/g, c => c.toUpperCase());
+                    ing = {
+                      id:           correction.canonicalId,
+                      name:         readable,
+                      shortName:    readable,
+                      emoji:        correction.emoji || "✨",
+                      category:     "pantry",
+                      units:        [{ id: "count", label: "count", toBase: 1 }],
+                      defaultUnit:  "count",
+                      _synthetic:   true,
                     };
+                    console.log("[upc-debug] 2b/synthesized-ing", { id: ing.id, name: ing.name });
                   }
+                  correctionMatch = {
+                    canonical: ing,
+                    confidence: "exact",
+                    reason: `barcode-${correction.source}`,
+                    matchedOn: barcode,
+                    autoApply: true,
+                    _correction: correction,
+                  };
                 }
               } catch (e) {
                 console.warn("[upc-debug] lookup threw:", e);
