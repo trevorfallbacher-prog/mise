@@ -7381,6 +7381,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         if (!fresh) return null;
         return (
           <ItemCard
+            // See draftItem card below — same remount-on-id-change
+            // defense so pendingChanges from a prior open row don't
+            // bleed into the next one when the user closes without
+            // applying and opens a different item.
+            key={fresh.id}
             item={fresh}
             pantry={pantry}
             userId={userId}
@@ -7426,6 +7431,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       })()}
       {draftItem && (
         <ItemCard
+          // Key by draft id so a back-to-back barcode scan (user
+          // dismisses one draft mid-edit and scans something else)
+          // forces React to remount the card. Without this, the
+          // previous draft's pendingChanges bleed into the new
+          // draft — ItemCard's internal pendingChanges state sticks
+          // around with the old brand / claims and the merged `item`
+          // shows stale values (e.g. milk draft reading as
+          // "Tostitos" brand from a prior Scoops edit).
+          key={draftItem.id}
           item={draftItem}
           pantry={pantry}
           userId={userId}
