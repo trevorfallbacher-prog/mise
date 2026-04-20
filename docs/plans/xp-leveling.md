@@ -762,22 +762,30 @@ pass at each step):*
 8. Level-up ceremony modal — triggered by profile.level change
    via realtime sub. Full-screen celebration per §5.
 
-**Phase 4b gate commits (preview — final list locked when Phase 4b
-begins):**
+**Phase 4b commits — gates (8 total, locked at phase start):**
 
-- `NNNN_xp_level_gates.sql` — config table + seed. Prereqs as
-  jsonb DSL; gate_recipe_slugs[] starts empty (TBD fill-in as
-  curated library grows). Attach to xp_config_audit trigger.
-- `NNNN_user_gate_progress.sql` — state-machine table with RLS.
-- `NNNN_xp_events_gate_adjustment.sql` — add int column + index.
-- `NNNN_award_xp_gate_check.sql` — rewrite award_xp to zero
-  final_xp when the user is at a gate, write gate_adjustment.
-- Prereq aggregator RPC (`user_gate_prereq_state(user_id,
-  gate_level) returns jsonb`) — reads concrete achievements.
-- Ranked-match pass trigger — on cook_log_reviews INSERT that
-  completes unanimous "nailed" for a user_gate_progress row.
-- Client: gate card on UserProfile, gate ceremony modal,
-  ranked-match picker, fail/pass UX.
+1. `0107_xp_level_gates.sql` — config table + seed for 4 gates
+   (L20/35/50/75). Prereqs as jsonb DSL; gate_recipe_slugs[]
+   starts empty (TBD fill-in as curated library grows).
+   Attached to xp_config_audit trigger family.
+2. `0108_user_gate_progress.sql` — state-machine table with
+   self-select RLS.
+3. `0109_xp_events_gate_adjustment.sql` — add int column + index.
+4. `0110_user_gate_prereq_state.sql` — RPC that reads concrete
+   achievements (skill_levels, cook_logs categories, streak_count,
+   user_curated_lessons depth) and returns per-prereq green/red
+   status for a given user + gate.
+5. `0111_award_xp_gate_check.sql` — rewrite award_xp to zero
+   final_xp when the user is at a gate and their
+   user_gate_progress.status < 'passed'. Writes the blocked
+   amount into gate_adjustment on the xp_events row.
+6. `0112_gate_ranked_match_pass_trigger.sql` — trigger on
+   cook_log_reviews INSERT that detects unanimous "nailed" on
+   the user's active gate cook_log, flips user_gate_progress to
+   'passed', and fires a special level-up-style notification.
+7. UserProfile gate card — prereq list with per-row progress
+   bars; unlocks the ranked-match picker when all green.
+8. Gate ceremony modal + ranked-match picker + fail/pass UX.
 
 (Phases 2, 3, 5, 6 commit breakdowns will be added as each phase
 begins.)
