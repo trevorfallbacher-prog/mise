@@ -2361,14 +2361,15 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           return map[k] || k.toUpperCase();
         };
         const changedLabels = outcome.changed.map(prettyLabel);
-        const locLabel = LOCATIONS.find(l => l.id === item.location)?.label || item.location;
-        const locEmoji = LOCATIONS.find(l => l.id === item.location)?.emoji || "📦";
+        const locEntry = LOCATIONS.find(l => l.id === item.location);
+        const locLabel = locEntry?.label || item.location || "Storage";
+        const locEmoji = locEntry?.emoji || "📦";
         return (
           <AddItemOutcome
             kind="success"
             title={`${item.name} updated`}
             body={`Saved: ${changedLabels.join(" · ")}`}
-            destination={`${locEmoji} ${locLabel.toUpperCase()}`}
+            destination={`${locEmoji} ${String(locLabel).toUpperCase()}`}
             primary={{
               label: "DONE",
               tone: "confirm",
