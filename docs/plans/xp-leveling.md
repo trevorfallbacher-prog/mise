@@ -397,11 +397,10 @@ the level-up ceremony plays. Never interrupts mid-sequence.
    `day_local` (date in user's tz, indexed for daily-cap lookups).
    This is the source of truth — `profiles.total_xp` becomes a
    materialized sum updated by trigger.
-2. **`profiles.level_numeric`** — new int column. Collision with
-   existing TEXT `profiles.level` ("beginner"/"intermediate"/
-   "advanced") is unresolved — see §7. Proposed: rename existing
-   column to `profiles.skill_self_report` and use `level` for the
-   numeric tier. Requires migration + every read-site update.
+2. **`profiles.level` (numeric)** — new int column. Existing TEXT
+   `profiles.level` is renamed to `profiles.skill_self_report` in
+   the same migration; all read sites updated in the same PR.
+   See §7 decision #1.
 3. **`profiles.streak_shields`** — int (count held).
 4. **`profiles.streak_peak`** — int (highest ever, for tombstone).
 5. **`profiles.streak_tier`** — denormalized int (0-4) for fast
@@ -460,21 +459,15 @@ the level-up ceremony plays. Never interrupts mid-sequence.
 
 ## 7. Open questions & implementation phases
 
-### Open questions (BLOCKING)
+### Decisions locked
 
-1. **`profiles.level` column collision.** Today it's TEXT with
-   values `'beginner' | 'intermediate' | 'advanced'` — the
-   onboarding self-report. The XP system needs a numeric tier.
-   Options:
-   - **(a)** Rename existing column to `skill_self_report`, add new
-     numeric `level` column. Cleanest semantically, but every read
-     site needs updating.
-   - **(b)** Keep existing TEXT `level`, add numeric
-     `level_numeric`. Easier migration, uglier forever.
-   - **(c)** Drop the onboarding preference entirely if it's
-     unused downstream. Needs a grep of all read sites first.
-   **Recommendation: (a).** Audit and rename once, cleanly.
-   **Needs user decision before phase 1.**
+1. **`profiles.level` column collision — RESOLVED.** Existing TEXT
+   column (`'beginner' | 'intermediate' | 'advanced'`) will be
+   **renamed to `profiles.skill_self_report`**. A new numeric
+   `profiles.level` column will hold the XP tier. Phase 1
+   migration does the rename + column add atomically; every read
+   site gets audited and updated in the same migration PR so the
+   app never sees the intermediate state.
 
 ### Open questions (non-blocking)
 
@@ -503,9 +496,10 @@ Each phase is independently shippable and leaves the app better
 than it found it.
 
 **Phase 1 — Ledger & award pipeline (no UI changes)**
-- Resolve open question #1.
-- Migrations: `xp_events`, `profiles.level_numeric` (or renamed
-  `level`), `recipe_first_cooks`, `recipe_mastery`.
+- Migrations: `xp_events`; rename `profiles.level` →
+  `skill_self_report` + add new numeric `profiles.level`;
+  `recipe_first_cooks`; `recipe_mastery`. Audit + update every
+  read site of the old TEXT `level` in the same PR.
 - `award_xp()` server function — all anti-grind math, no streak
   multiplier yet (passthrough).
 - Swap the existing `cook_logs.xp_earned` path to call `award_xp`.
