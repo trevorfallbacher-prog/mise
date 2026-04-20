@@ -754,7 +754,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
   const updateUnit = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,unit:val} : item));
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
+    <div style={{ position:"fixed", inset:0, background:"#111", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
       <div style={{ height:2, background:"#1a1a1a" }}>
         <div style={{ height:"100%", background:"#f5c842", width:`${({upload:5,ready:20,scanning:60,confirm:90,done:100}[phase]||5)}%`, transition:"width 0.4s ease" }} />
       </div>
@@ -901,8 +901,9 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
       {canonicalCreatePrompt && (
         <CanonicalCreatePrompt
           initialName={canonicalCreatePrompt.suggestedName}
+          initialBrand={canonicalCreatePrompt.pendingRow?.brand || ""}
           sourceHint={canonicalCreatePrompt.pendingResolverReason}
-          onCreate={async (finalName) => {
+          onCreate={async ({ finalName, finalBrand }) => {
             // Top-level try/catch so a sub-call failure (enrich edge
             // fn down, brand_nutrition hook undefined, etc.) can
             // never leave the prompt stuck open. Even if every
@@ -914,6 +915,12 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               .replace(/[^a-z0-9]+/g, "_")
               .replace(/^_+|_+$/g, "")
               .slice(0, 80);
+            // Brand: user's input wins over whatever pendingRow had
+            // (OFF sometimes misses brand; we now ask the user
+            // directly). Empty trimmed string → null.
+            const resolvedBrand = ((finalBrand || "").trim())
+              || cpSnapshot?.pendingRow?.brand
+              || null;
             // Close prompt + advance phase FIRST so the UX commits
             // regardless of what the side-effects below do. User sees
             // the confirm screen immediately.
@@ -928,6 +935,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 ingredientId:  slug,
                 ingredientIds: [slug],
                 category:      canonCategory,
+                brand:         resolvedBrand,
                 autoLinked:    true,
               };
               setScannedItems([patchedRow]);
@@ -952,11 +960,19 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             } catch (e) {
               console.warn("[scanner:barcode] enrich new canonical failed:", e);
             }
-            if (cpSnapshot?.pendingBrandNutrition && typeof upsertBrandNutritionForScan === "function") {
+            // brand_nutrition requires a concrete brand (PK component).
+            // Use the user's typed brand when OFF didn't supply one,
+            // and skip entirely if we still have neither.
+            if (
+              cpSnapshot?.pendingBrandNutrition?.nutrition
+              && resolvedBrand
+              && typeof upsertBrandNutritionForScan === "function"
+            ) {
               try {
                 const maybePromise = upsertBrandNutritionForScan({
                   canonicalId: slug,
                   ...cpSnapshot.pendingBrandNutrition,
+                  brand: resolvedBrand,
                 });
                 if (maybePromise && typeof maybePromise.catch === "function") {
                   maybePromise.catch((e) => console.warn("[scanner:barcode] brand_nutrition upsert failed:", e));
@@ -1077,10 +1093,14 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 priceCents:    null,
                 autoLinked:    !!match,
               };
-              const pendingBrandNutrition = (res.nutrition && effectiveBrand)
+              // Stash nutrition whenever OFF gave us some — brand may
+              // be null here; the canonical-create prompt path lets
+              // the user supply a brand later, so we keep the payload
+              // around for the onCreate handler to finalize.
+              const pendingBrandNutrition = res.nutrition
                 ? {
                     nutrition: res.nutrition,
-                    brand:     effectiveBrand,
+                    brand:     effectiveBrand || null,
                     barcode:   res.barcode,
                     source:    res.source || "openfoodfacts",
                     sourceId:  res.sourceId || res.barcode,
@@ -1153,11 +1173,11 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // written after user confirms the row and it lands in
               // pantry, so a brand-less scan doesn't write an orphan
               // row to brand_nutrition.
-              if (pendingBrandNutrition && canon?.id) {
+              if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
                   ...pendingBrandNutrition,
-                }).catch(() => { /* logged upstream */ });
+                })?.catch?.(() => { /* logged upstream */ });
               }
             } catch (e) {
               console.error("[scanner:barcode] lookup failed:", e);
@@ -1988,9 +2008,11 @@ const promptIconBtn = {
 // a name but nothing matched our registry. Renders as a full-screen
 // sheet over the Scanner; user can accept the suggestion, edit the
 // name, or skip (stocks the item without a canonical link).
-function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCancel }) {
+function CanonicalCreatePrompt({ initialName, initialBrand, sourceHint, onCreate, onSkip, onCancel }) {
   const [name, setName] = useState(initialName || "");
+  const [brand, setBrand] = useState(initialBrand || "");
   const trimmed = name.trim();
+  const brandTrimmed = brand.trim();
   const hintLine = sourceHint?.topTag
     ? `OFF tag: ${sourceHint.topTag}`
     : sourceHint?.genericName
@@ -2009,7 +2031,7 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
     // behind it is visually suppressed.
     <div style={{
       position:"fixed", inset:0, zIndex:999,
-      background:"#0b0b0b",
+      background:"#111",
       overflowY:"auto",
       display:"flex", flexDirection:"column", alignItems:"stretch",
     }}>
@@ -2073,10 +2095,41 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
           </div>
         )}
 
+        {/* Brand input — captured at canonical-create time because OFF
+            sometimes has no brand field (barcode 8500069182175 returned
+            null productName AND null brands), and the user is already
+            engaged with this prompt. Empty = no brand, same as today. */}
+        <div style={{
+          marginTop:20,
+          fontFamily:"'DM Mono',monospace", fontSize:10,
+          color:"#c7a8d4", letterSpacing:"0.12em", marginBottom:8,
+        }}>
+          BRAND (OPTIONAL)
+        </div>
+        <input
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+          placeholder="e.g. Ramen Bae"
+          style={{
+            width:"100%", padding:"14px 16px",
+            background:"#1a1a1a", border:"1px solid #2a2a2a",
+            borderRadius:12, color:"#f0ece4", boxSizing:"border-box",
+            fontFamily:"'DM Sans',sans-serif", fontSize:15,
+            outline:"none",
+          }}
+        />
+        <div style={{
+          marginTop:6,
+          fontFamily:"'DM Sans',sans-serif", fontSize:11,
+          color:"#666", lineHeight:1.5,
+        }}>
+          Pulled from Open Food Facts when available. Leave blank if unknown.
+        </div>
+
         <div style={{ marginTop:26, display:"flex", flexDirection:"column", gap:10 }}>
           <button
             type="button"
-            onClick={() => trimmed && onCreate(trimmed)}
+            onClick={() => trimmed && onCreate({ finalName: trimmed, finalBrand: brandTrimmed })}
             disabled={!trimmed}
             style={{
               padding:"14px",
