@@ -871,10 +871,56 @@ export function mergeAttributes(existing, incoming) {
   return out;
 }
 
+// Generic English connectives and articles that are never a product
+// claim. Kept tight — anything substantive (even noisy marketing
+// words like 'original' / 'classic' / 'scoops') survives into claims
+// because the whole point of residual extraction is to catch
+// sub-line names the keyword whitelist can't predict.
+const RESIDUAL_NOISE = new Set([
+  "the", "and", "or", "of", "with", "for", "in", "on", "by",
+  "from", "to", "at", "a", "an", "our", "your", "new",
+]);
+
+// Pull product-line claims out of whatever text remains after the
+// brand and canonical name are stripped from the raw OFF productName.
+// Rule: brand = Tostitos, canonical = Tortilla Chips → residual from
+// "Tostitos Original Scoops Tortilla Chips" is ["Original", "Scoops"].
+// Complements the keyword-whitelist path (parseProductClaims) so we
+// don't miss sub-line names nobody's hand-curated yet.
+export function residualClaimsFromName(productName, brand, canonicalName) {
+  if (!productName || typeof productName !== "string") return [];
+  let out = productName.toLowerCase();
+  out = out.replace(UNIT_WITH_NUMBER_RE, " ");
+  out = out.replace(/[^a-z0-9 ]+/g, " ");
+  const tokens = out.split(/\s+/).filter(t => t.length >= 2);
+  const strip = new Set();
+  for (const t of brandTokens(brand)) strip.add(t);
+  if (canonicalName) {
+    String(canonicalName)
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .split(/\s+/)
+      .forEach(t => { if (t.length >= 2) strip.add(t); });
+  }
+  const seen = new Set();
+  const kept = [];
+  for (const t of tokens) {
+    if (strip.has(t)) continue;
+    if (RESIDUAL_NOISE.has(t)) continue;
+    if (/^\d+$/.test(t)) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    // Title-case for display: "scoops" → "Scoops"
+    kept.push(t.charAt(0).toUpperCase() + t.slice(1));
+  }
+  return kept;
+}
+
 export function buildAttributesFromScan({
   productName   = null,
   genericName   = null,
   brand         = null,
+  canonicalName = null,
   categoryHints = [],
   originTags    = [],
   countryTags   = [],
@@ -901,7 +947,22 @@ export function buildAttributesFromScan({
     .filter(Boolean)
     .join(" ")
     .replace(/[-_]/g, " ");
-  const claims          = parseProductClaims(claimHay);
+  const whitelist = parseProductClaims(claimHay);
+  // Residual path: anything in the raw productName (or genericName
+  // fallback) that ISN'T the brand or the canonical name is almost
+  // certainly a product-line claim. Catches SCOOPS / ORIGINAL /
+  // CANTINA-style sub-lines without needing them on a whitelist.
+  // Union with the whitelist; dedupe case-insensitive, preserve the
+  // first display casing seen.
+  const residual = residualClaimsFromName(productName || genericName, brand, canonicalName);
+  const seen = new Set();
+  const claims = [];
+  for (const c of [...residual, ...whitelist]) {
+    const k = String(c || "").toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    claims.push(c);
+  }
   const out = {};
   if (origins.length > 0)        out.origins        = origins;
   if (certifications.length > 0) out.certifications = certifications;

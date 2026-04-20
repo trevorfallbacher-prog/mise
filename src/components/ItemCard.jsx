@@ -2679,6 +2679,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 productName:   res.productName,
                 genericName:   res.genericName,
                 brand:         res.brand,
+                canonicalName: currentCanonical?.name || currentCanonical?.shortName || null,
                 categoryHints: res.categoryHints || [],
                 originTags:    res.originTags  || [],
                 countryTags:   res.countryTags || [],
