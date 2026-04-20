@@ -169,6 +169,77 @@ L20→L21 ≈ 12,100, L50→L51 ≈ 61,800. Curated 3× ladder is what
 makes L50+ tractable for the dedicated cook without requiring
 decades.
 
+### Level gates (ranked-match progression walls)
+
+Raw XP alone doesn't make a chef. At each title-tier boundary the
+user hits a **gate** — a hard wall that only lifts when they
+demonstrate they can actually cook at the next tier. Without gates,
+a user could grind cereal + chicken-and-rice to L76 and wear the
+Iron Chef title without ever having made anything challenging.
+
+**Gate points** (aligned to title-tier transitions):
+
+| Gate | From → To                              | Key change  |
+| ---- | -------------------------------------- | ----------- |
+| L20  | Home Chef → Sous Chef                  | First gate  |
+| L35  | Sous Chef → Head Chef                  |             |
+| L50  | Head Chef → Executive Chef             |             |
+| L75  | Executive Chef → Iron Chef             | Last gate   |
+
+L10 deliberately NOT gated — new users need a smooth first month.
+
+**Hard XP stop (critical):** when a user reaches a gate's floor XP,
+`profiles.level` stops advancing AND `profiles.total_xp` stops
+accruing. Additional earns write `xp_events` rows with `final_xp =
+0` and the adjustment logged in a new `gate_adjustment` column for
+telemetry ("how much XP did gates block"). Missed XP is genuinely
+lost — otherwise a user could bank XP behind the gate, fluke the
+challenge, and skyrocket up multiple levels without ever actually
+cooking at tier. The mechanic's teeth are why it works.
+
+**Gate passage — two stages:**
+
+1. **Prerequisites** — a fixed set of real-cooking achievements
+   the user must complete BEFORE the gate recipe picker unlocks.
+   Prereqs are concrete, measurable things already tracked
+   elsewhere in the system (skill courses, recipe categories,
+   streak count, curated-ladder depth, etc.).
+
+2. **Ranked match** — once prereqs are all green, we present
+   **3 gate recipes** (config-chosen difficult dishes). The user
+   picks 1 as their ranked match. They cook it. The gate passes
+   only if **every diner (including the chef) rates it "Nailed
+   it."** Any other rating = fail, must re-cook (same recipe or
+   swap to another of the 3). Unlimited retries, but each is a
+   real cook — no shortcuts.
+
+**Per-gate spec (prereqs lock now; gate-recipe slugs are TBD and
+config-filled as the curated library fleshes out):**
+
+| Gate | Prerequisites                                                                                                                                                                | Ranked-match |
+| ---- | --- | --- |
+| L20  | 1 skill course completed · cooked ≥1 breakfast + ≥1 lunch + ≥1 dinner recipe · 3-day streak active                                                                          | 3 difficult cross-cuisine picks |
+| L35  | 2 skill courses at ≥L3 · hosted a meal with ≥3 diners · 5+ curated lessons in ≥3 cuisines · 7-day streak active                                                             | 3 signature mains |
+| L50  | 4 skill courses at max L5 · 25+ curated cooks total · 2 curated collections mastered · 14-day streak active                                                                  | 3 chef-tier multi-component dishes |
+| L75  | ALL skill courses maxed · curated ladder max (20+ lessons) in ≥5 cuisines · every curated collection mastered · 30-day streak active                                         | 3 legendary-tier dishes |
+
+**UX beats (Phase 4):**
+
+1. Approaching the gate — progress card appears on UserProfile
+   listing prereqs with progress bars.
+2. Hitting the gate — full-screen "Gate: Home Chef → Sous Chef"
+   ceremony; XP ticker freezes with a lock icon.
+3. Each prereq completed plays a small beat toast.
+4. Once all prereqs green — "ranked match" picker unlocks with the
+   3 gate recipes. User picks, cooks through CookMode normally.
+5. On the cook complete flow for the chosen recipe, rating UI
+   shows "ranked match" framing. Chef rates → diners rate via
+   push. All diners "nailed" = gate breaks, big catch-up animation
+   as `profiles.level` unlocks and the title-tier transition plays.
+6. Any sub-"nailed" rating → fail celebration (warm, not
+   punishing): "good cooks have rough nights — try again when
+   you're ready." Gate stays blocked.
+
 ---
 
 ## 3. Fire mode — streak multiplier & shields
@@ -454,6 +525,22 @@ the level-up ceremony plays. Never interrupts mid-sequence.
 12. **`recipe_mastery`** — `(user_id, recipe_key, cook_count)` to
     drive 5×/10×/25× milestones without scanning `cook_logs` on
     every cook.
+12a. **`xp_level_gates`** — config table, one row per gate level.
+    Columns: `gate_level` (PK), `prereqs_jsonb` (structured DSL
+    listing the concrete achievements required), `gate_recipe_slugs`
+    (text[], the 3 picker options for the ranked match), `label`,
+    `description`, `updated_at`, `updated_by`. Read-all for
+    authenticated; audited via the same trigger family as the
+    other `xp_config*` tables. §2.
+12b. **`user_gate_progress`** — per-user gate state machine.
+    Columns: `user_id`, `gate_level`, `status` ('pending' |
+    'prereqs_met' | 'in_match' | 'passed'), `prereqs_state_jsonb`,
+    `chosen_gate_recipe_slug`, `match_cook_log_id` (uuid ref to
+    `cook_logs`), `started_at`, `passed_at`. Self-select RLS;
+    `award_xp` + a gate-check trigger are the only writers. §2.
+12c. **`xp_events.gate_adjustment`** — new int column (default 0)
+    captures the XP a gated user would have earned but didn't.
+    Pure telemetry; never credited to `profiles.total_xp`. §2.
 
 **Server logic (new Postgres functions + triggers OR edge functions):**
 
@@ -571,7 +658,25 @@ pass at each step):*
 18. `scripts/backfill_xp_events.sql` — replay existing `cook_logs`
     into `xp_events` so `total_xp` reconciles.
 
-(Phases 2–6 commit breakdowns will be added as each phase begins.)
+**Phase 4 gate commits (preview — final list locked when Phase 4
+begins):**
+
+- `NNNN_xp_level_gates.sql` — config table + seed. Prereqs as
+  jsonb DSL; gate_recipe_slugs[] starts empty (TBD fill-in as
+  curated library grows). Attach to xp_config_audit trigger.
+- `NNNN_user_gate_progress.sql` — state-machine table with RLS.
+- `NNNN_xp_events_gate_adjustment.sql` — add int column + index.
+- `NNNN_award_xp_gate_check.sql` — rewrite award_xp to zero
+  final_xp when the user is at a gate, write gate_adjustment.
+- Prereq aggregator RPC (`user_gate_prereq_state(user_id,
+  gate_level) returns jsonb`) — reads concrete achievements.
+- Ranked-match pass trigger — on cook_log_reviews INSERT that
+  completes unanimous "nailed" for a user_gate_progress row.
+- Client: gate card on UserProfile, gate ceremony modal,
+  ranked-match picker, fail/pass UX.
+
+(Phases 2, 3, 5, 6 commit breakdowns will be added as each phase
+begins.)
 
 ### Implementation phases
 
@@ -608,13 +713,21 @@ than it found it.
 - Streak break UX (tombstone).
 - Insurance flow (L30+ only).
 
-**Phase 4 — Curated ladder + level system**
+**Phase 4 — Curated ladder + level system + gates**
 - Curated multiplier calculation in `award_xp` (cuisine-scoped
   lesson count).
 - Level curve + `xp_to_next()`.
 - Level titles on UserProfile.
 - Level-up ceremony modal.
 - Audit bundled "learn" recipes for cuisine completeness.
+- **Gates:** `xp_level_gates` table + seed, `user_gate_progress`
+  table, `xp_events.gate_adjustment` column. Gate-check branch
+  in `award_xp` that zeros `final_xp` when the user is at a gate
+  and records the blocked amount. Prereq-progress aggregator
+  (reads from skill_levels, cook_logs categories, streak_count,
+  curated-lesson counts). Gate UX: prereq card on UserProfile,
+  full-screen gate ceremony, ranked-match picker, all-diners-
+  nailed pass check, catch-up animation on pass.
 
 **Phase 5 — Celebration layer (the "WHY" reveal)**
 - Rewrite `CookComplete.jsx` cook-complete scene to beat-sequenced
