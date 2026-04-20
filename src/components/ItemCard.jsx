@@ -536,8 +536,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             ITEM
           </div>
 
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 10 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Header band: identity stack + canonical image, image
+              absolutely pinned to the top-right. Relative container
+              lets the image float without getting pushed down by
+              text flow; the identity stack reserves paddingRight so
+              its content doesn't run under the image. Width is sized
+              to roughly match the EXPIRES tile column below so the
+              icon reads as visually anchored over that column
+              without being physically attached to it. */}
+          <div style={{ position: "relative", marginBottom: 10 }}>
+            <div style={{ paddingRight: 116, minWidth: 0 }}>
               {/* + ADD BRAND affordance — only rendered when brand
                   is unset. Positioned ABOVE the big italic header so
                   we don't leave a weird empty slot inline when brand
@@ -957,36 +965,39 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 </div>
               )}
             </div>
+            {/* Canonical image — bundled SVG wins, then admin-
+                generated imageUrl, then pantry row's emoji. Pinned
+                top-right of the header band so it stays anchored
+                even as the identity stack grows. Width ~ EXPIRES
+                tile column below for visual alignment. objectFit
+                contain + no frame so the bare SVG breathes on the
+                card's own dark surface. */}
+            {(() => {
+              const lookupId = item.canonicalId || item.ingredientId || null;
+              const canonImage = lookupId
+                ? canonicalImageUrlFor(lookupId, getDbInfo(lookupId))
+                : null;
+              if (!canonImage && !item.emoji) return null;
+              return (
+                <div style={{
+                  position: "absolute", top: 0, right: 0,
+                  width: 104, height: 104,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  pointerEvents: "none",
+                }}>
+                  {canonImage ? (
+                    <img
+                      src={canonImage}
+                      alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 64, lineHeight: 1 }}>{item.emoji || "🥫"}</div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
-
-          {/* Canonical image resolver — bundled SVG wins, then admin-
-              generated imageUrl, then pantry row's emoji. Positioned
-              in its own right-aligned row between the identity stack
-              and the three-tile block so the icon floats above the
-              EXPIRES column (rightmost tile). Deliberately large —
-              reads as a hero element, not a leading bullet. Pantry
-              tiles keep using emoji — only ItemCard header + the
-              IngredientCard hero run the image cascade. */}
-          {(() => {
-            const lookupId = item.canonicalId || item.ingredientId || null;
-            const canonImage = lookupId
-              ? canonicalImageUrlFor(lookupId, getDbInfo(lookupId))
-              : null;
-            if (!canonImage && !item.emoji) return null;
-            return (
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                {canonImage ? (
-                  <img
-                    src={canonImage}
-                    alt=""
-                    style={{ width: 128, height: 128, objectFit: "contain" }}
-                  />
-                ) : (
-                  <div style={{ fontSize: 72, lineHeight: 1 }}>{item.emoji || "🥫"}</div>
-                )}
-              </div>
-            );
-          })()}
 
           {/* Canonical suggestion — renders after a brand scan when
               the current row has no canonical pinned. User taps USE
