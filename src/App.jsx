@@ -13,6 +13,7 @@ import UserProfile from "./components/UserProfile";
 import WhatsNewNotification from "./components/WhatsNewNotification";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
 import LevelUpCeremony from "./components/LevelUpCeremony";
+import XpToastStack from "./components/XpToastStack";
 import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
@@ -338,6 +339,12 @@ function AuthedApp({ user, profile, upsertProfile }) {
           movement and plays a full-screen celebration. Self-dismissing
           and zIndex 9999 so it lands on top of any open sheet. */}
       <LevelUpCeremony level={profile?.level || 1} />
+
+      {/* Realtime XP toast stack — top-right slide-ins for non-cook
+          earn events (scans, photos, reviews, badges, …). Subscribes
+          to xp_events filtered to this user; suppressed by
+          CookCompleteSummary via context while a beat sequence plays. */}
+      <XpToastStack userId={user?.id} />
 
       <button
         onClick={() => setSettingsOpen(true)}
