@@ -1338,7 +1338,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // onItemsScanned (parent's addScannedItems handles the
               // pantry insert + toast), then close the Scanner. User
               // lands back in Kitchen with the new item stocked.
-              onItemsScanned([row], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              onScanDraft?.(row);
               if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
@@ -5765,17 +5765,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             emoji: s.emoji,
             amount: s.amount,
             unit: s.unit,
-            // Package capacity. For barcode scans we KNOW the
-            // package size (parsed from OFF.quantity OR inherited
-            // from popular_package_sizes), so seed max + the
-            // pantry_items.package_amount/unit columns with it.
-            // Sealed: amount === max → slider sits at 100%, ItemCard
-            // PACKAGE SIZE tile renders the real value instead of
-            // "tap to set". Fallback to 0 when packaging is unknown.
-            max: typeof s.max === "number" && s.max > 0 ? s.max : 0,
-            ...(typeof s.max === "number" && s.max > 0
-              ? { packageAmount: s.max, packageUnit: s.unit }
-              : {}),
+            // Packaging intentionally undefined — scans don't ask
+            // about container size. 0 = slider stays hidden
+            // (hasPackage check fails); DB column is NOT NULL so
+            // we can't send literal null.
+            max: 0,
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: scanPriceCents,
