@@ -34,7 +34,7 @@ import TypePicker from "./TypePicker";
 import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
-import { canonicalImageUrlFor } from "../lib/canonicalIcons";
+import { canonicalImageUrlFor, tileIconFor } from "../lib/canonicalIcons";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
@@ -7191,7 +7191,17 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                       onMouseOut={e =>  { e.currentTarget.style.borderColor = empty ? "#1a1a1a" : "#242424"; }}
                     >
                       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                        <span style={{ fontSize: 30 }}>{tile.emoji}</span>
+                        {(() => {
+                          // STORED IN tile icon — bundled SVG at
+                          // public/icons/tiles/<tile_id>.svg wins
+                          // when registered in BUNDLED_TILE_SLUGS;
+                          // emoji fallback otherwise.
+                          const tileIcon = tileIconFor(tile.id, storageTab);
+                          if (tileIcon) {
+                            return <img src={tileIcon} alt="" style={{ width: 36, height: 36, objectFit: "contain" }} />;
+                          }
+                          return <span style={{ fontSize: 30 }}>{tile.emoji}</span>;
+                        })()}
                         <span style={{
                           fontFamily:"'DM Mono',monospace",
                           fontSize: 10,
@@ -7249,7 +7259,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 >←</button>
                 <div style={{ flex:1, minWidth: 0 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <span style={{ fontSize: 22 }}>{tile.emoji}</span>
+                    {(() => {
+                      const tileIcon = tileIconFor(tile.id, storageTab);
+                      if (tileIcon) {
+                        return <img src={tileIcon} alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />;
+                      }
+                      return <span style={{ fontSize: 22 }}>{tile.emoji}</span>;
+                    })()}
                     <div style={{ fontFamily:"'Fraunces',serif", fontSize: 20, color:"#f0ece4", fontWeight: 400 }}>
                       {tile.label}
                     </div>

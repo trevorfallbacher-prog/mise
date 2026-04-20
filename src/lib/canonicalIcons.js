@@ -39,3 +39,51 @@ export function canonicalImageUrlFor(canonicalId, info) {
   if (info?.imageUrl) return info.imageUrl;
   return null;
 }
+
+// ── STORED IN tile icons ──────────────────────────────────────────────
+// Parallel system for the location-tile headers (Fridge / Pantry /
+// Freezer category tiles). Same convention: drop a file at
+// public/icons/tiles/<tile_id>.svg (lowercase, snake_case matching
+// the tile id from src/lib/{fridge,pantry,freezer}Tiles.js), then
+// add the id to BUNDLED_TILE_SLUGS below. Tile renderers check
+// tileIconFor() before falling back to the tile's emoji.
+//
+// Tile IDs as of latest:
+//
+//   FRIDGE: meat_poultry, seafood, dairy, produce, fresh_herbs,
+//           condiments, drinks, bread_baked, leftovers, misc
+//
+//   PANTRY: pasta_grains, beans_legumes, canned_jarred, baking,
+//           spices_dried_herbs, condiments_sauces, oils_fats,
+//           sweeteners, nuts_seeds, cooking_alcohol, bread,
+//           dried_chilies, misc
+//
+//   FREEZER: frozen_meat_poultry, frozen_seafood, frozen_stocks_sauces,
+//            frozen_veg, frozen_fruit, frozen_bread_dough,
+//            frozen_meal_prep, frozen_desserts, frozen_butter_dairy,
+//            frozen_herbs, misc
+//
+// Naming note: `misc` collides across all three locations (each has
+// its own misc tile). Use location-prefixed variants if you want
+// distinct visuals — e.g. fridge_misc.svg / pantry_misc.svg /
+// freezer_misc.svg — and register both the bare id and the prefixed
+// id below; tileIconFor checks the prefixed form first.
+const BUNDLED_TILE_SLUGS = new Set([
+  // empty — drop SVGs in public/icons/tiles/ and register here
+]);
+
+export function tileIconFor(tileId, location) {
+  if (!tileId || typeof tileId !== "string") return null;
+  const slug = tileId.toLowerCase();
+  // Try location-prefixed first so distinct misc-per-location works
+  // (e.g. fridge_misc beats misc). location is the parent shelf
+  // ('fridge' | 'pantry' | 'freezer'), passed through from the
+  // renderer when known.
+  if (location && BUNDLED_TILE_SLUGS.has(`${location}_${slug}`)) {
+    return `/icons/tiles/${location}_${slug}.svg`;
+  }
+  if (BUNDLED_TILE_SLUGS.has(slug)) {
+    return `/icons/tiles/${slug}.svg`;
+  }
+  return null;
+}
