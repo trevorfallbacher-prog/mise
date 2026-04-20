@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Cookbook from "./Cookbook";
+import NutritionDashboard from "./NutritionDashboard";
 import { useUserProfile } from "../lib/useUserProfile";
 import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
@@ -66,7 +67,7 @@ export default function UserProfile({
   // embedded Cookbook's own pipeline resolves the detail view.
   deepLink, onConsumeDeepLink,
 }) {
-  const { profile, cooks, stats, sharedCooks, loading, error } =
+  const { profile, cooks, stats, sharedCooks, loading, error, setNutritionTargets } =
     useUserProfile(targetUserId, viewerId);
 
   // "VIEW FULL COOKBOOK" — opens the existing Cookbook component as a
@@ -178,6 +179,17 @@ export default function UserProfile({
               <Stat value={stats.nailedCount} label="🤩" color="#f5c842" />
               <Stat value={profile?.streak_count ?? 0} label="🔥" color="#e07a3a" />
             </div>
+
+            {/* Nutrition dashboard — per-user tally of calories/protein/
+                fat/carbs with day / week / month views and a goal editor.
+                Self-only by design: another user's macros are private. */}
+            {isSelf && (
+              <NutritionDashboard
+                userId={viewerId}
+                targets={profile?.nutrition_targets}
+                onUpdateTargets={setNutritionTargets}
+              />
+            )}
 
             {/* Badge wall. Earned badges render in full color (SVG from
                 public/badges/), locked badges render as dim silhouettes

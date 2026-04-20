@@ -669,6 +669,12 @@ export default function CookMode({
           friends={friends}
           pantry={pantry}
           setPantry={setPantry}
+          // Threaded so CookComplete can call recipeNutrition() at
+          // save time to stamp cook_logs.nutrition (migration 0068).
+          // CookMode already reads both for its own meta-row card; no
+          // new hook calls on this path.
+          ingredientInfo={ingredientInfo}
+          brandNutrition={brandNutrition}
           onFinish={() => {
             setCompleting(false);
             onDone?.();

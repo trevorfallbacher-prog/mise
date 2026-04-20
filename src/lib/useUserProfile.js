@@ -149,5 +149,23 @@ export function useUserProfile(targetUserId, viewerId) {
     return () => { alive = false; };
   }, [viewerId, targetUserId]);
 
-  return { profile, cooks, stats, sharedCooks, loading, error, refresh: load };
+  // Update nutrition_targets on the viewer's OWN profile. Surfaced
+   // here so the NutritionDashboard goal editor has a single place to
+   // write through without needing its own hook. Partial merge: the
+   // caller can pass { kcal: 2400 } without clobbering protein/fat/carb.
+  const setNutritionTargets = useCallback(async (patch) => {
+    if (!viewerId || !patch) return;
+    const next = { ...(profile?.nutrition_targets || {}), ...patch };
+    // Optimistic local update so the bars re-animate against the new
+    // target immediately; realtime (or the refresh on next profile
+    // open) reconciles.
+    setProfile(prev => prev ? { ...prev, nutrition_targets: next } : prev);
+    const { error: upErr } = await supabase
+      .from("profiles")
+      .update({ nutrition_targets: next })
+      .eq("id", viewerId);
+    if (upErr) console.error("[profiles] nutrition_targets update failed:", upErr);
+  }, [viewerId, profile?.nutrition_targets]);
+
+  return { profile, cooks, stats, sharedCooks, loading, error, refresh: load, setNutritionTargets };
 }
