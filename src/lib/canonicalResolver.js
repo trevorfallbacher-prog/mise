@@ -285,18 +285,28 @@ export function resolveCanonicalFromScan({
   const cleaned = cleanProductName(productName, brand);
   console.log("[resolver-debug] cleaned:", cleaned, "productName:", productName, "brand:", brand);
 
-  // Tier 2.5 — exact-token match.
-  if (cleaned) {
-    const tokens = cleaned.split(/\s+/).filter(t => t && t.length >= 3);
-    console.log("[resolver-debug] tokens:", tokens);
+  // Tier 2.5 — exact-token match against productName first, then
+  // brand if productName failed or was empty. Brand-token fallback
+  // catches the case where OFF returned only `brand: "Ramen Bae"`
+  // (productName null, categoryHints empty) but "ramen" is sitting
+  // right there in the brand itself AND is a bundled canonical.
+  // The 95+ floor keeps this safe: a brand like "Kerrygold" doesn't
+  // match any canonical at 95+, so no false positive — we just fall
+  // through to the prompt.
+  const tokenSources = [];
+  if (cleaned) tokenSources.push({ label: "cleaned", text: cleaned });
+  if (brand) tokenSources.push({ label: "brand", text: String(brand).toLowerCase() });
+  for (const { label, text } of tokenSources) {
+    const tokens = text.split(/\s+/).filter(t => t && t.length >= 3);
+    console.log("[resolver-debug]", label, "tokens:", tokens);
     for (const token of tokens) {
       const hit = bestMatchAboveFloor(token, 95);
-      console.log("[resolver-debug] token:", token, "hit:", hit ? { id: hit.ingredient.id, score: hit.score } : null);
+      console.log("[resolver-debug]", label, "token:", token, "hit:", hit ? { id: hit.ingredient.id, score: hit.score } : null);
       if (hit) {
         return {
           canonical: hit.ingredient,
           confidence: "high",
-          reason: `token:${token}`,
+          reason: `token-${label}:${token}`,
           matchedOn: token,
           score: hit.score,
           autoApply: true,
