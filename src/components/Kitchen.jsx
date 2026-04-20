@@ -34,6 +34,7 @@ import TypePicker from "./TypePicker";
 import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
+import { canonicalImageUrlFor } from "../lib/canonicalIcons";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
@@ -6226,7 +6227,30 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor: tappable ? "pointer" : "default" }}
       >
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-          <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
+          {(() => {
+            // Row-level canonical image resolver. Matches ItemCard's
+            // rule — bundled /icons/<slug>.svg wins, then the admin-
+            // generated info.imageUrl, then fall back to the emoji.
+            // List rows are tighter than the hero (32px), but the
+            // prompt is tuned for 24px readability so the icon still
+            // lands clean. Pantry tiles (Kitchen tile grid) are a
+            // DIFFERENT surface with hand-curated emoji; this is the
+            // flat-list + search-result renderer only.
+            const lookupId = item.canonicalId || item.ingredientId || null;
+            const canonImage = lookupId
+              ? canonicalImageUrlFor(lookupId, kitchenDbMap?.[lookupId])
+              : null;
+            if (canonImage) {
+              return (
+                <img
+                  src={canonImage}
+                  alt=""
+                  style={{ width: 32, height: 32, objectFit: "contain", flexShrink: 0 }}
+                />
+              );
+            }
+            return <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>;
+          })()}
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
               <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
@@ -6710,7 +6734,25 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           style={{ position:"relative", background:"#141414", border:`1px solid ${anyCritical?"#ef444422":anyLow?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor:"pointer" }}
         >
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-            <span style={{ fontSize:26, flexShrink:0 }}>{top.emoji}</span>
+            {(() => {
+              // Stack top-card icon — same resolver as single-item
+              // rows so a stacked pile of Pepsis uses the soda_pop
+              // canonical image instead of the raw emoji.
+              const lookupId = top.canonicalId || top.ingredientId || null;
+              const canonImage = lookupId
+                ? canonicalImageUrlFor(lookupId, kitchenDbMap?.[lookupId])
+                : null;
+              if (canonImage) {
+                return (
+                  <img
+                    src={canonImage}
+                    alt=""
+                    style={{ width: 32, height: 32, objectFit: "contain", flexShrink: 0 }}
+                  />
+                );
+              }
+              return <span style={{ fontSize:26, flexShrink:0 }}>{top.emoji}</span>;
+            })()}
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
                 <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
