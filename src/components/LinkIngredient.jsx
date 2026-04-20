@@ -326,6 +326,25 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
       });
       setSearch("");
     }
+
+    // XP: +15 for creating a canonical. Only fires for genuinely new
+    // canonicals (slug not yet in the bundled registry). The
+    // canonical_approved follow-up (+25) lands via DB trigger when the
+    // ingredient_info approval row is later written.
+    if (!findIngredient(id)) {
+      (async () => {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) return;
+        const { error: xpErr } = await supabase.rpc("award_xp", {
+          p_user_id:   user.id,
+          p_source:    "canonical_create",
+          p_ref_table: "ingredient_info",
+          p_ref_id:    null,
+        });
+        if (xpErr) console.error("[award_xp] canonical_create failed:", xpErr);
+      })();
+    }
+
     setCreating(null);
   };
 
