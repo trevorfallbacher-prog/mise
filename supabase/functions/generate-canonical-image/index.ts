@@ -45,12 +45,15 @@ const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 // don't leave the app pointing at a URL that'll 404 in an hour.
 const RECRAFT_ENDPOINT = "https://external.api.recraft.ai/v1/images/generations";
 
-// Fixed style choices. digital_illustration substyle gives us the
-// flat-vector-on-solid-background aesthetic that plays nice with the
-// app's dark charcoal surfaces — cohesive with Fraunces italic hero
-// typography, readable at card-header scale.
-const RECRAFT_STYLE = "digital_illustration";
-const RECRAFT_SUBSTYLE = "2d_art_poster";
+// Fixed style choices. vector_illustration + line_art pins every
+// canonical to the same icon aesthetic — a thick warm-tan outline
+// stroke on pure black, no fills, no shadows. Reads like a single
+// illustrator's sheet even across hundreds of canonicals. The two
+// knobs that actually drive consistency: style/substyle (hard
+// constraint from Recraft's model) + the color + stroke language
+// in buildPrompt (soft constraint via the text prompt).
+const RECRAFT_STYLE = "vector_illustration";
+const RECRAFT_SUBSTYLE = "line_art";
 const RECRAFT_SIZE = "1024x1024";
 const RECRAFT_MODEL = "recraftv3";
 
@@ -78,10 +81,18 @@ function extractUserIdFromJwt(authHeader: string): string | null {
 }
 
 function buildPrompt(canonicalName: string, hint?: string): string {
-  const base = `A single ${canonicalName.trim()}, centered, editorial food illustration. ` +
-    `Warm cream and gold palette on a deep charcoal background. ` +
-    `Flat vector style, clean lines, subtle grain texture, high contrast. ` +
-    `No text, no labels, no decorative borders. Square composition.`;
+  // House icon style — thick warm-tan outline on pure black. Every
+  // canonical gets the same treatment so the set reads like one
+  // illustrator's sheet. The hex code is a soft hint (models can
+  // lose exact colors); the descriptive language does the heavy
+  // lifting ("warm premium tan").
+  const base = `An icon of a single ${canonicalName.trim()}. ` +
+    `Thick warm premium tan (#D4B896) outline stroke only, transparent fill, ` +
+    `on a pure black background. Single weight stroke throughout, ` +
+    `minimal anchor points, clean geometric construction. ` +
+    `No gradients, no shadows, no texture, no fills. ` +
+    `Bold enough to read at 24 pixels. No padding. ` +
+    `Centered subject, no text, no labels, no decorative borders.`;
   if (hint && hint.trim()) {
     return `${base} ${hint.trim()}.`;
   }
