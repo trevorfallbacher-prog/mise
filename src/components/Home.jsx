@@ -53,7 +53,15 @@ export default function Home({
   profile, userId, familyIds = [], familyLoading = false, nameFor,
   openProfile, openCook,
 }) {
-  const streak    = profile.streak_count || 0;
+  const streak      = profile.streak_count || 0;
+  const streakTier  = profile.streak_tier  || 0;
+  const brokenPeak  = profile.streak_broken_peak || 0;
+  const brokenAt    = profile.streak_broken_at;
+  // Tombstone: visible only while we're still inside the 48h revival
+  // window — beyond that the break becomes history and we stop
+  // interrupting the home surface with it.
+  const tombstoneActive = brokenPeak > 0 && brokenAt &&
+    (Date.now() - new Date(brokenAt).getTime()) < 48 * 60 * 60 * 1000;
 
   // Greeting is picked once per mount — re-tabbing back to Home rolls
   // again, which is the whole point (easter eggs should feel like a
@@ -99,11 +107,42 @@ export default function Home({
           </span>
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {streak > 0 && (
-            <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "4px 10px", display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12 }}>🔥</span>
+          {streak > 0 && !tombstoneActive && (
+            <div style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: 20,
+              padding: "4px 10px",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              boxShadow: streakTier >= 3 ? "0 0 10px rgba(224,122,58,.4)" : "none",
+            }}>
+              <span style={{ fontSize: 12 }}>
+                {streakTier > 0 ? "🔥".repeat(Math.min(4, streakTier)) : "🔥"}
+              </span>
               <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#f5c842" }}>
                 {streak} day{streak === 1 ? "" : "s"}
+              </span>
+            </div>
+          )}
+          {tombstoneActive && (
+            <div
+              title={`Your ${brokenPeak}-day streak ended — tap for options`}
+              style={{
+                background: "#1a0f0a",
+                border: "1px solid #3a1a0a",
+                borderRadius: 20,
+                padding: "4px 10px",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                opacity: 0.85,
+              }}
+            >
+              <span style={{ fontSize: 12 }}>🕯️</span>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#c78b6a" }}>
+                {brokenPeak}-day streak
               </span>
             </div>
           )}
