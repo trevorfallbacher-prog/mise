@@ -730,7 +730,39 @@ pass at each step):*
 9. Revive UI (L30+ gate), triggered when streak is mid-break
    (in the 48h revival window).
 
-**Phase 4 gate commits (preview — final list locked when Phase 4
+**Phase 4a commits — curated ladder + level system (8 total):**
+
+*Level curve:*
+1. `0102_xp_level_fn.sql` — xp_to_next(L) + level_from_xp(xp)
+   SQL functions reading xp_curve_coefficient + xp_curve_exponent
+   from xp_config. Pure math, no side effects.
+2. `0103_profiles_level_trigger.sql` — trigger on profiles
+   UPDATE of total_xp that recomputes level via level_from_xp()
+   and fires a level-up notification when crossing a boundary.
+
+*Curated ladder (multiplier):*
+3. `0104_curated_recipes_table.sql` — reference table
+   (slug PK, cuisine text, route_tags text[]) so award_xp can
+   tell which slugs qualify for the 1.5×→3× ladder. Empty seed;
+   populated by the script in step 4.
+4. `scripts/seed_curated_recipes.js` — one-shot Node script that
+   reads src/data/recipes/*.js and upserts rows into
+   curated_recipes. Run from the Supabase dashboard or CI.
+5. `0105_user_curated_lessons.sql` — per-user per-cuisine
+   lesson counter. Trigger on cook_logs insert that increments
+   when the cooked slug is in curated_recipes.
+6. `0106_award_xp_curated_multiplier.sql` — plug curated
+   multiplier into award_xp BEFORE cap (§4 step 2). Reads
+   xp_curated_ladder by the user's cuisine-specific lesson count.
+   Skips sources with flat_bonus=true.
+
+*Client:*
+7. UserProfile level/title display — replaces old L{skill_self_report}
+   reading profile.level + xp_level_titles + xp_to_next(L).
+8. Level-up ceremony modal — triggered by profile.level change
+   via realtime sub. Full-screen celebration per §5.
+
+**Phase 4b gate commits (preview — final list locked when Phase 4b
 begins):**
 
 - `NNNN_xp_level_gates.sql` — config table + seed. Prereqs as
