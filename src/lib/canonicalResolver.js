@@ -29,7 +29,54 @@
 //     matchedOn: "sushi-nori"|"tortilla chips"|... }
 //   or null when no tier produces a usable match.
 
-import { fuzzyMatchIngredient, INGREDIENT_STATES } from "../data/ingredients";
+import {
+  fuzzyMatchIngredient,
+  INGREDIENT_STATES,
+  INGREDIENTS,
+  dbCanonicalsSnapshot,
+} from "../data/ingredients";
+
+// Module-scope cache for canonical-name tokens. Rebuilt lazily on
+// first access; DB canonicals may grow over a session, so we also
+// invalidate whenever dbCanonicalsSnapshot returns a different size
+// than what we've baked in. Size check is a cheap heuristic, not
+// a strict equality — we just want to avoid rebuilding the set on
+// every cleanProductName call.
+let _canonicalNameTokens = null;
+let _canonicalNameTokensDbSize = -1;
+function canonicalNameTokens() {
+  const dbRows = dbCanonicalsSnapshot();
+  if (_canonicalNameTokens && _canonicalNameTokensDbSize === dbRows.length) {
+    return _canonicalNameTokens;
+  }
+  const out = new Set();
+  const addTokens = (s) => {
+    if (!s) return;
+    String(s)
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .split(/\s+/)
+      .forEach((t) => {
+        if (t && t.length >= 3) out.add(t);
+      });
+  };
+  for (const ing of INGREDIENTS) {
+    if (ing.parentId === undefined && ing.id.endsWith("_hub")) continue;
+    addTokens(ing.name);
+    addTokens(ing.shortName);
+    // Registry ids are underscore-separated and also identify the
+    // canonical. "chicken_breast" → tokens {chicken, breast}. Lets
+    // us protect canonical words that are more specific than the
+    // display name alone.
+    addTokens(String(ing.id).replace(/_/g, " "));
+  }
+  for (const ing of dbRows) {
+    addTokens(ing.name);
+  }
+  _canonicalNameTokens = out;
+  _canonicalNameTokensDbSize = dbRows.length;
+  return out;
+}
 
 // Marketing / packaging tokens to strip before we fuzz the product
 // name. Targeted list, not general English stopwords — we want the
@@ -93,6 +140,15 @@ function brandTokens(brand) {
 // "Ocean's Halo O'cean's Organic Sushi Nori Wasabi Style 40G"
 //   with brand "Ocean's Halo"
 //   → "sushi nori"
+//
+// Crucially: brand tokens that are ALSO canonical names are
+// preserved. "Ramen Bae Protein Ramen" with brand "Ramen Bae"
+// would otherwise strip both 'ramen's and leave "protein" — we'd
+// never resolve to the ramen canonical. Same problem for "Chicken
+// of the Sea Tuna", "Chicken Land's Chicken", any brand where the
+// marketer baked the food category into their name. Guard by
+// checking each brand token against the registry's name tokens
+// before removing it.
 export function cleanProductName(productName, brand) {
   if (!productName || typeof productName !== "string") return "";
   let out = productName.toLowerCase();
@@ -104,15 +160,35 @@ export function cleanProductName(productName, brand) {
     .split(/\s+/)
     .filter(t => t.length >= 2);
   const bTokens = brandTokens(brand);
+  const canonTokens = canonicalNameTokens();
+  // Narrow the brand-strip set to tokens the registry doesn't also
+  // claim as a canonical identifier. Preserves food nouns that
+  // happen to be part of the brand.
+  const strippableBrandTokens = new Set();
+  for (const t of bTokens) {
+    if (!canonTokens.has(t)) strippableBrandTokens.add(t);
+  }
   const kept = tokens.filter(t => {
-    if (bTokens.has(t)) return false;
+    if (strippableBrandTokens.has(t)) return false;
     if (MARKETING_STOPWORDS.has(t)) return false;
     // Drop pure-numeric residue (after unit strip, sometimes stray
     // digits survive).
     if (/^\d+$/.test(t)) return false;
     return true;
   });
-  return kept.join(" ").trim();
+  // Dedupe repeated tokens — "Ramen Bae Protein Ramen" with brand
+  // "Ramen Bae" + protected 'ramen' leaves "ramen protein ramen"
+  // (two 'ramen's, non-adjacent). Collapse to one 'ramen protein'
+  // as a stronger fuzz match target. Preserves first-occurrence
+  // order so the canonical noun reads first.
+  const seen = new Set();
+  const deduped = [];
+  for (const t of kept) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    deduped.push(t);
+  }
+  return deduped.join(" ").trim();
 }
 
 // Tidy an OFF taxonomy tag like "sushi-nori" / "seaweed-sheets" into
