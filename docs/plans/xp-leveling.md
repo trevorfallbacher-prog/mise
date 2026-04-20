@@ -694,6 +694,42 @@ pass at each step):*
 *Deferred to Phase 2b (needs partner-pair dedup design):*
 - `cook_together` — 1× per partner pair per day
 
+**Phase 3 commits (9 total — locked at phase start):**
+
+*Schema + clock:*
+1. `0096_profiles_streak_columns.sql` — add streak_shields,
+   streak_peak, streak_tier, streak_insurance_last_used, timezone.
+   Backfill existing rows to 'UTC' so day_local math still works.
+2. `0097_award_xp_timezone_aware.sql` — rewrite award_xp so
+   day_local is computed from profiles.timezone with the 04:00
+   local-hour rollover from xp_config.streak_rollover_hour.
+
+*Streak engine:*
+3. `0098_streak_tick_trigger.sql` — trigger on xp_events INSERT
+   (skipping streak_revival rows) that runs the state machine:
+   increment on consecutive day, burn shield on 1-day gap if
+   available, reset otherwise. Updates streak_count,
+   last_cooked_date, streak_tier, streak_peak.
+4. `0099_shield_regen_fn.sql` — shield regen function callable
+   from a daily cron. Reads xp_streak_tiers.shield_regen_days and
+   shield_capacity, bumps streak_shields up toward the cap.
+5. `0100_award_xp_streak_multiplier.sql` — plug streak_mult into
+   award_xp AFTER the cap (§4 step 5). Reads profiles.streak_tier
+   → xp_streak_tiers.multiplier. streak_revival events skip this.
+
+*Revival:*
+6. `0101_streak_revive_rpc.sql` — SECURITY DEFINER RPC: L≥30
+   gate, 48h window, 14d cooldown, 200 XP fee, never below
+   current level floor. Restores streak_count to peak, bumps
+   streak_insurance_last_used.
+
+*Client:*
+7. UserProfile flame-stack display (particle intensity keyed to
+   streak_tier via xp_streak_tiers.particle_intensity).
+8. Home avatar flame overlay + streak-break tombstone UX.
+9. Revive UI (L30+ gate), triggered when streak is mid-break
+   (in the 48h revival window).
+
 **Phase 4 gate commits (preview — final list locked when Phase 4
 begins):**
 
