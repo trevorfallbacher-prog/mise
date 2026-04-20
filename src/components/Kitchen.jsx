@@ -2631,7 +2631,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   // wrong" state that lists each missing field with a friendly
   // reminder of what it's for.
   const trimmedName = customName.trim();
-  const hasName     = !!trimmedName;
+  const trimmedBrand = (customBrand || "").trim();
   const hasAmount   = amount !== "" && !isNaN(parseFloat(amount));
   const hasUnit     = !!customUnit.trim();
   const hasCategory = !!customTypeId;
@@ -2648,6 +2648,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     || canonicalIdForType(customTypeId)
     || null;
   const hasCanonical = !!derivedCanonicalId;
+  // Per CLAUDE.md universal identity rule: HEADER is DERIVED from
+  // [Brand] [Canonical] when both set. So when brand + canonical are
+  // present, the NAME axis is satisfied even if the user typed
+  // nothing into the name field — the header renders "Ramen Bae ·
+  // Ramen" regardless. Only fail the name check when there's no
+  // derivation source at all.
+  const hasName = !!trimmedName || (!!trimmedBrand && hasCanonical);
   const missing = [];
   if (!hasName)      missing.push("name");
   if (!hasAmount)    missing.push("amount");
