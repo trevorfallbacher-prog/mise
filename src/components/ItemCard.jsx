@@ -247,8 +247,31 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // INSIDE the thing — lives on ingredient_ids[]).
   const currentCanonical = useMemo(() => {
     if (!item?.canonicalId) return null;
-    return findIngredient(item.canonicalId);
-  }, [item?.canonicalId]);
+    const real = findIngredient(item.canonicalId);
+    if (real) return real;
+    // Synthetic fallback. canonicalId set but the registry doesn't
+    // carry this slug (happens for UPC-correction-derived canonicals
+    // like 'tortilla_chips' that were taught by a prior scan but
+    // never promoted into src/data/ingredients.js). Mirror the stub
+    // shape the scan resolver builds at Kitchen.jsx:1099 so the
+    // canonical line renders with a humanized name instead of
+    // collapsing to item.name. Prevents the "canonical known but
+    // hidden" regression where the pantry row knows its tortilla_chips
+    // identity but the card looks like a free-text row.
+    const readable = String(item.canonicalId)
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase());
+    return {
+      id:          item.canonicalId,
+      name:        readable,
+      shortName:   readable,
+      emoji:       item.emoji || "✨",
+      category:    item.category || "pantry",
+      units:       [{ id: "count", label: "count", toBase: 1 }],
+      defaultUnit: "count",
+      _synthetic:  true,
+    };
+  }, [item?.canonicalId, item?.emoji, item?.category]);
 
   // Stacked type picker — separate from tilePicker so both can
   // exist but don't step on each other.
