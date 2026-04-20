@@ -1165,13 +1165,40 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   console.warn("[scanner:barcode] popular package fetch failed:", e);
                 }
               }
-              const attributes = buildAttributesFromScan({
+              let attributes = buildAttributesFromScan({
                 productName:   res.productName,
                 categoryHints: res.categoryHints || [],
                 originTags:    res.originTags  || [],
                 countryTags:   res.countryTags || [],
                 labelTags:     res.labelTags   || [],
               });
+              // OFF responses are inconsistent — the same UPC can
+              // return a rich productName one session and null the
+              // next. When current scan has nothing to extract from,
+              // inherit from the most recent prior pantry_items row
+              // with the same UPC. Preserves Scoops! Original claim
+              // pills, Chicken Flavor variant subtitle, etc., across
+              // rescans.
+              let inheritedScanRaw = null;
+              const offProductName = res.productName || null;
+              const attributesEmpty = !attributes || Object.keys(attributes).length === 0;
+              if (userId && (!offProductName || attributesEmpty)) {
+                try {
+                  const { data: prior } = await supabase
+                    .from("pantry_items")
+                    .select("scan_raw, attributes")
+                    .eq("barcode_upc", barcode)
+                    .order("updated_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                  if (prior) {
+                    if (!offProductName && prior.scan_raw) inheritedScanRaw = prior.scan_raw;
+                    if (attributesEmpty && prior.attributes) attributes = prior.attributes;
+                  }
+                } catch (e) {
+                  console.warn("[scanner:barcode] prior-row inherit failed:", e);
+                }
+              }
               // Build a single scan row that matches the shape the
               // rest of the confirm flow expects (same fields scan-
               // receipt / scan-shelf produce). Canonical-derived
@@ -5738,11 +5765,17 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             emoji: s.emoji,
             amount: s.amount,
             unit: s.unit,
-            // Packaging intentionally undefined — scans don't ask
-            // about container size. 0 = slider stays hidden
-            // (hasPackage check fails); DB column is NOT NULL so
-            // we can't send literal null.
-            max: 0,
+            // Package capacity. For barcode scans we KNOW the
+            // package size (parsed from OFF.quantity OR inherited
+            // from popular_package_sizes), so seed max + the
+            // pantry_items.package_amount/unit columns with it.
+            // Sealed: amount === max → slider sits at 100%, ItemCard
+            // PACKAGE SIZE tile renders the real value instead of
+            // "tap to set". Fallback to 0 when packaging is unknown.
+            max: typeof s.max === "number" && s.max > 0 ? s.max : 0,
+            ...(typeof s.max === "number" && s.max > 0
+              ? { packageAmount: s.max, packageUnit: s.unit }
+              : {}),
             category: s.category,
             lowThreshold: Math.max(s.amount * 0.25, 0.25),
             priceCents: scanPriceCents,
