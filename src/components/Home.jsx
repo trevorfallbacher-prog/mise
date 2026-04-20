@@ -1,8 +1,9 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useActivityFeed } from "../lib/useActivityFeed";
 import { useBadges } from "../lib/useBadges";
 import { pickGreeting } from "../lib/greetings";
 import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
+import StreakRevive from "./StreakRevive";
 
 // Rating face lookup shared with the activity feed's cook rows.
 const RATING_EMOJI = { nailed: "🤩", good: "😊", meh: "😐", rough: "😬" };
@@ -57,11 +58,14 @@ export default function Home({
   const streakTier  = profile.streak_tier  || 0;
   const brokenPeak  = profile.streak_broken_peak || 0;
   const brokenAt    = profile.streak_broken_at;
+  const userLevel   = profile.level || 1;
   // Tombstone: visible only while we're still inside the 48h revival
   // window — beyond that the break becomes history and we stop
   // interrupting the home surface with it.
   const tombstoneActive = brokenPeak > 0 && brokenAt &&
     (Date.now() - new Date(brokenAt).getTime()) < 48 * 60 * 60 * 1000;
+  const canRevive = tombstoneActive && userLevel >= 30;
+  const [showRevive, setShowRevive] = useState(false);
 
   // Greeting is picked once per mount — re-tabbing back to Home rolls
   // again, which is the whole point (easter eggs should feel like a
@@ -127,8 +131,12 @@ export default function Home({
             </div>
           )}
           {tombstoneActive && (
-            <div
-              title={`Your ${brokenPeak}-day streak ended — tap for options`}
+            <button
+              onClick={canRevive ? () => setShowRevive(true) : undefined}
+              title={canRevive
+                ? `Your ${brokenPeak}-day streak ended — tap to revive`
+                : `Your ${brokenPeak}-day streak ended — revival unlocks at L30`}
+              disabled={!canRevive}
               style={{
                 background: "#1a0f0a",
                 border: "1px solid #3a1a0a",
@@ -138,13 +146,16 @@ export default function Home({
                 alignItems: "center",
                 gap: 6,
                 opacity: 0.85,
+                cursor: canRevive ? "pointer" : "default",
+                font: "inherit",
+                color: "inherit",
               }}
             >
               <span style={{ fontSize: 12 }}>🕯️</span>
               <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#c78b6a" }}>
                 {brokenPeak}-day streak
               </span>
-            </div>
+            </button>
           )}
           {/* Profile avatar — primary visual entry point to your own
               profile from Home. Replaces the old XP / COOKS / 🏅 / 🔥
@@ -236,6 +247,15 @@ export default function Home({
 
       {/* Profile pill — compact diet/level/goal snapshot */}
       <ProfilePill profile={profile} />
+
+      {showRevive && (
+        <StreakRevive
+          userId={userId}
+          peak={brokenPeak}
+          onClose={() => setShowRevive(false)}
+          onRevived={() => { /* realtime profiles sub reconciles the UI */ }}
+        />
+      )}
     </div>
   );
 }
