@@ -81,22 +81,19 @@ function extractUserIdFromJwt(authHeader: string): string | null {
 }
 
 function buildPrompt(canonicalName: string, hint?: string): string {
-  // House icon style — thick warm-tan outline on pure black with the
-  // canonical name labeled below the icon. Every canonical gets the
-  // same treatment so the set reads like one illustrator's sheet.
-  // The hex code is a soft hint (models can lose exact colors); the
-  // descriptive language ("warm premium tan") does the heavy lifting.
-  // The label uses the same stroke weight so icon + text read as a
-  // single mark.
-  const name = canonicalName.trim();
-  const base = `An icon of a single ${name} with the word "${name}" labeled below the icon. ` +
+  // House icon style — thick warm-tan outline on pure black. Every
+  // canonical gets the same treatment so the set reads like one
+  // illustrator's sheet. The hex code is a soft hint (models can
+  // lose exact colors); the descriptive language ("warm premium tan")
+  // does the heavy lifting. Canonical name appears in the prompt as
+  // the SUBJECT only — NOT rendered as a text label on the image.
+  const base = `An icon of a single ${canonicalName.trim()}. ` +
     `Thick warm premium tan (#D4B896) outline stroke only, transparent fill, ` +
-    `on a pure black background. Single weight stroke throughout (both icon and label), ` +
+    `on a pure black background. Single weight stroke throughout, ` +
     `minimal anchor points, clean geometric construction. ` +
     `No gradients, no shadows, no texture, no fills. ` +
     `Bold enough to read at 24 pixels. No padding. ` +
-    `Label is clean sans-serif, centered under the icon, same warm tan as the stroke. ` +
-    `No decorative borders.`;
+    `Centered subject, no text, no labels, no decorative borders.`;
   if (hint && hint.trim()) {
     return `${base} ${hint.trim()}.`;
   }
