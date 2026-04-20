@@ -90,6 +90,19 @@ type Prefs = {
   // "bake" and "prep" are component-style recipes (bread, stock, sauce)
   // that aren't plate roles and don't live in a meal slot.
   course?: string;
+  // Which side of the "I want X / I have Y" tension wins.
+  //   "category" — course / timing / cuisine are authoritative; Claude
+  //                rejects drafts that don't fit the category even when
+  //                the pantry pushes toward something else. The client
+  //                also pre-filters the pantry block for tight-category
+  //                courses (bake/dessert/prep) so incompatible items
+  //                never become visible narrative pressure.
+  //   "pantry"   — legacy behavior. Pantry items drive the draft; the
+  //                course is a soft hint Claude bends around the
+  //                ingredients.
+  // Undefined → legacy behavior (course is a soft hint). Client only
+  // sends the field when course !== "any".
+  priority?: "category" | "pantry";
   // Canonical ids the user explicitly chose to build around. Must
   // appear in the recipe as primary components, not garnishes.
   starIngredientIds?: string[];
@@ -240,13 +253,13 @@ function assemblePromptHeader(
       : c === "side"
         ? "a supporting side dish — smaller scale, meant to sit alongside a main; do NOT draft a full entrée"
         : c === "dessert"
-          ? "a sweet dessert — do NOT draft a savory main or appetizer"
+          ? "a post-meal SWEET — cakes, pies, tarts, cookies, brownies, bars, custards, mousses, panna cotta, puddings, frozen desserts (ice cream, sorbet, granita), fruit-based finishes (compotes, crisps, cobblers), confections (truffles, bark, fudge). Single plated serving size, not a batch / bakery-case quantity. When something is both sweet AND baked, prefer Baked Goods unless the user's framing reads as 'finish to a meal' rather than 'bakery item.' ABSOLUTELY NOT savory, not meat, not a main, not an appetizer. If the pantry offers only savory starred items, draft a standard dessert and call out the missing sweet ingredients as shopping items — do not invent a savory dessert to use the pantry"
           : c === "appetizer"
             ? "a small opening bite — served before the main, meant to whet the appetite; 1-2 oz portions, finger-food or small-plate scale; do NOT draft a full entrée or a dessert"
             : c === "bake"
               ? "a sweet or neutral BAKED GOOD — cookies, cakes, brownies, muffins, scones, pies, tarts, quick breads, yeast breads (plain loaves), cinnamon rolls, croissants, biscuits, dinner rolls, bars, banana bread, pound cake. Think bakery display case. Explicitly NOT a meal-on-bread: no pizza, no focaccia with cheese/meat/avocado/pesto/etc. toppings, no savory galettes, no meal-style flatbreads, no stuffed savory breads, no quiche, no calzones, no savory tarts that function as a dinner. If it has a cheesy / meaty / vegetable topping composed like a plated dish, it's a MAIN disguised as a bake — reject that frame entirely and pick a true pastry or sweet/plain bread instead. The output must be something a user would eat as a standalone bakery item (with coffee, as dessert, as breakfast carbs) — NOT as the centerpiece of dinner. mealTiming should be null"
               : c === "prep"
-                ? "a kitchen prep/component — stock, sauce, marinade, pickle, spice blend, ferment, dressing, confit. Meant to be used as an ingredient in other recipes, NOT served as a plated dish. No composed-plate instructions, no 'serve with rice' step. mealTiming should be null (this is not a meal)"
+                ? "a kitchen PREP/COMPONENT — stock, broth, sauce, marinade, pickle, spice blend, ferment, dressing, vinaigrette, confit, flavored salt, chili oil, compound butter. A single ingredient-like output meant to be used in OTHER recipes. No composed-plate instructions, no 'serve with rice' step, no 'plate with garnish' step. Output is a jar / bottle / pouch of something, not a dinner. mealTiming should be null (this is not a meal). If the pantry's starred items are whole proteins or full produce sets that read like a plated-dish palette, ignore that framing — produce a stock/sauce/pickle that USES the aromatics/acids/salts on hand, not a plated entrée"
                 : "";
     hardConstraintLines.push(
       `- COURSE = ${c.toUpperCase()}. The dish MUST function as ${roleDesc}.`,
@@ -271,9 +284,52 @@ function assemblePromptHeader(
     ? `\nHARD CONSTRAINTS — violating these is a failure, not a stylistic choice:\n${hardConstraintLines.join("\n")}\n`
     : "";
 
-  return `You are drafting a single recipe for a home cook.
+  // Priority mode — category-first (course wins, pantry is a palette
+  // filtered to compatible items) vs pantry-first (legacy; pantry
+  // drives the draft and course bends). The client pre-filters the
+  // pantry block when priority==="category", so Claude sees a
+  // shortened palette; this block makes the precedence match that
+  // reality so Claude doesn't try to paint around missing ingredients
+  // by inventing something off-category.
+  const priorityMode: "category" | "pantry" =
+    prefs.priority === "pantry" ? "pantry" : "category";
+  const precedenceBlock = priorityMode === "category" ? `
+PRECEDENCE (hard → soft). Earlier beats later when they conflict.
+You are in CATEGORY-PRIORITY mode: the user picked a course and
+wants that category respected over pantry convenience.
+  1. Dietary / allergy constraints from the profile block.
+  2. COURSE — if set, the recipe MUST function as that course. This
+     is authoritative. A "bake" output is a baked good, not a meal
+     with a bread element. A "dessert" output is sweet. A "prep"
+     output is a single-component jar/bottle. Do not reframe the
+     category to fit the pantry.
+  3. MEAL TIMING — if set, the recipe fits that meal within the
+     category (breakfast pastry, dinner prep, etc.).
+  4. STAR INGREDIENTS — compatible only. If a starred item doesn't
+     fit the course category (e.g. hot dogs starred but course is
+     "bake"), SILENTLY DROP that star. Do not bend the category to
+     include it. Keep compatible stars (butter, flour, sugar, eggs
+     for bake; aromatics for prep; fruit/dairy for dessert).
+  5. The MEAL PROMPT text — the user's direct ask, respected within
+     the course category. "lasagna" under "bake" → reject lasagna,
+     pick a pastry.
+  6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
+     constraints above.
 
-PRECEDENCE (hard → soft). Earlier beats later when they conflict:
+The pantry block has already been filtered to category-compatible
+items. Ignore urgency/expiry narratives — the user explicitly asked
+for a category output, not for you to use up what's going bad. If
+the pantry is sparse for the category, draft a standard recipe and
+call the missing items out as shopping items.
+
+Lean toward creative, non-obvious combinations WITHIN the category.
+A boring chocolate chip cookie is a failure mode; so is a savory
+skillet disguised as a bake. Reach for something the user might
+not have thought of themselves — but keep it in-category.
+` : `
+PRECEDENCE (hard → soft). Earlier beats later when they conflict.
+You are in PANTRY-PRIORITY mode: the user wants to cook around what
+they have, not chase a category at the expense of waste.
   1. Dietary / allergy constraints from the profile block.
   2. STAR INGREDIENTS in USER PREFERENCES — if the user listed any,
      the recipe MUST feature EVERY one as a primary component, not
@@ -282,28 +338,70 @@ PRECEDENCE (hard → soft). Earlier beats later when they conflict:
   3. The MEAL PROMPT text — the user's direct ask ("Italian lasagna,
      Sunday dinner energy"). When it calls out a protein or dish,
      reach for it even if it isn't in their pantry; they'll source
-     what's missing. The pantry is your default palette, not a hard
-     constraint. If the user asks for shrimp and there's no shrimp,
-     write a shrimp recipe anyway and call out the non-pantry items
-     plainly.
+     what's missing.
   4. MEAL TIMING — if set, the recipe MUST fit that meal (breakfast
-     = breakfast dishes, dinner = dinner dishes). Don't draft
-     pancakes for dinner unless the Meal Prompt explicitly asks.
-  5. COURSE — if set, the recipe MUST function as that course
-     (main / side / dessert). A dinner main is not a side salad.
+     = breakfast dishes, dinner = dinner dishes).
+  5. COURSE — a soft hint in this mode. Try to honor it, but if the
+     pantry can't support it (course="bake" with zero flour/sugar/
+     butter/eggs/etc.), return a structured reason="pantry_incompatible_with_course"
+     so the client can suggest switching to Main or shopping first.
+     Do NOT fake a category by labeling a savory skillet "Baked
+     Goods." Better to admit the mismatch than produce a misleading
+     draft.
   6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
      constraints above.
 
-When nothing higher-priority is specified, lean on the pantry as
-your primary source and prioritize items that are expiring soon to
-reduce waste. A handful of assumed staples (salt, pepper, oil,
-water) is always fine.
+Lean on the pantry as your primary source and prioritize items that
+are expiring soon to reduce waste. A handful of assumed staples
+(salt, pepper, oil, water) is always fine.
 
 Lean toward creative, non-obvious combinations. When the user asks
 for a draft from their pantry, boring defaults (generic pasta, plain
 omelette) are a failure mode; reach for something the user might not
 have thought of themselves.
+`;
 
+  // Final self-check gate. Claude reliably respects HARD CONSTRAINTS
+  // more often when asked to explicitly verify its draft against
+  // them before emitting. This block fires regardless of priority
+  // mode; it exists because even with the category-priority
+  // precedence, Claude occasionally drifts (e.g. "Crispy Hot Dog &
+  // Avocado Scramble" labeled Baked Goods). The ABORT framing is
+  // proven language from OpenAI-style self-critique prompts.
+  const sanityCheck = prefs.course && prefs.course !== "any" ? `
+FINAL SANITY CHECK — run this against your draft BEFORE emitting JSON:
+
+  Course = ${prefs.course}:
+${prefs.course === "bake" ? `    • Title must not reference meat/fish/skillet/scramble/omelet/
+      breakfast-sandwich/burrito/quiche/pizza/calzone/focaccia-
+      with-toppings. If it does, ABORT and rewrite as a sweet or
+      plain baked good.
+    • Primary cooking method must be OVEN-BAKE. No pan-fry, no
+      sear, no grill, no stir-fry as the main step. If it is,
+      ABORT and switch to a true bake method.
+    • Output must read as a bakery-case item (served with coffee,
+      for breakfast carbs, as dessert), not as a plated meal. If
+      it looks like a plated dish with a bread base, ABORT.` : ""}
+${prefs.course === "dessert" ? `    • Output must be sweet. If the recipe is savory in any form —
+      a main disguised as dessert, a meat-containing finish, a
+      savory tart — ABORT and rewrite as a true sweet.
+    • Output must be a single plated serving or a small batch of
+      single servings. Not a bakery loaf.` : ""}
+${prefs.course === "prep" ? `    • Output must be a SINGLE COMPONENT meant to go into other
+      recipes — a stock, sauce, pickle, blend, dressing, confit,
+      oil, or salt. Not a plated dish. If the draft has
+      "serve with" or "plate alongside" language, ABORT and
+      produce a jar-of-something instead.` : ""}
+${prefs.course === "main" || prefs.course === "side" || prefs.course === "appetizer" ? `    • Output must function as the requested course. Don't draft
+      a sprawling three-component meal when asked for a side.
+      Don't draft a dessert when asked for an appetizer.` : ""}
+
+If ABORT fires, restart the JSON from scratch with a compliant
+recipe. Do not emit the failing draft.
+` : "";
+
+  return `You are drafting a single recipe for a home cook.
+${precedenceBlock}
 Variety seed: ${nonce}
 ${hardConstraintsBlock}${avoidBlock}
 PANTRY:
@@ -311,7 +409,7 @@ ${pantryLines}
 
 USER PREFERENCES:
 ${prefLines}
-${profileBlock}${historyBlock}`;
+${profileBlock}${historyBlock}${sanityCheck}`;
 }
 
 // SKETCH mode prompt — title + dual IDEAL/PANTRY ingredient lists,

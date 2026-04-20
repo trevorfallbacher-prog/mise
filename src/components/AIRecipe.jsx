@@ -81,6 +81,15 @@ const COURSE_CHIPS = [
   { id: "prep",      label: "Prep" },
 ];
 
+// PRIORITY chips — which side of the "I want X / I have Y" tension
+// wins. Only meaningful when a course is set (see buildPrefs). The
+// emojis pre-prime the user: 🎯 = category/target, 📦 = pantry/use
+// what's there.
+const PRIORITY_CHIPS = [
+  { id: "category", label: "🎯 Follow the category" },
+  { id: "pantry",   label: "📦 Use my pantry"       },
+];
+
 // Canonical ids that count as "protein" for the STAR INGREDIENTS
 // picker when the pantry row's category isn't in the meat/poultry/
 // seafood set. Keeps eggs / tofu / beans from being filtered out.
@@ -271,6 +280,14 @@ export default function AIRecipe({
   const [mealPrompt, setMealPrompt] = useState("");
   const [mealTiming, setMealTiming] = useState("any");
   const [course,     setCourse]     = useState("any");
+  // Priority mode — which side of the "I want X / I have Y" tension
+  // wins when the two conflict. "category" (default) makes the course
+  // constraint authoritative and filters the pantry palette to
+  // compatible items (bake = flour/sugar/butter/eggs/etc, not hot
+  // dogs). "pantry" keeps the old behavior where Claude drafts around
+  // whatever's stocked and bends the course to fit. Hidden from the
+  // UI when course === "any" — no tension to resolve.
+  const [priority,   setPriority]   = useState("category");
   const [starIngredientIds, setStarIngredientIds] = useState([]);
   const [cuisine,    setCuisine]    = useState("any");
   const [time,       setTime]       = useState("medium");
@@ -360,11 +377,16 @@ export default function AIRecipe({
     // mealTiming so the backend's HARD CONSTRAINTS block doesn't get a
     // "breakfast" tag on a chicken-stock prep.
     const isComponentCourse = course === "bake" || course === "prep";
+    // Priority only meaningful when a course is set. For course="any"
+    // there's no category to trade against, so omit the field — edge
+    // fn defaults to legacy behavior in that case.
+    const priorityForPayload = course !== "any" ? priority : undefined;
     return {
       cuisine, time, difficulty,
       mealPrompt: mealPrompt.trim() || undefined,
       mealTiming: (isComponentCourse || mealTiming === "any") ? undefined : mealTiming,
       course: course === "any" ? undefined : course,
+      priority: priorityForPayload,
       starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
       // Compose-a-meal anchor. Only present when the user clicked
       // "+ Add side/dessert/appetizer" from a main's preview; Claude
@@ -388,6 +410,10 @@ export default function AIRecipe({
         pantry, profile, ingredientInfo, cookLogs,
         mode: isRegen ? "lean" : "rich",
         starIngredientIds,
+        // Course-compatibility filter only fires when both are set;
+        // otherwise buildAIContext passes the pantry through unchanged.
+        course:   course === "any" ? undefined : course,
+        priority: course === "any" ? undefined : priority,
       });
       const payload = {
         mode: "sketch",
@@ -498,6 +524,8 @@ export default function AIRecipe({
         pantry, profile, ingredientInfo, cookLogs,
         mode: "rich",
         starIngredientIds,
+        course:   course === "any" ? undefined : course,
+        priority: course === "any" ? undefined : priority,
       });
       const locked = buildLockedIngredients();
       const payload = {
@@ -1840,6 +1868,26 @@ export default function AIRecipe({
             color="#e07a3a"
           />
         </Section>
+
+        {/* PRIORITY — which side of the "I want X / I have Y" tension
+            wins. Hidden when course==="any" because there's nothing
+            for pantry-compatibility to trade against. "Follow the
+            category" (default) filters the pantry palette to items
+            that fit the course and makes the course constraint
+            authoritative — picks Baked Goods → Claude sees only
+            flour/sugar/butter/eggs/etc., can't draft a hot-dog
+            skillet. "Use my pantry" keeps the old ingredient-first
+            behavior for the "use up what's going bad" workflow. */}
+        {course !== "any" && (
+          <Section label="PRIORITY">
+            <ChipRow
+              value={priority}
+              onChange={setPriority}
+              options={PRIORITY_CHIPS}
+              color="#7ec87e"
+            />
+          </Section>
+        )}
 
         {/* MEAL TIMING hides for bake/prep courses — a sourdough loaf
             or a gallon of stock isn't pinned to breakfast/lunch/dinner.
