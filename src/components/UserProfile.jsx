@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Cookbook from "./Cookbook";
 import NutritionDashboard from "./NutritionDashboard";
 import GateCard from "./GateCard";
+import GatePicker from "./GatePicker";
 import { useUserProfile } from "../lib/useUserProfile";
 import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
@@ -77,6 +78,9 @@ export default function UserProfile({
   // surface without duplicating that logic. Limited to self + family
   // since RLS only returns cook_logs for those scopes anyway.
   const [showCookbook, setShowCookbook] = useState(false);
+  // Ranked-match picker state; opened from GateCard when all
+  // prereqs are green.
+  const [pickerState, setPickerState] = useState(null);
 
   // Auto-open the Cookbook overlay whenever a cook_log deep-link lands.
   // The embedded Cookbook then consumes the same deepLink prop and
@@ -185,11 +189,7 @@ export default function UserProfile({
             {isSelf && (
               <GateCard
                 userId={viewerId}
-                onOpenPicker={(gate, progress) => {
-                  // Picker modal lands in P4b-8; for now log the
-                  // intent so the hook is observable.
-                  console.log("[GateCard] picker requested for gate", gate.gate_level, progress);
-                }}
+                onOpenPicker={(gate, progress) => setPickerState({ gate, progress })}
               />
             )}
 
@@ -381,6 +381,16 @@ export default function UserProfile({
             onOpenProfile={onOpenProfile}
           />
         </div>
+      )}
+
+      {pickerState && (
+        <GatePicker
+          userId={viewerId}
+          gate={pickerState.gate}
+          progress={pickerState.progress}
+          onClose={() => setPickerState(null)}
+          onPicked={() => setPickerState(null)}
+        />
       )}
     </div>
   );
