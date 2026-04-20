@@ -3,7 +3,7 @@ import { difficultyLabel, totalTimeMin } from "../data/recipes";
 import { findIngredient, unitLabel, compareQty, inferCanonicalFromName } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 import CookComplete from "./CookComplete";
-import { recipeNutrition } from "../lib/nutrition";
+import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 
@@ -363,36 +363,45 @@ export default function CookMode({
         )}
       </div>
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
-        {(() => {
-          // Per-serving kcal, rounded. Hidden (tile omitted) when the
-          // resolver couldn't map any ingredient to nutrition — a zero
-          // kcal tile on a recipe full of untracked items reads like a
-          // bug, not an honest coverage gap.
-          const cov = nutritionSummary?.coverage;
-          const kcal = nutritionSummary?.perServing?.kcal;
-          const kcalRounded = Math.round(kcal || 0);
-          const kcalTile = (cov?.resolved > 0 && kcalRounded > 0)
-            ? [["🔥", `${kcalRounded} kcal`, `${cov.resolved}/${cov.total} tracked`]]
-            : [];
-          const tiles = [
-            ["⏱", timeLabel],
-            ["📊", diffLabel],
-            ["👥", `Serves ${recipe.serves}`],
-            ...kcalTile,
-          ];
-          return tiles.map(([icon, val, sub]) => (
-            <div key={val} style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
-              <div style={{ fontSize:18, marginBottom:4 }}>{icon}</div>
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>{val}</div>
-              {sub && (
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", marginTop:2, letterSpacing:"0.06em" }}>
-                  {sub}
-                </div>
-              )}
-            </div>
-          ));
-        })()}
+        {[["⏱", timeLabel],["📊", diffLabel],["👥",`Serves ${recipe.serves}`]].map(([icon,val])=>(
+          <div key={val} style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
+            <div style={{ fontSize:18, marginBottom:4 }}>{icon}</div>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>{val}</div>
+          </div>
+        ))}
       </div>
+      {/* Per-serving macros rollup — verbose ('500 kcal · 12g protein
+          · 8g carbs · 7g fat') because cooks pre-meal want the full
+          picture, not just kcal. Hidden when the resolver couldn't
+          map any ingredient to nutrition (coverage.resolved === 0) —
+          don't render a misleading all-zeros card. Coverage subtitle
+          discloses gaps honestly when the recipe has untracked
+          ingredients. Matches the MealDetail macros card in
+          CreateMenu.jsx:816 for visual continuity between the
+          plan-the-menu surface and the about-to-cook surface. */}
+      {nutritionSummary && nutritionSummary.coverage.resolved > 0 && (
+        <div style={{
+          marginTop: 14, padding: "10px 14px",
+          background: "#141414", border: "1px solid #242424",
+          borderRadius: 10,
+        }}>
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+          }}>
+            ~ {formatMacros(nutritionSummary.perServing, { verbose: true })}
+          </div>
+          <div style={{
+            marginTop: 3,
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            color: "#666", letterSpacing: "0.08em",
+          }}>
+            PER SERVING
+            {nutritionSummary.coverage.resolved < nutritionSummary.coverage.total
+              ? ` · BASED ON ${nutritionSummary.coverage.resolved} OF ${nutritionSummary.coverage.total} INGREDIENTS`
+              : ""}
+          </div>
+        </div>
+      )}
       <div style={{ marginTop:28 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em" }}>INGREDIENTS</div>

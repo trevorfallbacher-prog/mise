@@ -9,7 +9,7 @@ import {
   totalTimeMin,
 } from "../data/recipes";
 import { SKILL_TREE } from "../data";
-import { recipeNutrition } from "../lib/nutrition";
+import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 
@@ -80,17 +80,18 @@ function SkillTile({ skill, onTap, active }) {
 
 function RecipeCard({ recipe, locked, lockReasons, onOpen, pantry = [], ingredientInfo, brandNutrition }) {
   const bars = difficultyBar(recipe.difficulty);
-  // Per-serving kcal rollup. Falls back through pantry override →
+  // Per-serving macros rollup. Falls back through pantry override →
   // brand_nutrition → ingredient_info → bundled canonical.nutrition,
   // so even a recipe on a row with zero scanned brands still shows
-  // the default calorie estimate from src/data/ingredients.js.
-  // Hidden when coverage is zero — a "0 kcal" tile on a recipe full
-  // of untracked ingredients reads like a bug, not a gap.
-  const kcal = useMemo(() => {
+  // defaults from src/data/ingredients.js. Compact format here —
+  // '500 kcal · 12p · 68c · 25f' — tight enough to sit on the same
+  // line as the prep time. Null when coverage is zero.
+  const macros = useMemo(() => {
     const n = recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo, brandNutrition });
     if (!n.coverage.resolved) return null;
-    const v = Math.round(n.perServing?.kcal || 0);
-    return v > 0 ? v : null;
+    const kcal = Math.round(n.perServing?.kcal || 0);
+    if (kcal <= 0) return null;
+    return formatMacros(n.perServing);
   }, [recipe, pantry, ingredientInfo, brandNutrition]);
   return (
     <button
@@ -115,7 +116,7 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen, pantry = [], ingredie
               {recipe.title}
             </span>
             <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#666", flexShrink: 0 }}>
-              {totalTimeMin(recipe)} min{kcal != null ? ` · ${kcal} kcal` : ""}
+              {totalTimeMin(recipe)} min
             </span>
           </div>
           {recipe.subtitle && (
@@ -136,6 +137,19 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen, pantry = [], ingredie
               {difficultyLabel(recipe.difficulty).toUpperCase()}
             </span>
           </div>
+          {/* Per-serving macros line — compact 'kcal · p · c · f'
+              shape. Only rendered when resolver returned real numbers;
+              a row of zeros on an untracked recipe reads as broken. */}
+          {macros && (
+            <div style={{
+              marginTop: 6,
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              color: locked ? "#444" : "#8a8478",
+              letterSpacing: "0.06em",
+            }}>
+              {macros}
+            </div>
+          )}
           {locked && lockReasons.length > 0 && (
             <div style={{ marginTop: 8, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#e07a3a", letterSpacing: "0.04em" }}>
               Requires {lockReasons.map(g => `${g.skill} ${g.need}`).join(", ")}
