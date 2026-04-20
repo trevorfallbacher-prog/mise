@@ -177,7 +177,11 @@ export default function UserProfile({
               <Stat value={stats.xp} label="XP" color="#f5c842" />
               <Stat value={stats.cookCount} label="COOKS" />
               <Stat value={stats.nailedCount} label="🤩" color="#f5c842" />
-              <Stat value={profile?.streak_count ?? 0} label="🔥" color="#e07a3a" />
+              <FlameStat
+                count={profile?.streak_count ?? 0}
+                tier={profile?.streak_tier ?? 0}
+                shields={profile?.streak_shields ?? 0}
+              />
             </div>
 
             {/* Nutrition dashboard — per-user tally of calories/protein/
@@ -386,6 +390,34 @@ function Stat({ value, label, color = "#f0ece4" }) {
     <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"12px 4px", textAlign:"center" }}>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color, fontWeight:500 }}>{value}</div>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>{label}</div>
+    </div>
+  );
+}
+
+// Fire-mode flame-stack stat. Flame count matches the streak tier
+// (0-4 from xp_streak_tiers.flame_count). Particle-halo intensity
+// is a hint encoded in the border/shadow strength here; the richer
+// particle field lands with the celebration layer in Phase 5.
+// Shield dots render below the count when the user is holding any.
+function FlameStat({ count, tier, shields }) {
+  const flames = Math.max(0, Math.min(4, tier));
+  const halo = ["none", "0 0 6px rgba(224,122,58,.25)", "0 0 10px rgba(224,122,58,.4)", "0 0 14px rgba(224,122,58,.55)", "0 0 20px rgba(245,200,66,.7)"][flames];
+  return (
+    <div style={{
+      background:"#161616", border:"1px solid #2a2a2a", borderRadius:12,
+      padding:"12px 4px", textAlign:"center", boxShadow: halo,
+    }}>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:"#e07a3a", fontWeight:500 }}>
+        {count}
+      </div>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginTop:2, display:"flex", alignItems:"center", justifyContent:"center", gap:2 }}>
+        <span>{flames > 0 ? "🔥".repeat(flames) : "🔥"}</span>
+      </div>
+      {shields > 0 && (
+        <div style={{ marginTop:4, fontSize:9, color:"#7eb8d4", fontFamily:"'DM Mono',monospace", letterSpacing:"0.08em" }}>
+          {"🛡".repeat(shields)}
+        </div>
+      )}
     </div>
   );
 }
