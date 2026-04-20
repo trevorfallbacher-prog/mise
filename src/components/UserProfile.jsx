@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Cookbook from "./Cookbook";
 import NutritionDashboard from "./NutritionDashboard";
+import GateCard from "./GateCard";
 import { useUserProfile } from "../lib/useUserProfile";
 import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
@@ -176,6 +177,21 @@ export default function UserProfile({
                 next. Curve and titles match xp_config / xp_level_titles
                 so the display is correct until product retunes. */}
             <LevelBand level={profile?.level || 1} totalXp={profile?.total_xp || 0} />
+
+            {/* Gate card — visible only when the user has an active
+                (non-passed) user_gate_progress row. Self-only: a
+                family member shouldn't see your in-progress
+                ranked-match until you pass it. */}
+            {isSelf && (
+              <GateCard
+                userId={viewerId}
+                onOpenPicker={(gate, progress) => {
+                  // Picker modal lands in P4b-8; for now log the
+                  // intent so the hook is observable.
+                  console.log("[GateCard] picker requested for gate", gate.gate_level, progress);
+                }}
+              />
+            )}
 
 
             {/* Quick stats band — XP / cooks / nailed / streak */}
