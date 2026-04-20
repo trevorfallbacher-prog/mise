@@ -20,10 +20,26 @@ export function useAuth() {
       if (!mounted) return;
       setSession(data.session ?? null);
       setLoading(false);
+      // Seed realtime with the initial access token so the socket
+      // opens authenticated. Without this, realtime uses the anon
+      // key and RLS-filtered subscriptions silently drop user-scoped
+      // rows (notifications, cook_logs, etc.).
+      if (data.session?.access_token) {
+        supabase.realtime.setAuth(data.session.access_token);
+      }
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s ?? null);
+      // Realtime's socket caches the JWT at open time and won't
+      // rotate it on its own. Every auth transition (TOKEN_REFRESHED
+      // fires roughly hourly, also SIGNED_IN / SIGNED_OUT) re-seeds
+      // the transport so inbound rows continue to pass the RLS
+      // check after the original token would have expired. Bug
+      // symptom without this: realtime notifications work on first
+      // load, then quietly stop ~1 hour in until the user hard-
+      // refreshes and opens a fresh socket.
+      supabase.realtime.setAuth(s?.access_token ?? null);
     });
 
     return () => {
