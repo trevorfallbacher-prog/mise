@@ -226,7 +226,7 @@ const SCAN_EMOJI_OPTIONS = [
 ];
 
 // ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
-function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onClose }) {
+function Scanner({ userId, isAdmin = false, shoppingList = [], onItemsScanned, onManualEntry, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
   // Barcode mode — skips the Claude-vision upload path and uses
@@ -950,6 +950,22 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 canonicalId: patchedRow.canonicalId,
                 resolvedBrand,
               });
+              // Teach the system. When the user created a canonical
+              // during a scan, the UPC → canonical mapping is the
+              // whole point — save it now so every future scan of
+              // the same UPC auto-pairs. Admin writes go global,
+              // regular users land family-scoped. Fire-and-forget.
+              const scanUpc = cpSnapshot?.pendingRow?.barcodeUpc || null;
+              if (scanUpc && userId) {
+                rememberBarcodeCorrection({
+                  userId,
+                  isAdmin,
+                  barcodeUpc: scanUpc,
+                  canonicalId:   slug,
+                  emoji:         canonEmoji,
+                  ingredientIds: [slug],
+                }).catch(e => console.warn("[barcode_correction] write from prompt failed:", e));
+              }
               // Single-item barcode scan — commit directly, skip
               // the "Look right?" confirm screen. Parent's
               // addScannedItems handles pantry insert + toast.
@@ -6585,6 +6601,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
 
   if (scanning) return <Scanner
     userId={userId}
+    isAdmin={isAdmin}
     shoppingList={shoppingList}
     onItemsScanned={addScannedItems}
     onClose={() => setScanning(false)}

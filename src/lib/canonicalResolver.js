@@ -298,10 +298,30 @@ export function resolveCanonicalFromScan({
   if (brand) tokenSources.push({ label: "brand", text: String(brand).toLowerCase() });
   for (const { label, text } of tokenSources) {
     const tokens = text.split(/\s+/).filter(t => t && t.length >= 3);
-    console.log("[resolver-debug]", label, "tokens:", tokens);
+    // 2-word phrases first so compound canonical names ('tortilla
+    // chips', 'soy sauce', 'olive oil') beat their single-word
+    // roots. Single-token mode would match 'tortilla' to 'tortillas'
+    // (wraps) before ever considering the compound 'tortilla chips'
+    // as a candidate.
+    const phrases = [];
+    for (let i = 0; i < tokens.length - 1; i++) {
+      phrases.push(`${tokens[i]} ${tokens[i + 1]}`);
+    }
+    for (const phrase of phrases) {
+      const hit = bestMatchAboveFloor(phrase, 95);
+      if (hit) {
+        return {
+          canonical: hit.ingredient,
+          confidence: "high",
+          reason: `phrase-${label}:${phrase}`,
+          matchedOn: phrase,
+          score: hit.score,
+          autoApply: true,
+        };
+      }
+    }
     for (const token of tokens) {
       const hit = bestMatchAboveFloor(token, 95);
-      console.log("[resolver-debug]", label, "token:", token, "hit:", hit ? { id: hit.ingredient.id, score: hit.score } : null);
       if (hit) {
         return {
           canonical: hit.ingredient,
