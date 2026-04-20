@@ -144,6 +144,12 @@ export function BrandNutritionProvider({ children }) {
     }
     const normalizedBrand = String(brand).trim().toLowerCase();
     const displayBrand    = String(brand).trim();
+    // Stamp created_by with the current user's id so the self-update
+    // RLS policy (auth.uid() = created_by) permits future rescans of
+    // the same (canonical, brand) pair to refresh the row. Without
+    // this, created_by defaults to null and every subsequent upsert
+    // hits the UPDATE path and fails with 42501.
+    const { data: { user } = {} } = await supabase.auth.getUser();
     const row = {
       canonical_id:  canonicalId,
       brand:         normalizedBrand,
@@ -153,6 +159,7 @@ export function BrandNutritionProvider({ children }) {
       source,
       source_id:     sourceId,
       confidence,
+      ...(user?.id ? { created_by: user.id } : {}),
     };
     const { data, error } = await supabase
       .from("brand_nutrition")
@@ -160,7 +167,14 @@ export function BrandNutritionProvider({ children }) {
       .select()
       .single();
     if (error) {
-      console.error("[brand_nutrition] upsert failed:", error);
+      // 42501 = RLS insufficient_privilege. Most common cause: a
+      // pre-existing row with created_by=null (from before this fix)
+      // or created by a different user — self-update policy can't
+      // reach it. Warn instead of error so the console stays clean
+      // for the common "stale row" case; the brand still lands on
+      // pantry_items.brand via a different code path.
+      const level = error?.code === "42501" ? "warn" : "error";
+      console[level]("[brand_nutrition] upsert failed:", error);
       return null;
     }
     return fromDb(data);
