@@ -121,6 +121,31 @@ async function fetchPopular(brand, canonical, limit) {
   return rows;
 }
 
+// Async imperative variant of the hook for non-React callers — the
+// Scanner's barcode onDetected needs to auto-apply a learned package
+// size BEFORE building the scan row, so the normal hook (runs during
+// render) is too late. Same fetch/cache path; returns the raw rows
+// so the caller can pick the top non-count entry.
+export async function fetchPopularPackages(brand, canonicalId, limit = 5) {
+  if (!canonicalId) return [];
+  const [specific, generic] = await Promise.all([
+    brand ? fetchPopular(brand, canonicalId, limit) : Promise.resolve([]),
+    fetchPopular(null, canonicalId, limit),
+  ]);
+  const seen = new Set();
+  const out = [];
+  const push = (entry) => {
+    if (out.length >= limit) return;
+    const sig = `${entry.amount}|${entry.unit}`;
+    if (seen.has(sig)) return;
+    seen.add(sig);
+    out.push(entry);
+  };
+  specific.forEach(push);
+  generic.forEach(push);
+  return out;
+}
+
 /**
  * Returns an array of up to `limit` popular package sizes for the
  * (brand, canonical) pair. Each entry:

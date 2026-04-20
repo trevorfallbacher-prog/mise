@@ -69,7 +69,7 @@ import {
   cleanProductName,
 } from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
-import { usePopularPackages } from "../lib/usePopularPackages";
+import { usePopularPackages, fetchPopularPackages } from "../lib/usePopularPackages";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import FieldExplainer from "./FieldExplainer";
@@ -1065,7 +1065,29 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               const state = match?.canonical
                 ? stateForCanonical(rawState, match.canonical)
                 : null;
-              const packageSize = parsePackageSize(res.quantity);
+              let packageSize = parsePackageSize(res.quantity);
+              // When OFF has no quantity string (common for
+              // user-contributed entries), fall back to the learned
+              // popular_package_sizes for this (brand, canonical)
+              // pair. Same UPC → same physical package, so any prior
+              // family-member observation teaches the size for all
+              // subsequent scans. Skip count-like units here too —
+              // '1 pack' carries no weight/volume.
+              if (!packageSize && match?.canonical?.id) {
+                try {
+                  const learned = await fetchPopularPackages(
+                    effectiveBrand,
+                    match.canonical.id,
+                    5,
+                  );
+                  const top = learned.find(r =>
+                    r?.amount > 0 && r.unit && !DISCRETE_COUNT_UNITS.has(r.unit)
+                  );
+                  if (top) packageSize = { amount: top.amount, unit: top.unit };
+                } catch (e) {
+                  console.warn("[scanner:barcode] popular package fetch failed:", e);
+                }
+              }
               const attributes = buildAttributesFromScan({
                 productName:   res.productName,
                 categoryHints: res.categoryHints || [],
@@ -2504,6 +2526,34 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     || (customComponents[0]?.canonical?.id)
     || null;
   const popularPackages = usePopularPackages(customBrand, primaryCanonicalId, 5);
+
+  // Auto-apply the most popular (brand, canonical) package size when:
+  //   - we have a learned/AI-backed size
+  //   - the user hasn't typed a PACKAGE SIZE yet
+  //   - the top candidate is in a real mass/volume unit (not pack / count)
+  // Fires once per unique top candidate. If the user clears the field
+  // later, we don't re-auto-apply (that would feel haunted). Skip if
+  // OFF already seeded a concrete size via the scan flow.
+  const autoAppliedKey = useRef("");
+  useEffect(() => {
+    if (!popularPackages || popularPackages.length === 0) return;
+    const top = popularPackages[0];
+    if (!top || !top.amount || !top.unit) return;
+    if (DISCRETE_COUNT_UNITS.has(top.unit)) return;
+    const key = `${primaryCanonicalId}::${customBrand || ""}::${top.amount}::${top.unit}`;
+    if (autoAppliedKey.current === key) return;
+    // Only auto-apply when the size field is effectively blank. A
+    // user-typed value — even a number we'd override — must survive.
+    const currentN = parseFloat(packageSize);
+    if (packageSize !== "" && Number.isFinite(currentN) && currentN > 0) return;
+    autoAppliedKey.current = key;
+    setPackageSize(String(top.amount));
+    setCustomUnit(top.unit);
+    if (amount === "" || !Number.isFinite(parseFloat(amount))) {
+      setAmount(String(top.amount));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [popularPackages, primaryCanonicalId, customBrand]);
 
   // Family-shared user templates, newest-first. Empty until the user
   // (or any family member) saves their first custom item; grows as
