@@ -1926,67 +1926,6 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "pack",
   },
-  // Snack-category staples. None of these were bundled before;
-  // scanning Tostitos Scoops / Doritos / Fritos / Ruffles hit the
-  // canonical-create prompt every time because the closest bundled
-  // match was 'tortillas' (wraps) — a false positive for chips.
-  // Adding them as first-class canonicals so barcode scans of
-  // mainstream snack brands resolve cleanly.
-  {
-    id: "tortilla_chips", name: "Tortilla Chips", shortName: "Tortilla Chips",
-    emoji: "🌽", category: "pantry",
-    units: [
-      { id: "bag",  label: "bags",  toBase: 283 },  // ~10oz standard
-      { id: "oz",   label: "oz",    toBase: 28.35 },
-      { id: "g",    label: "g",     toBase: 1 },
-    ],
-    defaultUnit: "bag",
-    estCentsPerBase: 1.4,  // ~$4 for a 10oz / 283g bag
-  },
-  {
-    id: "corn_chips", name: "Corn Chips", shortName: "Corn Chips",
-    emoji: "🌽", category: "pantry",
-    units: [
-      { id: "bag",  label: "bags",  toBase: 272 },  // ~9.25oz Fritos
-      { id: "oz",   label: "oz",    toBase: 28.35 },
-      { id: "g",    label: "g",     toBase: 1 },
-    ],
-    defaultUnit: "bag",
-    estCentsPerBase: 1.6,
-  },
-  {
-    id: "potato_chips", name: "Potato Chips", shortName: "Chips",
-    emoji: "🥔", category: "pantry",
-    units: [
-      { id: "bag",  label: "bags",  toBase: 227 },  // ~8oz standard
-      { id: "oz",   label: "oz",    toBase: 28.35 },
-      { id: "g",    label: "g",     toBase: 1 },
-    ],
-    defaultUnit: "bag",
-    estCentsPerBase: 2.0,
-  },
-  {
-    id: "pretzels", name: "Pretzels", shortName: "Pretzels",
-    emoji: "🥨", category: "pantry",
-    units: [
-      { id: "bag",  label: "bags",  toBase: 454 },  // ~16oz twist bag
-      { id: "oz",   label: "oz",    toBase: 28.35 },
-      { id: "g",    label: "g",     toBase: 1 },
-    ],
-    defaultUnit: "bag",
-    estCentsPerBase: 0.9,
-  },
-  {
-    id: "crackers", name: "Crackers", shortName: "Crackers",
-    emoji: "🍘", category: "pantry",
-    units: [
-      { id: "box",  label: "boxes", toBase: 283 },  // ~10oz Ritz-style
-      { id: "oz",   label: "oz",    toBase: 28.35 },
-      { id: "g",    label: "g",     toBase: 1 },
-    ],
-    defaultUnit: "box",
-    estCentsPerBase: 1.4,
-  },
   // ── condiments batch 2: Asian staples ──────────────────────────────
   {
     id: "fish_sauce", name: "Fish Sauce", emoji: "🐟", category: "pantry",

@@ -200,8 +200,7 @@ export const FOOD_TYPES = [
     id: "wweia_crackers", label: "Crackers & chips", emoji: "🍪",
     defaultTileId: "canned_jarred",
     blurb: "Crackers, chips, pretzels, popcorn",
-    aliases: ["cracker", "crackers", "chip", "chips", "pretzel", "popcorn", "tortilla chips", "corn chips", "potato chips", "ritz", "goldfish", "doritos", "tostitos", "fritos", "ruffles", "lays"],
-    canonicalId: "crackers",
+    aliases: ["cracker", "crackers", "chip", "chips", "pretzel", "popcorn", "tortilla chips", "ritz", "goldfish"],
   },
 
   // ── Mixed dishes / prepared ─────────────────────────────────────
