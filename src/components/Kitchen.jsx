@@ -1169,31 +1169,18 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   console.warn("[scanner:barcode] popular package fetch failed:", e);
                 }
               }
-              let attributes = buildAttributesFromScan({
-                productName:   res.productName,
-                genericName:   res.genericName,
-                brand:         res.brand,
-                canonicalName: match?.canonical?.name || match?.canonical?.shortName || null,
-                categoryHints: res.categoryHints || [],
-                originTags:    res.originTags  || [],
-                countryTags:   res.countryTags || [],
-                labelTags:     res.labelTags   || [],
-              });
-              // OFF responses are inconsistent — the same UPC can
-              // return a rich productName one session and null the
-              // next. When current scan has nothing to extract from,
-              // inherit from the most recent prior pantry_items row
-              // with the same UPC. Preserves Scoops! Original claim
-              // pills, Chicken Flavor variant subtitle, etc., across
-              // rescans.
+              // OFF responses are inconsistent — the cached path
+              // (brand_nutrition hit) always returns productName=null
+              // and the OFF fresh path can strip a sub-line down to a
+              // generic "Tostitos Tortilla Chips" one session and
+              // return the full "Tostitos Scoops Original Tortilla
+              // Chips" the next. Fetch the most recent prior pantry
+              // row for this UPC so every axis the current response
+              // is missing has a fallback source.
               let inheritedScanRaw = null;
+              let inheritedAttributes = null;
               const offProductName = res.productName || null;
-              const attributesEmpty = !attributes || Object.keys(attributes).length === 0;
               const packageEmpty = !packageSize;
-              // Always check for prior-row data on a barcode scan —
-              // same UPC = same product, so any axis the current
-              // OFF response is missing can be filled from a
-              // previous scan that had it.
               if (userId && barcode) {
                 try {
                   const { data: prior } = await supabase
@@ -1204,8 +1191,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                     .limit(1)
                     .maybeSingle();
                   if (prior) {
-                    if (!offProductName && prior.scan_raw) inheritedScanRaw = prior.scan_raw;
-                    if (attributesEmpty && prior.attributes) attributes = prior.attributes;
+                    if (prior.scan_raw)   inheritedScanRaw   = prior.scan_raw;
+                    if (prior.attributes) inheritedAttributes = prior.attributes;
                     if (packageEmpty && prior.package_amount && prior.package_unit) {
                       packageSize = { amount: Number(prior.package_amount), unit: prior.package_unit };
                     }
@@ -1213,13 +1200,44 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   console.log("[upc-debug] inherit", {
                     barcode,
                     inheritedScanRaw,
-                    inheritedAttributes: attributesEmpty && prior?.attributes ? Object.keys(prior.attributes) : null,
+                    inheritedAttributes: inheritedAttributes ? Object.keys(inheritedAttributes) : null,
                     inheritedPackage: packageSize,
                   });
                 } catch (e) {
                   console.warn("[scanner:barcode] prior-row inherit failed:", e);
                 }
               }
+              // Build attributes using the richest text we have —
+              // fresh OFF productName first, prior row's scan_raw as
+              // fallback. Running extraction ONCE against the best
+              // source beats the old "run on OFF, give up, inherit
+              // whatever stale attributes prior row had" path, which
+              // never rescued a UPC whose first stocking predated
+              // claim extraction.
+              const claimSourceText = offProductName || inheritedScanRaw;
+              let attributes = buildAttributesFromScan({
+                productName:   claimSourceText,
+                genericName:   res.genericName,
+                brand:         res.brand,
+                canonicalName: match?.canonical?.name || match?.canonical?.shortName || null,
+                categoryHints: res.categoryHints || [],
+                originTags:    res.originTags  || [],
+                countryTags:   res.countryTags || [],
+                labelTags:     res.labelTags   || [],
+              });
+              // Union with any prior attributes so origins /
+              // certifications captured on a past scan don't vanish
+              // just because this session's response was thinner.
+              if (inheritedAttributes) {
+                attributes = mergeAttributes(attributes || null, inheritedAttributes);
+              }
+              console.log("[claims-debug] extraction", {
+                barcode,
+                claimSourceText,
+                brand: res.brand,
+                canonicalName: match?.canonical?.name || null,
+                resultingClaims: attributes?.claims || [],
+              });
               // Build a single scan row that matches the shape the
               // rest of the confirm flow expects (same fields scan-
               // receipt / scan-shelf produce). Canonical-derived
