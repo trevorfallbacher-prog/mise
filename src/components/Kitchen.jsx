@@ -5758,20 +5758,31 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           });
           const freshId = crypto.randomUUID();
           if (!firstNewRowId) firstNewRowId = freshId;
+          // Quantity floor — never let a row land with amount 0.
+          // A pantry row with 0 quantity is meaningless (it's not
+          // in your kitchen), and downstream slider math reads it
+          // as '100% of 0' which makes the UI render an empty
+          // gauge over a real package.
+          const safeAmount = Math.max(Number(s.amount) || 0, 1);
+          // Package capacity. For barcode scans we KNOW the
+          // package size (parsed from OFF.quantity OR inherited
+          // from popular_package_sizes), so seed max + the
+          // pantry_items.package_amount/unit columns with it.
+          // Sealed: amount === max → slider sits at 100%.
+          const knownMax = typeof s.max === "number" && s.max > 0 ? s.max : 0;
           next.push({
             id: freshId,
             ingredientId: s.ingredientId || null,
             name: s.name,
             emoji: s.emoji,
-            amount: s.amount,
+            amount: safeAmount,
             unit: s.unit,
-            // Packaging intentionally undefined — scans don't ask
-            // about container size. 0 = slider stays hidden
-            // (hasPackage check fails); DB column is NOT NULL so
-            // we can't send literal null.
-            max: 0,
+            max: knownMax,
+            ...(knownMax > 0
+              ? { packageAmount: knownMax, packageUnit: s.unit }
+              : {}),
             category: s.category,
-            lowThreshold: Math.max(s.amount * 0.25, 0.25),
+            lowThreshold: Math.max(safeAmount * 0.25, 0.25),
             priceCents: scanPriceCents,
             expiresAt:   newExpiresAt,
             purchasedAt,
