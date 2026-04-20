@@ -904,6 +904,11 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           initialBrand={canonicalCreatePrompt.pendingRow?.brand || ""}
           sourceHint={canonicalCreatePrompt.pendingResolverReason}
           onCreate={async ({ finalName, finalBrand }) => {
+            console.log("[ramen-debug] 3/onCreate-entry", {
+              finalName,
+              finalBrand,
+              pendingRowBrand: canonicalCreatePrompt?.pendingRow?.brand,
+            });
             // Top-level try/catch so a sub-call failure (enrich edge
             // fn down, brand_nutrition hook undefined, etc.) can
             // never leave the prompt stuck open. Even if every
@@ -938,12 +943,19 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brand:         resolvedBrand,
                 autoLinked:    true,
               };
+              console.log("[ramen-debug] 4/patchedRow-built", {
+                name: patchedRow.name,
+                brand: patchedRow.brand,
+                canonicalId: patchedRow.canonicalId,
+                resolvedBrand,
+              });
               setScannedItems([patchedRow]);
               setReceiptMeta({ store: null, date: null, totalCents: null });
               setCanonicalCreatePrompt(null);
               setPhase("confirm");
+              console.log("[ramen-debug] 5/phase-advanced-to-confirm");
             } catch (e) {
-              console.error("[scanner:barcode] onCreate core failed:", e);
+              console.error("[ramen-debug] onCreate core failed:", e);
               // Even the core path threw (shouldn't happen, but guard).
               // Dismiss the prompt so the user isn't stuck.
               setCanonicalCreatePrompt(null);
@@ -1012,6 +1024,15 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             setError(null);
             try {
               const res = await lookupBarcode(barcode, { brandNutritionRows: brandNutritionRowsForScan });
+              console.log("[ramen-debug] 1/off-response", {
+                barcode,
+                found: res?.found,
+                productName: res?.productName,
+                brandFromOff: res?.brand,
+                genericName: res?.genericName,
+                categoryHints: res?.categoryHints,
+                hasNutrition: !!res?.nutrition,
+              });
               if (!res?.found) {
                 const msg = res?.reason === "edge_fn_not_deployed"
                   ? "Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode"
@@ -1154,6 +1175,11 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // accepting a pre-fill. Better than silently stocking
               // a "Barcode 8500…" row.
               if (!canon) {
+                console.log("[ramen-debug] 2/prompt-opening", {
+                  suggestedName: suggestedName || "",
+                  pendingRowBrand: row.brand,
+                  effectiveBrand,
+                });
                 setCanonicalCreatePrompt({
                   suggestedName: suggestedName || "",
                   pendingRow: row,
@@ -5510,6 +5536,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           if (s.scanRaw) ex.scanRaw = s.scanRaw;
         } else {
           addedCount++;
+          console.log("[ramen-debug] 6/pantry-row-push", {
+            name: s.name,
+            brand: s.brand,
+            canonicalId: s.canonicalId,
+            willSpreadBrand: !!s.brand,
+          });
           next.push({
             id: crypto.randomUUID(),
             ingredientId: s.ingredientId || null,

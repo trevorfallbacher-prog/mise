@@ -131,6 +131,14 @@ function fromDb(row) {
 }
 
 function toDb(item) {
+  if (item?.brand || item?.canonicalId === "ramen") {
+    console.log("[ramen-debug] 7/toDb-input", {
+      name: item.name,
+      brand: item.brand,
+      brandType: typeof item.brand,
+      canonicalId: item.canonicalId,
+    });
+  }
   // Multi-canonical tagging. If the caller explicitly set ingredientIds
   // Composition write path (migration 0056: components is the new
   // column; ingredient_ids stays as an alias until v0.14 drops it).
