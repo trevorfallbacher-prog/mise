@@ -801,9 +801,16 @@ const PRODUCT_CLAIM_KEYWORDS = [
   "antibiotic free", "antibiotic-free", "abf", "hormone free", "hormone-free",
   "no preservatives", "preservative free", "preservative-free",
   "gluten free", "gluten-free",
-  // Volume / concentration
+  // Volume / concentration / product-line tier
   "lite", "light", "extra", "original", "classic",
   "premium", "extra virgin",
+  // Common branded sub-line names — chips/snacks. These read as
+  // tags ('SCOOPS', 'CANTINA') alongside the canonical, mirroring
+  // how the package itself differentiates the line.
+  "scoops", "cantina", "hint of lime", "salsa verde",
+  "thins", "rounds", "twists", "minis", "bites",
+  "kettle", "kettle cooked", "wavy", "ridged",
+  "thick cut", "thin cut", "crispy",
 ];
 
 const PRODUCT_CLAIM_PHRASES = PRODUCT_CLAIM_KEYWORDS.map((k) => ({
