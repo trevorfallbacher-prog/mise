@@ -544,8 +544,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 visual axis. Image tier applies to ItemCard header
                 + IngredientCard hero only, per design call. */}
             {(() => {
-              const canonImage = item.canonicalId
-                ? (getDbInfo(item.canonicalId)?.imageUrl || null)
+              // Canonical image wins when the admin has stamped one
+              // on ingredient_info.info.imageUrl. Check canonicalId
+              // first (authoritative), then ingredientId (legacy
+              // pantry rows that predate the canonical_id column and
+              // still carry the slug in the old column). Either hit
+              // renders the image; a miss falls back to the pantry
+              // row's emoji.
+              const lookupId = item.canonicalId || item.ingredientId || null;
+              const canonImage = lookupId
+                ? (getDbInfo(lookupId)?.imageUrl || null)
                 : null;
               if (canonImage) {
                 return (
