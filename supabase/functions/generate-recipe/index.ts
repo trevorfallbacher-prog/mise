@@ -244,7 +244,7 @@ function assemblePromptHeader(
           : c === "appetizer"
             ? "a small opening bite — served before the main, meant to whet the appetite; 1-2 oz portions, finger-food or small-plate scale; do NOT draft a full entrée or a dessert"
             : c === "bake"
-              ? "a baked good — bread, pastry, pizza dough, cookies, rolls, focaccia. A component/pantry item, not a plated course. Output should feel like a bakery item, not a meal. mealTiming should be null (not tied to a specific meal slot)"
+              ? "a sweet or neutral BAKED GOOD — cookies, cakes, brownies, muffins, scones, pies, tarts, quick breads, yeast breads (plain loaves), cinnamon rolls, croissants, biscuits, dinner rolls, bars, banana bread, pound cake. Think bakery display case. Explicitly NOT a meal-on-bread: no pizza, no focaccia with cheese/meat/avocado/pesto/etc. toppings, no savory galettes, no meal-style flatbreads, no stuffed savory breads, no quiche, no calzones, no savory tarts that function as a dinner. If it has a cheesy / meaty / vegetable topping composed like a plated dish, it's a MAIN disguised as a bake — reject that frame entirely and pick a true pastry or sweet/plain bread instead. The output must be something a user would eat as a standalone bakery item (with coffee, as dessert, as breakfast carbs) — NOT as the centerpiece of dinner. mealTiming should be null"
               : c === "prep"
                 ? "a kitchen prep/component — stock, sauce, marinade, pickle, spice blend, ferment, dressing, confit. Meant to be used as an ingredient in other recipes, NOT served as a plated dish. No composed-plate instructions, no 'serve with rice' step. mealTiming should be null (this is not a meal)"
                 : "";

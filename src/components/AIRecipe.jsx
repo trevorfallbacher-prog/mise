@@ -64,11 +64,20 @@ const COURSE_CHIPS = [
   { id: "side",      label: "Side" },
   { id: "dessert",   label: "Dessert" },
   { id: "appetizer", label: "Appetizer" },
-  // "Bake" and "Prep" are component recipes (bread, stock, sauce,
-  // pickles) that live in the library without a meal slot. Selecting
-  // them hides MEAL TIMING since these aren't tied to breakfast/lunch/
-  // dinner — they're pantry-building.
-  { id: "bake",      label: "Bake" },
+  // "Baked Goods" and "Prep" are component recipes (bread, stock,
+  // sauce, pickles, pastry) that live in the library without a meal
+  // slot. Selecting them hides MEAL TIMING since these aren't tied to
+  // breakfast/lunch/dinner — they're pantry/bakery-case items.
+  //
+  // Label says "Baked Goods" rather than just "Bake" because users
+  // kept getting meals-on-bread (pesto focaccia topped with burrata,
+  // pizza, savory galettes) when they picked "Bake" — the plain verb
+  // read as "put something in the oven" and Claude happily obliged
+  // with sheet-pan dinners disguised as flatbreads. "Baked Goods"
+  // primes the bakery-case mental model. Edge-fn prompt reinforces
+  // it with an explicit exclusion list. Oven-roasted mains stay under
+  // "Main" where they belong.
+  { id: "bake",      label: "Baked Goods" },
   { id: "prep",      label: "Prep" },
 ];
 
