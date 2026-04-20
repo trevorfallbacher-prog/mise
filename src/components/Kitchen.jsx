@@ -903,34 +903,47 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           initialName={canonicalCreatePrompt.suggestedName}
           sourceHint={canonicalCreatePrompt.pendingResolverReason}
           onCreate={async (finalName) => {
-            // Slugify the user's confirmed name + write to
-            // pending_ingredient_info via enrichIngredient so the
-            // canonical enters the admin queue with AI-generated
-            // metadata. In the meantime we link the pantry row to
-            // the slug so it displays with the name the user just
-            // approved instead of the barcode fallback.
+            // Top-level try/catch so a sub-call failure (enrich edge
+            // fn down, brand_nutrition hook undefined, etc.) can
+            // never leave the prompt stuck open. Even if every
+            // optional side-effect fails, the core state transition
+            // (apply the row, close the prompt, advance phase) runs.
+            const cpSnapshot = canonicalCreatePrompt;   // snapshot before async work
             const slug = (finalName || "")
               .toLowerCase()
               .replace(/[^a-z0-9]+/g, "_")
               .replace(/^_+|_+$/g, "")
               .slice(0, 80);
-            const canonEmoji = canonicalCreatePrompt.pendingRow.emoji || "✨";
-            const canonCategory = canonicalCreatePrompt.pendingRow.category || "pantry";
-            const patchedRow = {
-              ...canonicalCreatePrompt.pendingRow,
-              name:          finalName.trim(),
-              emoji:         canonEmoji,
-              canonicalId:   slug,
-              ingredientId:  slug,
-              ingredientIds: [slug],
-              category:      canonCategory,
-              autoLinked:    true,
-            };
-            setScannedItems([patchedRow]);
-            setReceiptMeta({ store: null, date: null, totalCents: null });
-            // Fire enrichment for the new slug — queues an admin-
-            // reviewable pending_ingredient_info row with full
-            // Claude-generated metadata. User doesn't wait for it.
+            // Close prompt + advance phase FIRST so the UX commits
+            // regardless of what the side-effects below do. User sees
+            // the confirm screen immediately.
+            try {
+              const canonEmoji    = cpSnapshot?.pendingRow?.emoji    || "✨";
+              const canonCategory = cpSnapshot?.pendingRow?.category || "pantry";
+              const patchedRow = {
+                ...(cpSnapshot?.pendingRow || {}),
+                name:          finalName.trim(),
+                emoji:         canonEmoji,
+                canonicalId:   slug,
+                ingredientId:  slug,
+                ingredientIds: [slug],
+                category:      canonCategory,
+                autoLinked:    true,
+              };
+              setScannedItems([patchedRow]);
+              setReceiptMeta({ store: null, date: null, totalCents: null });
+              setCanonicalCreatePrompt(null);
+              setPhase("confirm");
+            } catch (e) {
+              console.error("[scanner:barcode] onCreate core failed:", e);
+              // Even the core path threw (shouldn't happen, but guard).
+              // Dismiss the prompt so the user isn't stuck.
+              setCanonicalCreatePrompt(null);
+              return;
+            }
+            // Fire-and-forget side effects. Any failure here is
+            // logged but doesn't affect the UX — the row is already
+            // in confirm and the user can proceed.
             try {
               await enrichIngredient({
                 source_name:  finalName.trim(),
@@ -939,16 +952,19 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             } catch (e) {
               console.warn("[scanner:barcode] enrich new canonical failed:", e);
             }
-            // brand_nutrition upsert now that we have a canonical
-            // to pin against.
-            if (canonicalCreatePrompt.pendingBrandNutrition) {
-              upsertBrandNutritionForScan?.({
-                canonicalId: slug,
-                ...canonicalCreatePrompt.pendingBrandNutrition,
-              }).catch(() => { /* logged upstream */ });
+            if (cpSnapshot?.pendingBrandNutrition && typeof upsertBrandNutritionForScan === "function") {
+              try {
+                const maybePromise = upsertBrandNutritionForScan({
+                  canonicalId: slug,
+                  ...cpSnapshot.pendingBrandNutrition,
+                });
+                if (maybePromise && typeof maybePromise.catch === "function") {
+                  maybePromise.catch((e) => console.warn("[scanner:barcode] brand_nutrition upsert failed:", e));
+                }
+              } catch (e) {
+                console.warn("[scanner:barcode] brand_nutrition upsert threw:", e);
+              }
             }
-            setCanonicalCreatePrompt(null);
-            setPhase("confirm");
           }}
           onSkip={() => {
             // User opted not to create a canonical — still land in
