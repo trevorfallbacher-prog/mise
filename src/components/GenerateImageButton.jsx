@@ -45,11 +45,15 @@ export default function GenerateImageButton({
   const [errMsg, setErrMsg] = useState("");
   // Unlock requires a two-tap confirmation so an admin doesn't
   // accidentally flip a finalized canonical back into draft state.
-  // Flips true on first tap, commits the unlock on second tap,
-  // resets on blur / another admin action. Scoped local because
-  // this is UI-only gating; the actual server state is the jsonb
-  // flag.
   const [unlockArmed, setUnlockArmed] = useState(false);
+  // Optional prompt hint tacked onto the next generation. Free-form
+  // ("thicker strokes", "more minimal", "emphasize the stem") — the
+  // edge function appends it to the end of the house prompt so the
+  // admin can iterate on output without redeploying. Expanded inline
+  // when the admin taps "✎ tweak prompt"; cleared after a successful
+  // generation so stale hints don't leak into the next regen.
+  const [hintOpen, setHintOpen] = useState(false);
+  const [hint, setHint]         = useState("");
   const { refreshDb } = useIngredientInfo();
 
   if (!isAdmin || !canonicalId || !canonicalName) return null;
@@ -58,8 +62,17 @@ export default function GenerateImageButton({
     setState("generating");
     setErrMsg("");
     try {
-      const { imageUrl } = await generateCanonicalImage({ canonicalId, canonicalName });
+      const { imageUrl } = await generateCanonicalImage({
+        canonicalId,
+        canonicalName,
+        hint: hint.trim() || undefined,
+      });
       await refreshDb?.();
+      // Clear the hint after a successful regen so an old "thicker
+      // strokes" nudge doesn't silently apply to the next canonical
+      // the admin generates.
+      setHint("");
+      setHintOpen(false);
       setState("idle");
       if (typeof onGenerated === "function") onGenerated(imageUrl);
     } catch (err) {
@@ -192,6 +205,50 @@ export default function GenerateImageButton({
           {state === "generating" && <span aria-hidden="true">⏳</span>}
           <span>{state === "generating" ? "Generating…" : "🎨 Generate image"}</span>
         </button>
+      )}
+      {/* Optional prompt hint — expands inline under the generate
+          chips. Hidden in the locked branch since regeneration is
+          off the table there. Free-form text gets appended to the
+          end of the house prompt server-side. Keeps the default
+          flow quick (one tap) while giving admins an escape hatch
+          when the default output isn't landing. */}
+      {!isLocked && (
+        hintOpen ? (
+          <input
+            type="text"
+            autoFocus
+            value={hint}
+            onChange={(e) => setHint(e.target.value)}
+            onBlur={() => { if (!hint.trim()) setHintOpen(false); }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") { setHint(""); setHintOpen(false); }
+            }}
+            placeholder="e.g. thicker strokes, more minimal, emphasize the stem"
+            style={{
+              marginTop: 2,
+              padding: "6px 10px",
+              background: "#0b0b0b", border: "1px solid #2a2a2a",
+              color: "#f0ece4", borderRadius: 8,
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              outline: "none",
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setHintOpen(true)}
+            style={{
+              background: "transparent", border: "none", padding: 0,
+              color: "#555", cursor: "pointer",
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              letterSpacing: "0.08em",
+              textDecoration: "underline dotted", textUnderlineOffset: 2,
+              alignSelf: "flex-start",
+            }}
+          >
+            ✎ TWEAK PROMPT
+          </button>
+        )
       )}
       {failed && errMsg && (
         <div style={{
