@@ -1182,11 +1182,16 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               let inheritedScanRaw = null;
               const offProductName = res.productName || null;
               const attributesEmpty = !attributes || Object.keys(attributes).length === 0;
-              if (userId && (!offProductName || attributesEmpty)) {
+              const packageEmpty = !packageSize;
+              // Always check for prior-row data on a barcode scan —
+              // same UPC = same product, so any axis the current
+              // OFF response is missing can be filled from a
+              // previous scan that had it.
+              if (userId && barcode) {
                 try {
                   const { data: prior } = await supabase
                     .from("pantry_items")
-                    .select("scan_raw, attributes")
+                    .select("scan_raw, attributes, package_amount, package_unit")
                     .eq("barcode_upc", barcode)
                     .order("updated_at", { ascending: false })
                     .limit(1)
@@ -1194,7 +1199,16 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   if (prior) {
                     if (!offProductName && prior.scan_raw) inheritedScanRaw = prior.scan_raw;
                     if (attributesEmpty && prior.attributes) attributes = prior.attributes;
+                    if (packageEmpty && prior.package_amount && prior.package_unit) {
+                      packageSize = { amount: Number(prior.package_amount), unit: prior.package_unit };
+                    }
                   }
+                  console.log("[upc-debug] inherit", {
+                    barcode,
+                    inheritedScanRaw,
+                    inheritedAttributes: attributesEmpty && prior?.attributes ? Object.keys(prior.attributes) : null,
+                    inheritedPackage: packageSize,
+                  });
                 } catch (e) {
                   console.warn("[scanner:barcode] prior-row inherit failed:", e);
                 }
@@ -1247,7 +1261,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 attributes:    attributes || null,
                 // Source metadata so the stock step can trace the
                 // row back to an OFF / barcode origin.
-                scanRaw:       res.productName || null,
+                scanRaw:       res.productName || inheritedScanRaw || null,
                 barcodeUpc:    barcode,
                 priceCents:    null,
                 autoLinked:    !!match,
