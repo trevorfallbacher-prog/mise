@@ -1026,20 +1026,12 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 ? crypto.randomUUID()
                 : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
               // Display-name fallback chain, most-informative → least.
-              // The old code dropped straight to "Barcode 8500…" when
-              // OFF returned a product with no name AND the resolver
-              // found no canonical, which happens more than expected.
-              // Now we walk an intermediate ladder before giving up:
-              //   1. productName (OFF's product_name / generic_name)
-              //   2. resolved canonical name (ramen, nori, etc.)
-              //   3. first OFF categoryHint, title-cased ("Tortilla
-              //      Chips" from "en:tortilla-chips") — captures
-              //      SOMETHING meaningful even when we don't resolve
-              //      to a canonical in our registry
-              //   4. brand + "item" ("Ocean's Halo item") — at least
-               //     the user sees the brand they just scanned
-              //   5. absolute last: "Barcode NNNNN" so the row isn't
-              //      nameless
+              // No "{brand} item" level — that produced garbage like
+              // "Ramen Bae item" when OFF returned only a brand. If
+              // we reach the raw-barcode tier, the prompt below
+              // surfaces with an empty input so the user can type
+              // the canonical name from scratch rather than stocking
+              // a mislabeled row.
               const firstHintPretty = (res.categoryHints && res.categoryHints[0])
                 ? res.categoryHints[0].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
                 : null;
@@ -1048,7 +1040,6 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 name:          res.productName
                                || canon?.name
                                || firstHintPretty
-                               || (effectiveBrand ? `${effectiveBrand} item` : null)
                                || `Barcode ${barcode}`,
                 emoji:         canon?.emoji || "🥫",
                 brand:         effectiveBrand || null,
@@ -1120,9 +1111,14 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 || (valid(cleanedGeneric) && toTitle(cleanedGeneric))
                 || firstHintPretty
                 || null;
-              if (!canon && suggestedName) {
+              // Prompt fires any time the resolver missed — whether
+              // we have a suggestion or not. Empty suggestion just
+              // means the user types the name themselves instead of
+              // accepting a pre-fill. Better than silently stocking
+              // a "Barcode 8500…" row.
+              if (!canon) {
                 setCanonicalCreatePrompt({
-                  suggestedName,
+                  suggestedName: suggestedName || "",
                   pendingRow: row,
                   pendingBrandNutrition,
                   pendingResolverReason: {
