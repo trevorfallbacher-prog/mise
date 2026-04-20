@@ -100,7 +100,7 @@ export default function UserProfile({
   const hasAnySkill = skills.some(s => s.level > 0);
 
   const diet = DIETARY_OPTIONS.find(d => d.id === profile?.dietary);
-  const level = LEVEL_OPTIONS.find(l => l.id === profile?.level);
+  const level = LEVEL_OPTIONS.find(l => l.id === profile?.skill_self_report);
   const goal  = GOAL_OPTIONS.find(g => g.id === profile?.goal);
 
   // Badges — earned (colored) vs catalog-leftover (silhouette) so the
@@ -171,6 +171,12 @@ export default function UserProfile({
                 )}
               </div>
             </div>
+
+            {/* Level band — numeric level + title + progress bar to
+                next. Curve and titles match xp_config / xp_level_titles
+                so the display is correct until product retunes. */}
+            <LevelBand level={profile?.level || 1} totalXp={profile?.total_xp || 0} />
+
 
             {/* Quick stats band — XP / cooks / nailed / streak */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8, marginBottom:20 }}>
@@ -382,6 +388,72 @@ function Chip({ color = "#2a2a2a", bg = "#1a1a1a", text = "#bbb", children }) {
     <span style={{ display:"inline-flex", alignItems:"center", background: bg, border:`1px solid ${color}`, color: text, borderRadius:20, padding:"3px 9px", fontFamily:"'DM Mono',monospace", fontSize:9, letterSpacing:"0.08em" }}>
       {children}
     </span>
+  );
+}
+
+// Numeric level + title + XP-to-next progress bar. Pure client math
+// mirrors xp_to_next(L) = round(100 * L^1.6) from 0102. Source of
+// truth is xp_config / xp_level_titles; if product retunes the curve
+// the DB stays authoritative and this component re-renders against
+// the user's recomputed profile.level.
+const LEVEL_TITLES = [
+  { min: 1,  max: 5,   title: "Apprentice" },
+  { min: 6,  max: 10,  title: "Line Cook" },
+  { min: 11, max: 20,  title: "Home Chef" },
+  { min: 21, max: 35,  title: "Sous Chef" },
+  { min: 36, max: 50,  title: "Head Chef" },
+  { min: 51, max: 75,  title: "Executive Chef" },
+  { min: 76, max: 999, title: "Iron Chef" },
+];
+function titleForLevel(L) {
+  const row = LEVEL_TITLES.find(r => L >= r.min && L <= r.max);
+  return row?.title || "Apprentice";
+}
+function xpToNext(L) {
+  return Math.max(1, Math.round(100 * Math.pow(L, 1.6)));
+}
+function xpInLevel(totalXp, L) {
+  // Sum cumulative xp_to_next(1..L-1) and subtract from totalXp.
+  let sum = 0;
+  for (let i = 1; i < L; i++) sum += xpToNext(i);
+  return Math.max(0, totalXp - sum);
+}
+
+function LevelBand({ level, totalXp }) {
+  const title = titleForLevel(level);
+  const inLevel = xpInLevel(totalXp, level);
+  const toNext = xpToNext(level);
+  const pct = Math.min(100, (inLevel / toNext) * 100);
+
+  return (
+    <div style={{
+      background: "#161616", border: "1px solid #2a2a2a", borderRadius: 12,
+      padding: "12px 14px", marginBottom: 20,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+        <div>
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#666", letterSpacing: "0.08em" }}>
+            L
+          </span>
+          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 28, fontWeight: 400, color: "#f5c842", marginLeft: 2 }}>
+            {level}
+          </span>
+          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 15, fontStyle: "italic", color: "#f0ece4", marginLeft: 10 }}>
+            {title}
+          </span>
+        </div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+          {inLevel.toLocaleString()} / {toNext.toLocaleString()}
+        </div>
+      </div>
+      <div style={{ background: "#0a0a0a", borderRadius: 6, height: 8, overflow: "hidden" }}>
+        <div style={{
+          width: `${pct}%`, height: "100%",
+          background: "linear-gradient(90deg, #e07a3a, #f5c842)",
+          transition: "width 400ms ease-out",
+        }} />
+      </div>
+    </div>
   );
 }
 
