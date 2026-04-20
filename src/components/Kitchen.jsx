@@ -4970,6 +4970,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   //   - cardIng:  the bare IngredientCard opened from secondary places
   //     (add-item flow, hub drill-down) where there's no specific row yet.
   const [openItem, setOpenItem] = useState(null);
+  // Deferred auto-open target for the scan→ItemCard cascade.
+  // addScannedItems sets this to the freshly-inserted row's id; a
+  // useEffect watching `pantry` then opens the card once the row has
+  // actually landed in state. Decouples the setOpenItem call from
+  // addScannedItems' setPantry reducer so React doesn't warn about
+  // 'update during render' when the commit happens mid-render of a
+  // provider up the tree.
+  const [pendingAutoOpenId, setPendingAutoOpenId] = useState(null);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -4980,6 +4988,18 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Driven by ItemCard's provenance line (onOpenProvenance callback)
   // and by a bell notification tap (deepLink prop, routed from App).
   const [openReceiptId, setOpenReceiptId] = useState(null);
+
+  // Watch for deferred scan-cascade targets. When addScannedItems
+  // commits a fresh row it sets pendingAutoOpenId; once that id
+  // appears in the pantry state, open the ItemCard on it.
+  useEffect(() => {
+    if (!pendingAutoOpenId) return;
+    const fresh = pantry.find(p => p.id === pendingAutoOpenId);
+    if (fresh) {
+      setOpenItem(fresh);
+      setPendingAutoOpenId(null);
+    }
+  }, [pantry, pendingAutoOpenId]);
   // Receipt-history modal — browse every receipt ever scanned. Opened
   // by tapping the GROCERIES THIS MONTH banner so users who want to
   // re-inspect a prior scan don't have to remember what they bought or
@@ -5754,15 +5774,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     // edit surface to finish any still-unset axes (expires, category,
     // stored-in, package size) instead of having to hunt for their
     // fresh row in the tile grid.
+    //
+    // Defer to a microtask (Promise.resolve().then) so we're not
+    // calling setOpenItem inside another component's render phase —
+    // React's 'Cannot update a component while rendering a different
+    // component' warning fires otherwise. By next tick, setPantry has
+    // flushed and the row is available via a fresh closure.
     if (meta.autoOpenFirst && firstNewRowId) {
-      // Resolve the row reference from the pantry state via a
-      // functional update — guarantees we see the post-merge state
-      // not a stale closure.
-      setPantry(prev => {
-        const fresh = prev.find(p => p.id === firstNewRowId);
-        if (fresh) setOpenItem(fresh);
-        return prev;
-      });
+      setPendingAutoOpenId(firstNewRowId);
     }
 
     // Bump use_count on every template that matched a scan row
