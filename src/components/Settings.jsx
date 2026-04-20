@@ -194,8 +194,13 @@ export default function Settings({ userId, profile, relationships, upsertProfile
   } = relationships;
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#111", zIndex:200, maxWidth:480, margin:"0 auto", overflowY:"auto" }}>
-      <div style={{ padding:"24px 20px 80px" }}>
+    // Full-viewport backdrop at z:200 so the floating top-corner
+    // buttons (🛠 ADMIN / 🔔 BELL / ⚙ SETTINGS, all at z:50) get
+    // covered on wider windows — the 480-wide sheet above was
+    // centered with maxWidth, leaving the corner space uncovered
+    // and the floating buttons peeking through behind the sheet.
+    <div style={{ position:"fixed", inset:0, background:"#111", zIndex:200, overflowY:"auto" }}>
+      <div style={{ maxWidth:480, margin:"0 auto", padding:"24px 20px 80px" }}>
         {/* Header */}
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:8 }}>
           <div>
