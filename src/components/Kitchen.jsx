@@ -1061,7 +1061,10 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brandFromOff: res?.brand,
                 genericName: res?.genericName,
                 categoryHints: res?.categoryHints,
+                labelTags: res?.labelTags,
                 hasNutrition: !!res?.nutrition,
+                cached: res?.cached,
+                source: res?.source,
               });
               if (!res?.found) {
                 const msg = res?.reason === "edge_fn_not_deployed"
@@ -1233,9 +1236,15 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               }
               console.log("[claims-debug] extraction", {
                 barcode,
+                resProductName: res.productName,
+                resCached: res.cached,
+                resSource: res.source,
+                inheritedScanRaw,
+                inheritedAttributes,
                 claimSourceText,
                 brand: res.brand,
                 canonicalName: match?.canonical?.name || null,
+                fullAttributes: attributes,
                 resultingClaims: attributes?.claims || [],
               });
               // Build a single scan row that matches the shape the
