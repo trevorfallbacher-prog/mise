@@ -93,19 +93,24 @@ function extractUserIdFromJwt(authHeader: string): string | null {
 }
 
 function buildPrompt(canonicalName: string, hint?: string): string {
-  // House sticker-style icon — flat vector, warm tan on transparent,
-  // thick white outline border, solid fills. Every canonical gets
-  // the same treatment so the set reads like one sticker sheet
-  // across hundreds of subjects. Canonical name is the SUBJECT of
-  // the prompt (what to draw); the style language after it is the
-  // aesthetic contract.
+  // House sticker-style icon — solid tan / cream sticker on pure
+  // black, thick white outline border, edge-to-edge canvas fill.
+  // Every canonical gets the same treatment so the set reads like
+  // one sticker sheet. Canonical name is the SUBJECT of the prompt
+  // (what to draw); the style language after it is the aesthetic
+  // contract and layout directive.
   const base = `A ${canonicalName.trim()}. ` +
-    `Flat vector illustration, warm tan #D4B896 on transparent background, ` +
+    `Flat vector illustration, warm tan #D4B896 on pure black background, ` +
     `bold graphic style, solid fills and thick outlines, ` +
     `limited color palette staying within tan cream and off-white tones, ` +
     `clean shapes with strong silhouettes, minimal detail, ` +
     `no gradients no photorealism no shadows, ` +
-    `sticker style with thick white outline border, SVG ready.`;
+    `sticker style with thick white outline border, SVG ready, ` +
+    `fill the entire square canvas edge to edge, ` +
+    `maximize subject size to use all available space, ` +
+    `no padding no whitespace around edges, ` +
+    `rotate tall subjects diagonally to fill canvas, ` +
+    `designed for 512x512 icon display.`;
   if (hint && hint.trim()) {
     return `${base} ${hint.trim()}.`;
   }
