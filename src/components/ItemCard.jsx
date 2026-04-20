@@ -2739,7 +2739,11 @@ function AttributePillsRow({ attributes }) {
   const origins        = Array.isArray(attributes.origins)        ? attributes.origins        : [];
   const certifications = Array.isArray(attributes.certifications) ? attributes.certifications : [];
   const flavor         = Array.isArray(attributes.flavor)         ? attributes.flavor         : [];
-  if (origins.length === 0 && certifications.length === 0 && flavor.length === 0) return null;
+  const claims         = Array.isArray(attributes.claims)         ? attributes.claims         : [];
+  if (
+    origins.length === 0 && certifications.length === 0 &&
+    flavor.length === 0 && claims.length === 0
+  ) return null;
   return (
     <div style={{
       marginBottom: 12,
@@ -2779,6 +2783,17 @@ function AttributePillsRow({ attributes }) {
           {f.toUpperCase()}
         </span>
       ))}
+      {claims.map((c) => (
+        <span key={`cl-${c}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#a8a8a8", background: "#171717",
+          border: "1px solid #2e2e2e",
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          {c.toUpperCase()}
+        </span>
+      ))}
     </div>
   );
 }
@@ -2792,7 +2807,7 @@ function mergeAttributes(existing, incoming) {
   if (!incoming) return existing || null;
   if (!existing) return incoming;
   const out = { ...existing };
-  for (const key of ["origins", "flavor"]) {
+  for (const key of ["origins", "flavor", "claims"]) {
     const merged = [...(existing[key] || []), ...(incoming[key] || [])];
     const seen = new Set();
     const deduped = [];

@@ -758,6 +758,57 @@ export function parseFlavorVariant(productName, categoryHints = []) {
 // attributes object suitable for the pantry_items.attributes JSONB
 // column. Only includes non-empty keys so we don't write empty
 // arrays / objects into the DB.
+// Marketing / health-claim keywords that ride alongside the product
+// name — things like "Protein", "Keto", "Lite", "Organic". These
+// aren't CERTIFICATIONS (which come from OFF labels_tags and are
+// formally regulated) and they aren't FLAVOR (the taste axis).
+// They're closer to USDA grade / farm-fresh / ABF tags: promises
+// a brand makes about the product's positioning. Surfaces as small
+// gray pills next to the brand on ItemCard.
+const PRODUCT_CLAIM_KEYWORDS = [
+  // Protein / macro positioning
+  "protein", "high protein", "high-protein", "low fat", "low-fat",
+  "fat free", "fat-free", "low carb", "low-carb", "zero carb",
+  "zero sugar", "no sugar added", "sugar free", "sugar-free",
+  "low sodium", "low-sodium", "no salt added",
+  // Diet tiers
+  "keto", "paleo", "whole30", "plant based", "plant-based",
+  "vegan", "vegetarian", "pescatarian",
+  // Processing / quality
+  "organic", "all natural", "natural", "non gmo", "non-gmo",
+  "grass fed", "grass-fed", "pasture raised", "pasture-raised",
+  "free range", "free-range", "cage free", "cage-free",
+  "antibiotic free", "antibiotic-free", "abf", "hormone free", "hormone-free",
+  "no preservatives", "preservative free", "preservative-free",
+  "gluten free", "gluten-free",
+  // Volume / concentration
+  "lite", "light", "extra", "original", "classic",
+  "premium", "extra virgin",
+];
+
+const PRODUCT_CLAIM_PHRASES = PRODUCT_CLAIM_KEYWORDS.map((k) => ({
+  phrase: k.replace(/[-_]/g, " "),
+  display: titleCaseSlug(k),
+}));
+
+export function parseProductClaims(productName) {
+  if (!productName || typeof productName !== "string") return [];
+  const hay = productName.toLowerCase();
+  const out = [];
+  const seen = new Set();
+  // Longest-first so 'high protein' wins over 'protein'.
+  const byLen = [...PRODUCT_CLAIM_PHRASES].sort((a, b) => b.phrase.length - a.phrase.length);
+  for (const { phrase, display } of byLen) {
+    const re = new RegExp(`\\b${phrase.replace(/\s+/g, "\\s+")}\\b`, "i");
+    if (re.test(hay) && !seen.has(display)) {
+      seen.add(display);
+      out.push(display);
+    }
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 export function buildAttributesFromScan({
   productName   = null,
   categoryHints = [],
@@ -768,9 +819,11 @@ export function buildAttributesFromScan({
   const origins         = parseOrigins(originTags, countryTags);
   const certifications  = parseCertifications(labelTags);
   const flavor          = parseFlavorVariant(productName, categoryHints);
+  const claims          = parseProductClaims(productName);
   const out = {};
   if (origins.length > 0)        out.origins        = origins;
   if (certifications.length > 0) out.certifications = certifications;
   if (flavor.length > 0)         out.flavor         = flavor;
+  if (claims.length > 0)         out.claims         = claims;
   return Object.keys(out).length > 0 ? out : null;
 }
