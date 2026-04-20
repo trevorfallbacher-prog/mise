@@ -953,7 +953,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // the "Look right?" confirm screen. Parent's
               // addScannedItems handles pantry insert + toast.
               setCanonicalCreatePrompt(null);
-              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null });
+              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
               console.log("[ramen-debug] 5/committed-via-onItemsScanned");
             } catch (e) {
               console.error("[ramen-debug] onCreate core failed:", e);
@@ -1009,7 +1009,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // that resolves the same brand+canonical will refetch.
             }
             setCanonicalCreatePrompt(null);
-            onItemsScanned([skipRow], { store: null, date: null, totalCents: null });
+            onItemsScanned([skipRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
             onClose?.();
           }}
           onCancel={() => {
@@ -1092,12 +1092,19 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               const firstHintPretty = (res.categoryHints && res.categoryHints[0])
                 ? res.categoryHints[0].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
                 : null;
+              // Pre-fill typeId (FOOD CATEGORY axis — orange chip) and
+              // tileId (STORED IN axis — blue chip) from the matched
+              // canonical so the user doesn't land on an ItemCard
+              // with two empty "+ SET X" affordances for axes the
+              // registry could already answer. typeIdForCanonical
+              // reads canonicalToType map; inferTileFromName falls
+              // back to keyword heuristics when no explicit mapping.
+              const prefilledTypeId = canon?.id ? (typeIdForCanonical(canon.id) || null) : null;
+              const rowName = res.productName || canon?.name || firstHintPretty || `Barcode ${barcode}`;
+              const prefilledTileId = inferTileFromName(rowName) || null;
               const row = {
                 id:            freshId,
-                name:          res.productName
-                               || canon?.name
-                               || firstHintPretty
-                               || `Barcode ${barcode}`,
+                name:          rowName,
                 emoji:         canon?.emoji || "🥫",
                 brand:         effectiveBrand || null,
                 category:      canon?.category || "pantry",
@@ -1105,6 +1112,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 canonicalId:   canon?.id || null,
                 ingredientId:  canon?.id || null,
                 ingredientIds: canon?.id ? [canon.id] : [],
+                ...(prefilledTypeId ? { typeId: prefilledTypeId } : {}),
+                ...(prefilledTileId ? { tileId: prefilledTileId } : {}),
                 amount:        packageSize?.amount ?? 1,
                 unit:          packageSize?.unit ?? (canon?.defaultUnit || "count"),
                 max:           packageSize?.amount ?? null,
@@ -1203,7 +1212,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // onItemsScanned (parent's addScannedItems handles the
               // pantry insert + toast), then close the Scanner. User
               // lands back in Kitchen with the new item stocked.
-              onItemsScanned([row], { store: null, date: null, totalCents: null });
+              onItemsScanned([row], { store: null, date: null, totalCents: null, autoOpenFirst: true });
               if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
@@ -5392,6 +5401,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
 
+    // Captured from inside the setPantry reducer below so that, when
+    // the Scanner signals a single-item barcode flow via
+    // meta.autoOpenFirst, we can pop the ItemCard for the freshly
+    // inserted pantry row and let the user fill any still-unset axes
+    // (category, tile, location, expires) before it joins the grid.
+    let firstNewRowId = null;
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       fannedItems.forEach(s => {
@@ -5548,8 +5563,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             canonicalId: s.canonicalId,
             willSpreadBrand: !!s.brand,
           });
+          const freshId = crypto.randomUUID();
+          if (!firstNewRowId) firstNewRowId = freshId;
           next.push({
-            id: crypto.randomUUID(),
+            id: freshId,
             ingredientId: s.ingredientId || null,
             name: s.name,
             emoji: s.emoji,
@@ -5661,6 +5678,22 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     }
     if (unitMismatchCount > 0) {
       pushToast(`${unitMismatchCount} item${unitMismatchCount === 1 ? "" : "s"} had a unit mismatch — check your kitchen`, { emoji: "⚠️", kind: "warn" });
+    }
+
+    // Barcode single-item scans pass meta.autoOpenFirst so we cascade
+    // directly into the new row's ItemCard. User lands on the full
+    // edit surface to finish any still-unset axes (expires, category,
+    // stored-in, package size) instead of having to hunt for their
+    // fresh row in the tile grid.
+    if (meta.autoOpenFirst && firstNewRowId) {
+      // Resolve the row reference from the pantry state via a
+      // functional update — guarantees we see the post-merge state
+      // not a stale closure.
+      setPantry(prev => {
+        const fresh = prev.find(p => p.id === firstNewRowId);
+        if (fresh) setOpenItem(fresh);
+        return prev;
+      });
     }
 
     // Bump use_count on every template that matched a scan row
