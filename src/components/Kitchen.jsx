@@ -5375,6 +5375,20 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       if (matchesSearch(item.name)) return true;
       if (matchesSearch(item.category)) return true;
       if (matchesSearch(item.brand)) return true;
+      // scanRaw carries the ORIGINAL product text from the scan
+      // ("Pepsi Zero Sugar"), which persists even if name later gets
+      // derived to something shorter. Lets users find items by the
+      // words they saw on the package.
+      if (matchesSearch(item.scanRaw)) return true;
+      // Claims and flavor from attributes — scans stamp these (e.g.
+      // SCOOPS, ORIGINAL). User might search by the variant word
+      // ("original") rather than the full product name.
+      if (item.attributes) {
+        const claims = Array.isArray(item.attributes.claims) ? item.attributes.claims : [];
+        if (claims.some(c => matchesSearch(c))) return true;
+        const flavor = Array.isArray(item.attributes.flavor) ? item.attributes.flavor : [];
+        if (flavor.some(f => matchesSearch(f))) return true;
+      }
       const canonId = item.canonicalId || item.ingredientId;
       if (canonId) {
         if (matchesSearch(canonId)) return true;
@@ -6136,9 +6150,46 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // lowThreshold also dropped out of auto-recompute; it's derived at
   // add-time in AddItemModal and stays stable after unless the user
   // edits it explicitly.
+  // Derive a display name from identity axes. "[Brand] [Canonical]"
+  // when both are set, canonical alone when no brand, brand alone
+  // when no canonical, otherwise a humanized slug fallback, otherwise
+  // the raw scan text. Keeps name + search + the ItemCard header in
+  // lockstep so correcting a canonical reshapes the row end-to-end.
+  const deriveItemName = (merged) => {
+    const canonId = merged.canonicalId || merged.ingredientId || null;
+    const canon = canonId ? findIngredient(canonId) : null;
+    const canonName = canon?.shortName || canon?.name
+      || (canonId ? String(canonId).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "");
+    const brand = (merged.brand || "").trim();
+    if (brand && canonName) return `${brand} ${canonName}`;
+    if (canonName) return canonName;
+    if (brand) return brand;
+    if (merged.scanRaw) return String(merged.scanRaw);
+    return merged.name || "Item";
+  };
+
+  // Whenever a patch touches the identity axes (canonicalId, brand,
+  // or the composition tags ingredientIds), rewrite `name` so the
+  // row's stored name reflects the new identity. User's explicit
+  // name override (typed into the inline rename input) wins — if
+  // the patch ALREADY sets name, we respect it and don't clobber.
+  //
+  // Motivation: the scanner stamps name from OFF's productName
+  // ("ZERO SUGAR" on a Pepsi), then the user corrects the canonical
+  // to soda_pop — without this, the row still reads "ZERO SUGAR" to
+  // the search index and the row feels disconnected from its actual
+  // identity. Per user spec: "update canonical update brand ...
+  // update name."
+  const IDENTITY_KEYS = new Set(["canonicalId", "ingredientId", "ingredientIds", "brand"]);
   const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
     if (p.id !== id) return p;
-    return { ...p, ...patch };
+    const merged = { ...p, ...patch };
+    const touchesIdentity = Object.keys(patch).some(k => IDENTITY_KEYS.has(k));
+    const userSetName = Object.prototype.hasOwnProperty.call(patch, "name");
+    if (touchesIdentity && !userSetName) {
+      merged.name = deriveItemName(merged);
+    }
+    return merged;
   }));
 
   // Render one pantry-item row. Used both for standalone items and for items
