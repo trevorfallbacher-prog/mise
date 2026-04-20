@@ -762,6 +762,33 @@ pass at each step):*
 8. Level-up ceremony modal — triggered by profile.level change
    via realtime sub. Full-screen celebration per §5.
 
+**Phase 5 commits — celebration layer (6 total):**
+
+*Realtime +N toasts:*
+1. `useXpEvents.js` — realtime sub on xp_events filtered to the
+   current user_id; exposes a queue of new earns since mount.
+2. `XpToast.jsx` — single top-right slide-in toast. Color pulled
+   from the reserved palette (CLAUDE.md identity hierarchy) when
+   the source maps to an axis (canonical → tan, scan → blue,
+   review → muted, etc.). 2s default hold.
+3. `XpToastStack.jsx` — queue renderer mounted at AuthedApp.
+   Throttles overlap (events within 400ms queue rather than
+   stack visually). Suppressed while a CookComplete summary is
+   playing so beats and toasts don't compete.
+
+*CookComplete beat choreography:*
+4. `CookComplete.jsx` save() refactor — await the award_xp RPC
+   instead of fire-and-forget; capture breakdown jsonb in state.
+5. `CookCompleteSummary.jsx` — beat-sequenced reveal component
+   driven by the breakdown. Beats per §5: base cook → flat
+   bonuses (first-time / plan→cook / eat-together / photo) →
+   curated multiplier reveal → per-skill rollup → streak
+   multiplier → total counter ramp. 600-800ms per beat. Tap
+   anywhere fast-forwards to total. 7s hard cap with overflow
+   batched into a "+N more bonuses" beat.
+6. Wire summary phase into CookComplete state machine + suppress
+   the realtime toast stack while the summary plays.
+
 **Phase 4b commits — gates (8 total, locked at phase start):**
 
 1. `0107_xp_level_gates.sql` — config table + seed for 4 gates
