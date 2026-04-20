@@ -1,8 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
 import { findIngredient, unitLabel, compareQty, inferCanonicalFromName } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 import CookComplete from "./CookComplete";
+import { recipeNutrition } from "../lib/nutrition";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -255,6 +258,23 @@ export default function CookMode({
   // Mounts CookComplete; on finish we hand off to parent's onDone.
   const [completing, setCompleting] = useState(false);
 
+  // Nutrition rollup for the recipe — drives the calorie tile in the
+  // meta row below. Pulls from the full resolver chain (pantry
+  // override → brand_nutrition → ingredient_info → bundled canonical
+  // fallback) so the number reflects the user's actual stocked items
+  // whenever the recipe references something they've scanned. Hooks
+  // must run unconditionally; kept above the `if (!recipe)` guard.
+  const ingredientInfo = useIngredientInfo();
+  const { get: getBrandNutrition } = useBrandNutrition();
+  const brandNutrition = useMemo(
+    () => ({ get: (k) => getBrandNutrition?.(k) || null }),
+    [getBrandNutrition],
+  );
+  const nutritionSummary = useMemo(
+    () => recipe ? recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo, brandNutrition }) : null,
+    [recipe, pantry, ingredientInfo, brandNutrition],
+  );
+
   // Defensive: if no recipe was passed, render nothing. Parent owns selection.
   if (!recipe) return null;
 
@@ -343,12 +363,35 @@ export default function CookMode({
         )}
       </div>
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
-        {[["⏱", timeLabel],["📊", diffLabel],["👥",`Serves ${recipe.serves}`]].map(([icon,val])=>(
-          <div key={val} style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
-            <div style={{ fontSize:18, marginBottom:4 }}>{icon}</div>
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>{val}</div>
-          </div>
-        ))}
+        {(() => {
+          // Per-serving kcal, rounded. Hidden (tile omitted) when the
+          // resolver couldn't map any ingredient to nutrition — a zero
+          // kcal tile on a recipe full of untracked items reads like a
+          // bug, not an honest coverage gap.
+          const cov = nutritionSummary?.coverage;
+          const kcal = nutritionSummary?.perServing?.kcal;
+          const kcalRounded = Math.round(kcal || 0);
+          const kcalTile = (cov?.resolved > 0 && kcalRounded > 0)
+            ? [["🔥", `${kcalRounded} kcal`, `${cov.resolved}/${cov.total} tracked`]]
+            : [];
+          const tiles = [
+            ["⏱", timeLabel],
+            ["📊", diffLabel],
+            ["👥", `Serves ${recipe.serves}`],
+            ...kcalTile,
+          ];
+          return tiles.map(([icon, val, sub]) => (
+            <div key={val} style={{ flex:1, background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
+              <div style={{ fontSize:18, marginBottom:4 }}>{icon}</div>
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>{val}</div>
+              {sub && (
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", marginTop:2, letterSpacing:"0.06em" }}>
+                  {sub}
+                </div>
+              )}
+            </div>
+          ));
+        })()}
       </div>
       <div style={{ marginTop:28 }}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
