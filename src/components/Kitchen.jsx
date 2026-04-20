@@ -950,12 +950,16 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 canonicalId: patchedRow.canonicalId,
                 resolvedBrand,
               });
-              // Teach the system. When the user created a canonical
-              // during a scan, the UPC → canonical mapping is the
-              // whole point — save it now so every future scan of
-              // the same UPC auto-pairs. Admin writes go global,
-              // regular users land family-scoped. Fire-and-forget.
+              // Teach the system. UPC → canonical mapping persists so
+              // future scans of the same UPC auto-pair.
               const scanUpc = cpSnapshot?.pendingRow?.barcodeUpc || null;
+              console.log("[upc-debug] 3/write-attempt", {
+                scanUpc,
+                userId,
+                isAdmin,
+                slug,
+                willWrite: !!(scanUpc && userId),
+              });
               if (scanUpc && userId) {
                 rememberBarcodeCorrection({
                   userId,
@@ -964,7 +968,9 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   canonicalId:   slug,
                   emoji:         canonEmoji,
                   ingredientIds: [slug],
-                }).catch(e => console.warn("[barcode_correction] write from prompt failed:", e));
+                })
+                  .then(res => console.log("[upc-debug] 4/write-result", res))
+                  .catch(e => console.warn("[upc-debug] write threw:", e));
               }
               // Single-item barcode scan — commit directly, skip
               // the "Look right?" confirm screen. Parent's
@@ -1071,18 +1077,23 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 const parsed = parseIdentity(res.productName);
                 if (parsed?.brand) effectiveBrand = parsed.brand;
               }
-              // Tier 0 — UPC correction memory (migration 0067). If
-              // anyone has previously taught the system what THIS
-              // exact UPC is (admin globally, or family-locally),
-              // skip the resolver entirely and use the stored
-              // identity. Same UPC = same physical product by
-              // definition, so the learned answer beats any OFF
-              // text parse.
+              // Tier 0 — UPC correction memory (migration 0067).
               let correctionMatch = null;
               try {
                 const correction = await findBarcodeCorrection(barcode);
+                console.log("[upc-debug] 1/lookup", {
+                  barcode,
+                  correction: correction
+                    ? { source: correction.source, canonicalId: correction.canonicalId }
+                    : null,
+                });
                 if (correction && correction.canonicalId) {
                   const ing = findIngredient(correction.canonicalId);
+                  console.log("[upc-debug] 2/findIngredient", {
+                    canonicalId: correction.canonicalId,
+                    found: !!ing,
+                    ingName: ing?.name,
+                  });
                   if (ing) {
                     correctionMatch = {
                       canonical: ing,
@@ -1095,7 +1106,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   }
                 }
               } catch (e) {
-                console.warn("[scanner:barcode] correction lookup failed:", e);
+                console.warn("[upc-debug] lookup threw:", e);
               }
 
               // Canonical resolution + state + size + attributes.
