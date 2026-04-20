@@ -377,16 +377,16 @@ export default function AIRecipe({
     // mealTiming so the backend's HARD CONSTRAINTS block doesn't get a
     // "breakfast" tag on a chicken-stock prep.
     const isComponentCourse = course === "bake" || course === "prep";
-    // Priority only meaningful when a course is set. For course="any"
-    // there's no category to trade against, so omit the field — edge
-    // fn defaults to legacy behavior in that case.
-    const priorityForPayload = course !== "any" ? priority : undefined;
     return {
       cuisine, time, difficulty,
       mealPrompt: mealPrompt.trim() || undefined,
       mealTiming: (isComponentCourse || mealTiming === "any") ? undefined : mealTiming,
       course: course === "any" ? undefined : course,
-      priority: priorityForPayload,
+      // Always send priority — when course is "any", the edge fn's
+      // pantry filter is a no-op but the precedence branch still
+      // respects the user's "category-first" vs "pantry-first" intent
+      // for whichever course Claude decides to emit.
+      priority,
       starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
       // Compose-a-meal anchor. Only present when the user clicked
       // "+ Add side/dessert/appetizer" from a main's preview; Claude
@@ -410,10 +410,11 @@ export default function AIRecipe({
         pantry, profile, ingredientInfo, cookLogs,
         mode: isRegen ? "lean" : "rich",
         starIngredientIds,
-        // Course-compatibility filter only fires when both are set;
-        // otherwise buildAIContext passes the pantry through unchanged.
+        // filterPantryByCourse is a no-op when course is "any" (no
+        // compatibility set) or priority is "pantry" — pass both
+        // through unconditionally; the filter does the gating.
         course:   course === "any" ? undefined : course,
-        priority: course === "any" ? undefined : priority,
+        priority,
       });
       const payload = {
         mode: "sketch",
@@ -1870,24 +1871,24 @@ export default function AIRecipe({
         </Section>
 
         {/* PRIORITY — which side of the "I want X / I have Y" tension
-            wins. Hidden when course==="any" because there's nothing
-            for pantry-compatibility to trade against. "Follow the
-            category" (default) filters the pantry palette to items
-            that fit the course and makes the course constraint
-            authoritative — picks Baked Goods → Claude sees only
-            flour/sugar/butter/eggs/etc., can't draft a hot-dog
-            skillet. "Use my pantry" keeps the old ingredient-first
-            behavior for the "use up what's going bad" workflow. */}
-        {course !== "any" && (
-          <Section label="PRIORITY">
-            <ChipRow
-              value={priority}
-              onChange={setPriority}
-              options={PRIORITY_CHIPS}
-              color="#7ec87e"
-            />
-          </Section>
-        )}
+            wins. Always visible so the UI doesn't jump when the course
+            chip flips. "Follow the category" (default) makes whatever
+            course IS set authoritative and filters the pantry palette
+            to compatible items — Baked Goods sees only flour/sugar/
+            butter/eggs/etc., can't draft a hot-dog skillet. "Use my
+            pantry" keeps the old ingredient-first behavior for the
+            "use up what's going bad" workflow. For course === "any"
+            the filter is a no-op (no compatibility set to apply) but
+            the preference still rides through for when Claude decides
+            what course to pick. */}
+        <Section label="PRIORITY">
+          <ChipRow
+            value={priority}
+            onChange={setPriority}
+            options={PRIORITY_CHIPS}
+            color="#7ec87e"
+          />
+        </Section>
 
         {/* MEAL TIMING hides for bake/prep courses — a sourdough loaf
             or a gallon of stock isn't pinned to breakfast/lunch/dinner.
