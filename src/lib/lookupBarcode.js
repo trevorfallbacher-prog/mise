@@ -63,6 +63,17 @@ export async function lookupBarcode(barcode, { brandNutritionRows = [] } = {}) {
     body: { barcode: normalized },
   });
 
+  console.log("[lookup-barcode] edge-fn result", {
+    barcode: normalized,
+    hasError: !!error,
+    errorMessage: error?.message,
+    errorStatus: error?.context?.status ?? null,
+    dataFound: data?.found,
+    dataReason: data?.reason,
+    dataProductName: data?.productName,
+    willFallBackToCache: !!(error || !data?.found) && !!cached,
+  });
+
   if (!error && data && data.found) {
     // Merge: OFF provides fresh text, cache can top up nutrition if
     // OFF didn't have it (older OFF entries without nutriments).
