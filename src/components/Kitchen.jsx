@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   INGREDIENTS, HUBS,
   findIngredient, findHub, hubForIngredient,
@@ -55,8 +56,21 @@ import {
 import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { lookupBarcode } from "../lib/lookupBarcode";
+import BarcodeScanner from "./BarcodeScanner";
+import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
+import {
+  resolveCanonicalFromScan,
+  parsePackageSize,
+  parseStateFromText,
+  stateForCanonical,
+  buildAttributesFromScan,
+  cleanProductName,
+} from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
-import { usePopularPackages } from "../lib/usePopularPackages";
+import { usePopularPackages, fetchPopularPackages } from "../lib/usePopularPackages";
+import { findBarcodeCorrection, rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import FieldExplainer from "./FieldExplainer";
@@ -212,9 +226,25 @@ const SCAN_EMOJI_OPTIONS = [
 ];
 
 // ── Scanner (fridge / pantry / receipt) ───────────────────────────────────────
-function Scanner({ userId, onItemsScanned, onClose }) {
+function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onClose }) {
   const [mode, setMode] = useState("receipt");
   const [phase, setPhase] = useState("upload");
+  // Barcode mode — skips the Claude-vision upload path and uses
+  // the dedicated BarcodeScanner (zxing + photo-capture fallback).
+  // Result feeds a single prefilled scanned-item into the existing
+  // confirm/review flow so adds land with one more tap.
+  const [barcodeScannerOpen, setBarcodeScannerOpen] = useState(false);
+  const [barcodeBusy,        setBarcodeBusy]        = useState(false);
+  // When the resolver misses but OFF gave us enough signal to
+  // suggest a new canonical name (from genericName / productName /
+  // categoryHints), park the would-be scan row here and show a
+  // "Create canonical: X?" prompt. User can accept, edit, or skip.
+  // Null when the resolver resolved cleanly or when no signal
+  // existed at all (in which case we land in confirm with the
+  // fallback-named row directly).
+  const [canonicalCreatePrompt, setCanonicalCreatePrompt] = useState(null);
+  //   { suggestedName, pendingRow, pendingBrandNutrition }
+  const { rows: brandNutritionRowsForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
   // Admin bypass for the PENDING status. Admins approve canonicals
   // themselves, so when they create one we auto-upsert the
   // ingredient_info stub (same shape AdminPanel.approveCustom writes)
@@ -725,7 +755,7 @@ function Scanner({ userId, onItemsScanned, onClose }) {
   const updateUnit = (idx,val) => setScannedItems(prev => prev.map((item,i) => i===idx ? {...item,unit:val} : item));
 
   return (
-    <div style={{ position:"fixed", inset:0, background:"#080808", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
+    <div style={{ position:"fixed", inset:0, background:"#111", zIndex:200, maxWidth:480, margin:"0 auto", display:"flex", flexDirection:"column", minHeight:0, overflow:"hidden" }}>
       <div style={{ height:2, background:"#1a1a1a" }}>
         <div style={{ height:"100%", background:"#f5c842", width:`${({upload:5,ready:20,scanning:60,confirm:90,done:100}[phase]||5)}%`, transition:"width 0.4s ease" }} />
       </div>
@@ -772,28 +802,572 @@ function Scanner({ userId, onItemsScanned, onClose }) {
             <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:32, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>{activeMode.title}</h2>
             <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666" }}>{activeMode.blurb}</p>
           </div>
-          <div onClick={() => fileRef.current?.click()} style={{ flex:1, border:`2px dashed ${imagePreview?"#f5c84255":"#2a2a2a"}`, borderRadius:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background: imagePreview?"#0f0d08":"#0f0f0f", overflow:"hidden", position:"relative", minHeight:280, transition:"all 0.3s" }}>
-            {imagePreview ? (
-              <>
-                <img src={imagePreview} alt="Receipt" style={{ width:"100%", height:"100%", objectFit:"contain", maxHeight:400 }} />
-                <div style={{ position:"absolute", bottom:12, right:12, background:"#f5c842", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#111", fontWeight:600 }}>TAP TO CHANGE</div>
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize:48, marginBottom:16 }}>{activeMode.icon}</div>
-                <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>
-                  Tap to upload {activeMode.id === "receipt" ? "receipt" : "photo"}
-                </div>
-                <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>Photo or screenshot works</div>
-              </>
-            )}
-          </div>
+          {mode === "barcode" ? (
+            // Barcode mode — no image upload, no Claude vision call.
+            // The dedicated BarcodeScanner (zxing live + photo-capture
+            // + typed fallback) handles the decode, then we hand off
+            // to lookupBarcode + canonicalResolver to build a single
+            // prefilled scan row that lands in the confirm screen.
+            <div
+              onClick={() => !barcodeBusy && setBarcodeScannerOpen(true)}
+              style={{
+                flex:1, border:`2px dashed ${barcodeBusy?"#f5c84255":"#2a2a2a"}`,
+                borderRadius:20,
+                display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
+                cursor: barcodeBusy ? "wait" : "pointer",
+                background:"#0f0f0f",
+                minHeight:280, transition:"all 0.3s",
+              }}
+            >
+              <div style={{ fontSize:48, marginBottom:16 }}>📷</div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color: barcodeBusy ? "#f5c842" : "#555", fontStyle:"italic" }}>
+                {barcodeBusy ? "Looking up…" : "Tap to open the camera"}
+              </div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>
+                Live scan, photo capture, or type the digits
+              </div>
+            </div>
+          ) : (
+            <div onClick={() => fileRef.current?.click()} style={{ flex:1, border:`2px dashed ${imagePreview?"#f5c84255":"#2a2a2a"}`, borderRadius:20, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", cursor:"pointer", background: imagePreview?"#0f0d08":"#0f0f0f", overflow:"hidden", position:"relative", minHeight:280, transition:"all 0.3s" }}>
+              {imagePreview ? (
+                <>
+                  <img src={imagePreview} alt="Receipt" style={{ width:"100%", height:"100%", objectFit:"contain", maxHeight:400 }} />
+                  <div style={{ position:"absolute", bottom:12, right:12, background:"#f5c842", borderRadius:8, padding:"6px 12px", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#111", fontWeight:600 }}>TAP TO CHANGE</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize:48, marginBottom:16 }}>{activeMode.icon}</div>
+                  <div style={{ fontFamily:"'Fraunces',serif", fontSize:18, color:"#555", fontStyle:"italic" }}>
+                    Tap to upload {activeMode.id === "receipt" ? "receipt" : "photo"}
+                  </div>
+                  <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#444", marginTop:4 }}>Photo or screenshot works</div>
+                </>
+              )}
+            </div>
+          )}
           <input ref={fileRef} type="file" accept="image/*" style={{ display:"none" }} onChange={e=>handleFile(e.target.files[0])} />
           {error && <div style={{ marginTop:12, padding:"12px 14px", background:"#1a0f0f", border:"1px solid #3a1a1a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f87171" }}>{error}</div>}
+          {mode !== "barcode" && (
           <button onClick={imagePreview ? runScan : ()=>fileRef.current?.click()} style={{ marginTop:20, width:"100%", padding:"16px", background: imagePreview?"#f5c842":"#1a1a1a", color: imagePreview?"#111":"#444", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", transition:"all 0.3s", boxShadow: imagePreview?"0 0 30px #f5c84233":"none" }}>
             {imagePreview ? activeMode.cta : "CHOOSE PHOTO"}
           </button>
+          )}
+          {mode === "barcode" && (
+            <>
+              <button
+                onClick={() => !barcodeBusy && setBarcodeScannerOpen(true)}
+                disabled={barcodeBusy}
+                style={{
+                  marginTop:20, width:"100%", padding:"16px",
+                  background: barcodeBusy ? "#2a2a2a" : "#f5c842",
+                  color: barcodeBusy ? "#666" : "#111",
+                  border:"none", borderRadius:14,
+                  fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600,
+                  letterSpacing:"0.08em",
+                  cursor: barcodeBusy ? "wait" : "pointer",
+                  transition:"all 0.3s",
+                  boxShadow: barcodeBusy ? "none" : "0 0 30px #f5c84233",
+                }}
+              >
+                {barcodeBusy ? "LOOKING UP…" : "SCAN BARCODE →"}
+              </button>
+              {/* Escape hatch when the barcode is unreadable — torn
+                  label, shrink-wrapped, hand-printed, or no barcode
+                  at all. Closes the Scanner and opens AddItemModal
+                  for a fully manual entry. Secondary-weight so it
+                  doesn't compete with the primary scan CTA above. */}
+              {onManualEntry && (
+                <button
+                  type="button"
+                  onClick={onManualEntry}
+                  disabled={barcodeBusy}
+                  style={{
+                    marginTop:10, width:"100%", padding:"12px",
+                    background:"transparent",
+                    border:"1px solid #2a2a2a",
+                    color:"#aaa", borderRadius:12,
+                    fontFamily:"'DM Mono',monospace", fontSize:11,
+                    fontWeight:600, letterSpacing:"0.08em",
+                    cursor: barcodeBusy ? "not-allowed" : "pointer",
+                    opacity: barcodeBusy ? 0.5 : 1,
+                  }}
+                >
+                  CAN'T SCAN? ADD MANUALLY →
+                </button>
+              )}
+            </>
+          )}
         </div>
+      )}
+      {canonicalCreatePrompt && (
+        <CanonicalCreatePrompt
+          initialName={canonicalCreatePrompt.suggestedName}
+          initialBrand={canonicalCreatePrompt.pendingRow?.brand || ""}
+          sourceHint={canonicalCreatePrompt.pendingResolverReason}
+          onCreate={async ({ finalName, finalBrand }) => {
+            console.log("[ramen-debug] 3/onCreate-entry", {
+              finalName,
+              finalBrand,
+              pendingRowBrand: canonicalCreatePrompt?.pendingRow?.brand,
+            });
+            // Top-level try/catch so a sub-call failure (enrich edge
+            // fn down, brand_nutrition hook undefined, etc.) can
+            // never leave the prompt stuck open. Even if every
+            // optional side-effect fails, the core state transition
+            // (apply the row, close the prompt, advance phase) runs.
+            const cpSnapshot = canonicalCreatePrompt;   // snapshot before async work
+            const slug = (finalName || "")
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, "_")
+              .replace(/^_+|_+$/g, "")
+              .slice(0, 80);
+            // Brand: user's input wins over whatever pendingRow had
+            // (OFF sometimes misses brand; we now ask the user
+            // directly). Empty trimmed string → null.
+            const resolvedBrand = ((finalBrand || "").trim())
+              || cpSnapshot?.pendingRow?.brand
+              || null;
+            // Close prompt + advance phase FIRST so the UX commits
+            // regardless of what the side-effects below do. User sees
+            // the confirm screen immediately.
+            try {
+              const canonEmoji    = cpSnapshot?.pendingRow?.emoji    || "✨";
+              const canonCategory = cpSnapshot?.pendingRow?.category || "pantry";
+              const patchedRow = {
+                ...(cpSnapshot?.pendingRow || {}),
+                name:          finalName.trim(),
+                emoji:         canonEmoji,
+                canonicalId:   slug,
+                ingredientId:  slug,
+                ingredientIds: [slug],
+                category:      canonCategory,
+                brand:         resolvedBrand,
+                autoLinked:    true,
+              };
+              console.log("[ramen-debug] 4/patchedRow-built", {
+                name: patchedRow.name,
+                brand: patchedRow.brand,
+                canonicalId: patchedRow.canonicalId,
+                resolvedBrand,
+              });
+              // Teach the system. UPC → canonical mapping persists so
+              // future scans of the same UPC auto-pair.
+              const scanUpc = cpSnapshot?.pendingRow?.barcodeUpc || null;
+              console.log("[upc-debug] 3/write-attempt", {
+                scanUpc,
+                userId,
+                isAdmin,
+                slug,
+                willWrite: !!(scanUpc && userId),
+              });
+              if (scanUpc && userId) {
+                rememberBarcodeCorrection({
+                  userId,
+                  isAdmin,
+                  barcodeUpc: scanUpc,
+                  canonicalId:   slug,
+                  emoji:         canonEmoji,
+                  ingredientIds: [slug],
+                })
+                  .then(res => console.log("[upc-debug] 4/write-result", res))
+                  .catch(e => console.warn("[upc-debug] write threw:", e));
+              }
+              // Single-item barcode scan — commit directly, skip
+              // the "Look right?" confirm screen. Parent's
+              // addScannedItems handles pantry insert + toast.
+              setCanonicalCreatePrompt(null);
+              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              console.log("[ramen-debug] 5/committed-via-onItemsScanned");
+            } catch (e) {
+              console.error("[ramen-debug] onCreate core failed:", e);
+              // Even the core path threw (shouldn't happen, but guard).
+              // Dismiss the prompt so the user isn't stuck.
+              setCanonicalCreatePrompt(null);
+              return;
+            }
+            // Fire-and-forget side effects. Any failure here is
+            // logged but doesn't affect the UX — the row is already
+            // in confirm and the user can proceed.
+            try {
+              await enrichIngredient({
+                source_name:  finalName.trim(),
+                canonical_id: slug,
+              });
+            } catch (e) {
+              console.warn("[scanner:barcode] enrich new canonical failed:", e);
+            }
+            // brand_nutrition requires a concrete brand (PK component).
+            // Use the user's typed brand when OFF didn't supply one,
+            // and skip entirely if we still have neither.
+            if (
+              cpSnapshot?.pendingBrandNutrition?.nutrition
+              && resolvedBrand
+              && typeof upsertBrandNutritionForScan === "function"
+            ) {
+              try {
+                const maybePromise = upsertBrandNutritionForScan({
+                  canonicalId: slug,
+                  ...cpSnapshot.pendingBrandNutrition,
+                  brand: resolvedBrand,
+                });
+                if (maybePromise && typeof maybePromise.catch === "function") {
+                  maybePromise.catch((e) => console.warn("[scanner:barcode] brand_nutrition upsert failed:", e));
+                }
+              } catch (e) {
+                console.warn("[scanner:barcode] brand_nutrition upsert threw:", e);
+              }
+            }
+            // Close the Scanner after commit — single-item scans
+            // have no further review step to show.
+            onClose?.();
+          }}
+          onSkip={() => {
+            // User opted not to create a canonical — commit the
+            // fallback-named row directly to pantry. They can assign
+            // a canonical later from the ItemCard.
+            const skipRow = canonicalCreatePrompt.pendingRow;
+            if (canonicalCreatePrompt.pendingBrandNutrition) {
+              // Without canonical, brand_nutrition can't be written
+              // (PK requires it). Payload is dropped; a future scan
+              // that resolves the same brand+canonical will refetch.
+            }
+            setCanonicalCreatePrompt(null);
+            onItemsScanned([skipRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+            onClose?.();
+          }}
+          onCancel={() => {
+            // Back out entirely — no scan row created.
+            setCanonicalCreatePrompt(null);
+          }}
+        />
+      )}
+      {barcodeScannerOpen && (
+        <BarcodeScanner
+          onCancel={() => setBarcodeScannerOpen(false)}
+          onDetected={async (barcode) => {
+            setBarcodeScannerOpen(false);
+            setBarcodeBusy(true);
+            setError(null);
+            try {
+              const res = await lookupBarcode(barcode, { brandNutritionRows: brandNutritionRowsForScan });
+              console.log("[ramen-debug] 1/off-response", {
+                barcode,
+                found: res?.found,
+                productName: res?.productName,
+                brandFromOff: res?.brand,
+                genericName: res?.genericName,
+                categoryHints: res?.categoryHints,
+                hasNutrition: !!res?.nutrition,
+              });
+              if (!res?.found) {
+                const msg = res?.reason === "edge_fn_not_deployed"
+                  ? "Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode"
+                  : res?.reason === "fetch_failed"
+                    ? `Barcode lookup failed (${res?.status || "network"}).`
+                    : res?.reason === "no_nutriments"
+                      ? `Found ${barcode} but Open Food Facts has no nutrition data for it.`
+                      : `No match for ${barcode} in Open Food Facts.`;
+                setError(msg);
+                return;
+              }
+              // Brand: OFF brands field first, parseIdentity over
+              // productName as fallback (same pattern as AddItemModal).
+              let effectiveBrand = res.brand || null;
+              if (!effectiveBrand && res.productName) {
+                const parsed = parseIdentity(res.productName);
+                if (parsed?.brand) effectiveBrand = parsed.brand;
+              }
+              // Tier 0 — UPC correction memory (migration 0067).
+              // If ANY correction exists for this UPC, we trust it
+              // and skip the resolver + prompt entirely. The slug
+              // alone is enough to commit the row; findIngredient
+              // only upgrades the display metadata if the registry
+              // knows the canonical, but the commit never depends
+              // on it.
+              let correctionMatch = null;
+              let hadCorrection = false;
+              try {
+                const correction = await findBarcodeCorrection(barcode);
+                console.log("[upc-debug] 1/lookup", {
+                  barcode,
+                  correction: correction
+                    ? { source: correction.source, canonicalId: correction.canonicalId }
+                    : null,
+                });
+                if (correction && correction.canonicalId) {
+                  hadCorrection = true;
+                  const real = findIngredient(correction.canonicalId);
+                  const readable = correction.canonicalId
+                    .replace(/_/g, " ")
+                    .replace(/\b\w/g, c => c.toUpperCase());
+                  const ing = real || {
+                    id:           correction.canonicalId,
+                    name:         readable,
+                    shortName:    readable,
+                    emoji:        correction.emoji || "✨",
+                    category:     "pantry",
+                    units:        [{ id: "count", label: "count", toBase: 1 }],
+                    defaultUnit:  "count",
+                    _synthetic:   true,
+                  };
+                  console.log("[upc-debug] 2/resolved-ing", {
+                    canonicalId: correction.canonicalId,
+                    synthetic: !real,
+                    name: ing.name,
+                  });
+                  correctionMatch = {
+                    canonical: ing,
+                    confidence: "exact",
+                    reason: `barcode-${correction.source}`,
+                    matchedOn: barcode,
+                    autoApply: true,
+                    _correction: correction,
+                  };
+                }
+              } catch (e) {
+                console.warn("[upc-debug] lookup threw:", e);
+              }
+
+              // Canonical resolution + state + size + attributes.
+              // Fall through to the resolver only when no correction
+              // matched — the resolver's tiers are the cold-start
+              // path for UPCs nobody's taught yet.
+              const match = correctionMatch || resolveCanonicalFromScan({
+                brand:         res.brand,
+                productName:   res.productName,
+                categoryHints: res.categoryHints || [],
+                findIngredient,
+              });
+              const rawState = parseStateFromText(res.productName, res.categoryHints || []);
+              const state = match?.canonical
+                ? stateForCanonical(rawState, match.canonical)
+                : null;
+              let packageSize = parsePackageSize(res.quantity);
+              // When OFF has no quantity string (common for
+              // user-contributed entries), fall back to the learned
+              // popular_package_sizes for this (brand, canonical)
+              // pair. Same UPC → same physical package, so any prior
+              // family-member observation teaches the size for all
+              // subsequent scans. Skip count-like units here too —
+              // '1 pack' carries no weight/volume.
+              if (!packageSize && match?.canonical?.id) {
+                try {
+                  const learned = await fetchPopularPackages(
+                    effectiveBrand,
+                    match.canonical.id,
+                    5,
+                  );
+                  const top = learned.find(r =>
+                    r?.amount > 0 && r.unit && !DISCRETE_COUNT_UNITS.has(r.unit)
+                  );
+                  if (top) packageSize = { amount: top.amount, unit: top.unit };
+                } catch (e) {
+                  console.warn("[scanner:barcode] popular package fetch failed:", e);
+                }
+              }
+              let attributes = buildAttributesFromScan({
+                productName:   res.productName,
+                categoryHints: res.categoryHints || [],
+                originTags:    res.originTags  || [],
+                countryTags:   res.countryTags || [],
+                labelTags:     res.labelTags   || [],
+              });
+              // OFF responses are inconsistent — the same UPC can
+              // return a rich productName one session and null the
+              // next. When current scan has nothing to extract from,
+              // inherit from the most recent prior pantry_items row
+              // with the same UPC. Preserves Scoops! Original claim
+              // pills, Chicken Flavor variant subtitle, etc., across
+              // rescans.
+              let inheritedScanRaw = null;
+              const offProductName = res.productName || null;
+              const attributesEmpty = !attributes || Object.keys(attributes).length === 0;
+              const packageEmpty = !packageSize;
+              // Always check for prior-row data on a barcode scan —
+              // same UPC = same product, so any axis the current
+              // OFF response is missing can be filled from a
+              // previous scan that had it.
+              if (userId && barcode) {
+                try {
+                  const { data: prior } = await supabase
+                    .from("pantry_items")
+                    .select("scan_raw, attributes, package_amount, package_unit")
+                    .eq("barcode_upc", barcode)
+                    .order("updated_at", { ascending: false })
+                    .limit(1)
+                    .maybeSingle();
+                  if (prior) {
+                    if (!offProductName && prior.scan_raw) inheritedScanRaw = prior.scan_raw;
+                    if (attributesEmpty && prior.attributes) attributes = prior.attributes;
+                    if (packageEmpty && prior.package_amount && prior.package_unit) {
+                      packageSize = { amount: Number(prior.package_amount), unit: prior.package_unit };
+                    }
+                  }
+                  console.log("[upc-debug] inherit", {
+                    barcode,
+                    inheritedScanRaw,
+                    inheritedAttributes: attributesEmpty && prior?.attributes ? Object.keys(prior.attributes) : null,
+                    inheritedPackage: packageSize,
+                  });
+                } catch (e) {
+                  console.warn("[scanner:barcode] prior-row inherit failed:", e);
+                }
+              }
+              // Build a single scan row that matches the shape the
+              // rest of the confirm flow expects (same fields scan-
+              // receipt / scan-shelf produce). Canonical-derived
+              // fields populate when match present; else fall back
+              // to productName as the raw display.
+              const canon = match?.canonical || null;
+              const freshId = (typeof crypto !== "undefined" && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+              // Display-name fallback chain, most-informative → least.
+              // No "{brand} item" level — that produced garbage like
+              // "Ramen Bae item" when OFF returned only a brand. If
+              // we reach the raw-barcode tier, the prompt below
+              // surfaces with an empty input so the user can type
+              // the canonical name from scratch rather than stocking
+              // a mislabeled row.
+              const firstHintPretty = (res.categoryHints && res.categoryHints[0])
+                ? res.categoryHints[0].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+                : null;
+              // Pre-fill typeId (FOOD CATEGORY axis — orange chip) and
+              // tileId (STORED IN axis — blue chip) from the matched
+              // canonical so the user doesn't land on an ItemCard
+              // with two empty "+ SET X" affordances for axes the
+              // registry could already answer. typeIdForCanonical
+              // reads canonicalToType map; inferTileFromName falls
+              // back to keyword heuristics when no explicit mapping.
+              const prefilledTypeId = canon?.id ? (typeIdForCanonical(canon.id) || null) : null;
+              const rowName = res.productName || canon?.name || firstHintPretty || `Barcode ${barcode}`;
+              const prefilledTileId = inferTileFromName(rowName) || null;
+              const row = {
+                id:            freshId,
+                name:          rowName,
+                emoji:         canon?.emoji || "🥫",
+                brand:         effectiveBrand || null,
+                category:      canon?.category || "pantry",
+                confidence:    match?.autoApply ? "high" : match ? "medium" : "low",
+                canonicalId:   canon?.id || null,
+                ingredientId:  canon?.id || null,
+                ingredientIds: canon?.id ? [canon.id] : [],
+                ...(prefilledTypeId ? { typeId: prefilledTypeId } : {}),
+                ...(prefilledTileId ? { tileId: prefilledTileId } : {}),
+                amount:        packageSize?.amount ?? 1,
+                unit:          packageSize?.unit ?? (canon?.defaultUnit || "count"),
+                max:           packageSize?.amount ?? null,
+                state:         state || null,
+                attributes:    attributes || null,
+                // Source metadata so the stock step can trace the
+                // row back to an OFF / barcode origin.
+                scanRaw:       res.productName || inheritedScanRaw || null,
+                barcodeUpc:    barcode,
+                priceCents:    null,
+                autoLinked:    !!match,
+              };
+              // Stash nutrition whenever OFF gave us some — brand may
+              // be null here; the canonical-create prompt path lets
+              // the user supply a brand later, so we keep the payload
+              // around for the onCreate handler to finalize.
+              const pendingBrandNutrition = res.nutrition
+                ? {
+                    nutrition: res.nutrition,
+                    brand:     effectiveBrand || null,
+                    barcode:   res.barcode,
+                    source:    res.source || "openfoodfacts",
+                    sourceId:  res.sourceId || res.barcode,
+                  }
+                : null;
+              // If the resolver missed (no canonical at all) but OFF
+              // still gave us SOME identifying signal, surface a
+              // "create new canonical?" prompt before landing in
+              // confirm. Users shouldn't have to end up with a
+              // "Barcode 8500..." row when OFF had genericName or
+              // a tag we could have suggested as a canonical name.
+              //
+              // Suggestion priority: genericName (cleanest, often
+              // "Greek yogurt" vs productName's "Chobani Zero
+              // Vanilla Greek Yogurt 5.3oz") > cleaned productName
+              // via resolver's helper > top categoryHint
+              // title-cased > null.
+              // Suggestion priority. Each candidate runs through
+              // cleanProductName (which strips brand + marketing +
+              // unit tokens) so the brand never leaks into the
+              // suggested canonical name — bug symptom: user said
+              // the canonical was coming back AS the brand, which
+              // happened when genericName or an unstripped
+              // productName survived intact because the bare value
+              // happened to BE the brand.
+              const toTitle = (s) => s.replace(/\b\w/g, c => c.toUpperCase());
+              const cleanedProduct = res.productName
+                ? cleanProductName(res.productName, effectiveBrand)
+                : "";
+              const cleanedGeneric = res.genericName
+                ? cleanProductName(res.genericName, effectiveBrand)
+                : "";
+              // Drop any candidate that collapsed to the brand
+              // itself (everything got stripped; residue IS the
+              // brand lowercased) or that's empty after cleaning.
+              const brandLower = (effectiveBrand || "").toLowerCase().trim();
+              const valid = (s) => {
+                const v = (s || "").trim().toLowerCase();
+                if (!v) return false;
+                if (brandLower && v === brandLower) return false;
+                return true;
+              };
+              const suggestedName =
+                (valid(cleanedProduct) && toTitle(cleanedProduct))
+                || (valid(cleanedGeneric) && toTitle(cleanedGeneric))
+                || firstHintPretty
+                || null;
+              // Prompt fires any time the resolver missed — whether
+              // we have a suggestion or not. Empty suggestion just
+              // means the user types the name themselves instead of
+              // accepting a pre-fill. Better than silently stocking
+              // a "Barcode 8500…" row.
+              if (!canon && !hadCorrection) {
+                console.log("[ramen-debug] 2/prompt-opening", {
+                  suggestedName: suggestedName || "",
+                  pendingRowBrand: row.brand,
+                  effectiveBrand,
+                });
+                setCanonicalCreatePrompt({
+                  suggestedName: suggestedName || "",
+                  pendingRow: row,
+                  pendingBrandNutrition,
+                  pendingResolverReason: {
+                    productName:   res.productName,
+                    genericName:   res.genericName,
+                    topTag:        res.categoryHints?.[0] || null,
+                  },
+                });
+                return;   // stay on upload screen until user decides
+              }
+              // Barcode scans are single-item by nature — the user
+              // scanned ONE package, we built ONE row. The
+              // multi-item "Look right?" confirm screen is always
+              // "FOUND 1 ITEMS" and the user has to click STOCK MY
+              // PANTRY anyway. Skip it: commit the row directly via
+              // onItemsScanned (parent's addScannedItems handles the
+              // pantry insert + toast), then close the Scanner. User
+              // lands back in Kitchen with the new item stocked.
+              onItemsScanned([row], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              if (pendingBrandNutrition?.brand && canon?.id) {
+                upsertBrandNutritionForScan?.({
+                  canonicalId: canon.id,
+                  ...pendingBrandNutrition,
+                })?.catch?.(() => { /* logged upstream */ });
+              }
+              onClose?.();
+            } catch (e) {
+              console.error("[scanner:barcode] lookup failed:", e);
+              setError("Barcode lookup failed. Try again.");
+            } finally {
+              setBarcodeBusy(false);
+            }
+          }}
+        />
       )}
 
       {phase === "scanning" && (
@@ -1599,6 +2173,180 @@ function Scanner({ userId, onItemsScanned, onClose }) {
 }
 
 // Single-row picker button used in the AddItem modal's ingredient lists.
+// Shared icon-button style for the Canonical Create prompt's
+// back/dismiss buttons. Matches the pattern elsewhere in the app;
+// inlined here because Kitchen.jsx doesn't import the shared token.
+const promptIconBtn = {
+  background: "#161616", border: "1px solid #2a2a2a",
+  borderRadius: 18, width: 34, height: 34,
+  color: "#aaa", fontSize: 16, cursor: "pointer",
+  display: "flex", alignItems: "center", justifyContent: "center",
+  lineHeight: 1,
+};
+
+// "We don't have a canonical for this — create one?" prompt shown
+// after a barcode scan when OFF returned enough signal to suggest
+// a name but nothing matched our registry. Renders as a full-screen
+// sheet over the Scanner; user can accept the suggestion, edit the
+// name, or skip (stocks the item without a canonical link).
+function CanonicalCreatePrompt({ initialName, initialBrand, sourceHint, onCreate, onSkip, onCancel }) {
+  const [name, setName] = useState(initialName || "");
+  const [brand, setBrand] = useState(initialBrand || "");
+  const trimmed = name.trim();
+  const brandTrimmed = brand.trim();
+  const hintLine = sourceHint?.topTag
+    ? `OFF tag: ${sourceHint.topTag}`
+    : sourceHint?.genericName
+      ? `OFF generic: ${sourceHint.genericName}`
+      : sourceHint?.productName
+        ? `OFF name: ${sourceHint.productName}`
+        : null;
+  // Portal the prompt directly to document.body so it escapes the
+  // Scanner's parent stacking context (Scanner root has
+  // overflow:hidden + its own z-index, which was clipping the
+  // prompt content even though position:fixed should cover the
+  // viewport). document.body has no constraints so this renders
+  // cleanly over everything.
+  return createPortal(
+    // Outer wrapper: full-viewport fixed cover so the Scanner content
+    // behind it is visually suppressed.
+    <div style={{
+      position:"fixed", inset:0, zIndex:999,
+      background:"#111",
+      overflowY:"auto",
+      display:"flex", flexDirection:"column", alignItems:"stretch",
+    }}>
+      {/* Inner content — constrained to the app's 480px column, but
+          its SIZE is what's maxWidth'd, not the fixed layer itself. */}
+      <div style={{
+        width:"100%", maxWidth:480, margin:"0 auto",
+        display:"flex", flexDirection:"column", flex:1,
+        minHeight:"100%",
+      }}>
+      <div style={{ padding:"24px 20px 12px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #1e1e1e" }}>
+        <button onClick={onCancel} style={promptIconBtn}>←</button>
+        <div style={{ flex:1, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#c7a8d4", letterSpacing:"0.12em" }}>
+          NEW CANONICAL?
+        </div>
+        <button onClick={onCancel} style={promptIconBtn}>✕</button>
+      </div>
+      <div style={{ flex:1, padding:"28px 20px" }}>
+        <div style={{ fontSize:44, marginBottom:14 }}>✨</div>
+        <h1 style={{
+          fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300,
+          fontStyle:"italic", color:"#f0ece4", margin:"0 0 10px",
+        }}>
+          We don't have this in our registry
+        </h1>
+        <div style={{
+          fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888",
+          lineHeight:1.55, marginBottom:20,
+        }}>
+          Open Food Facts had the product but nothing in our canonical
+          list matched it. Want to create a new canonical so this item
+          (and future scans of similar products) has a proper identity?
+        </div>
+
+        <div style={{
+          fontFamily:"'DM Mono',monospace", fontSize:10,
+          color:"#c7a8d4", letterSpacing:"0.12em", marginBottom:8,
+        }}>
+          WE RECOMMEND
+        </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Canonical name"
+          autoFocus
+          style={{
+            width:"100%", padding:"14px 16px",
+            background:"#1a1a1a", border:"1px solid #2a2a2a",
+            borderRadius:12, color:"#f0ece4", boxSizing:"border-box",
+            fontFamily:"'Fraunces',serif", fontSize:18, fontStyle:"italic",
+            outline:"none",
+          }}
+        />
+        {hintLine && (
+          <div style={{
+            marginTop:8,
+            fontFamily:"'DM Mono',monospace", fontSize:9,
+            color:"#666", letterSpacing:"0.08em",
+          }}>
+            SUGGESTED FROM · {hintLine.toUpperCase()}
+          </div>
+        )}
+
+        {/* Brand input — captured at canonical-create time because OFF
+            sometimes has no brand field (barcode 8500069182175 returned
+            null productName AND null brands), and the user is already
+            engaged with this prompt. Empty = no brand, same as today. */}
+        <div style={{
+          marginTop:20,
+          fontFamily:"'DM Mono',monospace", fontSize:10,
+          color:"#c7a8d4", letterSpacing:"0.12em", marginBottom:8,
+        }}>
+          BRAND (OPTIONAL)
+        </div>
+        <input
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+          placeholder="e.g. Ramen Bae"
+          style={{
+            width:"100%", padding:"14px 16px",
+            background:"#1a1a1a", border:"1px solid #2a2a2a",
+            borderRadius:12, color:"#f0ece4", boxSizing:"border-box",
+            fontFamily:"'DM Sans',sans-serif", fontSize:15,
+            outline:"none",
+          }}
+        />
+        <div style={{
+          marginTop:6,
+          fontFamily:"'DM Sans',sans-serif", fontSize:11,
+          color:"#666", lineHeight:1.5,
+        }}>
+          Pulled from Open Food Facts when available. Leave blank if unknown.
+        </div>
+
+        <div style={{ marginTop:26, display:"flex", flexDirection:"column", gap:10 }}>
+          <button
+            type="button"
+            onClick={() => trimmed && onCreate({ finalName: trimmed, finalBrand: brandTrimmed })}
+            disabled={!trimmed}
+            style={{
+              padding:"14px",
+              background: trimmed
+                ? "linear-gradient(135deg, #c7a8d4 0%, #a389b8 100%)"
+                : "#2a2a2a",
+              color: trimmed ? "#111" : "#666",
+              border:"none", borderRadius:12,
+              fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+              letterSpacing:"0.1em",
+              cursor: trimmed ? "pointer" : "not-allowed",
+            }}
+          >
+            ✨ CREATE {(trimmed || "").toUpperCase()}
+          </button>
+          <button
+            type="button"
+            onClick={onSkip}
+            style={{
+              padding:"12px",
+              background:"transparent", border:"1px solid #2a2a2a",
+              color:"#aaa", borderRadius:12,
+              fontFamily:"'DM Mono',monospace", fontSize:11,
+              letterSpacing:"0.08em", cursor:"pointer",
+            }}
+          >
+            SKIP — STOCK WITHOUT CANONICAL
+          </button>
+        </div>
+      </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // `useShortName` is set when we're inside a hub drill so the row reads
 // "Breast" / "Thigh" instead of "Chicken Breast" / "Chicken Thighs".
 function IngredientRow({ ing, onPick, useShortName = false }) {
@@ -1751,6 +2499,22 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   // ingredient_info, we let the user tap a typical size instead of
   // typing amount+unit from scratch.
   const { refreshDb, dbMap } = useIngredientInfo();
+  // Barcode scanner + brand-nutrition write path. Scanning prefills
+  // brand + name from Open Food Facts; the nutrition payload is
+  // stashed on a ref and written to `brand_nutrition` after the item
+  // save resolves a canonical_id (brand_nutrition's PK requires it,
+  // so we wait until we know what to key against).
+  const { upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scannedPayload, setScannedPayload] = useState(null);
+  //   { barcode, brand, nutrition, source, sourceId, productName } | null
+  const [scanBusy, setScanBusy] = useState(false);
+  // Canonical suggestion from the last scan. null = no active
+  // suggestion (either nothing scanned, resolver missed, or user
+  // already actioned it). When set, renders CanonicalSuggestionCard.
+  const [canonicalSuggestion, setCanonicalSuggestion] = useState(null);
+  //   { match, inferredState: {state} | null, packageSize: {amount, unit} | null } | null
+  const { push: pushToastFromScan } = useToast();
   const [amount, setAmount] = useState("");
   // Optional "full package size" the user declares at add-time.
   // Empty string = undeclared (max stays null on save, slider hidden).
@@ -1881,6 +2645,33 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     || null;
   const popularPackages = usePopularPackages(customBrand, primaryCanonicalId, 5);
 
+  // Auto-apply the most popular (brand, canonical) package size when:
+  //   - we have a learned/AI-backed size
+  //   - the user hasn't typed a PACKAGE SIZE yet
+  //   - the top candidate is in a real mass/volume unit (not pack / count)
+  // Fires once per unique top candidate. If the user clears the field
+  // later, we don't re-auto-apply (that would feel haunted). Skip if
+  // OFF already seeded a concrete size via the scan flow.
+  const autoAppliedKey = useRef("");
+  useEffect(() => {
+    if (!popularPackages || popularPackages.length === 0) return;
+    const top = popularPackages[0];
+    if (!top || !top.amount || !top.unit) return;
+    if (DISCRETE_COUNT_UNITS.has(top.unit)) return;
+    const key = `${primaryCanonicalId}::${customBrand || ""}::${top.amount}::${top.unit}`;
+    if (autoAppliedKey.current === key) return;
+    // Only auto-apply when the size field is effectively blank. A
+    // user-typed value — even a number we'd override — must survive.
+    const currentN = parseFloat(packageSize);
+    if (packageSize !== "" && Number.isFinite(currentN) && currentN > 0) return;
+    autoAppliedKey.current = key;
+    setPackageSize(String(top.amount));
+    setCustomUnit(top.unit);
+    if (amount === "" || !Number.isFinite(parseFloat(amount))) {
+      setAmount(String(top.amount));
+    }
+  }, [popularPackages, primaryCanonicalId, customBrand]);
+
   // Family-shared user templates, newest-first. Empty until the user
   // (or any family member) saves their first custom item; grows as
   // real-life usage populates the recents ladder.
@@ -2007,7 +2798,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   // wrong" state that lists each missing field with a friendly
   // reminder of what it's for.
   const trimmedName = customName.trim();
-  const hasName     = !!trimmedName;
+  const trimmedBrand = (customBrand || "").trim();
   const hasAmount   = amount !== "" && !isNaN(parseFloat(amount));
   const hasUnit     = !!customUnit.trim();
   const hasCategory = !!customTypeId;
@@ -2024,14 +2815,33 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     || canonicalIdForType(customTypeId)
     || null;
   const hasCanonical = !!derivedCanonicalId;
+  // Per CLAUDE.md universal identity rule: HEADER is DERIVED from
+  // [Brand] [Canonical] when both set. So when brand + canonical are
+  // present, the NAME axis is satisfied even if the user typed
+  // nothing into the name field — the header renders "Ramen Bae ·
+  // Ramen" regardless. Only fail the name check when there's no
+  // derivation source at all.
+  const hasName = !!trimmedName || (!!trimmedBrand && hasCanonical);
+  // PACKAGE SIZE is required AND must be in a mass/volume unit
+  // (grams, oz, ml, etc.) — not an opaque count unit like "pack" or
+  // "count". User spec: "1 package doesn't help us calculate
+  // calories." Nutrition math and serving estimation need a real
+  // weight/volume anchor; "1 pack" carries no such information.
+  const pkgN = parseFloat(packageSize);
+  const pkgUnit = (customUnit || "").trim();
+  const hasPackageSize =
+    Number.isFinite(pkgN) && pkgN > 0 &&
+    !!pkgUnit &&
+    !DISCRETE_COUNT_UNITS.has(pkgUnit);
   const missing = [];
-  if (!hasName)      missing.push("name");
-  if (!hasAmount)    missing.push("amount");
-  if (!hasUnit)      missing.push("unit");
-  if (!hasCanonical) missing.push("canonical");
-  if (!hasCategory)  missing.push("category");
-  if (!hasTile)      missing.push("tile");
-  if (!hasLocation)  missing.push("location");
+  if (!hasName)         missing.push("name");
+  if (!hasAmount)       missing.push("amount");
+  if (!hasUnit)         missing.push("unit");
+  if (!hasPackageSize)  missing.push("packageSize");
+  if (!hasCanonical)    missing.push("canonical");
+  if (!hasCategory)     missing.push("category");
+  if (!hasTile)         missing.push("tile");
+  if (!hasLocation)     missing.push("location");
   const canSave = missing.length === 0;
 
   // Close-attempt interceptor. If the user has started filling out
@@ -2092,15 +2902,19 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     // then name-match. We deliberately do NOT fall back to
     // canonicalIdForType(customTypeId) — the food category is a broad
     // classification (Pasta), not the item's specific identity
-    // Canonical invariant (v0.13.0): every row must land with a
-    // canonical_id. If the user didn't pick one and the name doesn't
-    // match a registry alias, slugify the display name so free-text
-    // items still get a stable identity. Without this, the hub
-    // grouper and recipe matcher both get an all-null row and the
-    // "loose pile" grows unbounded.
+    // Canonical resolution on save:
+    //   1. User's explicit pick (typeahead / suggestion card).
+    //   2. Registry alias match on the typed name.
+    //   3. null — better than a synthetic. Previous behavior slugified
+    //      the display name into a fresh canonical when nothing else
+    //      matched, which polluted the registry with one-off fake
+    //      canonicals per scanned marketing name ("Ocean's Halo
+    //      O'cean's Organic Sushi Nori Wasabi Style 40G" → a unique
+    //      id per product, no clustering, no hub grouping, no recipe
+    //      matches). Null is the honest answer when resolution fails;
+    //      the hub "loose pile" filter already handles null.
     const canonicalId = customCanonicalId
       || inferCanonicalFromName(customName.trim())
-      || slugifyIngredientName(customName.trim())
       || null;
 
     // Mirror canonical into components when user hasn't tagged
@@ -2173,6 +2987,10 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
       ...(customExpiresAt ? { expiresAt: customExpiresAt } : {}),
       ...(customState ? { state: customState } : {}),
       ...(customBrand ? { brand: customBrand } : {}),
+      // Scan-extracted attribute metadata (origins, certifications,
+      // flavor variants). Null when not scanned or scan produced no
+      // recognizable attributes.
+      ...(scannedPayload?.attributes ? { attributes: scannedPayload.attributes } : {}),
     };
 
     // Per-instance add: insert N independent rows sharing identity so
@@ -2189,6 +3007,29 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
       onAdd({ ...item, id: freshId });
     }
     setSaveAttempted(false);
+
+    // Brand-nutrition upsert. Fires only when the user both (a)
+    // scanned a barcode during this add AND (b) resolved a canonical
+    // for the row — brand_nutrition's PK requires canonical_id. If the
+    // canonical is still null we drop the payload silently rather than
+    // writing a row that can't be looked up later. The write is fire-
+    // and-forget; a transient failure just means the next household
+    // member to scan the same UPC re-fetches from OFF.
+    const resolvedCanonical = item.ingredientId || item.canonicalId || null;
+    const brandForWrite = item.brand || scannedPayload?.brand;
+    if (scannedPayload && resolvedCanonical && brandForWrite) {
+      upsertBrandNutrition({
+        canonicalId: resolvedCanonical,
+        brand:       brandForWrite,
+        nutrition:   scannedPayload.nutrition,
+        barcode:     scannedPayload.barcode,
+        source:      scannedPayload.source || "openfoodfacts",
+        sourceId:    scannedPayload.sourceId || scannedPayload.barcode,
+      }).catch((e) => {
+        console.warn("[brand_nutrition] upsert after add failed:", e);
+      });
+    }
+    setScannedPayload(null);
     // Full-screen success. User taps DONE to dismiss → onClose fires.
     // Gives them a beat to absorb "yes, it saved, here's where it
     // went" instead of the modal snapping shut. Destination string
@@ -2349,6 +3190,259 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                 dump redundant noise. fillFromTemplate is still wired
                 through the typeahead row's onClick. */}
             {/* (removed — see comment above) */}
+
+            {/* Barcode scan — fast path for packaged goods. Prefills
+                brand + name from Open Food Facts and stashes the OFF
+                nutrition payload; once the user picks a canonical and
+                saves, the nutrition writes to brand_nutrition. If the
+                product isn't in OFF or scanning isn't supported,
+                user can type the number or just skip this and use
+                the free-text name input below. */}
+            <button
+              type="button"
+              onClick={() => setScannerOpen(true)}
+              disabled={scanBusy}
+              style={{
+                width: "100%", padding: "11px 14px",
+                background: "linear-gradient(135deg, #1a1a1a 0%, #141414 100%)",
+                border: `1px solid ${scannedPayload ? "#c7a8d4" : "#2a2a2a"}`,
+                borderRadius: 10, marginBottom: 14,
+                display: "flex", alignItems: "center", gap: 10,
+                cursor: scanBusy ? "wait" : "pointer",
+                textAlign: "left",
+                opacity: scanBusy ? 0.6 : 1,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>📷</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: scannedPayload ? "#c7a8d4" : "#aaa",
+                  letterSpacing: "0.12em",
+                }}>
+                  {scanBusy ? "LOOKING UP…" : scannedPayload ? "SCANNED ✓" : "SCAN BARCODE"}
+                </div>
+                <div style={{
+                  marginTop: 2,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#777", lineHeight: 1.4,
+                }}>
+                  {scannedPayload
+                    ? `${scannedPayload.productName || "Product"}${scannedPayload.brand ? ` · ${scannedPayload.brand}` : ""}`
+                    : "Open Food Facts has 2M+ products — one tap fills name + brand + nutrition."}
+                </div>
+              </div>
+              <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+            </button>
+            {scannerOpen && (
+              <BarcodeScanner
+                onCancel={() => setScannerOpen(false)}
+                onDetected={async (barcode) => {
+                  setScannerOpen(false);
+                  setScanBusy(true);
+                  try {
+                    const res = await lookupBarcode(barcode, { brandNutritionRows });
+                    if (!res?.found) {
+                      // Distinguish failure modes so the user knows
+                      // whether they have a deploy problem, a network
+                      // problem, or just a barcode OFF doesn't know.
+                      const msg = res?.reason === "edge_fn_not_deployed"
+                        ? `Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode`
+                        : res?.reason === "fetch_failed"
+                          ? `Barcode lookup failed (${res?.status || "network"}). Check your connection.`
+                          : res?.reason === "no_nutriments"
+                            ? `Found ${barcode} but Open Food Facts has no nutrition data for it.`
+                            : res?.reason === "off_unavailable"
+                              ? `Open Food Facts is having a rough moment. Try again in a sec.`
+                              : `No match for ${barcode} in Open Food Facts.`;
+                      pushToastFromScan(msg, {
+                        emoji: res?.reason === "edge_fn_not_deployed" ? "⚙️" : "🔍",
+                        kind: "warn",
+                        ttl: res?.reason === "edge_fn_not_deployed" ? 9000 : 5500,
+                      });
+                      setScanBusy(false);
+                      return;
+                    }
+                    // Prefill the form. Don't blow away user-typed
+                    // text if they already started — only fill empty
+                    // slots so a mid-form scan is additive, not
+                    // destructive. We keep productName as the raw
+                    // name so grade / variant info ("sushi", "wasabi
+                    // style") is preserved on the row even when the
+                    // canonical snap strips them down to "nori".
+                    //
+                    // Brand fallback: OFF's `brands` field is missing
+                    // on a non-trivial share of products even when
+                    // the brand is obvious in the productName
+                    // ("Tostitos Scoops..."). Run parseIdentity over
+                    // the productName when OFF didn't give us one,
+                    // same mechanism that already pulls brand off
+                    // receipt-scan strings.
+                    let effectiveBrand = res.brand || null;
+                    if (!effectiveBrand && res.productName) {
+                      const parsed = parseIdentity(res.productName);
+                      if (parsed?.brand) effectiveBrand = parsed.brand;
+                    }
+                    setCustomBrand(prev => prev || effectiveBrand || null);
+                    setCustomName(prev => prev || res.productName || "");
+                    // Resolve canonical from OFF data. Returns null
+                    // when nothing above the confidence floor — in
+                    // that case the user gets the existing canonical
+                    // picker with productName as a search seed.
+                    const match = resolveCanonicalFromScan({
+                      brand:         res.brand,
+                      productName:   res.productName,
+                      categoryHints: res.categoryHints || [],
+                      findIngredient,
+                    });
+                    // Extract state + package size opportunistically.
+                    // State only applies when the resolved canonical
+                    // actually supports it (ground beef = yes; ground
+                    // bread = no).
+                    const rawState = parseStateFromText(res.productName, res.categoryHints || []);
+                    const inferredState = match?.canonical
+                      ? { state: stateForCanonical(rawState, match.canonical) }
+                      : null;
+                    const packageSize = parsePackageSize(res.quantity);
+                    // Attribute extraction (origin, certifications,
+                    // flavor) — orthogonal to canonical, always extract
+                    // when we have the OFF data, regardless of whether
+                    // the canonical resolved.
+                    const attributes = buildAttributesFromScan({
+                      productName:   res.productName,
+                      categoryHints: res.categoryHints || [],
+                      originTags:    res.originTags  || [],
+                      countryTags:   res.countryTags || [],
+                      labelTags:     res.labelTags   || [],
+                    });
+                    if (match && match.autoApply) {
+                      // Near-exact match ("Heavy Cream" scan → "Heavy
+                      // Cream" canonical). User's tap-to-confirm would
+                      // just be friction; apply silently and skip the
+                      // suggestion card. Same cascade path the USE
+                      // button would have run.
+                      setCustomCanonicalId(match.canonical.id);
+                      cascadeFromCanonical(match.canonical);
+                      if (inferredState?.state) setCustomState(inferredState.state);
+                      if (packageSize) {
+                        setAmount(String(packageSize.amount));
+                        setCustomUnit(packageSize.unit);
+                      }
+                    } else if (match) {
+                      setCanonicalSuggestion({
+                        match,
+                        inferredState: inferredState?.state ? inferredState : null,
+                        packageSize,
+                        attributes,
+                      });
+                    } else if (packageSize) {
+                      // No canonical match but we got a package size —
+                      // apply it silently. Nothing to confirm; just
+                      // helpful prefill.
+                      setAmount(String(packageSize.amount));
+                      setCustomUnit(packageSize.unit);
+                    }
+                    // Stash the payload for the post-save
+                    // brand_nutrition upsert. If the scan was cached
+                    // (same barcode seen before) the row already
+                    // exists and we don't need to write again.
+                    if (!res.cached) {
+                      setScannedPayload({
+                        barcode:     res.barcode,
+                        brand:       effectiveBrand,       // parseIdentity fallback already applied
+                        productName: res.productName,
+                        nutrition:   res.nutrition,
+                        source:      res.source,
+                        sourceId:    res.sourceId,
+                        canonicalId: res.canonicalId || null,
+                        // Attributes stash so the save path can pin
+                        // origin / certifications / flavor onto the
+                        // new pantry row even if the user never
+                        // interacts with the suggestion card (the
+                        // attributes are orthogonal to canonical
+                        // and don't need confirmation).
+                        attributes,
+                      });
+                      // Diagnostic toast — show WHAT we extracted so
+                      // an OFF-data miss ("they don't have the brand
+                      // for this one") reads differently from a
+                      // client-side bug. Brand line says "brand:
+                      // <name>" on hit or "(no brand in OFF)" when
+                      // both res.brand and parseIdentity missed.
+                      const brandLine = effectiveBrand
+                        ? `brand: ${effectiveBrand}`
+                        : "(no brand in OFF or productName)";
+                      pushToastFromScan(
+                        `Found: ${res.productName || res.barcode}\n${brandLine}`,
+                        { emoji: "✨", kind: "success", ttl: 5500 },
+                      );
+                    } else {
+                      pushToastFromScan(
+                        "Pulled from cache — nutrition already known.",
+                        { emoji: "💾", kind: "info", ttl: 3000 },
+                      );
+                    }
+                  } catch (e) {
+                    console.error("[barcode] lookup failed:", e);
+                    pushToastFromScan(
+                      "Barcode lookup failed. Fill in manually.",
+                      { emoji: "⚠️", kind: "warn", ttl: 4500 },
+                    );
+                  } finally {
+                    setScanBusy(false);
+                  }
+                }}
+              />
+            )}
+
+            {/* Canonical suggestion card — renders after a scan when
+                the resolver maps productName + categoryHints to a
+                registry canonical. Always shown (per design: half-a-
+                tap of friction for zero pollution risk). USE applies
+                the canonical + state + package size; DIFFERENT opens
+                the canonical picker and clears the suggestion. */}
+            {canonicalSuggestion && (
+              <CanonicalSuggestionCard
+                match={canonicalSuggestion.match}
+                inferredState={canonicalSuggestion.inferredState}
+                packageSize={canonicalSuggestion.packageSize}
+                attributes={canonicalSuggestion.attributes}
+                onUse={() => {
+                  const { match, inferredState, packageSize } = canonicalSuggestion;
+                  setCustomCanonicalId(match.canonical.id);
+                  // Cascade: canonical → category → location → tile
+                  // → food type. Reuses the same fill path the
+                  // typeahead picker uses, so a scan-confirmed
+                  // canonical lands identically to a user-typed
+                  // canonical pick. Doesn't clobber fields the user
+                  // already set — each setter in cascadeFromCanonical
+                  // gates on its own `prev` before writing.
+                  cascadeFromCanonical(match.canonical);
+                  // State comes from productName / categoryHints,
+                  // already filtered against the canonical's allowed
+                  // state vocabulary by resolveCanonicalFromScan.
+                  if (inferredState?.state) setCustomState(inferredState.state);
+                  if (packageSize) {
+                    setAmount(String(packageSize.amount));
+                    // Canonical's defaultUnit already landed via
+                    // cascadeFromCanonical; overwrite only when the
+                    // scanned package size uses a different unit
+                    // (box says "40 g" but butter's defaultUnit is
+                    // "stick" — we want the literal label unit).
+                    setCustomUnit(packageSize.unit);
+                  }
+                  setCanonicalSuggestion(null);
+                }}
+                onDifferent={() => {
+                  setCanonicalSuggestion(null);
+                  // Open the existing canonical picker surface —
+                  // AddItemModal uses tilePickerOpen for IDENTIFIED AS
+                  // (which flips both type + canonical). User can
+                  // find the right canonical via search from there.
+                  setTilePickerOpen(true);
+                }}
+              />
+            )}
 
             {/* Name input + typeahead. As the user types, filter the
                 family's templates by substring match and surface a
@@ -3628,13 +4722,14 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
         the backdrop covers the whole viewport including the nav. */}
     {outcome && outcome.kind === "warning" && (() => {
       const fields = [];
-      if (!hasName)      fields.push({ emoji: "📝", label: LABEL_KICKER("name"),      body: LABELS.name.help });
-      if (!hasAmount)    fields.push({ emoji: "🔢", label: LABEL_KICKER("quantity"),  body: LABELS.quantity.help });
-      if (!hasUnit)      fields.push({ emoji: "📏", label: LABEL_KICKER("unit"),      body: LABELS.unit.help });
-      if (!hasCanonical) fields.push({ emoji: "✨", label: LABEL_KICKER("canonical"), body: LABELS.canonical.help });
-      if (!hasCategory)  fields.push({ emoji: "🧩", label: LABEL_KICKER("category"),  body: LABELS.category.help });
-      if (!hasTile)      fields.push({ emoji: "🗂️", label: LABEL_KICKER("storedIn"),  body: LABELS.storedIn.help });
-      if (!hasLocation)  fields.push({ emoji: "📍", label: LABEL_KICKER("location"),  body: LABELS.location.help });
+      if (!hasName)        fields.push({ emoji: "📝", label: LABEL_KICKER("name"),        body: LABELS.name.help });
+      if (!hasAmount)      fields.push({ emoji: "🔢", label: LABEL_KICKER("quantity"),    body: LABELS.quantity.help });
+      if (!hasUnit)        fields.push({ emoji: "📏", label: LABEL_KICKER("unit"),        body: LABELS.unit.help });
+      if (!hasPackageSize) fields.push({ emoji: "⚖️", label: LABEL_KICKER("packageSize"), body: LABELS.packageSize.help });
+      if (!hasCanonical)   fields.push({ emoji: "✨", label: LABEL_KICKER("canonical"),   body: LABELS.canonical.help });
+      if (!hasCategory)    fields.push({ emoji: "🧩", label: LABEL_KICKER("category"),    body: LABELS.category.help });
+      if (!hasTile)        fields.push({ emoji: "🗂️", label: LABEL_KICKER("storedIn"),    body: LABELS.storedIn.help });
+      if (!hasLocation)    fields.push({ emoji: "📍", label: LABEL_KICKER("location"),    body: LABELS.location.help });
       return (
         <AddItemOutcome
           kind="warning"
@@ -3993,6 +5088,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   //   - cardIng:  the bare IngredientCard opened from secondary places
   //     (add-item flow, hub drill-down) where there's no specific row yet.
   const [openItem, setOpenItem] = useState(null);
+  // Deferred auto-open target for the scan→ItemCard cascade.
+  // addScannedItems sets this to the freshly-inserted row's id; a
+  // useEffect watching `pantry` then opens the card once the row has
+  // actually landed in state. Decouples the setOpenItem call from
+  // addScannedItems' setPantry reducer so React doesn't warn about
+  // 'update during render' when the commit happens mid-render of a
+  // provider up the tree.
+  const [pendingAutoOpenId, setPendingAutoOpenId] = useState(null);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -4003,6 +5106,18 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Driven by ItemCard's provenance line (onOpenProvenance callback)
   // and by a bell notification tap (deepLink prop, routed from App).
   const [openReceiptId, setOpenReceiptId] = useState(null);
+
+  // Watch for deferred scan-cascade targets. When addScannedItems
+  // commits a fresh row it sets pendingAutoOpenId; once that id
+  // appears in the pantry state, open the ItemCard on it.
+  useEffect(() => {
+    if (!pendingAutoOpenId) return;
+    const fresh = pantry.find(p => p.id === pendingAutoOpenId);
+    if (fresh) {
+      setOpenItem(fresh);
+      setPendingAutoOpenId(null);
+    }
+  }, [pantry, pendingAutoOpenId]);
   // Receipt-history modal — browse every receipt ever scanned. Opened
   // by tapping the GROCERIES THIS MONTH banner so users who want to
   // re-inspect a prior scan don't have to remember what they bought or
@@ -4493,6 +5608,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
 
+    // Captured from inside the setPantry reducer below so that, when
+    // the Scanner signals a single-item barcode flow via
+    // meta.autoOpenFirst, we can pop the ItemCard for the freshly
+    // inserted pantry row and let the user fill any still-unset axes
+    // (category, tile, location, expires) before it joins the grid.
+    let firstNewRowId = null;
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
       fannedItems.forEach(s => {
@@ -4643,20 +5764,39 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           if (s.scanRaw) ex.scanRaw = s.scanRaw;
         } else {
           addedCount++;
+          console.log("[ramen-debug] 6/pantry-row-push", {
+            name: s.name,
+            brand: s.brand,
+            canonicalId: s.canonicalId,
+            willSpreadBrand: !!s.brand,
+          });
+          const freshId = crypto.randomUUID();
+          if (!firstNewRowId) firstNewRowId = freshId;
+          // Quantity floor — never let a row land with amount 0.
+          // A pantry row with 0 quantity is meaningless (it's not
+          // in your kitchen), and downstream slider math reads it
+          // as '100% of 0' which makes the UI render an empty
+          // gauge over a real package.
+          const safeAmount = Math.max(Number(s.amount) || 0, 1);
+          // Package capacity. For barcode scans we KNOW the
+          // package size (parsed from OFF.quantity OR inherited
+          // from popular_package_sizes), so seed max + the
+          // pantry_items.package_amount/unit columns with it.
+          // Sealed: amount === max → slider sits at 100%.
+          const knownMax = typeof s.max === "number" && s.max > 0 ? s.max : 0;
           next.push({
-            id: crypto.randomUUID(),
+            id: freshId,
             ingredientId: s.ingredientId || null,
             name: s.name,
             emoji: s.emoji,
-            amount: s.amount,
+            amount: safeAmount,
             unit: s.unit,
-            // Packaging intentionally undefined — scans don't ask
-            // about container size. 0 = slider stays hidden
-            // (hasPackage check fails); DB column is NOT NULL so
-            // we can't send literal null.
-            max: 0,
+            max: knownMax,
+            ...(knownMax > 0
+              ? { packageAmount: knownMax, packageUnit: s.unit }
+              : {}),
             category: s.category,
-            lowThreshold: Math.max(s.amount * 0.25, 0.25),
+            lowThreshold: Math.max(safeAmount * 0.25, 0.25),
             priceCents: scanPriceCents,
             expiresAt:   newExpiresAt,
             purchasedAt,
@@ -4671,6 +5811,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // the raw scan text during normalization. Conditional so
             // un-branded rows stay undefined and hit toDb's skip path.
             ...(s.brand      ? { brand: s.brand           } : {}),
+            // Source UPC (migration 0067) — persisted so the
+            // ItemCard's canonical-picker commit path can stamp a
+            // fresh barcode_identity_corrections row when the user
+            // edits identity after the fact.
+            ...(s.barcodeUpc ? { barcodeUpc: s.barcodeUpc } : {}),
+            // Scan-derived attributes (origins / certifications /
+            // flavor / claims) from buildAttributesFromScan.
+            // Renders as pills via AttributePillsRow.
+            ...(s.attributes ? { attributes: s.attributes } : {}),
             // Multi-canonical tag array (0033). The Scanner's LinkIngredient
             // picker emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element
@@ -4756,6 +5905,21 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     }
     if (unitMismatchCount > 0) {
       pushToast(`${unitMismatchCount} item${unitMismatchCount === 1 ? "" : "s"} had a unit mismatch — check your kitchen`, { emoji: "⚠️", kind: "warn" });
+    }
+
+    // Barcode single-item scans pass meta.autoOpenFirst so we cascade
+    // directly into the new row's ItemCard. User lands on the full
+    // edit surface to finish any still-unset axes (expires, category,
+    // stored-in, package size) instead of having to hunt for their
+    // fresh row in the tile grid.
+    //
+    // Defer to a microtask (Promise.resolve().then) so we're not
+    // calling setOpenItem inside another component's render phase —
+    // React's 'Cannot update a component while rendering a different
+    // component' warning fires otherwise. By next tick, setPantry has
+    // flushed and the row is available via a fresh closure.
+    if (meta.autoOpenFirst && firstNewRowId) {
+      setPendingAutoOpenId(firstNewRowId);
     }
 
     // Bump use_count on every template that matched a scan row
@@ -5521,7 +6685,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     );
   };
 
-  if (scanning) return <Scanner userId={userId} onItemsScanned={addScannedItems} onClose={() => setScanning(false)} />;
+  if (scanning) return <Scanner
+    userId={userId}
+    shoppingList={shoppingList}
+    onItemsScanned={addScannedItems}
+    onClose={() => setScanning(false)}
+    onManualEntry={() => { setScanning(false); setAddingTo("pantry"); }}
+  />;
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>

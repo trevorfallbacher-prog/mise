@@ -95,6 +95,13 @@ export const LABELS = {
     help:   "Gallon, stick, lb, count — the way the item is sold. Needed so amounts add up correctly when you restock.",
   },
 
+  packageSize: {
+    full:   "Package Size",
+    short:  "Pkg Size",
+    plural: "Package Sizes",
+    help:   "The real weight or volume of one package (like 75 g or 1 lb) — not '1 pack'. Without this we can't compute calories or track how much is left.",
+  },
+
   expires: {
     full:   "Expires",
     short:  "Expires",

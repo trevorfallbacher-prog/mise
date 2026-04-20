@@ -42,6 +42,22 @@ export const SCAN_MODES = [
     cta: "SCAN RECEIPT →",
     badge: "RECEIPT SCAN",
   },
+  {
+    // Single-item barcode scan. Skips the Claude-vision upload path
+    // entirely — goes through lookupBarcode (Open Food Facts) and
+    // canonicalResolver so the user can scan one product and land
+    // straight in the confirm card with brand / canonical / nutrition
+    // / state / size all prefilled. Lowest-friction pantry add for
+    // any packaged good with a UPC.
+    id: "barcode",
+    icon: "📷",
+    label: "Item",
+    location: null,
+    title: "Scan a single item",
+    blurb: "Point at any packaged product's UPC. We'll pull brand, nutrition, and everything else from Open Food Facts in one tap.",
+    cta: "SCAN BARCODE →",
+    badge: "BARCODE SCAN",
+  },
 ];
 
 // Color + label + ordering for the confidence tag a scanned item carries.

@@ -22,6 +22,7 @@ import { useNotifications } from "./lib/useNotifications";
 import { ToastProvider, useToast } from "./lib/toast";
 import { supabase } from "./lib/supabase";
 import { IngredientInfoProvider } from "./lib/useIngredientInfo";
+import { BrandNutritionProvider } from "./lib/useBrandNutrition";
 
 // Four regular tabs + a floating ➕ Quick Cook button slotted between
 // slot 2 (COURSES) and slot 3 (CALENDAR). The ➕ is not a tab — it opens
@@ -113,7 +114,9 @@ export default function App() {
   return (
     <ToastProvider>
       <IngredientInfoProvider>
-        <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+        <BrandNutritionProvider>
+          <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+        </BrandNutritionProvider>
       </IngredientInfoProvider>
     </ToastProvider>
   );

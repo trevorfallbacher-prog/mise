@@ -86,8 +86,9 @@ type Prefs = {
   // When is the user eating this? Shapes whether Claude drafts
   // breakfast vs dinner vs lunch vs "any time."
   mealTiming?: string;
-  // Course role — main / side / dessert / any. A main reads very
-  // differently from a dessert even with the same cuisine.
+  // Course role — main / side / dessert / appetizer / bake / prep / any.
+  // "bake" and "prep" are component-style recipes (bread, stock, sauce)
+  // that aren't plate roles and don't live in a meal slot.
   course?: string;
   // Canonical ids the user explicitly chose to build around. Must
   // appear in the recipe as primary components, not garnishes.
@@ -96,6 +97,16 @@ type Prefs = {
   // technique / seasoning / approach when going from sketch to
   // final cook. Only meaningful in mode = "final".
   recipeFeedback?: string;
+  // Anchor context for compose-a-meal drafts. When present, the draft
+  // is a side / dessert / appetizer intended to be served alongside
+  // `pairWith.title`. Claude uses it for contrast/complement — don't
+  // duplicate the anchor's dominant protein / starch / sauce.
+  pairWith?: {
+    title: string;
+    course: string;         // "main" | "side" | "dessert" | "appetizer"
+    cuisine?: string;
+    ingredients: Array<{ name: string; amount?: string | number | null }>;
+  };
 };
 
 // One ingredient line in the sketch's "what we're locking in"
@@ -203,6 +214,63 @@ function assemblePromptHeader(
     : "";
   const nonce = crypto.randomUUID();
 
+  // Hoist meal timing / course into their own HARD CONSTRAINTS block at
+  // the top of the prompt. Buried at the bottom of USER PREFERENCES the
+  // model was treating them as soft nuance; promoting them to a standalone
+  // block (with explicit violation callouts) makes breakfast-vs-dinner and
+  // main-vs-side-vs-dessert actually swing the output.
+  const hardConstraintLines: string[] = [];
+  if (prefs.mealTiming && prefs.mealTiming !== "any") {
+    const t = prefs.mealTiming;
+    const examples = t === "breakfast"
+      ? "egg dishes, pancakes, oatmeal, breakfast burritos, shakshuka, frittatas, breakfast sandwiches, yogurt bowls"
+      : t === "lunch"
+        ? "sandwiches, wraps, grain bowls, soups, salads, lighter mains"
+        : t === "dinner"
+          ? "substantial mains, braises, roasts, pastas, stir-fries, hearty entrées"
+          : "";
+    hardConstraintLines.push(
+      `- MEAL TIMING = ${t.toUpperCase()}. The dish MUST read unmistakably as a ${t} dish.${examples ? ` Think: ${examples}.` : ""} Do NOT draft a dinner entrée when the user asked for breakfast, or vice versa.`,
+    );
+  }
+  if (prefs.course && prefs.course !== "any") {
+    const c = prefs.course;
+    const roleDesc = c === "main"
+      ? "a meal-carrying entrée, substantial enough to stand alone on the plate"
+      : c === "side"
+        ? "a supporting side dish — smaller scale, meant to sit alongside a main; do NOT draft a full entrée"
+        : c === "dessert"
+          ? "a sweet dessert — do NOT draft a savory main or appetizer"
+          : c === "appetizer"
+            ? "a small opening bite — served before the main, meant to whet the appetite; 1-2 oz portions, finger-food or small-plate scale; do NOT draft a full entrée or a dessert"
+            : c === "bake"
+              ? "a baked good — bread, pastry, pizza dough, cookies, rolls, focaccia. A component/pantry item, not a plated course. Output should feel like a bakery item, not a meal. mealTiming should be null (not tied to a specific meal slot)"
+              : c === "prep"
+                ? "a kitchen prep/component — stock, sauce, marinade, pickle, spice blend, ferment, dressing, confit. Meant to be used as an ingredient in other recipes, NOT served as a plated dish. No composed-plate instructions, no 'serve with rice' step. mealTiming should be null (this is not a meal)"
+                : "";
+    hardConstraintLines.push(
+      `- COURSE = ${c.toUpperCase()}. The dish MUST function as ${roleDesc}.`,
+    );
+  }
+  if (prefs.pairWith) {
+    const pw = prefs.pairWith;
+    const ingLine = Array.isArray(pw.ingredients) && pw.ingredients.length
+      ? pw.ingredients
+          .slice(0, 15)
+          .map((i) => `${i.name}${i.amount ? ` (${i.amount})` : ""}`)
+          .join(", ")
+      : "(no ingredient list provided)";
+    const thisCourse = (prefs.course && prefs.course !== "any") ? prefs.course : "dish";
+    hardConstraintLines.push(
+      `- PAIRING: this ${thisCourse} will be served alongside a ${pw.course}` +
+        (pw.cuisine ? ` (${pw.cuisine})` : "") +
+        ` — "${pw.title}". That anchor dish includes: ${ingLine}. Your ${thisCourse} MUST complement those flavors/textures — do NOT duplicate the same protein, starch, or dominant sauce. Think contrast and balance: crunch next to something rich, acid next to something fatty, a light element next to a heavy one. If the anchor is heavy and creamy, lean bright and sharp; if the anchor is lean and acidic, lean rich and savory.`,
+    );
+  }
+  const hardConstraintsBlock = hardConstraintLines.length > 0
+    ? `\nHARD CONSTRAINTS — violating these is a failure, not a stylistic choice:\n${hardConstraintLines.join("\n")}\n`
+    : "";
+
   return `You are drafting a single recipe for a home cook.
 
 PRECEDENCE (hard → soft). Earlier beats later when they conflict:
@@ -237,7 +305,7 @@ omelette) are a failure mode; reach for something the user might not
 have thought of themselves.
 
 Variety seed: ${nonce}
-${avoidBlock}
+${hardConstraintsBlock}${avoidBlock}
 PANTRY:
 ${pantryLines}
 
@@ -273,7 +341,7 @@ exact shape:
   "emoji":        "🍝",
   "cuisine":     "italian" | "french" | "mexican" | "american" | "japanese" | "thai" | "indian" | "chinese" | "mediterranean" | "other",
   "mealTiming":  "breakfast" | "lunch" | "dinner" | null,
-  "course":      "main" | "side" | "dessert" | null,
+  "course":      "main" | "side" | "dessert" | "appetizer" | "bake" | "prep" | null,
   "serves":      <integer 1..12>,
   "estimatedTime": { "prep": <minutes>, "cook": <minutes> },
   "ideal": [
@@ -366,6 +434,8 @@ exact shape. Every field is REQUIRED unless marked optional.
   "emoji":      "🍝",
   "cuisine":    "italian" | "french" | "mexican" | "american" | "japanese" | "thai" | "indian" | "chinese" | "mediterranean" | "other",
   "category":   "pasta" | "eggs" | "lunch" | "soup" | "salad" | "chicken" | "beef" | "pork" | "fish" | "vegetarian" | "dessert" | "sauce" | "snack" | "other",
+  "mealTiming": "breakfast" | "lunch" | "dinner" | null,  // null when course is bake/prep (no plate slot)
+  "course":     "main" | "side" | "dessert" | "appetizer" | "bake" | "prep" | null,
   "difficulty": <integer 1..10; 1-3 easy, 4-6 medium, 7-10 advanced>,
   "routes":     ["plan"],                               // always ["plan"] for generated recipes
   "time":       { "prep": <minutes>, "cook": <minutes> },
@@ -709,8 +779,8 @@ Deno.serve(async (req) => {
       subtitle:    recipe.subtitle   ?? null,
       emoji:       recipe.emoji      || "🍽️",
       cuisine:     recipe.cuisine    || "other",
-      mealTiming:  recipe.mealTiming ?? null,
-      course:      recipe.course     ?? null,
+      mealTiming:  normalizeMealTiming(recipe.mealTiming),
+      course:      normalizeCourse(recipe.course),
       serves:      clampInt(recipe.serves, 1, 12, 2),
       estimatedTime: recipe.estimatedTime || recipe.time || { prep: 10, cook: 20 },
       ideal:       Array.isArray(recipe.ideal)  ? recipe.ideal  : [],
@@ -743,6 +813,13 @@ Deno.serve(async (req) => {
     emoji:      recipe.emoji      || "🍽️",
     cuisine:    recipe.cuisine    || "other",
     category:   recipe.category   || "other",
+    // Preserve meal-composition tags the user picked (breakfast vs
+    // dinner, main vs side vs dessert vs appetizer). Claude returns
+    // them in its JSON; without this passthrough they were getting
+    // dropped during normalization, stripping the filter/grouping
+    // signal from every saved recipe.
+    mealTiming: normalizeMealTiming(recipe.mealTiming),
+    course:     normalizeCourse(recipe.course),
     difficulty: clampInt(recipe.difficulty, 1, 10, 3),
     routes:     Array.isArray(recipe.routes) && recipe.routes.length ? recipe.routes : ["plan"],
     time:       recipe.time       || { prep: 10, cook: 20 },
@@ -778,6 +855,18 @@ function clampInt(v: unknown, lo: number, hi: number, fallback: number): number 
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(lo, Math.min(hi, Math.round(n)));
+}
+
+// Whitelist the meal-composition enum values so a chatty model that
+// invents "brunch" or "starter" doesn't poison the saved recipe with a
+// value the UI can't render. Returns null for anything unrecognized.
+const MEAL_TIMING_VALUES = new Set(["breakfast", "lunch", "dinner"]);
+const COURSE_VALUES      = new Set(["main", "side", "dessert", "appetizer", "bake", "prep"]);
+function normalizeMealTiming(v: unknown): string | null {
+  return typeof v === "string" && MEAL_TIMING_VALUES.has(v) ? v : null;
+}
+function normalizeCourse(v: unknown): string | null {
+  return typeof v === "string" && COURSE_VALUES.has(v) ? v : null;
 }
 
 // Ensure every step carries the fields CookMode reads without

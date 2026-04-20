@@ -1801,6 +1801,85 @@ export const INGREDIENTS = [
     estCentsPerBase: 0.7, // ~$4 for a 15oz Kikkoman
   },
   {
+    // Nori — dried edible seaweed sheets used for sushi rolls and as
+    // a finishing garnish. Most common mapping from OFF taxonomy tag
+    // `sushi-nori` / `seaweed-sheets` / `dried-seaweed`. Product lines
+    // commonly blend in flavor variants (wasabi, sea-salt, smoked) —
+    // those ride on pantry_items.attributes.flavor rather than forking
+    // the canonical.
+    id: "nori", name: "Nori", shortName: "Nori", emoji: "🍙", category: "pantry",
+    units: [
+      { id: "pack",  label: "packs",  toBase: 1 },        // full package (10-sheet standard)
+      { id: "sheet", label: "sheets", toBase: 0.1 },      // individual sheet, 1/10 of a standard pack
+      { id: "g",     label: "g",      toBase: 0.02 },     // ~50g per 10-sheet pack, ~5g per sheet
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 300, // ~$3 for a 10-sheet pack
+  },
+  {
+    // Ramen — Japanese / Asian wheat noodle. Distinct from Italian
+    // pasta (pasta_hub) despite OFF's taxonomy putting both under
+    // the broader "pastas" parent tag. Without this canonical, any
+    // scanned ramen product falls through to the "pasta" canonical
+    // via OFF's tag cascade, which is technically accurate but
+    // collapses the specificity the user cares about (protein
+    // ramen != spaghetti). Covers fresh, instant, and dried forms —
+    // the `state` axis can carry "dried" / "fresh" when it matters.
+    id: "ramen", name: "Ramen", shortName: "Ramen", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },          // instant-ramen "brick"
+      { id: "serving", label: "servings", toBase: 0.5 },        // half a brick = one bowl
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "lb",      label: "lb",       toBase: 453.6 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 120, // ~$1.20 per pack for standard instant
+  },
+  {
+    // Udon — thick Japanese wheat noodle. Usually sold fresh-packed
+    // (vacuum-sealed, refrigerated) or dried. Separate canonical
+    // because the thicker bite changes how recipes treat it vs
+    // ramen / soba.
+    id: "udon", name: "Udon", shortName: "Udon", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },
+      { id: "serving", label: "servings", toBase: 0.5 },
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 180,
+  },
+  {
+    // Soba — Japanese buckwheat noodle. Usually dried, sometimes
+    // fresh. Buckwheat content varies 30-100% by brand; the
+    // attribute axis can carry grade / % details when relevant.
+    id: "soba", name: "Soba", shortName: "Soba", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },
+      { id: "serving", label: "servings", toBase: 0.5 },
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 220,
+  },
+  {
+    // Rice noodles — base for pho, pad thai, drunken noodles. Wheat-
+    // free (relevant for GF diets). Sold dried, thin / wide variants
+    // differ by recipe need; attribute axis can carry the shape.
+    id: "rice_noodles", name: "Rice Noodles", shortName: "Rice Noodles", emoji: "🍜", category: "pantry",
+    units: [
+      { id: "pack",    label: "packs",    toBase: 1 },
+      { id: "serving", label: "servings", toBase: 0.5 },
+      { id: "oz",      label: "oz",       toBase: 28.35 },
+      { id: "g",       label: "g",        toBase: 1 },
+    ],
+    defaultUnit: "pack",
+    estCentsPerBase: 200,
+  },
+  {
     // Compound ingredient — bottled sriracha is one product, homemade is
     // another with the same id. Links to the "sriracha" scratch recipe
     // via skillDev.fromScratchRecipeId (Phase 1 of the compound work).
@@ -2177,6 +2256,88 @@ for (const ing of INGREDIENTS) {
 
 const byId = new Map(INGREDIENTS.map(i => [i.id, i]));
 
+// ── DB-backed canonicals registry (unified lookup) ───────────────────
+//
+// The bundled INGREDIENTS array is the 400-item hand-curated seed.
+// User-created + admin-approved canonicals live in Supabase's
+// `ingredient_info` table and previously only surfaced inside
+// LinkIngredient's picker — fuzzyMatchIngredient / findIngredient /
+// inferCanonicalFromName all ignored them, so typing "nori from the
+// japanese store" into the typeahead or scanning its UPC found no
+// match even when an admin had blessed it.
+//
+// This module-level map is populated by the React layer (see
+// useIngredientInfo.js:IngredientInfoProvider) whenever `ingredient_info`
+// fetches or updates. Keeping it as a plain Map rather than a React
+// context lets pure helper functions (fuzzyMatchIngredient,
+// inferCanonicalFromName) consult it without becoming hooks
+// themselves — they run from inside event handlers, reducers, and
+// non-React code paths (edge-function clients, the canonical resolver)
+// where context isn't available.
+//
+// Shape per entry — mirrors LinkIngredient.syntheticCanonicalForSlug:
+//   { id, name, shortName, emoji, category, parentId?, units[] }
+// A minimal stub when info is sparse; fuller when admin enriched.
+const dbCanonicals = new Map();
+
+// Build a registry-compatible canonical object from an ingredient_info
+// row. Kept here (rather than imported from LinkIngredient) so
+// ingredients.js stays React-free.
+function syntheticFromInfo(slug, info) {
+  if (!slug) return null;
+  const displayOverride = info && typeof info.display_name === "string"
+    ? info.display_name.trim()
+    : "";
+  const name = displayOverride ||
+    slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  return {
+    id: slug,
+    name,
+    shortName: null,
+    emoji: (info && info.emoji) || "✨",
+    category: (info && info.category) || "user",
+    parentId: undefined,
+    // Permissive unit list so toBase / unitLabel can't blow up on a
+    // user-canonical row that somehow received a quantity. Admin can
+    // refine this when they curate.
+    units: [
+      { id: "unit", label: "unit", toBase: 1 },
+      { id: "oz",   label: "oz",   toBase: 1 },
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+  };
+}
+
+// Called by IngredientInfoProvider whenever ingredient_info's dbMap
+// refreshes (initial load + every realtime update + admin approvals).
+// Clears + repopulates rather than merging so a slug the admin
+// deleted doesn't linger in search results.
+//
+// Skips slugs that already exist in the bundled INGREDIENTS registry —
+// bundled entries are the source of truth for those ids and any DB
+// enrichment on the same slug rides alongside via ingredient_info's
+// info JSONB (not by shadowing the canonical object).
+export function registerCanonicalsFromDb(dbMap) {
+  dbCanonicals.clear();
+  if (!dbMap || typeof dbMap !== "object") return;
+  // Also reset the alias-map cache so inferCanonicalFromName picks
+  // up newly-registered DB canonicals on the next lookup.
+  _aliasMapCache = null;
+  for (const [slug, info] of Object.entries(dbMap)) {
+    if (!slug || byId.has(slug)) continue;
+    const synthetic = syntheticFromInfo(slug, info || {});
+    if (synthetic) dbCanonicals.set(slug, synthetic);
+  }
+}
+
+// Read helper — lets callers enumerate the live DB canonicals
+// alongside the bundled array. Returns a snapshot array; mutations
+// to the return value don't affect the registry.
+export function dbCanonicalsSnapshot() {
+  return Array.from(dbCanonicals.values());
+}
+
+
 // Canonical aliases — legacy slugs where STATE was baked into the
 // canonical id ("ground_beef", "ground_pork", "ground_turkey").
 // Per CLAUDE.md the identity hierarchy keeps state as a SEPARATE
@@ -2205,7 +2366,13 @@ export function findIngredient(id) {
   if (!id) return null;
   const alias = CANONICAL_ALIASES[id];
   if (alias) return byId.get(alias.base) || null;
-  return byId.get(id) || null;
+  // Bundled registry wins when present. DB-registered synthetics
+  // (admin-approved user canonicals from ingredient_info) fall
+  // through below so a scanned pantry row whose canonical_id is
+  // "pepperoni" (admin-minted, not in the JS 400) still resolves.
+  const bundled = byId.get(id);
+  if (bundled) return bundled;
+  return dbCanonicals.get(id) || null;
 }
 
 /**
@@ -2387,25 +2554,36 @@ export function standaloneIngredients() {
 
 // Lookup table for canonical inference: lowercase name/shortName →
 // ingredient id. Built lazily so it's a one-time cost on first use.
-// Only includes tokens ≥ 3 chars to avoid spurious matches
-// ("a"/"i" would fire on almost anything).
-let _canonicalAliasMap = null;
+// Cache is invalidated by registerCanonicalsFromDb so a freshly
+// admin-approved canonical can show up in inferCanonicalFromName
+// without a page reload. Only includes tokens ≥ 3 chars to avoid
+// spurious matches ("a"/"i" would fire on almost anything).
+let _aliasMapCache = null;
 function getCanonicalAliasMap() {
-  if (_canonicalAliasMap) return _canonicalAliasMap;
+  if (_aliasMapCache) return _aliasMapCache;
   const map = new Map();
+  // Bundled entries first so their ids win on ties (registry order
+  // is carefully curated, DB entries are user/admin-minted and may
+  // overlap by name). "Tomato" in INGREDIENTS beats a DB-registered
+  // "Heirloom Tomato" when matching just the word "tomato".
   for (const ing of INGREDIENTS) {
     const tokens = [ing.name, ing.shortName].filter(Boolean);
     for (const t of tokens) {
       const key = t.toLowerCase().trim();
       if (key.length < 3) continue;
-      // Keep the FIRST match if duplicate names exist — preserves
-      // registry order (specifics before generics when carefully
-      // ordered). "Sausage" (specific) wins over a hypothetical
-      // broader "Sausage / whatever" appearing later.
       if (!map.has(key)) map.set(key, ing.id);
     }
   }
-  _canonicalAliasMap = map;
+  // DB-registered synthetics fill gaps the bundled registry doesn't
+  // cover. Admin-approved "pepperoni" gets its slug registered so
+  // typing "pepperoni" in the typeahead or scanning a pepperoni
+  // product with no bundled match lands on the DB entry.
+  for (const ing of dbCanonicals.values()) {
+    const key = (ing.name || "").toLowerCase().trim();
+    if (key.length < 3) continue;
+    if (!map.has(key)) map.set(key, ing.id);
+  }
+  _aliasMapCache = map;
   return map;
 }
 
@@ -5246,6 +5424,9 @@ export function fuzzyMatchIngredient(text, limit = 5, shoppingListItems = []) {
     .filter(n => n.length >= 3);
 
   const scored = [];
+  // Iterate the bundled 400 FIRST. Bundled entries are the source of
+  // truth for their slugs — full unit ladders, hub membership, real
+  // categories, emoji curation.
   for (const ing of INGREDIENTS) {
     // Skip hubs — they're UI groupings, not real pantry items.
     if (ing.parentId === undefined && ing.id.endsWith("_hub")) continue;
@@ -5257,6 +5438,25 @@ export function fuzzyMatchIngredient(text, limit = 5, shoppingListItems = []) {
       const ingName = (ing.name || "").toLowerCase();
       const ingShort = (ing.shortName || "").toLowerCase();
       const hit = listNames.some(n => ingName.includes(n) || ingShort.includes(n));
+      if (hit) score += 20;
+    }
+    scored.push({ ingredient: ing, score });
+  }
+  // Then the DB-registered synthetics (admin-approved user canonicals
+  // from ingredient_info, registered via registerCanonicalsFromDb).
+  // Same scoring path — they're already normalized into a registry-
+  // compatible shape by syntheticFromInfo. Bundled and synthetic
+  // candidates compete for ranking on equal footing; the JS 400 still
+  // typically wins for common terms because it has fuller metadata
+  // (shortName, hub parent, etc.) feeding scoreIngredientMatch.
+  for (const ing of dbCanonicals.values()) {
+    let score = scoreIngredientMatch(text, ing);
+    if (score <= 0) continue;
+    if (listIds.has(ing.id)) {
+      score += 30;
+    } else if (listNames.length > 0) {
+      const ingName = (ing.name || "").toLowerCase();
+      const hit = listNames.some(n => ingName.includes(n));
       if (hit) score += 20;
     }
     scored.push({ ingredient: ing, score });

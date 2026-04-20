@@ -105,6 +105,12 @@ function fromDb(row) {
   // name by parseIdentity. Orthogonal to the six-row identity stack
   // (CLAUDE.md); surfaced in UI parenthetically next to the name.
   if (row.brand              !== undefined) item.brand             = row.brand || null;
+  if (row.barcode_upc        !== undefined) item.barcodeUpc        = row.barcode_upc || null;
+  // Scan-derived attributes JSONB (migration 0066) — origins,
+  // certifications, flavor keywords, product claims like 'ORIGINAL'
+  // / 'PROTEIN'. Rendered as pills by AttributePillsRow. Without
+  // the mapping these vanish on persist and the pills go blank.
+  if (row.attributes         !== undefined) item.attributes        = row.attributes || null;
   // protected (migration 0044) — sentimental / keepsake rows that
   // shouldn't be ✕-deletable. DB enforces via the delete policy;
   // this mapping just lets the UI know so it can hide the delete
@@ -131,6 +137,14 @@ function fromDb(row) {
 }
 
 function toDb(item) {
+  if (item?.brand || item?.canonicalId === "ramen") {
+    console.log("[ramen-debug] 7/toDb-input", {
+      name: item.name,
+      brand: item.brand,
+      brandType: typeof item.brand,
+      canonicalId: item.canonicalId,
+    });
+  }
   // Multi-canonical tagging. If the caller explicitly set ingredientIds
   // Composition write path (migration 0056: components is the new
   // column; ingredient_ids stays as an alias until v0.14 drops it).
@@ -180,6 +194,8 @@ function toDb(item) {
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
     ...(item.brand             !== undefined ? { brand: item.brand || null } : {}),
+    ...(item.barcodeUpc        !== undefined ? { barcode_upc: item.barcodeUpc || null } : {}),
+    ...(item.attributes        !== undefined ? { attributes: item.attributes || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
     // Packaging + reserves (migration 0054). Passthrough only when the
     // caller set them — older code paths that don't know about

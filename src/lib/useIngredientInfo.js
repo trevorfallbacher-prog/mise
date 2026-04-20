@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabase";
 import { seedIngredientInfoOnce } from "./seedIngredientInfo";
+import { registerCanonicalsFromDb } from "../data/ingredients";
 
 // Does this `info` object carry actual enrichment, or is it a ghost
 // stub left by admin auto-approve? Three categories of keys live in
@@ -106,6 +107,18 @@ export function IngredientInfoProvider({ children }) {
   const [dbMap, setDbMap] = useState(() => initial || {});
   const [pendingMap, setPendingMap] = useState({});
   const [loading, setLoading] = useState(() => !initial);
+
+  // Mirror dbMap into the bundled registry's DB-canonicals map so
+  // pure lookup helpers (fuzzyMatchIngredient, findIngredient,
+  // inferCanonicalFromName) can see admin-approved user canonicals
+  // alongside the 400 JS bundled ones. Fires on initial load (from
+  // cache) AND on every refresh so a freshly approved canonical
+  // becomes searchable across the app without a page reload. The
+  // registry module handles cache invalidation of its alias-map
+  // internally.
+  useEffect(() => {
+    registerCanonicalsFromDb(dbMap);
+  }, [dbMap]);
 
   const fetchPending = useCallback(async () => {
     const { data, error } = await supabase

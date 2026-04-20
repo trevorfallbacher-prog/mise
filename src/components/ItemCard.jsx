@@ -1,10 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
 import { useIngredientInfo, slugifyIngredientName, isMeaningfullyEnriched } from "../lib/useIngredientInfo";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { lookupBarcode } from "../lib/lookupBarcode";
+import BarcodeScanner from "./BarcodeScanner";
+import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
+import {
+  resolveCanonicalFromScan,
+  parsePackageSize,
+  parseStateFromText,
+  stateForCanonical,
+  buildAttributesFromScan,
+} from "../lib/canonicalResolver";
+import { useToast } from "../lib/toast";
 import { usePopularPackages } from "../lib/usePopularPackages";
 import { useItemComponents } from "../lib/useItemComponents";
 import { useUserTiles } from "../lib/useUserTiles";
@@ -19,6 +31,8 @@ import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanon
 import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
+import { pantryItemNutrition, formatMacros, sourceBadge } from "../lib/nutrition";
+import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -262,6 +276,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // the composite product. Single-tag items skip this line since
   // the deep-dive already shows the same info.
   const { getInfo: getDbInfo, getPendingInfo, refreshDb } = useIngredientInfo();
+  const { get: getBrandNutrition, upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  const { push: pushToast } = useToast();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
     const intensityRank = { mild: 1, moderate: 2, intense: 3 };
@@ -359,6 +375,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // Which field is currently being edited inline. null = read-only view.
   // One field open at a time matches the existing pantry-row edit UX.
   const [editingField, setEditingField] = useState(null);
+  // "+ ADD BRAND" now opens a small chooser: type the brand manually
+  // OR scan a barcode. Scanning also opportunistically patches name
+  // when OFF gives us better data, and writes brand_nutrition so the
+  // nutrition chip lights up. This lets users fill in receipt-imported
+  // items post-hoc without being locked into typing.
+  const [brandChooserOpen, setBrandChooserOpen] = useState(false);
+  const [brandScannerOpen, setBrandScannerOpen] = useState(false);
+  const [brandScanBusy,    setBrandScanBusy]    = useState(false);
+  // Canonical suggestion from the brand scan. Rendered as an inline
+  // card at the top of the item card so the user can confirm a
+  // canonical resolution from the scanned product before we lock it
+  // in. Same pattern as AddItemModal.
+  const [canonicalSuggestion, setCanonicalSuggestion] = useState(null);
   // Flips true when the user picks "+ custom…" in the unit dropdown.
   // Replaces the <select> with a free-text <input> so they can type a
   // unit that isn't in the canonical's ladder ("pack", "wheel",
@@ -415,6 +444,27 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
     if (Object.keys(pendingChanges).length === 0) return;
     const changed = Object.keys(pendingChanges);
     onUpdate?.(pendingChanges);
+    // UPC correction memory (migration 0067). When the user edits
+    // identity axes on a row that carries a source barcode, teach
+    // the system. Admins write to the global table; regular users
+    // write to their family-scoped pool (admin can later promote).
+    // Fire-and-forget — the local state update above is what the
+    // user sees; the correction is a background learning signal.
+    const upc = item?.barcodeUpc || null;
+    const identityKeys = ["canonicalId", "typeId", "emoji", "ingredientIds"];
+    const identityEdited = identityKeys.some((k) => k in pendingChanges);
+    if (upc && identityEdited && userId) {
+      const merged = { ...item, ...pendingChanges };
+      rememberBarcodeCorrection({
+        userId,
+        isAdmin: !!isAdmin,
+        barcodeUpc: upc,
+        canonicalId:   merged.canonicalId || null,
+        typeId:        merged.typeId || null,
+        emoji:         merged.emoji || null,
+        ingredientIds: Array.isArray(merged.ingredientIds) ? merged.ingredientIds : [],
+      }).catch((e) => console.warn("[barcode_correction] write failed:", e));
+    }
     setPendingChanges({});
     setOutcome({ kind: "update_success", changed });
   };
@@ -475,7 +525,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   set it appears on the inline block before canonical." */}
               {!readOnly && !item.brand && editingField !== "brand" && (
                 <div
-                  onClick={() => startEdit("brand")}
+                  onClick={() => setBrandChooserOpen(true)}
                   style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 9,
                     color: "#555", letterSpacing: "0.12em",
@@ -591,6 +641,60 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   </span>
                 )}
               </h2>
+              {/* VARIANT / FLAVOR — product-level specifics from the
+                  original scan (scanRaw), minus brand, minus canonical.
+                  For "Protein Ramen Chicken Flavor" with brand
+                  "Ramen Bae" + canonical "ramen" → renders "Chicken
+                  Flavor". Not a reserved colored axis — it's
+                  contextual prose under the HEADER. Skipped when the
+                  derived string is empty, the raw text is obviously
+                  just the canonical again, or there's no scanRaw at
+                  all. */}
+              {(() => {
+                const rawText = typeof item.scanRaw === "string"
+                  ? item.scanRaw
+                  : (item.scanRaw?.raw_name || null);
+                if (!rawText) return null;
+                const escape = (s) => String(s).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                let variant = String(rawText).toLowerCase();
+                if (item.brand) {
+                  variant = variant.replace(new RegExp(`\\b${escape(item.brand)}\\b`, "gi"), " ");
+                }
+                const canonName = tags[0]?.canonical?.name || null;
+                if (canonName) {
+                  variant = variant.replace(new RegExp(`\\b${escape(canonName)}\\b`, "gi"), " ");
+                }
+                variant = variant.replace(/\s+/g, " ").trim();
+                if (!variant || variant.length < 2) return null;
+                // When the residue contains a "<word> flavor" pattern,
+                // narrow to just that — the flavor IS the
+                // variant-defining axis, everything else (product line
+                // descriptors like "protein", size words, etc.) is
+                // noise. "protein chicken flavor" → "chicken flavor".
+                const flavorMatch = variant.match(/([a-z]+(?:\s+[a-z]+)?)\s+flavou?r\b/i);
+                if (flavorMatch) {
+                  // Prefer a single-word modifier when a two-word
+                  // match would pick up a non-flavor descriptor like
+                  // "protein chicken". Regex greediness gives us the
+                  // longest match; take only the last word before
+                  // 'flavor' as the actual flavor name.
+                  const words = flavorMatch[1].split(/\s+/);
+                  variant = `${words[words.length - 1]} flavor`;
+                }
+                const titled = variant.replace(/\b\w/g, (c) => c.toUpperCase());
+                return (
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif",
+                    fontSize: 13,
+                    color: "#8a8478",
+                    fontStyle: "italic",
+                    marginTop: 2,
+                    marginBottom: 8,
+                  }}>
+                    {titled}
+                  </div>
+                );
+              })()}
               {/* CANONICAL — tan badge. Reserved color across the app
                   for the canonical-identity axis. When canonicalId is
                   set but the registry doesn't know about it (user-
@@ -831,6 +935,107 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             </div>
           </div>
 
+          {/* Canonical suggestion — renders after a brand scan when
+              the current row has no canonical pinned. User taps USE
+              to accept the resolver's pick (and any inferred state
+              + package size), DIFFERENT to clear it + open the
+              canonical picker for manual selection. */}
+          {/* Attribute pills band — origin, certifications, flavor
+              variants extracted from barcode scans or manually
+              entered. Neutral-tinted pills below the six colored
+              identity axes (per CLAUDE.md: metadata ride-along, not
+              a new reserved axis). Hidden when no attributes present. */}
+          <AttributePillsRow attributes={item.attributes} />
+
+          {canonicalSuggestion && (
+            <CanonicalSuggestionCard
+              match={canonicalSuggestion.match}
+              inferredState={canonicalSuggestion.inferredState}
+              packageSize={canonicalSuggestion.packageSize}
+              attributes={canonicalSuggestion.attributes}
+              onUse={async () => {
+                const s = canonicalSuggestion;
+                const canon = s.match.canonical;
+                // Cascade: fill every derived field from the
+                // canonical that's still empty on the row. Same
+                // idea as AddItemModal's cascadeFromCanonical — the
+                // canonical carries a category, default unit, and
+                // composition; without threading those through, the
+                // row reads as "canonical set, everything else
+                // blank" and users have to fill each field
+                // themselves. We only overwrite when the field is
+                // currently empty — conscious user picks stay.
+                const patch = {
+                  ingredientId: canon.id,
+                  // Composition mirrors canonical for single-tag
+                  // rows (the norm). Multi-tag rows already have
+                  // their own ingredientIds and skip this.
+                  ...(item.ingredientIds && item.ingredientIds.length > 0
+                    ? {}
+                    : { ingredientIds: [canon.id] }),
+                  // Category cascades from the canonical's own
+                  // category field (pantry / dairy / meat / etc.)
+                  // when the row hasn't been classified.
+                  ...(item.category ? {} : { category: canon.category || "pantry" }),
+                };
+                if (s.inferredState?.state) patch.state = s.inferredState.state;
+                // Package size wins over the row's current amount/unit
+                // — the scanned label is the ground truth for what's
+                // physically in the container. Without package size,
+                // fill the default unit from canonical if row has none.
+                if (s.packageSize) {
+                  patch.amount = s.packageSize.amount;
+                  patch.unit   = s.packageSize.unit;
+                } else if (canon.defaultUnit && !item.unit) {
+                  patch.unit = canon.defaultUnit;
+                }
+                onUpdate?.(patch);
+                // With canonical now resolved, write brand_nutrition
+                // if we had a pending payload from the scan.
+                const brandForWrite = item?.brand || canonicalSuggestion.match?.canonical && null;
+                if (s.pendingNutrition && item?.brand) {
+                  try {
+                    await upsertBrandNutrition({
+                      canonicalId: s.match.canonical.id,
+                      brand:       item.brand,
+                      nutrition:   s.pendingNutrition,
+                      barcode:     s.pendingBarcode,
+                      source:      s.pendingSource || "openfoodfacts",
+                      sourceId:    s.pendingSourceId,
+                    });
+                  } catch (e) {
+                    console.error("[itemcard] brand_nutrition upsert after suggestion accept failed:", e);
+                  }
+                }
+                setCanonicalSuggestion(null);
+                pushToast(`Canonical set to ${s.match.canonical.name}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+              }}
+              onDifferent={() => {
+                setCanonicalSuggestion(null);
+                // Open the canonical picker — ItemCard uses
+                // editingField="canonical" + a LinkIngredient flow
+                // triggered from the header's canonical segment.
+                // Keeping DIFFERENT lightweight: dismiss the card
+                // and let the user tap the canonical segment in the
+                // header to open LinkIngredient on their terms.
+                pushToast("Tap the canonical in the header to pick manually.", { emoji: "🏷️", kind: "info", ttl: 4500 });
+              }}
+            />
+          )}
+
+          {/* NUTRITION — resolver-based macro chip. Sits as a neutral
+              band below the six colored identity axes (not a new axis
+              per CLAUDE.md: brand / nutrition / etc are metadata that
+              ride along). Tapping expands to a compact macro grid with
+              a source-of-signal badge. Hidden when no resolver tier
+              returns numbers — the coverage story reads honestly
+              instead of faking zeros. */}
+          <NutritionChip
+            item={item}
+            getInfo={getDbInfo}
+            getBrandNutrition={getBrandNutrition}
+            onUpdate={onUpdate}
+          />
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -2232,14 +2437,15 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           return map[k] || k.toUpperCase();
         };
         const changedLabels = outcome.changed.map(prettyLabel);
-        const locLabel = LOCATIONS.find(l => l.id === item.location)?.label || item.location;
-        const locEmoji = LOCATIONS.find(l => l.id === item.location)?.emoji || "📦";
+        const locEntry = LOCATIONS.find(l => l.id === item.location);
+        const locLabel = locEntry?.label || item.location || "Storage";
+        const locEmoji = locEntry?.emoji || "📦";
         return (
           <AddItemOutcome
             kind="success"
             title={`${item.name} updated`}
             body={`Saved: ${changedLabels.join(" · ")}`}
-            destination={`${locEmoji} ${locLabel.toUpperCase()}`}
+            destination={`${locEmoji} ${String(locLabel).toUpperCase()}`}
             primary={{
               label: "DONE",
               tone: "confirm",
@@ -2272,6 +2478,516 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           }}
         />
       )}
+
+      {/* Brand chooser sheet — opens when user taps "+ ADD BRAND".
+          Two paths: type it manually (defers to the existing inline
+          edit flow) or scan a barcode (opens BarcodeScanner, pulls
+          brand + optional product name from OFF, writes the row's
+          brand + the brand_nutrition row so the chip can resolve
+          nutrition from the new brand tier). Backdrop dismisses. */}
+      {brandChooserOpen && (
+        <div
+          onClick={() => setBrandChooserOpen(false)}
+          style={{
+            // Must render above ItemCard's own z-index (Z.card = 320),
+            // otherwise the sheet sits behind the card and clicks
+            // pass straight through. Z.picker (340) is the layer
+            // LinkIngredient uses for the same over-card reason.
+            position: "fixed", inset: 0, zIndex: 345,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "flex-end", justifyContent: "center",
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%", maxWidth: 480,
+              background: "#141414",
+              borderTop: "1px solid #2a2a2a",
+              borderRadius: "16px 16px 0 0",
+              padding: "20px 20px 28px",
+              display: "flex", flexDirection: "column", gap: 10,
+            }}
+          >
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              color: "#888", letterSpacing: "0.12em", marginBottom: 4,
+            }}>
+              ADD BRAND
+            </div>
+            <button
+              type="button"
+              disabled={brandScanBusy}
+              onClick={() => { setBrandChooserOpen(false); startEdit("brand"); }}
+              style={brandChooserBtnStyle}
+            >
+              <span style={{ fontSize: 20 }}>✏️</span>
+              <span style={{ flex: 1, textAlign: "left" }}>
+                <span style={brandChooserTitleStyle}>Type brand name</span>
+                <span style={brandChooserBlurbStyle}>
+                  Inline input. For when the brand's easy to read off the package.
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={brandScanBusy}
+              onClick={() => { setBrandChooserOpen(false); setBrandScannerOpen(true); }}
+              style={brandChooserBtnStyle}
+            >
+              <span style={{ fontSize: 20 }}>📷</span>
+              <span style={{ flex: 1, textAlign: "left" }}>
+                <span style={brandChooserTitleStyle}>Scan barcode</span>
+                <span style={brandChooserBlurbStyle}>
+                  Pulls brand + product name + nutrition from Open Food Facts.
+                </span>
+              </span>
+            </button>
+            <button
+              onClick={() => setBrandChooserOpen(false)}
+              style={{
+                marginTop: 6, padding: "10px",
+                background: "transparent", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 10,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.08em", cursor: "pointer",
+              }}
+            >
+              CANCEL
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* BarcodeScanner overlay for the brand-scan path. On decode,
+          patches the row's brand (always) and name (if current name
+          reads as generic / short / looks receipt-auto-generated) and
+          writes the brand_nutrition row when we have a canonical id
+          to pin against. Skips the write path silently when canonical
+          is null — user needs to set CANONICAL separately; toast
+          explains. */}
+      {brandScannerOpen && (
+        <BarcodeScanner
+          onCancel={() => setBrandScannerOpen(false)}
+          onDetected={async (barcode) => {
+            setBrandScannerOpen(false);
+            setBrandScanBusy(true);
+            try {
+              const res = await lookupBarcode(barcode, { brandNutritionRows });
+              if (!res?.found) {
+                const msg = res?.reason === "edge_fn_not_deployed"
+                  ? "Scan edge function isn't deployed. Run: supabase functions deploy lookup-barcode"
+                  : res?.reason === "fetch_failed"
+                    ? `Barcode lookup failed (${res?.status || "network"}).`
+                    : res?.reason === "no_nutriments"
+                      ? `Found ${barcode} but Open Food Facts has no nutrition data for it.`
+                      : `No match for ${barcode} in Open Food Facts.`;
+                pushToast(msg, { emoji: "🔍", kind: "warn", ttl: 5500 });
+                return;
+              }
+              // Build the patch for the row. Brand always (with
+              // parseIdentity fallback when OFF missed it), name
+              // only when the current name looks receipt-auto-
+              // generated ("ACQUAMAR FLA" / "CHOBANI YGT" — users
+              // who typed a deliberate name keep it). ProductName
+              // is kept as `name` (not canonical) so grade/variant
+              // info ("sushi", "wasabi style") is preserved.
+              const patch = {};
+              let effectiveBrand = res.brand || null;
+              if (!effectiveBrand && res.productName) {
+                const parsed = parseIdentity(res.productName);
+                if (parsed?.brand) effectiveBrand = parsed.brand;
+              }
+              if (effectiveBrand) patch.brand = effectiveBrand;
+              if (res.productName && looksReceiptGenerated(item.name)) {
+                patch.name = res.productName;
+              }
+              if (Object.keys(patch).length > 0) {
+                onUpdate?.(patch);
+              }
+              // Attribute extraction runs regardless of canonical
+              // state — origins / certifications / flavor are
+              // orthogonal to canonical and always worth saving if
+              // the scan surfaced them. Merges with any existing
+              // attributes on the row so repeated scans aren't
+              // destructive.
+              const scannedAttributes = buildAttributesFromScan({
+                productName:   res.productName,
+                categoryHints: res.categoryHints || [],
+                originTags:    res.originTags  || [],
+                countryTags:   res.countryTags || [],
+                labelTags:     res.labelTags   || [],
+              });
+              if (scannedAttributes) {
+                const mergedAttributes = mergeAttributes(item.attributes, scannedAttributes);
+                onUpdate?.({ attributes: mergedAttributes });
+              }
+
+              // Resolve canonical from OFF data. Only surfaces a
+              // suggestion when no canonical is currently set on the
+              // row — if the user's already pinned a canonical we
+              // don't want to second-guess it.
+              const currentCanonId = item.ingredientId || item.canonicalId || null;
+              if (!currentCanonId) {
+                const match = resolveCanonicalFromScan({
+                  brand:         res.brand,
+                  productName:   res.productName,
+                  categoryHints: res.categoryHints || [],
+                  findIngredient,
+                });
+                const rawState = parseStateFromText(res.productName, res.categoryHints || []);
+                const inferredState = match?.canonical
+                  ? { state: stateForCanonical(rawState, match.canonical) }
+                  : null;
+                const packageSize = parsePackageSize(res.quantity);
+                if (match && match.autoApply) {
+                  // Near-exact match — skip the confirmation card and
+                  // patch the row directly. Same payload the USE
+                  // button would have built.
+                  const canon = match.canonical;
+                  const autoPatch = {
+                    ingredientId: canon.id,
+                    ...(item.ingredientIds && item.ingredientIds.length > 0
+                      ? {}
+                      : { ingredientIds: [canon.id] }),
+                    ...(item.category ? {} : { category: canon.category || "pantry" }),
+                  };
+                  if (inferredState?.state) autoPatch.state = inferredState.state;
+                  if (packageSize) {
+                    autoPatch.amount = packageSize.amount;
+                    autoPatch.unit   = packageSize.unit;
+                  } else if (canon.defaultUnit && !item.unit) {
+                    autoPatch.unit = canon.defaultUnit;
+                  }
+                  onUpdate?.(autoPatch);
+                  // brand_nutrition write follows a few lines down
+                  // (same path as when user taps USE) — no special
+                  // handling needed here.
+                } else if (match) {
+                  setCanonicalSuggestion({
+                    match,
+                    inferredState: inferredState?.state ? inferredState : null,
+                    packageSize,
+                    attributes: scannedAttributes,
+                    pendingNutrition: res.nutrition,   // save with brand_nutrition after canonical confirms
+                    pendingBarcode:   res.barcode,
+                    pendingSource:    res.source || "openfoodfacts",
+                    pendingSourceId:  res.sourceId || res.barcode,
+                  });
+                } else if (packageSize) {
+                  // No canonical match but we got a size — apply
+                  // silently as a helpful prefill on an existing row.
+                  onUpdate?.({ amount: packageSize.amount, unit: packageSize.unit });
+                }
+              }
+              // Write brand_nutrition when we can — needs a canonical
+              // to pin against. Three paths:
+              //   1. Row already had a canonical (currentCanonId set)
+              //   2. We just auto-applied one (autoApply branch above)
+              //   3. User will tap USE on the suggestion card — that
+              //      handler writes brand_nutrition itself with its
+              //      pending payload.
+              // Check auto-applied case explicitly so a silent
+              // canonical resolution still gets its brand_nutrition
+              // row written immediately, not only when user taps USE.
+              const canonId = currentCanonId
+                || (match?.autoApply ? match.canonical?.id : null);
+              const brandForWrite = effectiveBrand;
+              if (res.cached) {
+                pushToast("Already in the nutrition database.", { emoji: "💾", kind: "info", ttl: 3500 });
+              } else if (canonId && brandForWrite && res.nutrition) {
+                await upsertBrandNutrition({
+                  canonicalId: canonId,
+                  brand:       brandForWrite,
+                  nutrition:   res.nutrition,
+                  barcode:     res.barcode,
+                  source:      res.source || "openfoodfacts",
+                  sourceId:    res.sourceId || res.barcode,
+                });
+                pushToast(`Nutrition saved for ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+              } else if (!canonId && brandForWrite) {
+                pushToast(`Brand set to ${brandForWrite}. Assign a canonical to pin nutrition to it.`, { emoji: "🏷️", kind: "info", ttl: 5000 });
+              } else if (!brandForWrite) {
+                // Open Food Facts didn't have brand data for this
+                // product AND parseIdentity couldn't pull it from
+                // the productName. Be explicit so the user doesn't
+                // think it's a bug — it's OFF's data gap for this
+                // specific UPC (common for store-brand and regional
+                // products).
+                pushToast(
+                  `Scanned ${res.productName || res.barcode}, but Open Food Facts has no brand info for this UPC. Tap "+ ADD BRAND" to type it in.`,
+                  { emoji: "🏷️", kind: "warn", ttl: 6000 },
+                );
+              } else {
+                pushToast(`Brand set to ${brandForWrite}.`, { emoji: "✨", kind: "success", ttl: 3500 });
+              }
+            } catch (e) {
+              console.error("[itemcard] brand scan failed:", e);
+              pushToast("Scan lookup failed. Try again.", { emoji: "⚠️", kind: "warn", ttl: 4500 });
+            } finally {
+              setBrandScanBusy(false);
+            }
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// Heuristic: does this pantry name look auto-generated by a receipt
+// scanner rather than a human? Short + no lowercase + abbreviations
+// are all signals. "ACQUAMAR FLA" / "CHOBANI YGT" / "KROGER CKN BRST"
+// vs "Homemade pasta sauce" / "my leftover chicken". When true we
+// feel OK overwriting with OFF's cleaner product_name; when false
+// the user deliberately typed the name and we leave it alone.
+function looksReceiptGenerated(name) {
+  if (!name) return true;                  // null name → fill in
+  const n = String(name).trim();
+  if (!n) return true;
+  if (n.length > 40) return false;         // long name → definitely user-typed
+  // All-caps or near-all-caps is the strongest receipt tell.
+  const lowerCount = (n.match(/[a-z]/g) || []).length;
+  const upperCount = (n.match(/[A-Z]/g) || []).length;
+  if (upperCount >= 3 && lowerCount === 0) return true;
+  return false;
+}
+
+// Pills band rendering the row's attributes metadata — origins,
+// certifications, flavor variants. Same palette as the suggestion
+// card's metadata row so pills feel continuous across the scan
+// flow → saved row. Hidden when nothing to show.
+function AttributePillsRow({ attributes }) {
+  if (!attributes) return null;
+  const origins        = Array.isArray(attributes.origins)        ? attributes.origins        : [];
+  const certifications = Array.isArray(attributes.certifications) ? attributes.certifications : [];
+  const flavor         = Array.isArray(attributes.flavor)         ? attributes.flavor         : [];
+  const claims         = Array.isArray(attributes.claims)         ? attributes.claims         : [];
+  if (
+    origins.length === 0 && certifications.length === 0 &&
+    flavor.length === 0 && claims.length === 0
+  ) return null;
+  return (
+    <div style={{
+      marginBottom: 12,
+      display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+    }}>
+      {origins.map((o) => (
+        <span key={`o-${o}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#8aa4b8", background: "#0f151a",
+          border: "1px solid #1e2a36",
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          📍 {o.toUpperCase()}
+        </span>
+      ))}
+      {certifications.map((c) => (
+        <span key={`c-${c.id}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: c.kind === "dietary" ? "#d9c594" : "#7ec87e",
+          background: c.kind === "dietary" ? "#1c1810" : "#0f1a0f",
+          border: `1px solid ${c.kind === "dietary" ? "#3a2f10" : "#1e3a1e"}`,
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          {c.label.toUpperCase()}
+        </span>
+      ))}
+      {flavor.map((f) => (
+        <span key={`f-${f}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#d4a8c7", background: "#1c1520",
+          border: "1px solid #3a253a",
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          {f.toUpperCase()}
+        </span>
+      ))}
+      {claims.map((c) => (
+        <span key={`cl-${c}`} style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#a8a8a8", background: "#171717",
+          border: "1px solid #2e2e2e",
+          padding: "3px 8px", borderRadius: 6,
+          letterSpacing: "0.06em",
+        }}>
+          {c.toUpperCase()}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// Merge a scanned attribute blob into whatever the row already
+// carries. Origins / flavor get unioned (deduped by lowercase);
+// certifications get unioned (deduped by id). A second scan of the
+// same product is idempotent; a scan of a DIFFERENT product with
+// overlapping attributes adds without removing existing ones.
+function mergeAttributes(existing, incoming) {
+  if (!incoming) return existing || null;
+  if (!existing) return incoming;
+  const out = { ...existing };
+  for (const key of ["origins", "flavor", "claims"]) {
+    const merged = [...(existing[key] || []), ...(incoming[key] || [])];
+    const seen = new Set();
+    const deduped = [];
+    for (const v of merged) {
+      const k = String(v || "").toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(v);
+    }
+    if (deduped.length > 0) out[key] = deduped;
+  }
+  if (existing.certifications || incoming.certifications) {
+    const seen = new Set();
+    const merged = [];
+    for (const cert of [...(existing.certifications || []), ...(incoming.certifications || [])]) {
+      if (!cert || !cert.id || seen.has(cert.id)) continue;
+      seen.add(cert.id);
+      merged.push(cert);
+    }
+    if (merged.length > 0) out.certifications = merged;
+  }
+  return out;
+}
+
+// Brand chooser sheet button styles — shared between the two options
+// so they visually read as peers (type vs scan), not primary/secondary.
+const brandChooserBtnStyle = {
+  display: "flex", alignItems: "center", gap: 12,
+  padding: "14px 14px",
+  background: "#1a1a1a", border: "1px solid #2a2a2a",
+  borderRadius: 12, cursor: "pointer",
+  textAlign: "left",
+};
+const brandChooserTitleStyle = {
+  display: "block",
+  fontFamily: "'Fraunces',serif", fontSize: 16, fontStyle: "italic",
+  color: "#f0ece4", fontWeight: 400,
+};
+const brandChooserBlurbStyle = {
+  display: "block", marginTop: 2,
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888",
+  lineHeight: 1.4,
+};
+
+// Nutrition chip — compact macro line + expandable detail. Runs
+// through `pantryItemNutrition` so brand/override/canonical resolution
+// stays consistent across every surface. When no resolver tier fires
+// (unknown state), the chip simply hides — the scan affordance to
+// fill the gap lives behind "+ ADD BRAND" in the identity stack, not
+// as a standalone CTA here (keeps the nutrition band uncluttered and
+// one discoverable entry point for data enrichment).
+function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
+  const [expanded, setExpanded] = useState(false);
+  // Wrap the brand-lookup function in a Map-like shape so the resolver
+  // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
+  const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
+  const { nutrition, source, brand } = pantryItemNutrition(
+    {
+      ingredientId: item?.ingredientId || item?.canonicalId || null,
+      brand: item?.brand || null,
+      nutritionOverride: item?.nutritionOverride || null,
+    },
+    { getInfo, brandNutrition: brandNutritionMap },
+  );
+  if (!nutrition) return null;
+  const badge = sourceBadge(source);
+  const per = nutrition.per === "100g" ? "per 100g"
+            : nutrition.per === "count" ? "per item"
+            : nutrition.per === "serving" && nutrition.serving_g ? `per ${nutrition.serving_g}g serving`
+            : "";
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <button
+        onClick={() => setExpanded(x => !x)}
+        style={{
+          width: "100%", padding: "10px 12px",
+          background: "#141414",
+          border: "1px solid #242424",
+          borderRadius: 10,
+          display: "flex", alignItems: "center", gap: 10,
+          cursor: "pointer", textAlign: "left",
+        }}
+      >
+        <span style={{ fontSize: 16 }}>🔥</span>
+        <span style={{
+          flex: 1,
+          fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+        }}>
+          {formatMacros(nutrition)}
+        </span>
+        {per && (
+          <span style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            color: "#777", letterSpacing: "0.08em",
+          }}>
+            {per.toUpperCase()}
+          </span>
+        )}
+        {badge.label && (
+          <span style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+            color: badge.color, background: `${badge.color}15`,
+            border: `1px solid ${badge.color}55`,
+            padding: "2px 6px", borderRadius: 6,
+            letterSpacing: "0.1em",
+          }}>
+            {badge.label}
+            {brand ? ` · ${brand}` : ""}
+          </span>
+        )}
+        <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
+          {expanded ? "▾" : "▸"}
+        </span>
+      </button>
+      {expanded && (
+        <div style={{
+          marginTop: 6, padding: "10px 12px",
+          background: "#0f0f0f", border: "1px solid #1e1e1e",
+          borderRadius: 10,
+          display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8,
+        }}>
+          <MacroCell label="CALORIES" value={nutrition.kcal}     unit="kcal" />
+          <MacroCell label="PROTEIN"  value={nutrition.protein_g} unit="g" />
+          <MacroCell label="CARBS"    value={nutrition.carb_g}    unit="g" />
+          <MacroCell label="FAT"      value={nutrition.fat_g}     unit="g" />
+          {typeof nutrition.fiber_g   === "number" && <MacroCell label="FIBER"  value={nutrition.fiber_g}   unit="g"  />}
+          {typeof nutrition.sugar_g   === "number" && <MacroCell label="SUGAR"  value={nutrition.sugar_g}   unit="g"  />}
+          {typeof nutrition.sodium_mg === "number" && <MacroCell label="SODIUM" value={nutrition.sodium_mg} unit="mg" />}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MacroCell({ label, value, unit }) {
+  return (
+    <div style={{
+      padding: "6px 8px",
+      background: "#161616", border: "1px solid #252525",
+      borderRadius: 8,
+    }}>
+      <div style={{
+        fontFamily: "'DM Mono',monospace", fontSize: 8,
+        color: "#666", letterSpacing: "0.1em",
+      }}>
+        {label}
+      </div>
+      <div style={{
+        marginTop: 2,
+        fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4",
+      }}>
+        {typeof value === "number" ? Math.round(value * 10) / 10 : "—"}
+        {typeof value === "number" && (
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", marginLeft: 4 }}>
+            {unit}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }

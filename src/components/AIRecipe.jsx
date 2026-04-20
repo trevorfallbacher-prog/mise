@@ -3,6 +3,8 @@ import { generateRecipe } from "../lib/generateRecipe";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 import { findIngredient, INGREDIENTS } from "../data/ingredients";
+import { recipeNutrition, formatMacros } from "../lib/nutrition";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -57,10 +59,17 @@ const MEAL_TIMING_CHIPS = [
 // on their own track. Same dish title can read very differently
 // depending on which of these Claude is aiming for.
 const COURSE_CHIPS = [
-  { id: "any",     label: "Any course" },
-  { id: "main",    label: "Main" },
-  { id: "side",    label: "Side" },
-  { id: "dessert", label: "Dessert" },
+  { id: "any",       label: "Any course" },
+  { id: "main",      label: "Main" },
+  { id: "side",      label: "Side" },
+  { id: "dessert",   label: "Dessert" },
+  { id: "appetizer", label: "Appetizer" },
+  // "Bake" and "Prep" are component recipes (bread, stock, sauce,
+  // pickles) that live in the library without a meal slot. Selecting
+  // them hides MEAL TIMING since these aren't tied to breakfast/lunch/
+  // dinner — they're pantry-building.
+  { id: "bake",      label: "Bake" },
+  { id: "prep",      label: "Prep" },
 ];
 
 // Canonical ids that count as "protein" for the STAR INGREDIENTS
@@ -115,6 +124,25 @@ function normalizeForMatch(name) {
     .trim();
 }
 
+// Split an ideal name on alternative separators into candidate sub-
+// names. Claude frequently emits "ciabatta or crusty bread" / "salt &
+// black pepper" / "penne, rigatoni" — those are alternatives, not
+// compound identities, and matching the literal compound against the
+// pantry fails on both sides: "ciabatta or crusty bread" isn't a
+// substring of "Ciabatta Roll" (false negative), and a broad category
+// fallback on a loose resolver sweep pulls in unrelated rows (false
+// positive). Splitting lets each alternative resolve to its own
+// canonical and match cleanly.
+const NAME_SEPARATOR_RE = /\s+or\s+|\s+and\s+|\s*[&/,]\s*/i;
+function splitIdealName(name) {
+  if (!name) return [];
+  const parts = String(name)
+    .split(NAME_SEPARATOR_RE)
+    .map(s => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : [String(name)];
+}
+
 // Do two ingredient display names refer to the same thing? Uses
 // normalized substring containment both directions — catches
 // "Ricotta" vs "GV Ricotta 32oz", "Crescent Roll" vs "Crescent
@@ -160,15 +188,40 @@ export default function AIRecipe({
   ingredientInfo,   // the useIngredientInfo() context — optional
   onCancel,
   onSave,           // (recipe) => Promise — persist privately, then close
+  onSilentSave,     // (recipe) => Promise<persistedRecipe> — persist
+                    // WITHOUT toasting or closing. Used by the compose-
+                    // a-meal flow to lock the anchor in user_recipes
+                    // before re-entering setup for a side/dessert.
+                    // Falls back to onSave when parent didn't provide.
   onSchedule,       // (recipe) => Promise — parent persists + opens SchedulePicker
   onSaveAndCook,    // (recipe) => Promise — existing save + cook path
+  onMealSave,       // ({ name, emoji, cuisine, mealTiming, anchorSlug, pieces })
+                    // => Promise<meal> — parent persists a MEAL row
+                    // (meals + meal_recipes). Called from the sticky
+                    // header's SAVE MEAL CTA once the user has two+
+                    // pieces composed. Optional — when absent, the
+                    // CTA just closes the overlay and leaves pieces
+                    // as loose recipes in the library.
   onShoppingAdd,    // (items[]) => void — receives the locked ingredients
                     // promoted to shopping in the tweak phase so the
                     // parent can merge them into the shoppingList state.
                     // Optional — when absent the promotions still show
                     // in the recipe with a "user will pick up" note
                     // but don't land on the actual shopping list.
+  // Library sources used by the "Pick existing" path of the compose
+  // flow — filtered to course=target (side/dessert/appetizer) and
+  // soft-sorted by cuisine/timing match to the anchor.
+  userRecipes = [], // [{ id, recipe, source }, ...] from useUserRecipes
+  bundledRecipes = [],
 }) {
+  // Brand-nutrition lookup for the per-serving rollup. Wrapped in a
+  // Map-like shape so the resolver's signature stays source-agnostic.
+  const { get: getBrandNutrition } = useBrandNutrition();
+  const brandNutrition = useMemo(
+    () => ({ get: (k) => getBrandNutrition?.(k) || null }),
+    [getBrandNutrition],
+  );
+
   const [phase,  setPhase]  = useState("setup");     // setup | sketch_loading | tweak | final_loading | preview | error
   const [recipe, setRecipe] = useState(null);
   const [errMsg, setErrMsg] = useState("");
@@ -213,6 +266,27 @@ export default function AIRecipe({
   const [cuisine,    setCuisine]    = useState("any");
   const [time,       setTime]       = useState("medium");
   const [difficulty, setDifficulty] = useState("medium");
+
+  // Compose-a-meal state. pairWith carries the anchor dish's identity
+  // into Claude's prompt so a side/dessert/appetizer is drafted to
+  // COMPLEMENT the main (contrast, balance, no duplicated protein)
+  // rather than in isolation. mealInProgress tracks every piece the
+  // user has committed to this meal so the sticky header can render
+  // the composition. Each piece's `recipe` is the row we actually
+  // persisted to user_recipes — pieces are reusable standalone
+  // recipes, not meal-owned rows.
+  const [pairWith,        setPairWith]        = useState(null);
+  //   { title, course, cuisine, ingredients: [{name, amount}] } | null
+  const [mealInProgress,  setMealInProgress]  = useState(null);
+  //   { anchor: recipe, pieces: [{ course, recipe }] } | null
+
+  // "+ Add X" sheet state. When non-null, the two-option sheet
+  // ("Draft new" / "Pick existing") is open for this course.
+  const [addSheetCourse,  setAddSheetCourse]  = useState(null);
+  //   null | "side" | "dessert" | "appetizer"
+  // When non-null, the library picker is open, filtered to this course.
+  const [pickExistingFor, setPickExistingFor] = useState(null);
+  //   null | "side" | "dessert" | "appetizer"
 
   // Protein picker source — collapse the pantry to one chip per
   // canonical (5 cans of tuna = one TUNA chip, not five) and group
@@ -272,14 +346,25 @@ export default function AIRecipe({
 
   // Shared prefs payload — both the sketch and final calls assemble
   // the same set; only mode + lockedIngredients differ.
-  const buildPrefs = (extra = {}) => ({
-    cuisine, time, difficulty,
-    mealPrompt: mealPrompt.trim() || undefined,
-    mealTiming: mealTiming === "any" ? undefined : mealTiming,
-    course: course === "any" ? undefined : course,
-    starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
-    ...extra,
-  });
+  const buildPrefs = (extra = {}) => {
+    // bake/prep courses don't belong to a meal slot — drop any stale
+    // mealTiming so the backend's HARD CONSTRAINTS block doesn't get a
+    // "breakfast" tag on a chicken-stock prep.
+    const isComponentCourse = course === "bake" || course === "prep";
+    return {
+      cuisine, time, difficulty,
+      mealPrompt: mealPrompt.trim() || undefined,
+      mealTiming: (isComponentCourse || mealTiming === "any") ? undefined : mealTiming,
+      course: course === "any" ? undefined : course,
+      starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
+      // Compose-a-meal anchor. Only present when the user clicked
+      // "+ Add side/dessert/appetizer" from a main's preview; Claude
+      // uses it to build something that complements rather than
+      // duplicates the anchor.
+      pairWith: pairWith || undefined,
+      ...extra,
+    };
+  };
 
   // Phase 2 entry — kicks off the cheap sketch pass. User lands on
   // the tweak screen with the rough draft + dual IDEAL/PANTRY lists,
@@ -458,6 +543,217 @@ export default function AIRecipe({
   const handleSchedule = handleAction("schedule", onSchedule);
   const handleCookIt   = handleAction("cook",     onSaveAndCook);
 
+  // ── Compose-a-meal handlers ─────────────────────────────────────
+
+  // Derive ingredient descriptors for the pairWith payload. Trims to
+  // name + amount so a long recipe doesn't bloat the prompt. The full
+  // recipe is already saved in user_recipes; this is just the context
+  // Claude needs to build something complementary.
+  const ingredientDescriptors = (r) =>
+    (r?.ingredients || [])
+      .filter((i) => i && typeof i.item === "string" && i.item.trim())
+      .map((i) => ({ name: i.item, amount: i.amount ?? null }));
+
+  // Open the "+ Add X" sheet for a course. The sheet offers two paths:
+  // Draft new (re-enters setup with pairWith seeded) or Pick existing
+  // (opens the filtered library picker).
+  const openAddSheet = (courseType) => {
+    if (busy) return;
+    setAddSheetCourse(courseType);
+  };
+
+  // "Draft new" path — saves the current recipe as the anchor (or
+  // extends the in-progress meal), seeds pairWith with the anchor's
+  // identity, resets the sketch/tweak machinery, and kicks back to
+  // setup with course pre-filled to the target. The pieces already
+  // in mealInProgress survive the reset.
+  const draftNewComponent = async (courseType) => {
+    if (!recipe) return;
+    setAddSheetCourse(null);
+    const saver = onSilentSave || onSave;
+    if (!saver) return;
+    setBusy("compose");
+    try {
+      // Fall back to the user's setup chips when Claude forgot to
+      // stamp the tags on its final output — the user's intent is
+      // the ground truth. Without this a pre-Phase-1 cached response
+      // could land as a "main" on a slot it wasn't.
+      const resolvedCourse     = recipe.course     || (course     === "any" ? null : course);
+      const resolvedMealTiming = recipe.mealTiming || (mealTiming === "any" ? null : mealTiming);
+      const recipeWithTags = { ...recipe, course: resolvedCourse, mealTiming: resolvedMealTiming };
+      // Persist the current recipe so it exists as a standalone row
+      // in user_recipes. This piece is reusable — it lives in the
+      // library regardless of whether the user ever "saves the meal".
+      const saved = (await saver(recipeWithTags)) || recipeWithTags;
+      // Seed or extend the in-progress meal. First call establishes
+      // the anchor (main); subsequent + Add calls append pieces.
+      setMealInProgress((prev) => {
+        const incoming = { course: saved.course || "main", recipe: saved };
+        if (!prev) {
+          return { anchor: saved, pieces: [incoming] };
+        }
+        return { ...prev, pieces: [...prev.pieces, incoming] };
+      });
+      // Anchor context for the next draft. Use the current anchor if
+      // one's already set (so "Dessert after side after main" still
+      // complements the MAIN, not the side), else the just-saved
+      // recipe.
+      const anchor = mealInProgress?.anchor || saved;
+      setPairWith({
+        title:       anchor.title,
+        course:      anchor.course || "main",
+        cuisine:     anchor.cuisine || undefined,
+        ingredients: ingredientDescriptors(anchor),
+      });
+      // Reset the sketch + tweak machinery AND star-ingredient picks.
+      // Star ingredients are a "build around THIS protein" signal for
+      // the piece the user is currently drafting; they should never
+      // carry from main → side. The eggs that were the main's hero
+      // shouldn't reappear in the side's star slot — the anchor's
+      // proteins already ride along via pairWith, so Claude has the
+      // context without the side being forced to include them.
+      // mealPrompt / cuisine / time / difficulty stay — those read as
+      // overall session mood, not piece-specific direction.
+      setRecipe(null);
+      setSketch(null);
+      setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
+      setRecipeFeedback("");
+      setSwapOpenIdx(null);
+      setAddOpen(false);
+      setStarIngredientIds([]);
+      setCourse(courseType);
+      setErrMsg("");
+      setPhase("setup");
+    } catch (e) {
+      console.error("[ai recipe] compose draft-new failed:", e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // "Pick existing" path — attach a library recipe to the meal
+  // without re-drafting. Recipe is already in user_recipes (or is a
+  // bundled one); we just pin it into mealInProgress.pieces. The
+  // anchor stays on the current preview so the user can keep adding.
+  const attachExistingComponent = async (courseType, chosenRecipe) => {
+    if (!recipe || !chosenRecipe) return;
+    setPickExistingFor(null);
+    setAddSheetCourse(null);
+    const saver = onSilentSave || onSave;
+    // Make sure the current preview's anchor is in user_recipes too.
+    // First call of the compose flow needs to lock the anchor in so
+    // pieces are siblings, not just floating refs to an unsaved draft.
+    let anchorRecipe = mealInProgress?.anchor;
+    if (!mealInProgress) {
+      if (!saver) return;
+      setBusy("compose");
+      try {
+        anchorRecipe = (await saver(recipe)) || recipe;
+      } catch (e) {
+        console.error("[ai recipe] compose anchor-save failed:", e);
+        setBusy(null);
+        return;
+      }
+    }
+    setMealInProgress((prev) => {
+      if (!prev) {
+        return {
+          anchor: anchorRecipe,
+          pieces: [
+            { course: anchorRecipe.course || "main", recipe: anchorRecipe },
+            { course: courseType, recipe: chosenRecipe },
+          ],
+        };
+      }
+      return { ...prev, pieces: [...prev.pieces, { course: courseType, recipe: chosenRecipe }] };
+    });
+    setBusy(null);
+  };
+
+  // Remove a piece from the in-progress meal. Does NOT delete the
+  // recipe from user_recipes — it just unpins it from this meal.
+  const removePiece = (idx) => {
+    setMealInProgress((prev) => {
+      if (!prev) return prev;
+      const nextPieces = prev.pieces.filter((_, i) => i !== idx);
+      if (nextPieces.length === 0) return null;
+      return { ...prev, pieces: nextPieces };
+    });
+  };
+
+  // "SAVE MEAL" CTA from the sticky header. Two jobs:
+  //   1. If the user is sitting on a preview (e.g. the dessert they
+  //      just drafted) that hasn't been pinned yet, silently persist
+  //      it and append so the meal captures everything on screen.
+  //   2. Persist the meal itself — a `meals` row plus one
+  //      `meal_recipes` row per piece — via onMealSave. The pieces
+  //      are already in user_recipes individually (every + Add
+  //      triggered a silent save), so the meal is a pure pointer-set.
+  const finishMeal = async () => {
+    const saver = onSilentSave || onSave;
+    setBusy("compose");
+    try {
+      // 1. Pin the current preview's recipe if it's not yet in pieces.
+      //    Build the committed piece list in a local so we use the
+      //    post-pin snapshot without waiting for setState to flush.
+      let committed = mealInProgress;
+      const pinnedSlugs = new Set((committed?.pieces || []).map(p => p.recipe?.slug).filter(Boolean));
+      const shouldPinCurrent = phase === "preview" &&
+        recipe &&
+        recipe.course !== "bake" && recipe.course !== "prep" &&
+        !pinnedSlugs.has(recipe.slug);
+      if (shouldPinCurrent && saver) {
+        try {
+          const resolvedCourse     = recipe.course     || (course     === "any" ? null : course);
+          const resolvedMealTiming = recipe.mealTiming || (mealTiming === "any" ? null : mealTiming);
+          const recipeWithTags = { ...recipe, course: resolvedCourse, mealTiming: resolvedMealTiming };
+          const saved = (await saver(recipeWithTags)) || recipeWithTags;
+          const incoming = { course: saved.course || "side", recipe: saved };
+          committed = committed
+            ? { ...committed, pieces: [...committed.pieces, incoming] }
+            : { anchor: saved, pieces: [{ course: saved.course || "main", recipe: saved }] };
+          setMealInProgress(committed);
+        } catch (e) {
+          console.error("[ai recipe] finishMeal pin-current failed:", e);
+        }
+      }
+
+      // 2. Persist the meal row. Need a parent handler + at least one
+      //    piece; otherwise the CTA is really just "close this flow".
+      const piecesForRow = (committed?.pieces || [])
+        .filter(p => p.recipe?.slug)
+        .map((p, i) => ({
+          recipeSlug: p.recipe.slug,
+          course:     p.course || "main",
+          sortOrder:  i,
+        }));
+      if (onMealSave && piecesForRow.length > 0) {
+        const anchor = committed?.anchor || piecesForRow[0];
+        const mealTimingForRow = anchor?.mealTiming
+          || (mealTiming === "any" ? null : mealTiming)
+          || null;
+        const name = buildMealName(committed?.anchor, committed?.pieces);
+        try {
+          await onMealSave({
+            name,
+            emoji:       committed?.anchor?.emoji   || null,
+            cuisine:     committed?.anchor?.cuisine || null,
+            mealTiming:  mealTimingForRow,
+            anchorSlug:  committed?.anchor?.slug    || null,
+            pieces:      piecesForRow,
+          });
+        } catch (e) {
+          console.error("[ai recipe] finishMeal onMealSave failed:", e);
+        }
+      }
+    } finally {
+      setBusy(null);
+    }
+    setMealInProgress(null);
+    setPairWith(null);
+    onCancel?.();
+  };
+
   // Header is shared across phases so the back button is always where
   // the user expects it.
   const header = (
@@ -469,11 +765,40 @@ export default function AIRecipe({
     </div>
   );
 
+  // A slot counts as filled either because a piece is pinned in
+  // mealInProgress.pieces OR because the user is currently previewing
+  // a draft of that course (about to be pinned via "+ Add" or "SAVE
+  // MEAL"). Without this, "+ SIDE" on a side-preview would double-add
+  // the same slot.
+  const filledSlots = new Set((mealInProgress?.pieces || []).map(p => p.course));
+  if (phase === "preview" && recipe?.course && recipe.course !== "main"
+      && recipe.course !== "bake" && recipe.course !== "prep") {
+    filledSlots.add(recipe.course);
+  }
+
+  // Sticky MEAL header — shown across all phases whenever a meal is
+  // mid-compose. Renders the pieces as pills + "+ Add X" buttons for
+  // the slots the user hasn't filled yet, plus a SAVE MEAL CTA. Lives
+  // outside the scrollable body so it stays visible as the user
+  // drafts / tweaks / previews subsequent pieces. Hidden when
+  // mealInProgress is null (first draft hasn't been anchored yet).
+  const mealHeaderBlock = mealInProgress ? (
+    <MealInProgressHeader
+      meal={mealInProgress}
+      filledSlots={filledSlots}
+      onAdd={openAddSheet}
+      onRemovePiece={removePiece}
+      onFinish={finishMeal}
+      disabled={!!busy}
+    />
+  ) : null;
+
   if (phase === "sketch_loading" || phase === "final_loading" || phase === "loading") {
     const isFinal = phase === "final_loading";
     return (
       <div>
         {header}
+        {mealHeaderBlock}
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 44, animation: "spin 1.2s linear infinite", display: "inline-block" }}>✨</div>
           <div style={{ marginTop: 18, fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4" }}>
@@ -494,6 +819,7 @@ export default function AIRecipe({
     return (
       <div>
         {header}
+        {mealHeaderBlock}
         <div style={{ padding: "40px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 44, opacity: 0.6 }}>🫠</div>
           <div style={{ marginTop: 14, fontFamily: "'Fraunces',serif", fontSize: 22, fontStyle: "italic", color: "#f0ece4" }}>
@@ -622,28 +948,44 @@ export default function AIRecipe({
         // than display-name — handles "GV Ricotta 32oz" vs "Ricotta"
         // without needing brand/size stripping heuristics to line
         // up exactly.
-        const idealCanonId = ideal.ingredientId || resolveNameToCanonicalId(ideal.name);
+        // Resolve ideal → one primary canonical id plus any alt
+        // canonicals the AI's "or/and/&/," separators implied. The
+        // sketch's pantry column matches a canonical on EITHER side,
+        // so splitting the ideal lets "ciabatta or crusty bread"
+        // pair with a sketch.pantry row canonical'd to "ciabatta".
+        const idealCanonIds = new Set();
+        if (ideal.ingredientId) idealCanonIds.add(ideal.ingredientId);
+        const directSlug = resolveNameToCanonicalId(ideal.name);
+        if (directSlug) idealCanonIds.add(directSlug);
+        for (const sub of splitIdealName(ideal.name)) {
+          const subSlug = resolveNameToCanonicalId(sub);
+          if (subSlug) idealCanonIds.add(subSlug);
+        }
+        const idealSubNames = [ideal.name, ...splitIdealName(ideal.name)];
 
         // (1) subbedFrom match — the sketch told us which ideal
         // slot this pantry row was subbing for. Cheapest, truest
-        // signal: pair on that.
+        // signal: pair on that. Check against every sub-name so the
+        // "ciabatta" the AI picked still matches a subbedFrom of
+        // "ciabatta or crusty bread".
         for (let j = 0; j < sketch.pantry.length; j++) {
           if (matchedPantryIdx.has(j)) continue;
           const p = sketch.pantry[j];
-          if (p.subbedFrom && namesMatch(p.subbedFrom, ideal.name)) {
+          if (!p.subbedFrom) continue;
+          if (idealSubNames.some(n => namesMatch(p.subbedFrom, n))) {
             pantryIdx = j;
             isSub = true;
             break;
           }
         }
-        // (2) canonical-id match — same slug on both sides means
-        // same ingredient regardless of brand / size / casing in
-        // the display names.
-        if (pantryIdx === null && idealCanonId) {
+        // (2) canonical-id match — same slug on EITHER side (primary
+        // OR any alt from the split) means same ingredient regardless
+        // of brand / size / casing in the display names.
+        if (pantryIdx === null && idealCanonIds.size > 0) {
           for (let j = 0; j < sketch.pantry.length; j++) {
             if (matchedPantryIdx.has(j)) continue;
             const p = sketch.pantry[j];
-            if (p.ingredientId && p.ingredientId === idealCanonId) {
+            if (p.ingredientId && idealCanonIds.has(p.ingredientId)) {
               pantryIdx = j;
               isSub = false;
               break;
@@ -651,12 +993,14 @@ export default function AIRecipe({
           }
         }
         // (3) fuzzy name match — last-resort fallback for rows
-        // without canonical ids on either side.
+        // without canonical ids on either side. Match against any
+        // sub-name so "Ciabatta Roll" can pair with the "ciabatta"
+        // alt of a compound ideal.
         if (pantryIdx === null) {
           for (let j = 0; j < sketch.pantry.length; j++) {
             if (matchedPantryIdx.has(j)) continue;
             const p = sketch.pantry[j];
-            if (namesMatch(p.name, ideal.name)) {
+            if (idealSubNames.some(n => namesMatch(p.name, n))) {
               pantryIdx = j;
               isSub = false;
               break;
@@ -701,9 +1045,29 @@ export default function AIRecipe({
     // food category → name substring. Dedupes by canonical so a
     // 50-can tuna stack contributes one candidate, not fifty.
     const findRawPantryCandidates = (ideal) => {
-      const idealSlug = ideal.ingredientId || resolveNameToCanonicalId(ideal.name);
-      const idealCanon = idealSlug ? findIngredient(idealSlug) : null;
-      const idealCategory = idealCanon?.category || null;
+      // Build a list of resolution targets: one per sub-name the AI
+      // wrote ("ciabatta or crusty bread" → two targets). The top-
+      // level ingredientId, when Claude stamped one, rides along as
+      // an additional exact-match target.
+      const subNames = splitIdealName(ideal.name);
+      const targets = subNames.map(n => {
+        const slug = resolveNameToCanonicalId(n);
+        const canon = slug ? findIngredient(slug) : null;
+        return {
+          name:     n,
+          slug,
+          category: canon?.category || null,
+        };
+      });
+      if (ideal.ingredientId) {
+        const canon = findIngredient(ideal.ingredientId);
+        targets.unshift({
+          name:     ideal.name,
+          slug:     ideal.ingredientId,
+          category: canon?.category || null,
+        });
+      }
+
       // Items already locked into the recipe (pantry-matched,
       // swapped-in, or user-added) shouldn't appear as candidates
       // for OTHER missing slots.
@@ -726,13 +1090,46 @@ export default function AIRecipe({
         if (canonKey && seenCanon.has(canonKey)) continue;
         const rowCanon = row.ingredientId ? findIngredient(row.ingredientId) : null;
         const rowCategory = rowCanon?.category || null;
-        if (idealSlug && row.ingredientId === idealSlug) {
+
+        // Tier 1 — exact canonical match against ANY target slug.
+        // "Ciabatta Roll" (ingredientId: "ciabatta") lines up with
+        // target {slug: "ciabatta"} from the split, even when the
+        // compound ideal name wouldn't substring-match.
+        let matched = null;
+        for (const t of targets) {
+          if (t.slug && row.ingredientId === t.slug) { matched = "exact"; break; }
+        }
+
+        // Tier 2 — category match, BUT only when the row's name also
+        // carries a name-level signal for the same target. Without
+        // this name check, a loose category like "pantry" pulled in
+        // every unrelated jar/box/bag that happened to share the
+        // fallback bucket (Mustard, Crackers, Oats, Sugar all landing
+        // under "salt & black pepper"). Requiring both raises the bar.
+        if (!matched) {
+          for (const t of targets) {
+            if (t.category && rowCategory === t.category && namesMatch(row.name, t.name)) {
+              matched = "byCategory"; break;
+            }
+          }
+        }
+
+        // Tier 3 — last-resort fuzzy name match against any target.
+        // Catches user-typed pantry rows (no ingredientId, no
+        // category) where the name alone has to do the work.
+        if (!matched) {
+          for (const t of targets) {
+            if (namesMatch(row.name, t.name)) { matched = "byName"; break; }
+          }
+        }
+
+        if (matched === "exact") {
           if (canonKey) seenCanon.add(canonKey);
           exact.push(row);
-        } else if (idealCategory && rowCategory === idealCategory) {
+        } else if (matched === "byCategory") {
           if (canonKey) seenCanon.add(canonKey);
           byCategory.push(row);
-        } else if (namesMatch(row.name, ideal.name)) {
+        } else if (matched === "byName") {
           if (canonKey) seenCanon.add(canonKey);
           byName.push(row);
         }
@@ -745,6 +1142,7 @@ export default function AIRecipe({
     return (
       <div>
         {header}
+        {mealHeaderBlock}
         <div style={{ padding: "12px 20px 60px" }}>
           {/* Sketch header — title + emoji + AI rationale. Reads as
               "here's what we drafted, want to tweak before cooking?" */}
@@ -1125,6 +1523,7 @@ export default function AIRecipe({
     return (
       <div>
         {header}
+        {mealHeaderBlock}
         <div style={{ padding: "12px 20px 140px" }}>
           <div style={{ textAlign: "center", padding: "12px 0 20px" }}>
             <div style={{ fontSize: 52 }}>{recipe.emoji || "🍽️"}</div>
@@ -1139,6 +1538,23 @@ export default function AIRecipe({
             <div style={{ marginTop: 6, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em" }}>
               {(recipe.cuisine || "").toUpperCase()} · {totalTimeMin(recipe)} MIN · {difficultyLabel(recipe.difficulty).toUpperCase()} · SERVES {recipe.serves}
             </div>
+            {/* Meal-composition tags — course (main/side/...) and meal
+                timing (breakfast/lunch/...) render as small neutral pills
+                below the cuisine line. Only surface when Claude stamped
+                them; a recipe with null tags (old drafts pre-Phase-1)
+                skips this row entirely. Neutral styling (no color)
+                keeps clear of the reserved color axes in CLAUDE.md. */}
+            {(recipe.course || recipe.mealTiming) && (
+              <div style={{ marginTop: 8, display: "flex", gap: 6, justifyContent: "center", flexWrap: "wrap" }}>
+                {recipe.course     && <MetaPill label={recipe.course} />}
+                {recipe.mealTiming && <MetaPill label={recipe.mealTiming} />}
+              </div>
+            )}
+            {/* Nutrition summary — per-serving macros rolled up from
+                the ingredients list. `coverage` discloses gaps so we
+                don't pretend a recipe is 100% known when some lines
+                didn't resolve. */}
+            <RecipeNutritionLine recipe={recipe} pantry={pantry} ingredientInfo={ingredientInfo} brandNutrition={brandNutrition} />
           </div>
 
           {recipe.aiRationale && (
@@ -1225,46 +1641,78 @@ export default function AIRecipe({
           </Section>
         </div>
 
-        {/* Bottom action bar — four actions. REGEN is narrow (secondary,
-            non-destructive); SAVE + SCHEDULE are medium-weight outline
-            buttons; COOK IT is the flex-2 yellow CTA. */}
+        {/* Bottom action area — two rows when the recipe is a plate
+            piece (compose row + action bar); single row when it's a
+            bake/prep component (nothing to pair with). */}
         <div style={{
           position: "fixed", bottom: 0, left: 0, right: 0,
           maxWidth: 480, margin: "0 auto",
-          padding: "14px 20px 22px",
+          padding: "8px 20px 22px",
           background: "linear-gradient(180deg, rgba(11,11,11,0) 0%, #0b0b0b 40%)",
-          display: "flex", gap: 8,
+          display: "flex", flexDirection: "column", gap: 8,
         }}>
-          <button
-            onClick={start}
-            disabled={!!busy}
-            style={{ ...iconActionBtn, opacity: busy ? 0.5 : 1 }}
-            title="Draft a different recipe"
-          >
-            ↻
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!!busy}
-            style={{ ...outlineBtn, opacity: busy ? 0.5 : 1 }}
-          >
-            {busy === "save" ? "…" : "SAVE"}
-          </button>
-          <button
-            onClick={handleSchedule}
-            disabled={!!busy}
-            style={{ ...outlineBtn, opacity: busy ? 0.5 : 1 }}
-          >
-            {busy === "schedule" ? "…" : "📅 SCHED"}
-          </button>
-          <button
-            onClick={handleCookIt}
-            disabled={!!busy}
-            style={{ ...primaryBtn, flex: 2, opacity: busy ? 0.6 : 1 }}
-          >
-            {busy === "cook" ? "SAVING…" : "COOK IT →"}
-          </button>
+          {recipe.course !== "bake" && recipe.course !== "prep" && (
+            <ComposeRow
+              filledSlots={filledSlots}
+              onAdd={openAddSheet}
+              disabled={!!busy}
+            />
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={start}
+              disabled={!!busy}
+              style={{ ...iconActionBtn, opacity: busy ? 0.5 : 1 }}
+              title="Draft a different recipe"
+            >
+              ↻
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={!!busy}
+              style={{ ...outlineBtn, opacity: busy ? 0.5 : 1 }}
+            >
+              {busy === "save" ? "…" : "SAVE"}
+            </button>
+            <button
+              onClick={handleSchedule}
+              disabled={!!busy}
+              style={{ ...outlineBtn, opacity: busy ? 0.5 : 1 }}
+            >
+              {busy === "schedule" ? "…" : "📅 SCHED"}
+            </button>
+            <button
+              onClick={handleCookIt}
+              disabled={!!busy}
+              style={{ ...primaryBtn, flex: 2, opacity: busy ? 0.6 : 1 }}
+            >
+              {busy === "cook" ? "SAVING…" : "COOK IT →"}
+            </button>
+          </div>
         </div>
+        {addSheetCourse && (
+          <AddComponentSheet
+            courseType={addSheetCourse}
+            onDraftNew={() => draftNewComponent(addSheetCourse)}
+            onPickExisting={() => {
+              setPickExistingFor(addSheetCourse);
+              setAddSheetCourse(null);
+            }}
+            onClose={() => setAddSheetCourse(null)}
+            busy={busy}
+          />
+        )}
+        {pickExistingFor && (
+          <PickExistingPicker
+            courseType={pickExistingFor}
+            anchor={mealInProgress?.anchor || recipe}
+            userRecipes={userRecipes}
+            bundledRecipes={bundledRecipes}
+            alreadyPinnedSlugs={(mealInProgress?.pieces || []).map(p => p.recipe?.slug).filter(Boolean)}
+            onPick={(picked) => attachExistingComponent(pickExistingFor, picked)}
+            onClose={() => setPickExistingFor(null)}
+          />
+        )}
       </div>
     );
   }
@@ -1273,6 +1721,7 @@ export default function AIRecipe({
   return (
     <div>
       {header}
+      {mealHeaderBlock}
       <div style={{ padding: "12px 20px 40px" }}>
         <h1 style={{ fontFamily: "'Fraunces',serif", fontSize: 30, fontWeight: 300, fontStyle: "italic", color: "#f0ece4", letterSpacing: "-0.02em", margin: 0 }}>
           What are we making?
@@ -1374,15 +1823,6 @@ export default function AIRecipe({
           </Section>
         )}
 
-        <Section label="MEAL TIMING">
-          <ChipRow
-            value={mealTiming}
-            onChange={setMealTiming}
-            options={MEAL_TIMING_CHIPS}
-            color="#f5c842"
-          />
-        </Section>
-
         <Section label="COURSE">
           <ChipRow
             value={course}
@@ -1391,6 +1831,21 @@ export default function AIRecipe({
             color="#e07a3a"
           />
         </Section>
+
+        {/* MEAL TIMING hides for bake/prep courses — a sourdough loaf
+            or a gallon of stock isn't pinned to breakfast/lunch/dinner.
+            Reset to "any" when the user flips to those courses so the
+            backend doesn't receive a stale timing signal. */}
+        {course !== "bake" && course !== "prep" && (
+          <Section label="MEAL TIMING">
+            <ChipRow
+              value={mealTiming}
+              onChange={setMealTiming}
+              options={MEAL_TIMING_CHIPS}
+              color="#f5c842"
+            />
+          </Section>
+        )}
 
         <Section label="CUISINE">
           <ChipRow
@@ -1447,6 +1902,25 @@ function Section({ label, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+// Small neutral pill for meal-composition tags (course, mealTiming) on
+// recipe cards and previews. Neutral styling sidesteps the reserved
+// color axes in CLAUDE.md (tan/orange/blue/purple/yellow). Exported
+// via file-local usage; CreateMenu imports its own copy for the
+// PICK A RECIPE row.
+function MetaPill({ label }) {
+  return (
+    <span style={{
+      fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+      color: "#aaa", background: "#1a1a1a",
+      border: "1px solid #2a2a2a",
+      padding: "2px 7px", borderRadius: 6,
+      letterSpacing: "0.1em", textTransform: "uppercase",
+    }}>
+      {label}
+    </span>
   );
 }
 
@@ -1574,3 +2048,497 @@ const shopActiveBtn = {
   ...shopBtn,
   background: "#0f1a0f", border: "1px solid #1e3a1e", color: "#7ec87e",
 };
+
+// Auto-generate a display name for a composed meal. Uses the anchor's
+// title directly; if we have a strong cuisine + mealTiming signal
+// we append a descriptor ("Ribeye · Italian Dinner"). Keeps it short
+// so it fits a calendar tile. User can rename later via a library edit.
+function buildMealName(anchor, _pieces) {
+  if (!anchor?.title) return "Untitled meal";
+  const base = anchor.title.trim();
+  const bits = [];
+  if (anchor.cuisine && anchor.cuisine !== "other") {
+    bits.push(anchor.cuisine.charAt(0).toUpperCase() + anchor.cuisine.slice(1));
+  }
+  if (anchor.mealTiming) {
+    bits.push(anchor.mealTiming.charAt(0).toUpperCase() + anchor.mealTiming.slice(1));
+  }
+  return bits.length ? `${base} · ${bits.join(" ")}` : base;
+}
+
+// ── Compose-a-meal components ────────────────────────────────────────
+
+// COMPOSE_SLOTS defines the non-main slots the user can add to a meal.
+// "main" is established by the anchor (the recipe currently on
+// preview), so the compose row only surfaces the three optional
+// accompaniments. "bake" and "prep" aren't here — those are pantry-
+// building components, not plate roles.
+const COMPOSE_SLOTS = [
+  { id: "side",      label: "+ SIDE",    emoji: "🥗" },
+  { id: "dessert",   label: "+ DESSERT", emoji: "🍰" },
+  { id: "appetizer", label: "+ APP",     emoji: "🥟" },
+];
+
+// Sticky MEAL header — renders at the top of AIRecipe whenever a meal
+// is mid-compose. Pills show every piece already pinned (tap × to
+// unpin — removes from the meal only, recipe stays in library).
+// Empty slots render as "+ Add X" buttons. SAVE MEAL on the right
+// commits the composition (Phase 3 will write the meals row; for now
+// it just closes since pieces are already saved individually).
+function MealInProgressHeader({ meal, filledSlots, onAdd, onRemovePiece, onFinish, disabled }) {
+  // filledSlots already folds in the currently-previewed recipe's
+  // course (computed in the parent) so clicking "+ SIDE" from a side
+  // preview is prevented — the "+ Add X" button is hidden entirely.
+  const filled = filledSlots || new Set((meal?.pieces || []).map(p => p.course));
+  const anchorLabel = meal?.anchor?.title || "this meal";
+  return (
+    <div style={{
+      position: "sticky", top: 0, zIndex: 20,
+      padding: "10px 20px 12px",
+      background: "linear-gradient(180deg, #0b0b0b 70%, rgba(11,11,11,0.92) 100%)",
+      borderBottom: "1px solid #2a2a2a",
+    }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        marginBottom: 8,
+      }}>
+        <span style={{ fontSize: 14 }}>🍽️</span>
+        <div style={{
+          flex: 1, fontFamily: "'DM Mono',monospace", fontSize: 9,
+          color: "#888", letterSpacing: "0.12em", textTransform: "uppercase",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          Your meal · {anchorLabel}
+        </div>
+        <button
+          onClick={onFinish}
+          disabled={disabled}
+          style={{
+            padding: "5px 10px",
+            background: "#1a1608", border: "1px solid #3a2f10",
+            color: "#f5c842", borderRadius: 8,
+            fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+            letterSpacing: "0.1em", cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.5 : 1,
+          }}
+        >
+          SAVE MEAL
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {(meal?.pieces || []).map((piece, i) => (
+          <MealPiecePill
+            key={`${piece.recipe?.slug || piece.course}-${i}`}
+            piece={piece}
+            removable={piece.course !== "main"}
+            onRemove={() => onRemovePiece(i)}
+          />
+        ))}
+        {COMPOSE_SLOTS.filter(s => !filled.has(s.id)).map(slot => (
+          <button
+            key={slot.id}
+            onClick={() => onAdd(slot.id)}
+            disabled={disabled}
+            style={{
+              padding: "5px 10px",
+              background: "#141414",
+              border: "1px dashed #3a3a3a",
+              color: "#888", borderRadius: 8,
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              letterSpacing: "0.1em", cursor: disabled ? "not-allowed" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 4,
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            <span>{slot.emoji}</span>
+            {slot.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MealPiecePill({ piece, removable, onRemove }) {
+  const emoji = piece.recipe?.emoji || (
+    piece.course === "main" ? "🍽️" :
+    piece.course === "side" ? "🥗" :
+    piece.course === "dessert" ? "🍰" : "🥟"
+  );
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5,
+      padding: "4px 8px",
+      background: "#161616", border: "1px solid #2a2a2a",
+      borderRadius: 8,
+      fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#d8d2c8",
+      maxWidth: 180,
+    }}>
+      <span style={{ fontSize: 12 }}>{emoji}</span>
+      <span style={{
+        fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+        color: "#888", letterSpacing: "0.1em", textTransform: "uppercase",
+      }}>
+        {piece.course}
+      </span>
+      <span style={{
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        maxWidth: 100,
+      }}>
+        {piece.recipe?.title || "(untitled)"}
+      </span>
+      {removable && (
+        <button
+          onClick={onRemove}
+          style={{
+            background: "transparent", border: "none",
+            color: "#666", fontSize: 12, lineHeight: 1,
+            padding: 0, marginLeft: 2, cursor: "pointer",
+          }}
+          title="Remove from meal (keeps recipe in library)"
+        >
+          ×
+        </button>
+      )}
+    </span>
+  );
+}
+
+// Row of three small outline buttons above the main preview action
+// bar. Filled slots render as disabled "✓ SIDE" confirmations; unfilled
+// slots are tappable "+ SIDE" adds. Hidden entirely when the current
+// recipe is a bake/prep component (not a plate piece).
+function ComposeRow({ filledSlots, onAdd, disabled }) {
+  const filled = filledSlots || new Set();
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {COMPOSE_SLOTS.map(slot => {
+        const isFilled = filled.has(slot.id);
+        return (
+          <button
+            key={slot.id}
+            onClick={() => !isFilled && onAdd(slot.id)}
+            disabled={disabled || isFilled}
+            style={{
+              flex: 1, padding: "8px 4px",
+              background: isFilled ? "#0f1a0f" : "transparent",
+              border: `1px ${isFilled ? "solid" : "dashed"} ${isFilled ? "#1e3a1e" : "#3a3a3a"}`,
+              color: isFilled ? "#7ec87e" : "#888",
+              borderRadius: 10,
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 600,
+              letterSpacing: "0.08em", whiteSpace: "nowrap",
+              cursor: (disabled || isFilled) ? "default" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+            }}
+          >
+            {isFilled ? `✓ ${slot.id.toUpperCase()}` : slot.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Bottom sheet that asks "Draft new" vs "Pick existing" for a given
+// course. Backdrop dismisses. Tapping "Draft new" kicks straight into
+// the setup flow with pairWith seeded; "Pick existing" opens the
+// filtered library picker.
+function AddComponentSheet({ courseType, onDraftNew, onPickExisting, onClose, busy }) {
+  const label = courseType === "appetizer" ? "APPETIZER" : courseType.toUpperCase();
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 220,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "flex-end", justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%", maxWidth: 480,
+          background: "#141414",
+          borderTop: "1px solid #2a2a2a",
+          borderRadius: "16px 16px 0 0",
+          padding: "20px 20px 28px",
+          display: "flex", flexDirection: "column", gap: 10,
+        }}
+      >
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10,
+          color: "#888", letterSpacing: "0.12em",
+          marginBottom: 4,
+        }}>
+          ADD A {label}
+        </div>
+        <button
+          onClick={onDraftNew}
+          disabled={!!busy}
+          style={addPathBtn}
+        >
+          <span style={{ fontSize: 20 }}>✨</span>
+          <span style={{ flex: 1, textAlign: "left" }}>
+            <span style={addPathTitle}>Draft new</span>
+            <span style={addPathBlurb}>
+              Claude builds a {courseType} that complements this dish.
+            </span>
+          </span>
+        </button>
+        <button
+          onClick={onPickExisting}
+          disabled={!!busy}
+          style={addPathBtn}
+        >
+          <span style={{ fontSize: 20 }}>📖</span>
+          <span style={{ flex: 1, textAlign: "left" }}>
+            <span style={addPathTitle}>Pick existing</span>
+            <span style={addPathBlurb}>
+              Choose a {courseType} from your recipes or the library.
+            </span>
+          </span>
+        </button>
+        <button
+          onClick={onClose}
+          style={{
+            marginTop: 6, padding: "10px",
+            background: "transparent", border: "1px solid #2a2a2a",
+            color: "#888", borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 10,
+            letterSpacing: "0.08em", cursor: "pointer",
+          }}
+        >
+          CANCEL
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const addPathBtn = {
+  display: "flex", alignItems: "center", gap: 12,
+  padding: "14px 14px",
+  background: "#1a1a1a", border: "1px solid #2a2a2a",
+  borderRadius: 12, cursor: "pointer",
+  textAlign: "left",
+};
+const addPathTitle = {
+  display: "block",
+  fontFamily: "'Fraunces',serif", fontSize: 16, fontStyle: "italic",
+  color: "#f0ece4", fontWeight: 400,
+};
+const addPathBlurb = {
+  display: "block", marginTop: 2,
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888",
+  lineHeight: 1.4,
+};
+
+// Full-screen library picker for the "Pick existing" path. Filtered to
+// course=target (keeps strict for sides / desserts / apps so the user
+// doesn't accidentally pin a main as a side). Soft-sorted by cuisine
+// match to the anchor, then mealTiming match, then recency. Recipes
+// already in the meal render disabled with an "IN MEAL" badge so the
+// user can't double-add.
+function PickExistingPicker({
+  courseType, anchor,
+  userRecipes, bundledRecipes,
+  alreadyPinnedSlugs,
+  onPick, onClose,
+}) {
+  const [query, setQuery] = useState("");
+
+  const pinned = new Set(alreadyPinnedSlugs || []);
+
+  // Flatten candidates from both sources. User recipes come as rows
+  // with { id, recipe, source }; bundled as flat recipe objects.
+  const candidates = useMemo(() => {
+    const rows = [];
+    (userRecipes || []).forEach((ur) => {
+      if (ur && ur.recipe) rows.push({ recipe: ur.recipe, source: ur.source || "user", createdAt: ur.createdAt || null });
+    });
+    (bundledRecipes || []).forEach((r) => {
+      if (r) rows.push({ recipe: r, source: "bundled", createdAt: null });
+    });
+    return rows;
+  }, [userRecipes, bundledRecipes]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matchesQuery = (r) => {
+      if (!q) return true;
+      return (r.title || "").toLowerCase().includes(q) ||
+             (r.cuisine || "").toLowerCase().includes(q) ||
+             (r.category || "").toLowerCase().includes(q);
+    };
+    const anchorCuisine    = anchor?.cuisine || null;
+    const anchorMealTiming = anchor?.mealTiming || null;
+    const scored = [];
+    candidates.forEach((row) => {
+      const r = row.recipe;
+      if (!r || !matchesQuery(r)) return;
+      // Strict course filter. A recipe with no `course` tag (pre-Phase-1
+      // draft) is eligible only if its `category` hints strongly at
+      // the target (e.g. category="dessert" for a dessert slot). Keeps
+      // the picker useful before every recipe has been re-tagged.
+      const recipeCourse = r.course || null;
+      if (recipeCourse && recipeCourse !== courseType) return;
+      if (!recipeCourse) {
+        if (courseType === "dessert" && r.category !== "dessert") return;
+        if (courseType !== "dessert" && r.category === "dessert")  return;
+      }
+      let score = 0;
+      if (anchorCuisine    && r.cuisine    === anchorCuisine)    score += 3;
+      if (anchorMealTiming && r.mealTiming === anchorMealTiming) score += 2;
+      if (recipeCourse === courseType)                           score += 1;
+      scored.push({ row, score });
+    });
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map((s) => s.row);
+  }, [candidates, query, courseType, anchor]);
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 230,
+      background: "#0b0b0b",
+      maxWidth: 480, margin: "0 auto",
+      overflowY: "auto",
+    }}>
+      <div style={{
+        padding: "24px 20px 12px",
+        display: "flex", alignItems: "center", gap: 10,
+        borderBottom: "1px solid #1e1e1e",
+      }}>
+        <button onClick={onClose} style={iconBtn}>←</button>
+        <div style={{
+          flex: 1, fontFamily: "'DM Mono',monospace", fontSize: 10,
+          color: "#c7a8d4", letterSpacing: "0.12em",
+        }}>
+          PICK A {courseType === "appetizer" ? "APPETIZER" : courseType.toUpperCase()}
+        </div>
+        <button onClick={onClose} style={iconBtn}>✕</button>
+      </div>
+      <div style={{ padding: "14px 20px 0" }}>
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={`Search ${courseType}s…`}
+          style={{
+            width: "100%", padding: "12px 14px",
+            background: "#1a1a1a", border: "1px solid #2a2a2a",
+            borderRadius: 10, color: "#f0ece4", boxSizing: "border-box",
+            fontFamily: "'DM Sans',sans-serif", fontSize: 14, outline: "none",
+          }}
+        />
+        {anchor?.cuisine && (
+          <div style={{
+            marginTop: 8,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#777",
+            fontStyle: "italic",
+          }}>
+            Sorted by fit with your {anchor.cuisine} main.
+          </div>
+        )}
+      </div>
+      <div style={{ padding: "14px 20px 60px", display: "flex", flexDirection: "column", gap: 8 }}>
+        {filtered.length === 0 && (
+          <div style={{
+            padding: 40, textAlign: "center",
+            color: "#555", fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+          }}>
+            No {courseType} recipes yet. Try "Draft new" instead.
+          </div>
+        )}
+        {filtered.map((row, i) => {
+          const r = row.recipe;
+          const isPinned = pinned.has(r.slug);
+          return (
+            <button
+              key={`${r.slug || "recipe"}-${i}`}
+              onClick={() => !isPinned && onPick(r)}
+              disabled={isPinned}
+              style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "12px 14px",
+                background: isPinned ? "#0f1a0f" : "#161616",
+                border: `1px solid ${isPinned ? "#1e3a1e" : "#2a2a2a"}`,
+                borderRadius: 12,
+                cursor: isPinned ? "default" : "pointer",
+                textAlign: "left",
+                opacity: isPinned ? 0.7 : 1,
+              }}
+            >
+              <div style={{ fontSize: 26, flexShrink: 0 }}>{r.emoji || "🍽️"}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4",
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {r.title}
+                </div>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555",
+                  letterSpacing: "0.05em", marginTop: 2,
+                }}>
+                  {(r.cuisine || "").toUpperCase()}
+                  {r.mealTiming ? ` · ${r.mealTiming.toUpperCase()}` : ""}
+                  {row.source === "bundled" ? " · BUNDLED" : row.source === "ai" ? " · AI" : " · CUSTOM"}
+                </div>
+              </div>
+              {isPinned ? (
+                <span style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+                  color: "#7ec87e", background: "#0f1a0f",
+                  border: "1px solid #1e3a1e",
+                  padding: "3px 7px", borderRadius: 6,
+                  letterSpacing: "0.1em",
+                }}>
+                  IN MEAL
+                </span>
+              ) : (
+                <span style={{ color: "#c7a8d4", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Per-serving macros rolled up across the recipe's ingredients.
+// Renders as a compact single line between the cuisine/timing meta
+// and the ingredients list. Hidden when no ingredient resolves so
+// we don't surface a fake "0 kcal" on a recipe the nutrition data
+// doesn't cover. Coverage ratio ("based on 7 of 9") is always shown
+// when partial so the user knows we're estimating.
+function RecipeNutritionLine({ recipe, pantry, ingredientInfo, brandNutrition }) {
+  const summary = useMemo(
+    () => recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo, brandNutrition }),
+    [recipe, pantry, ingredientInfo, brandNutrition],
+  );
+  if (!summary || summary.coverage.resolved === 0) return null;
+  const { resolved, total } = summary.coverage;
+  const partial = resolved < total;
+  return (
+    <div style={{
+      marginTop: 10, padding: "8px 12px",
+      background: "#141414", border: "1px solid #242424",
+      borderRadius: 10, textAlign: "center",
+    }}>
+      <div style={{
+        fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+      }}>
+        ~ {formatMacros(summary.perServing, { verbose: true })}
+      </div>
+      <div style={{
+        marginTop: 3,
+        fontFamily: "'DM Mono',monospace", fontSize: 9,
+        color: "#666", letterSpacing: "0.08em",
+      }}>
+        PER SERVING
+        {partial ? ` · BASED ON ${resolved} OF ${total} INGREDIENTS` : ""}
+      </div>
+    </div>
+  );
+}

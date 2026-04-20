@@ -170,7 +170,7 @@ export const FOOD_TYPES = [
     id: "wweia_pasta", label: "Pasta", emoji: "🍝",
     defaultTileId: "pasta_grains",
     blurb: "Dried, fresh, stuffed",
-    aliases: ["pasta", "noodle", "noodles", "spaghetti", "penne", "rigatoni", "fettuccine", "cavatappi", "fusilli", "rotini", "farfalle", "bow-tie", "macaroni", "bucatini", "linguine", "angel hair", "ziti", "orecchiette", "tortellini", "ravioli", "gnocchi", "orzo", "lasagna"],
+    aliases: ["pasta", "noodle", "noodles", "ramen", "udon", "soba", "rice noodle", "rice noodles", "instant noodle", "instant noodles", "spaghetti", "penne", "rigatoni", "fettuccine", "cavatappi", "fusilli", "rotini", "farfalle", "bow-tie", "macaroni", "bucatini", "linguine", "angel hair", "ziti", "orecchiette", "tortellini", "ravioli", "gnocchi", "orzo", "lasagna"],
     // Generic 'pasta' canonical catches recipes that call for
     // "1 lb pasta" without a specific shape. Shape-specific items
     // (penne, rigatoni) already match via name-based canonical
