@@ -536,42 +536,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             ITEM
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-            {/* Canonical image wins when the admin has stamped one on
-                ingredient_info.info.imageUrl. Otherwise fall back to
-                the pantry row's emoji. Pantry tiles (user's custom
-                tiles surface) intentionally keep using emoji even
-                when an image exists — they're a separate curated
-                visual axis. Image tier applies to ItemCard header
-                + IngredientCard hero only, per design call. */}
-            {(() => {
-              // Canonical image resolver. Three-tier:
-              //   1. Bundled SVG (public/icons/<slug>.svg, registered
-              //      in canonicalIcons.js) — hand-curated, wins.
-              //   2. Admin-generated imageUrl on ingredient_info.
-              //   3. Emoji fallback.
-              // Check canonicalId first (authoritative), then
-              // ingredientId (legacy rows pre canonical_id column).
-              const lookupId = item.canonicalId || item.ingredientId || null;
-              const canonImage = lookupId
-                ? canonicalImageUrlFor(lookupId, getDbInfo(lookupId))
-                : null;
-              if (canonImage) {
-                return (
-                  <img
-                    src={canonImage}
-                    alt=""
-                    style={{
-                      width: 48, height: 48, borderRadius: 10,
-                      objectFit: "cover", flexShrink: 0,
-                      background: "#0f0f0f",
-                      border: "1px solid #242424",
-                    }}
-                  />
-                );
-              }
-              return <div style={{ fontSize: 40, flexShrink: 0 }}>{item.emoji || "🥫"}</div>;
-            })()}
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 10 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               {/* + ADD BRAND affordance — only rendered when brand
                   is unset. Positioned ABOVE the big italic header so
@@ -992,6 +957,34 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 </div>
               )}
             </div>
+            {/* Canonical image resolver — bundled SVG (public/icons/
+                <slug>.svg) wins, then admin-generated imageUrl on
+                ingredient_info, then the pantry row's emoji. Rendered
+                on the RIGHT of the identity stack at a deliberately
+                large size — the chicken icon in particular reads
+                as a hero element, not a leading bullet. Pantry tiles
+                (user-curated emoji set) intentionally skip this
+                treatment; only ItemCard header + IngredientCard hero
+                run the image cascade. */}
+            {(() => {
+              const lookupId = item.canonicalId || item.ingredientId || null;
+              const canonImage = lookupId
+                ? canonicalImageUrlFor(lookupId, getDbInfo(lookupId))
+                : null;
+              if (canonImage) {
+                return (
+                  <img
+                    src={canonImage}
+                    alt=""
+                    style={{
+                      width: 96, height: 96,
+                      objectFit: "contain", flexShrink: 0,
+                    }}
+                  />
+                );
+              }
+              return <div style={{ fontSize: 56, flexShrink: 0, lineHeight: 1 }}>{item.emoji || "🥫"}</div>;
+            })()}
           </div>
 
           {/* Canonical suggestion — renders after a brand scan when
