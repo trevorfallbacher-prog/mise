@@ -70,6 +70,7 @@ import {
 } from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
 import { usePopularPackages, fetchPopularPackages } from "../lib/usePopularPackages";
+import { findBarcodeCorrection, rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import FieldExplainer from "./FieldExplainer";
@@ -1054,8 +1055,38 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 const parsed = parseIdentity(res.productName);
                 if (parsed?.brand) effectiveBrand = parsed.brand;
               }
+              // Tier 0 — UPC correction memory (migration 0067). If
+              // anyone has previously taught the system what THIS
+              // exact UPC is (admin globally, or family-locally),
+              // skip the resolver entirely and use the stored
+              // identity. Same UPC = same physical product by
+              // definition, so the learned answer beats any OFF
+              // text parse.
+              let correctionMatch = null;
+              try {
+                const correction = await findBarcodeCorrection(barcode);
+                if (correction && correction.canonicalId) {
+                  const ing = findIngredient(correction.canonicalId);
+                  if (ing) {
+                    correctionMatch = {
+                      canonical: ing,
+                      confidence: "exact",
+                      reason: `barcode-${correction.source}`,
+                      matchedOn: barcode,
+                      autoApply: true,
+                      _correction: correction,
+                    };
+                  }
+                }
+              } catch (e) {
+                console.warn("[scanner:barcode] correction lookup failed:", e);
+              }
+
               // Canonical resolution + state + size + attributes.
-              const match = resolveCanonicalFromScan({
+              // Fall through to the resolver only when no correction
+              // matched — the resolver's tiers are the cold-start
+              // path for UPCs nobody's taught yet.
+              const match = correctionMatch || resolveCanonicalFromScan({
                 brand:         res.brand,
                 productName:   res.productName,
                 categoryHints: res.categoryHints || [],
@@ -5682,6 +5713,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // the raw scan text during normalization. Conditional so
             // un-branded rows stay undefined and hit toDb's skip path.
             ...(s.brand      ? { brand: s.brand           } : {}),
+            // Source UPC (migration 0067) — persisted so the
+            // ItemCard's canonical-picker commit path can stamp a
+            // fresh barcode_identity_corrections row when the user
+            // edits identity after the fact.
+            ...(s.barcodeUpc ? { barcodeUpc: s.barcodeUpc } : {}),
             // Multi-canonical tag array (0033). The Scanner's LinkIngredient
             // picker emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element

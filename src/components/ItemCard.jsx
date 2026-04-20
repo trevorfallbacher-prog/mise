@@ -32,6 +32,7 @@ import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import { pantryItemNutrition, formatMacros, sourceBadge } from "../lib/nutrition";
+import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 
 // ItemCard — card for a SPECIFIC pantry item.
 //
@@ -443,6 +444,27 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
     if (Object.keys(pendingChanges).length === 0) return;
     const changed = Object.keys(pendingChanges);
     onUpdate?.(pendingChanges);
+    // UPC correction memory (migration 0067). When the user edits
+    // identity axes on a row that carries a source barcode, teach
+    // the system. Admins write to the global table; regular users
+    // write to their family-scoped pool (admin can later promote).
+    // Fire-and-forget — the local state update above is what the
+    // user sees; the correction is a background learning signal.
+    const upc = item?.barcodeUpc || null;
+    const identityKeys = ["canonicalId", "typeId", "emoji", "ingredientIds"];
+    const identityEdited = identityKeys.some((k) => k in pendingChanges);
+    if (upc && identityEdited && userId) {
+      const merged = { ...item, ...pendingChanges };
+      rememberBarcodeCorrection({
+        userId,
+        isAdmin: !!isAdmin,
+        barcodeUpc: upc,
+        canonicalId:   merged.canonicalId || null,
+        typeId:        merged.typeId || null,
+        emoji:         merged.emoji || null,
+        ingredientIds: Array.isArray(merged.ingredientIds) ? merged.ingredientIds : [],
+      }).catch((e) => console.warn("[barcode_correction] write failed:", e));
+    }
     setPendingChanges({});
     setOutcome({ kind: "update_success", changed });
   };

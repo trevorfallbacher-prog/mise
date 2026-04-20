@@ -105,6 +105,7 @@ function fromDb(row) {
   // name by parseIdentity. Orthogonal to the six-row identity stack
   // (CLAUDE.md); surfaced in UI parenthetically next to the name.
   if (row.brand              !== undefined) item.brand             = row.brand || null;
+  if (row.barcode_upc        !== undefined) item.barcodeUpc        = row.barcode_upc || null;
   // protected (migration 0044) — sentimental / keepsake rows that
   // shouldn't be ✕-deletable. DB enforces via the delete policy;
   // this mapping just lets the UI know so it can hide the delete
@@ -188,6 +189,7 @@ function toDb(item) {
     ...(item.typeId            !== undefined ? { type_id: item.typeId || null } : {}),
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
     ...(item.brand             !== undefined ? { brand: item.brand || null } : {}),
+    ...(item.barcodeUpc        !== undefined ? { barcode_upc: item.barcodeUpc || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
     // Packaging + reserves (migration 0054). Passthrough only when the
     // caller set them — older code paths that don't know about
