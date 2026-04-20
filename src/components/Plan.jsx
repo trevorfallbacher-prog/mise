@@ -5,6 +5,7 @@ import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
 import { supabase } from "../lib/supabase";
+import { scaleRecipe } from "../lib/recipeScaling";
 
 const DAY_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const DAY_SHORTS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
@@ -178,7 +179,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNo
           <div style={{ fontSize: 40 }}>{recipe.emoji}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
-              {fmtTime(meal.scheduled_for).toUpperCase()}
+              {meal.meal_slot ? `${meal.meal_slot.toUpperCase()} · ` : ""}{fmtTime(meal.scheduled_for).toUpperCase()}
             </div>
             <div style={{ fontFamily: "'Fraunces',serif", fontSize: 22, color: "#f0ece4", fontWeight: 300, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {recipe.title}
@@ -723,7 +724,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                             {recipe?.title || meal.recipe_slug}
                           </span>
                           <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", flexShrink: 0 }}>
-                            {fmtTime(meal.scheduled_for)}
+                            {meal.meal_slot ? `${meal.meal_slot} · ` : ""}{fmtTime(meal.scheduled_for)}
                           </span>
                         </div>
                         <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
@@ -783,7 +784,16 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           onCookNow={() => {
             const r = findRecipe(openMeal.recipe_slug, findUserRecipe);
             setOpenMeal(null);
-            if (r) setCookingRecipe(r);
+            if (!r) return;
+            // If the scheduled meal carries a servings override
+            // (SchedulePicker let the user scale on the way in),
+            // hand CookMode the pre-scaled recipe so ingredient
+            // amounts already reflect the cook's intent. No override
+            // = original recipe passes through unchanged.
+            const scaled = openMeal.servings && openMeal.servings !== r.serves
+              ? scaleRecipe(r, openMeal.servings)
+              : r;
+            setCookingRecipe(scaled);
           }}
           onClaim={async () => {
             const updated = await claim(openMeal.id);

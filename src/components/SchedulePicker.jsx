@@ -1,5 +1,30 @@
 import { useMemo, useState } from "react";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
+import { scaleRecipe } from "../lib/recipeScaling";
+
+// Meal slots — the structural-time axis the user wanted in place of
+// (or alongside) raw HH:MM input. Default times per slot are
+// reasonable middle-of-the-window picks; the user can still override
+// via the TIME input below. Persisted on scheduled_meals.meal_slot
+// (migration 0069) so Plan can surface 'DINNER · Thu 6:30 PM' instead
+// of just 'Thu 6:30 PM'.
+const MEAL_SLOTS = [
+  { id: "breakfast", label: "Breakfast", emoji: "🥞", defaultTime: "08:00" },
+  { id: "lunch",     label: "Lunch",     emoji: "🥪", defaultTime: "12:30" },
+  { id: "dinner",    label: "Dinner",    emoji: "🍽️", defaultTime: "18:30" },
+  { id: "snack",     label: "Snack",     emoji: "🍎", defaultTime: "15:00" },
+];
+
+// Infer a meal slot from an HH:MM string so the chip row lights up
+// correctly when the scheduler opens with a pre-set time.
+function inferSlotFromTime(timeStr) {
+  const [h] = (timeStr || "").split(":").map(Number);
+  if (!Number.isFinite(h)) return "dinner";
+  if (h < 10)  return "breakfast";
+  if (h < 14)  return "lunch";
+  if (h < 17)  return "snack";
+  return "dinner";
+}
 
 // Format a JS Date as a local ISO-ish string for <input type="time"> ("HH:mm").
 const hhmm = (d) =>
@@ -58,10 +83,31 @@ export default function SchedulePicker({
     }
     return today;
   });
-  const [timeStr, setTimeStr] = useState("19:00");
+  // Meal slot drives the default time. Picking Dinner sets 6:30 PM;
+  // picking Lunch sets 12:30 PM. User can still override the TIME
+  // input to any HH:MM. Changing the time manually re-infers the
+  // slot so the chip row always reflects which window they're in.
+  const [mealSlot, setMealSlot] = useState("dinner");
+  const [timeStr,  setTimeStr]  = useState(() => {
+    const slot = MEAL_SLOTS.find(s => s.id === "dinner");
+    return slot?.defaultTime || "18:30";
+  });
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // When the user picks a slot chip, snap time to that slot's default.
+  // When they manually change the TIME input, re-infer the slot.
+  const pickSlot = (slotId) => {
+    const slot = MEAL_SLOTS.find(s => s.id === slotId);
+    if (!slot) return;
+    setMealSlot(slotId);
+    setTimeStr(slot.defaultTime);
+  };
+  const pickTime = (t) => {
+    setTimeStr(t);
+    setMealSlot(inferSlotFromTime(t));
+  };
 
   // Cook picker. "request" = nobody assigned yet, userId = self, other uuid = family
   // member. Default to request per user spec ("start as request until changed").
@@ -114,6 +160,7 @@ export default function SchedulePicker({
         cookId: isRequest ? null : cookChoice,
         isRequest,
         servings,
+        mealSlot,
       });
       onClose();
     } catch (e) {
@@ -179,14 +226,48 @@ export default function SchedulePicker({
           })}
         </div>
 
-        {/* Time */}
-        <div style={{ marginTop: 20, display: "flex", gap: 12, alignItems: "center" }}>
+        {/* Meal slot — primary structural pick. Most users want
+            "dinner Thursday" more than they want "6:47 PM Thursday."
+            Chip picks snap the TIME input to a reasonable default;
+            the input stays editable for people who want a specific
+            clock time. Plan surfaces DINNER · 6:30 PM on the card. */}
+        <div style={{ marginTop: 20 }}>
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 8 }}>MEAL</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {MEAL_SLOTS.map(slot => {
+              const active = mealSlot === slot.id;
+              return (
+                <button
+                  key={slot.id}
+                  onClick={() => pickSlot(slot.id)}
+                  style={{
+                    flex: "1 1 auto", minWidth: 0,
+                    padding: "10px 12px",
+                    background: active ? "#1e1a0e" : "#161616",
+                    border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                    color: active ? "#f5c842" : "#888",
+                    borderRadius: 20,
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                    cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
+                    justifyContent: "center", transition: "all 0.15s",
+                  }}
+                >
+                  <span>{slot.emoji}</span>
+                  <span>{slot.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Time — secondary override to the slot default. */}
+        <div style={{ marginTop: 14, display: "flex", gap: 12, alignItems: "center" }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>TIME</div>
             <input
               type="time"
               value={timeStr}
-              onChange={(e) => setTimeStr(e.target.value)}
+              onChange={(e) => pickTime(e.target.value)}
               style={{
                 width: "100%", padding: "12px 14px",
                 background: "#1a1a1a", border: "1px solid #2a2a2a",
@@ -270,11 +351,36 @@ export default function SchedulePicker({
               }}
             >+</button>
           </div>
-          {recipe.serves && servings !== recipe.serves && (
-            <div style={{ marginTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#555", fontStyle: "italic" }}>
-              Recipe is written for {recipe.serves}. You'll want to scale ingredients accordingly.
-            </div>
-          )}
+          {recipe.serves && servings !== recipe.serves && (() => {
+            // Live scaling preview. Instead of nagging the user to
+            // "scale ingredients accordingly" on their own, compute
+            // the scaled recipe right here and show the new amounts.
+            // Helps them sanity-check the scale before committing —
+            // 6 cups of flour hits different than 1.5 cups.
+            const scaled = scaleRecipe(recipe, servings);
+            const scaledIngs = Array.isArray(scaled.ingredients) ? scaled.ingredients : [];
+            if (!scaledIngs.length) return null;
+            return (
+              <div style={{ marginTop: 10, padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", marginBottom: 8 }}>
+                  SCALED FOR {servings} · from {recipe.serves}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {scaledIngs.slice(0, 8).map((ing, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb" }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ing.name}</span>
+                      <span style={{ color: "#888", fontFamily: "'DM Mono',monospace", fontSize: 11, flexShrink: 0 }}>{ing.amount || ""}</span>
+                    </div>
+                  ))}
+                  {scaledIngs.length > 8 && (
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.08em", marginTop: 4 }}>
+                      + {scaledIngs.length - 8} MORE
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Prep notifications */}
