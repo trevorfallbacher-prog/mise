@@ -318,7 +318,7 @@ function Avatar({ name, initial, onClick }) {
 // old Home had. The old EDIT button was never wired — removed.
 function ProfilePill({ profile }) {
   const diet  = DIETARY_OPTIONS.find(d => d.id === profile.dietary);
-  const level = LEVEL_OPTIONS.find(l => l.id === profile.level);
+  const level = LEVEL_OPTIONS.find(l => l.id === profile.skill_self_report);
   const goal  = GOAL_OPTIONS.find(g => g.id === profile.goal);
   const bits = [diet?.label || "Everything", level?.label, goal?.label].filter(Boolean);
   return (

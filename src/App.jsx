@@ -98,10 +98,10 @@ export default function App() {
         <Onboarding
           onComplete={async (answers) => {
             await upsertProfile({
-              dietary:     answers.dietary,
-              vegan_style: answers.veganStyle || null,
-              level:       answers.level,
-              goal:        answers.goal,
+              dietary:           answers.dietary,
+              vegan_style:       answers.veganStyle || null,
+              skill_self_report: answers.level,
+              goal:              answers.goal,
             });
           }}
         />

@@ -71,7 +71,7 @@ export function useRelationships(userId) {
     }
     const { data: profs, error: pe } = await supabase
       .from("profiles")
-      .select("id, name, dietary, vegan_style, level, goal, invite_code")
+      .select("id, name, dietary, vegan_style, skill_self_report, goal, invite_code")
       .in("id", otherIds);
     if (pe) {
       console.error("[relationships] profiles failed:", pe);
