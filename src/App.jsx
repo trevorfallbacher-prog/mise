@@ -12,6 +12,7 @@ import NotificationsPanel from "./components/NotificationsPanel";
 import UserProfile from "./components/UserProfile";
 import WhatsNewNotification from "./components/WhatsNewNotification";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
+import LevelUpCeremony from "./components/LevelUpCeremony";
 import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
@@ -333,6 +334,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
 
   return (
     <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
+      {/* Level-up ceremony — watches profile.level for upward
+          movement and plays a full-screen celebration. Self-dismissing
+          and zIndex 9999 so it lands on top of any open sheet. */}
+      <LevelUpCeremony level={profile?.level || 1} />
+
       <button
         onClick={() => setSettingsOpen(true)}
         title="Settings"
