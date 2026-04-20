@@ -5,6 +5,7 @@ import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition } from "../lib/nutrition";
+import CookCompleteSummary from "./CookCompleteSummary";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
@@ -216,6 +217,9 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // Award_xp breakdown captured during save() — drives the
   // beat-sequenced summary in CookCompleteSummary (P5-5).
   const [xpBreakdown, setXpBreakdown] = useState(null);
+  // The cook_log id we just inserted — handed to the summary
+  // overlay so it can fetch every related xp_events row.
+  const [summaryCookLogId, setSummaryCookLogId] = useState(null);
   // How many recipe-servings each eater consumed. Default 1 covers the
   // common case (four people eat a four-serving recipe, one slice
   // each). Stepper surfaces on the rating screen so the chef can bump
@@ -596,7 +600,18 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     }
 
     setSaving(false);
-    onFinish?.({ saved: true, rating });
+
+    // Phase-5: gate onFinish on the summary overlay. If the
+    // award_xp call landed (we have a cookLogId and no fatal
+    // error), surface the beat-sequenced reveal first; the
+    // summary's onClose calls onFinish. Otherwise (RPC failed,
+    // no cookLogId) finish immediately so the legacy flow still
+    // works end-to-end.
+    if (cookLogId) {
+      setSummaryCookLogId(cookLogId);
+    } else {
+      onFinish?.({ saved: true, rating });
+    }
   };
 
   // ── shared modal shell ───────────────────────────────────────────────────
@@ -610,6 +625,21 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       `}</style>
     </div>
   );
+
+  // Summary overlay short-circuits the phase tree once save() has
+  // landed. The summary's onClose calls onFinish so the parent's
+  // navigation only fires after the beat sequence wraps.
+  if (summaryCookLogId) {
+    return (
+      <CookCompleteSummary
+        cookLogId={summaryCookLogId}
+        onClose={() => {
+          setSummaryCookLogId(null);
+          onFinish?.({ saved: true, rating });
+        }}
+      />
+    );
+  }
 
   // ── phase 1: celebrate ───────────────────────────────────────────────────
   if (phase === "celebrate") {
