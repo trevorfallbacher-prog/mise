@@ -40,28 +40,28 @@ const CORS_HEADERS = {
 
 const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
-// Recraft's public API. v1/images/generations returns a short-lived
-// URL to the rendered image; we fetch the bytes before storing so we
-// don't leave the app pointing at a URL that'll 404 in an hour.
+// Recraft's public API. Per the docs the `/v1` path is the API
+// version (not the model version), and the specific model is chosen
+// via the `model` field in the body. Returns a short-lived URL to
+// the rendered image; we fetch the bytes before storing so we don't
+// leave the app pointing at something that'll 404 in an hour.
 const RECRAFT_ENDPOINT = "https://external.api.recraft.ai/v1/images/generations";
 
-// Fixed style choices. vector_illustration + line_art pins every
-// canonical to the same icon aesthetic — a thick warm-tan outline
-// stroke on pure black, no fills, no shadows. Reads like a single
-// illustrator's sheet even across hundreds of canonicals. The two
-// knobs that actually drive consistency: style/substyle (hard
-// constraint from Recraft's model) + the color + stroke language
-// in buildPrompt (soft constraint via the text prompt).
-const RECRAFT_STYLE = "vector_illustration";
-const RECRAFT_SUBSTYLE = "line_art";
+// Model + size. Per Recraft's docs (and confirmed against the
+// March 2026 model catalog):
+//   • V4 model names are SNAKE_CASE — `recraftv4_pro`, not
+//     `recraftv4pro`. Camel-case / merged variants fail validation.
+//   • V4 does NOT accept `style` / `style_id` / `substyle` — those
+//     are V2/V3 only. The aesthetic is driven entirely by the
+//     prompt text for V4 models.
+//   • `recraftv4_pro_vector` returns a real SVG (Content-Type
+//     image/svg+xml), which plays nicely with our hand-drawn
+//     /icons/*.svg set and scales infinitely at any render size.
+// If you need to fall back to V3 for style/substyle control, swap
+// the model to `recraftv3` or `recraftv3_vector` and re-add the
+// `style` + `substyle` fields to the POST body below.
+const RECRAFT_MODEL = "recraftv4_pro_vector";
 const RECRAFT_SIZE = "1024x1024";
-// Recraft model. `recraftv3` is the known-good default; if you've
-// verified a newer model name against https://www.recraft.ai/docs
-// (e.g. `recraftv4pro`), swap it in — the payload shape is unchanged.
-// Using v3 here until a newer name is confirmed because an unknown
-// model name makes Recraft 400 with a validation error and surfaces
-// to the client as a generic "edge function failed."
-const RECRAFT_MODEL = "recraftv3";
 
 const BUCKET = "canonical-images";
 
@@ -201,11 +201,12 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         prompt,
-        style: RECRAFT_STYLE,
-        substyle: RECRAFT_SUBSTYLE,
-        size: RECRAFT_SIZE,
+        // V4 vector models accept only prompt / model / size / n /
+        // response_format / controls. No style or substyle field —
+        // sending them makes Recraft 400 with a validation error.
+        size:  RECRAFT_SIZE,
         model: RECRAFT_MODEL,
-        n: 1,
+        n:     1,
       }),
     });
     if (!res.ok) {
@@ -264,7 +265,12 @@ Deno.serve(async (req) => {
   //    after regen will serve the new bytes once CDN expiry flushes;
   //    we could append a ?v= param if that turns out to be a problem
   //    in practice.
-  const ext = contentType.includes("webp") ? "webp"
+  // V4 vector model returns image/svg+xml; raster models return
+  // png/webp/jpg. Pick the extension from the content type so the
+  // storage object is served back with the right MIME at render
+  // time. SVG is cohesive with our hand-drawn /icons/*.svg set.
+  const ext = contentType.includes("svg") ? "svg"
+    : contentType.includes("webp") ? "webp"
     : contentType.includes("jpeg") ? "jpg"
     : "png";
   const storagePath = `${canonicalId}.${ext}`;
