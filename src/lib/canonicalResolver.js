@@ -264,9 +264,36 @@ export function resolveCanonicalFromScan({
   // "pasta" canonical. Previously auto-applied; now surfaces the
   // suggestion card so the user can confirm or pick the correct
   // specific canonical.
+  // OFF category tags that are CLASSIFICATIONS rather than ingredient
+  // identities. Feeding these into fuzzyMatchIngredient produces
+  // false-positive hits — "sugary-drinks" fuzzes to the `sugar`
+  // canonical because the prefix overlaps heavily; "salty-snacks"
+  // would fuzz to `salt`; "plant-based-foods" to... no good match.
+  // None of these are what the user means when they scan a Pepsi /
+  // a bag of chips / a block of tofu. Skip the tag entirely; the
+  // resolver falls through to productName / brand / Claude prompts.
+  //
+  // Add to the set when you notice a new OFF tag producing weird
+  // canonical triage. The rule: tags that describe WHAT KIND of
+  // food (beverage / snack / condiment) rather than WHAT it is.
+  const CLASSIFICATION_TAGS = new Set([
+    "sugary-drinks", "sugary-snacks", "sugary-foods",
+    "salty-snacks", "savory-snacks",
+    "fatty-foods", "ultra-processed-foods", "processed-foods",
+    "plant-based-foods", "plant-based-beverages",
+    "beverages", "drinks", "soft-drinks", "sodas", "carbonated-drinks",
+    "alcoholic-beverages",
+    "snacks", "sweet-snacks", "desserts", "confectioneries",
+    "frozen-foods", "canned-foods",
+    "breakfasts", "meals", "dishes",
+    "sauces", "condiments", "seasonings",
+    "dairies", "dairy-desserts",
+  ]);
+
   const tagList = Array.isArray(categoryHints) ? categoryHints : [];
   for (let i = 0; i < tagList.length; i++) {
     const tag = tagList[i];
+    if (!tag || CLASSIFICATION_TAGS.has(String(tag).toLowerCase())) continue;
     const phrase = tagToPhrase(tag);
     if (!phrase) continue;
     const hit = bestMatchAboveFloor(phrase, 70);
