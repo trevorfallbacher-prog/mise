@@ -5767,6 +5767,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // fresh barcode_identity_corrections row when the user
             // edits identity after the fact.
             ...(s.barcodeUpc ? { barcodeUpc: s.barcodeUpc } : {}),
+            // Scan-derived attributes (origins / certifications /
+            // flavor / claims) from buildAttributesFromScan.
+            // Renders as pills via AttributePillsRow.
+            ...(s.attributes ? { attributes: s.attributes } : {}),
             // Multi-canonical tag array (0033). The Scanner's LinkIngredient
             // picker emits a full ingredientIds array — preset taps
             // land a 4-element array; single matches land a 1-element

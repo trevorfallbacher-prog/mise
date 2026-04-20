@@ -106,6 +106,11 @@ function fromDb(row) {
   // (CLAUDE.md); surfaced in UI parenthetically next to the name.
   if (row.brand              !== undefined) item.brand             = row.brand || null;
   if (row.barcode_upc        !== undefined) item.barcodeUpc        = row.barcode_upc || null;
+  // Scan-derived attributes JSONB (migration 0066) — origins,
+  // certifications, flavor keywords, product claims like 'ORIGINAL'
+  // / 'PROTEIN'. Rendered as pills by AttributePillsRow. Without
+  // the mapping these vanish on persist and the pills go blank.
+  if (row.attributes         !== undefined) item.attributes        = row.attributes || null;
   // protected (migration 0044) — sentimental / keepsake rows that
   // shouldn't be ✕-deletable. DB enforces via the delete policy;
   // this mapping just lets the UI know so it can hide the delete
@@ -190,6 +195,7 @@ function toDb(item) {
     ...(item.canonicalId       !== undefined ? { canonical_id: item.canonicalId || null } : {}),
     ...(item.brand             !== undefined ? { brand: item.brand || null } : {}),
     ...(item.barcodeUpc        !== undefined ? { barcode_upc: item.barcodeUpc || null } : {}),
+    ...(item.attributes        !== undefined ? { attributes: item.attributes || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
     // Packaging + reserves (migration 0054). Passthrough only when the
     // caller set them — older code paths that don't know about
