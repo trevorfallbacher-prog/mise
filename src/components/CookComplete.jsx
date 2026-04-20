@@ -364,6 +364,26 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     }
     const cookLogId = logRow?.id || null;
 
+    // 1b) Fire the XP ledger via award_xp(). Phase-1 wiring: the
+    //     client-computed xp on cook_logs.xp_earned stays authoritative
+    //     for the celebration pulse and useUserProfile's sum-on-read.
+    //     award_xp writes an xp_events row and bumps profiles.total_xp
+    //     under the new ordering (base → caps → streak/curated mult).
+    //     Fail-soft: log and continue — we never want a telemetry
+    //     write to block a cook save.
+    if (cookLogId) {
+      supabase
+        .rpc("award_xp", {
+          p_user_id:   userId,
+          p_source:    "cook_complete",
+          p_ref_table: "cook_logs",
+          p_ref_id:    cookLogId,
+        })
+        .then(({ error: xpErr }) => {
+          if (xpErr) console.error("[award_xp] cook_complete failed:", xpErr);
+        });
+    }
+
     // 2) Apply pantry mutations in a single setPantry call. useSyncedList
     //    diffs prev vs next and fires INSERT / UPDATE / DELETE behind the
     //    scenes, so we just return the post-cook array.
