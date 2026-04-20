@@ -282,12 +282,40 @@ export function resolveCanonicalFromScan({
     }
   }
 
+  const cleaned = cleanProductName(productName, brand);
+
+  // Tier 2.5 — exact-token match. Split the cleaned productName into
+  // whitespace-separated tokens and look for a single-word canonical
+  // that exactly matches any of them. Beats tier 3's fuzzy match on
+  // the full phrase when the productName contains a direct canonical
+  // word buried in marketing filler.
+  //
+  // Bug that motivated this: "Protein Ramen Chicken Flavor" (brand
+  // Ramen Bae) cleaned to "protein ramen chicken flavor" and the
+  // fuzzy matcher scored 'pasta' above 'ramen' even though 'ramen'
+  // is right there as its own token. Token-level match catches it.
+  if (cleaned) {
+    const tokens = cleaned.split(/\s+/).filter(t => t && t.length >= 3);
+    for (const token of tokens) {
+      const hit = bestMatchAboveFloor(token, 95);
+      if (hit) {
+        return {
+          canonical: hit.ingredient,
+          confidence: "high",
+          reason: `token:${token}`,
+          matchedOn: token,
+          score: hit.score,
+          autoApply: true,
+        };
+      }
+    }
+  }
+
   // Tier 3 — fuzzy match the cleaned productName. Lower floor (60)
   // because we're matching against a denser, messier phrase.
   // autoApply trips at 95+: a scan where cleanProductName returns
   // the exact canonical name ("Heavy Cream" → "heavy cream" →
   // Heavy Cream canonical norm'd "heavy cream") — no tap needed.
-  const cleaned = cleanProductName(productName, brand);
   if (cleaned) {
     const hit = bestMatchAboveFloor(cleaned, 60);
     if (hit) {

@@ -619,6 +619,45 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   </span>
                 )}
               </h2>
+              {/* VARIANT / FLAVOR — product-level specifics from the
+                  original scan (scanRaw), minus brand, minus canonical.
+                  For "Protein Ramen Chicken Flavor" with brand
+                  "Ramen Bae" + canonical "ramen" → renders "Chicken
+                  Flavor". Not a reserved colored axis — it's
+                  contextual prose under the HEADER. Skipped when the
+                  derived string is empty, the raw text is obviously
+                  just the canonical again, or there's no scanRaw at
+                  all. */}
+              {(() => {
+                const rawText = typeof item.scanRaw === "string"
+                  ? item.scanRaw
+                  : (item.scanRaw?.raw_name || null);
+                if (!rawText) return null;
+                const escape = (s) => String(s).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                let variant = String(rawText).toLowerCase();
+                if (item.brand) {
+                  variant = variant.replace(new RegExp(`\\b${escape(item.brand)}\\b`, "gi"), " ");
+                }
+                const canonName = tags[0]?.canonical?.name || null;
+                if (canonName) {
+                  variant = variant.replace(new RegExp(`\\b${escape(canonName)}\\b`, "gi"), " ");
+                }
+                variant = variant.replace(/\s+/g, " ").trim();
+                if (!variant || variant.length < 2) return null;
+                const titled = variant.replace(/\b\w/g, (c) => c.toUpperCase());
+                return (
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif",
+                    fontSize: 13,
+                    color: "#8a8478",
+                    fontStyle: "italic",
+                    marginTop: 2,
+                    marginBottom: 8,
+                  }}>
+                    {titled}
+                  </div>
+                );
+              })()}
               {/* CANONICAL — tan badge. Reserved color across the app
                   for the canonical-identity axis. When canonicalId is
                   set but the registry doesn't know about it (user-
