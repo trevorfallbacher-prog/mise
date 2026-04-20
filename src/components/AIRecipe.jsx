@@ -1810,6 +1810,26 @@ export default function AIRecipe({
           </div>
         </div>
 
+        {/* PRIORITY — meta-level stance about how Claude should
+            balance the user's requested course/flavor/prompt against
+            their actual pantry inventory. Hoisted to the top of the
+            form (right under the meal prompt, above every other
+            chip row) because it colors how EVERY lower-ranked
+            constraint is interpreted: star ingredients, course,
+            timing, and cuisine all behave differently depending on
+            whether we're filtering the palette to category-compatible
+            items or leaning into what's stocked. Placing it below
+            COURSE made users commit to a course before seeing that
+            their pantry might not support it. */}
+        <Section label="PRIORITY">
+          <ChipRow
+            value={priority}
+            onChange={setPriority}
+            options={PRIORITY_CHIPS}
+            color="#7ec87e"
+          />
+        </Section>
+
         {/* STAR INGREDIENTS — only surfaces when the pantry has
             proteins. Multi-select: the user's explicit "use these"
             signal. Beats the expiring-soon heuristic in the pantry
@@ -1867,26 +1887,6 @@ export default function AIRecipe({
             onChange={setCourse}
             options={COURSE_CHIPS}
             color="#e07a3a"
-          />
-        </Section>
-
-        {/* PRIORITY — which side of the "I want X / I have Y" tension
-            wins. Always visible so the UI doesn't jump when the course
-            chip flips. "Follow the category" (default) makes whatever
-            course IS set authoritative and filters the pantry palette
-            to compatible items — Baked Goods sees only flour/sugar/
-            butter/eggs/etc., can't draft a hot-dog skillet. "Use my
-            pantry" keeps the old ingredient-first behavior for the
-            "use up what's going bad" workflow. For course === "any"
-            the filter is a no-op (no compatibility set to apply) but
-            the preference still rides through for when Claude decides
-            what course to pick. */}
-        <Section label="PRIORITY">
-          <ChipRow
-            value={priority}
-            onChange={setPriority}
-            options={PRIORITY_CHIPS}
-            color="#7ec87e"
           />
         </Section>
 
