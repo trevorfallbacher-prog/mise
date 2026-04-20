@@ -23,6 +23,15 @@ Target pacing: ~1 month to L10 for a regularly-engaged user
 5. **Identity-field hierarchy and reserved palette (see CLAUDE.md)
    are law.** XP UI reuses the existing colors where an axis is
    referenced; no new reserved colors are introduced by this system.
+6. **Every tunable number lives in config tables, not in code.**
+   Base XP per source, daily caps, streak multiplier schedule,
+   curated ladder thresholds, rarity-roll odds, badge-tier XP —
+   all stored in `xp_config` (scalars) and dedicated tier tables
+   (`xp_streak_tiers`, `xp_curated_ladder`, `xp_rarity_rolls`,
+   `xp_badge_tier_xp`). `award_xp()` reads at evaluation time with
+   a short-lived cache. Tweaking a value = one UPDATE — no
+   migration, no redeploy. All edits are audited in
+   `xp_config_audit`.
 
 ---
 
@@ -389,6 +398,28 @@ the level-up ceremony plays. Never interrupts mid-sequence.
 ### Needs scaffolding
 
 **Schema (new migrations):**
+
+0. **Config tables** — source of truth for every tunable:
+   - `xp_config` — key/jsonb/description/updated_at/updated_by.
+     Holds scalars: soft_cap, hard_cap, soft_cap_haircut_pct,
+     xp_curve_coefficient, xp_curve_exponent, revival_fee, etc.
+   - `xp_source_values` — one row per source (cook, scan, photo,
+     plan_cook_closed, eat_together, …): base_xp, per_day_cap,
+     per_cook_cap, flat_bonus (bool, skips curated multiplier).
+   - `xp_streak_tiers` — `(tier_idx, min_days, multiplier,
+     shield_capacity, shield_regen_days, flame_count,
+     particle_intensity)`.
+   - `xp_curated_ladder` — `(min_lessons_in_cuisine, multiplier)`.
+   - `xp_rarity_rolls` — `(rarity, weight_pct, xp_reward,
+     cosmetic_flair)`.
+   - `xp_badge_tier_xp` — `(tier, xp_reward)`.
+   - `xp_level_titles` — `(min_level, max_level, title)`.
+   - `xp_config_audit` — immutable log of every config mutation
+     (table name, row pk, old jsonb, new jsonb, actor, at). Admin
+     writes go through an RPC that writes audit in the same txn.
+   `award_xp()` reads these at evaluation time with a short-lived
+   (~30s) in-transaction cache to avoid hammering the tables on a
+   busy request.
 
 1. **`xp_events` table** — the ledger. One row per earn event.
    Columns: `id`, `user_id`, `source` (enum), `base_xp`,
