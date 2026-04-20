@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { supabase } from "../lib/supabase";
 import { useNutritionTally } from "../lib/useNutritionTally";
 import ModalSheet from "./ModalSheet";
 
@@ -47,6 +48,33 @@ export default function NutritionDashboard({ userId, targets, onUpdateTargets })
 
   const tally = useNutritionTally(userId);
   const eff = { ...DEFAULT_TARGETS, ...(targets || {}) };
+
+  // XP: +25 when today's totals clear ≥90% of target on all four
+  // macros (kcal + protein + fat + carb). Fires once per render cycle
+  // where the condition is met; the 1/day cap on xp_source_values
+  // keeps the actual credit to one per local day regardless of how
+  // many times the dashboard re-renders or the user reopens it.
+  useEffect(() => {
+    if (!userId) return;
+    const t = tally.today || {};
+    const macros = ["kcal", "protein_g", "fat_g", "carb_g"];
+    const hit = macros.every(k => {
+      const tgt = Number(eff[k]) || 0;
+      if (tgt <= 0) return false;
+      return (Number(t[k]) || 0) >= tgt * 0.9;
+    });
+    if (!hit) return;
+    supabase
+      .rpc("award_xp", {
+        p_user_id:   userId,
+        p_source:    "nutrition_goal_day",
+        p_ref_table: null,
+        p_ref_id:    null,
+      })
+      .then(({ error }) => {
+        if (error) console.error("[award_xp] nutrition_goal_day failed:", error);
+      });
+  }, [userId, tally.today, eff.kcal, eff.protein_g, eff.fat_g, eff.carb_g]);
 
   // Active period numbers + label.
   const current = useMemo(() => {
