@@ -474,14 +474,33 @@ export function useCookLogReviews(cookLogId, userId) {
 
   const upsertMyReview = useCallback(async ({ rating, notes }) => {
     if (!cookLogId || !userId) return;
+    // Detect whether this is a first-time review vs. an edit so we
+    // only award XP on the genuine act of reviewing. Edits shouldn't
+    // re-earn the +5.
+    const alreadyReviewed = reviews.some(r => r.reviewerId === userId);
     const { error } = await supabase
       .from("cook_log_reviews")
       .upsert(
         { cook_log_id: cookLogId, reviewer_id: userId, rating, notes: notes || null },
         { onConflict: "cook_log_id,reviewer_id" },
       );
-    if (error) console.error("[cook_log_reviews] upsert failed:", error);
-  }, [cookLogId, userId]);
+    if (error) {
+      console.error("[cook_log_reviews] upsert failed:", error);
+      return;
+    }
+    if (!alreadyReviewed) {
+      supabase
+        .rpc("award_xp", {
+          p_user_id:   userId,
+          p_source:    "review_cook",
+          p_ref_table: "cook_logs",
+          p_ref_id:    cookLogId,
+        })
+        .then(({ error: xpErr }) => {
+          if (xpErr) console.error("[award_xp] review_cook failed:", xpErr);
+        });
+    }
+  }, [cookLogId, userId, reviews]);
 
   const deleteMyReview = useCallback(async () => {
     if (!cookLogId || !userId) return;
