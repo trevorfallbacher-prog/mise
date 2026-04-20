@@ -273,10 +273,13 @@ Deno.serve(async (req) => {
   const { data: publicData } = admin.storage.from(BUCKET).getPublicUrl(storagePath);
   const imageUrl = `${publicData.publicUrl}?v=${Date.now()}`;
 
-  // 5. Upsert ingredient_info.info.imageUrl via jsonb merge so we
-  //    don't clobber description/storage/nutrition/etc. written by
-  //    the enrichment flow. If the row doesn't exist yet, insert
-  //    with just the imageUrl payload.
+  // 5. Pre-upload lock check. If another admin already marked the
+  //    image as final (info.imageLocked === true), refuse the
+  //    regeneration — they sealed this on purpose and a regen would
+  //    silently overwrite the work. Admin must explicitly unlock
+  //    first. Status 409 'Conflict' is the right shape: it's not a
+  //    permission issue, it's a state conflict with the existing
+  //    resource.
   const { data: existing, error: selErr } = await admin
     .from("ingredient_info")
     .select("info")
@@ -287,6 +290,17 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ error: "ingredient_info_select_failed", detail: selErr.message }),
       { status: 500, headers: JSON_HEADERS },
+    );
+  }
+  if (existing?.info?.imageLocked === true) {
+    return new Response(
+      JSON.stringify({
+        error: "locked",
+        detail: "This canonical's image is locked as final. Unlock first to regenerate.",
+        lockedBy: existing.info.imageLockedBy || null,
+        lockedAt: existing.info.imageLockedAt || null,
+      }),
+      { status: 409, headers: JSON_HEADERS },
     );
   }
   const mergedInfo = { ...(existing?.info || {}), imageUrl };

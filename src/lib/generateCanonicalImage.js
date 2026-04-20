@@ -1,5 +1,52 @@
 import { supabase } from "./supabase";
 
+// Lock / unlock a canonical's generated image. Direct ingredient_info
+// upsert — migration 0047 tightened the write policy to admin-only,
+// so RLS enforces the admin check server-side and any non-admin
+// attempt fails there.
+//
+// Lock: stamps info.imageLocked + imageLockedBy + imageLockedAt,
+// preserving the existing info blob.
+// Unlock: drops the three fields.
+export async function setCanonicalImageLock({ canonicalId, locked, userId }) {
+  if (!canonicalId) throw new Error("canonicalId is required");
+  if (locked && !userId) throw new Error("userId is required to lock");
+
+  // Pull the existing info so we can merge rather than clobber. The
+  // row should always exist by the time Lock is available (an image
+  // has been generated), but be defensive.
+  const { data: existing, error: selErr } = await supabase
+    .from("ingredient_info")
+    .select("info")
+    .eq("ingredient_id", canonicalId)
+    .maybeSingle();
+  if (selErr) throw new Error(selErr.message || "Failed to load current image lock state");
+
+  const base = existing?.info || {};
+  const mergedInfo = { ...base };
+  if (locked) {
+    mergedInfo.imageLocked = true;
+    mergedInfo.imageLockedBy = userId;
+    mergedInfo.imageLockedAt = new Date().toISOString();
+  } else {
+    delete mergedInfo.imageLocked;
+    delete mergedInfo.imageLockedBy;
+    delete mergedInfo.imageLockedAt;
+  }
+
+  const { error: upErr } = await supabase
+    .from("ingredient_info")
+    .upsert({ ingredient_id: canonicalId, info: mergedInfo });
+  if (upErr) {
+    // RLS denial surfaces here for non-admins.
+    if (upErr.code === "42501" || /row-level security|permission denied/i.test(upErr.message || "")) {
+      throw new Error("Locking canonical images is admin-only.");
+    }
+    throw new Error(upErr.message || "Couldn't update lock state. Try again?");
+  }
+  return { locked: !!locked };
+}
+
 // Thin client wrapper over the `generate-canonical-image` edge
 // function. Admins trigger this from GenerateImageButton; the edge
 // function calls Recraft, uploads to the canonical-images bucket,
@@ -33,6 +80,9 @@ export async function generateCanonicalImage({ canonicalId, canonicalName, hint 
     console.error("[generate-canonical-image] edge fn failed:", { message: error.message, status, detail });
     if (status === 403) {
       throw new Error("Canonical image generation is admin-only.");
+    }
+    if (status === 409) {
+      throw new Error("This image is locked as final. Unlock before regenerating.");
     }
     if (status === 404) {
       throw new Error("Image generator edge function isn't deployed. Run: supabase functions deploy generate-canonical-image");

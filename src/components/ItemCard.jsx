@@ -1981,6 +1981,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 fallbackEmoji={embedFallbackEmoji}
                 pantry={pantry}
                 isAdmin={isAdmin}
+                userId={userId}
                 onClose={onClose}
                 embedded
                 preview
@@ -2045,6 +2046,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           ingredientId={drilledIngredientId}
           pantry={pantry}
           isAdmin={isAdmin}
+          userId={userId}
           onClose={() => setDrilledIngredientId(null)}
         />
       )}

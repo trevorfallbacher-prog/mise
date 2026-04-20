@@ -7604,6 +7604,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           fallbackEmoji={cardIng.fallbackEmoji}
           pantry={pantry}
           isAdmin={isAdmin}
+          userId={userId}
           onClose={() => setCardIng(null)}
         />
       )}

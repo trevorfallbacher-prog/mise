@@ -152,6 +152,10 @@ export default function IngredientCard({
   // button, and the edge function enforces the same check server-
   // side so a bypassed client check still 403s.
   isAdmin = false,
+  // Viewer's user id. Stamped onto info.imageLockedBy when an admin
+  // taps Lock as final, so Plan / audit surfaces know who sealed
+  // the canonical's image.
+  userId = null,
   // When true, the card renders its CONTENT only — no backdrop, no fixed
   // positioning, no bottom Close button. Used by ItemCard to embed the
   // canonical deep-dive below its own item-specific section. The parent
@@ -332,33 +336,59 @@ export default function IngredientCard({
             without leaving the card. */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 16 }}>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            {info?.imageUrl ? (
-              <img
-                src={info.imageUrl}
-                alt={name}
-                style={{
+            {/* Image slot + optional 🔒 FINAL lock pip in the top-
+                right corner. Lock pip renders for everyone (not just
+                admins) so family members viewing the canonical see
+                that the image has been sealed — consistency across
+                viewers, not just a curator-only signal. */}
+            <div style={{ position: "relative" }}>
+              {info?.imageUrl ? (
+                <img
+                  src={info.imageUrl}
+                  alt={name}
+                  style={{
+                    width: 72, height: 72, borderRadius: 14,
+                    objectFit: "cover",
+                    background: "#0f0f0f",
+                    border: info?.imageLocked ? "1px solid #2a3a1e" : "1px solid #242424",
+                    display: "block",
+                  }}
+                />
+              ) : (
+                <div style={{
                   width: 72, height: 72, borderRadius: 14,
-                  objectFit: "cover",
-                  background: "#0f0f0f",
-                  border: "1px solid #242424",
-                }}
-              />
-            ) : (
-              <div style={{
-                width: 72, height: 72, borderRadius: 14,
-                background: "#0f0f0f", border: "1px solid #242424",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 44,
-              }}>
-                {emoji}
-              </div>
-            )}
+                  background: "#0f0f0f", border: "1px solid #242424",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 44,
+                }}>
+                  {emoji}
+                </div>
+              )}
+              {info?.imageUrl && info?.imageLocked && (
+                <span
+                  title="Locked as final by an admin"
+                  style={{
+                    position: "absolute", top: -6, right: -6,
+                    background: "#0f1a0f", border: "1px solid #2a3a1e",
+                    color: "#a3d977",
+                    fontFamily: "'DM Mono',monospace", fontSize: 8,
+                    fontWeight: 700, letterSpacing: "0.1em",
+                    padding: "2px 5px", borderRadius: 4,
+                    lineHeight: 1,
+                  }}
+                >
+                  🔒 FINAL
+                </span>
+              )}
+            </div>
             {viewingId && (
               <GenerateImageButton
                 canonicalId={viewingId}
                 canonicalName={name}
                 hasExistingImage={!!info?.imageUrl}
+                isLocked={!!info?.imageLocked}
                 isAdmin={isAdmin}
+                userId={userId}
                 compact
               />
             )}
