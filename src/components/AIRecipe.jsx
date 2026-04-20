@@ -64,12 +64,30 @@ const COURSE_CHIPS = [
   { id: "side",      label: "Side" },
   { id: "dessert",   label: "Dessert" },
   { id: "appetizer", label: "Appetizer" },
-  // "Bake" and "Prep" are component recipes (bread, stock, sauce,
-  // pickles) that live in the library without a meal slot. Selecting
-  // them hides MEAL TIMING since these aren't tied to breakfast/lunch/
-  // dinner — they're pantry-building.
-  { id: "bake",      label: "Bake" },
+  // "Baked Goods" and "Prep" are component recipes (bread, stock,
+  // sauce, pickles, pastry) that live in the library without a meal
+  // slot. Selecting them hides MEAL TIMING since these aren't tied to
+  // breakfast/lunch/dinner — they're pantry/bakery-case items.
+  //
+  // Label says "Baked Goods" rather than just "Bake" because users
+  // kept getting meals-on-bread (pesto focaccia topped with burrata,
+  // pizza, savory galettes) when they picked "Bake" — the plain verb
+  // read as "put something in the oven" and Claude happily obliged
+  // with sheet-pan dinners disguised as flatbreads. "Baked Goods"
+  // primes the bakery-case mental model. Edge-fn prompt reinforces
+  // it with an explicit exclusion list. Oven-roasted mains stay under
+  // "Main" where they belong.
+  { id: "bake",      label: "Baked Goods" },
   { id: "prep",      label: "Prep" },
+];
+
+// PRIORITY chips — which side of the "I want X / I have Y" tension
+// wins. Only meaningful when a course is set (see buildPrefs). The
+// emojis pre-prime the user: 🎯 = category/target, 📦 = pantry/use
+// what's there.
+const PRIORITY_CHIPS = [
+  { id: "category", label: "🎯 Follow the category" },
+  { id: "pantry",   label: "📦 Use my pantry"       },
 ];
 
 // Canonical ids that count as "protein" for the STAR INGREDIENTS
@@ -262,6 +280,14 @@ export default function AIRecipe({
   const [mealPrompt, setMealPrompt] = useState("");
   const [mealTiming, setMealTiming] = useState("any");
   const [course,     setCourse]     = useState("any");
+  // Priority mode — which side of the "I want X / I have Y" tension
+  // wins when the two conflict. "category" (default) makes the course
+  // constraint authoritative and filters the pantry palette to
+  // compatible items (bake = flour/sugar/butter/eggs/etc, not hot
+  // dogs). "pantry" keeps the old behavior where Claude drafts around
+  // whatever's stocked and bends the course to fit. Hidden from the
+  // UI when course === "any" — no tension to resolve.
+  const [priority,   setPriority]   = useState("category");
   const [starIngredientIds, setStarIngredientIds] = useState([]);
   const [cuisine,    setCuisine]    = useState("any");
   const [time,       setTime]       = useState("medium");
@@ -356,6 +382,11 @@ export default function AIRecipe({
       mealPrompt: mealPrompt.trim() || undefined,
       mealTiming: (isComponentCourse || mealTiming === "any") ? undefined : mealTiming,
       course: course === "any" ? undefined : course,
+      // Always send priority — when course is "any", the edge fn's
+      // pantry filter is a no-op but the precedence branch still
+      // respects the user's "category-first" vs "pantry-first" intent
+      // for whichever course Claude decides to emit.
+      priority,
       starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
       // Compose-a-meal anchor. Only present when the user clicked
       // "+ Add side/dessert/appetizer" from a main's preview; Claude
@@ -379,6 +410,11 @@ export default function AIRecipe({
         pantry, profile, ingredientInfo, cookLogs,
         mode: isRegen ? "lean" : "rich",
         starIngredientIds,
+        // filterPantryByCourse is a no-op when course is "any" (no
+        // compatibility set) or priority is "pantry" — pass both
+        // through unconditionally; the filter does the gating.
+        course:   course === "any" ? undefined : course,
+        priority,
       });
       const payload = {
         mode: "sketch",
@@ -489,6 +525,8 @@ export default function AIRecipe({
         pantry, profile, ingredientInfo, cookLogs,
         mode: "rich",
         starIngredientIds,
+        course:   course === "any" ? undefined : course,
+        priority: course === "any" ? undefined : priority,
       });
       const locked = buildLockedIngredients();
       const payload = {
@@ -1771,6 +1809,26 @@ export default function AIRecipe({
             Tell me what you're in the mood for — I'll pull from your kitchen.
           </div>
         </div>
+
+        {/* PRIORITY — meta-level stance about how Claude should
+            balance the user's requested course/flavor/prompt against
+            their actual pantry inventory. Hoisted to the top of the
+            form (right under the meal prompt, above every other
+            chip row) because it colors how EVERY lower-ranked
+            constraint is interpreted: star ingredients, course,
+            timing, and cuisine all behave differently depending on
+            whether we're filtering the palette to category-compatible
+            items or leaning into what's stocked. Placing it below
+            COURSE made users commit to a course before seeing that
+            their pantry might not support it. */}
+        <Section label="PRIORITY">
+          <ChipRow
+            value={priority}
+            onChange={setPriority}
+            options={PRIORITY_CHIPS}
+            color="#7ec87e"
+          />
+        </Section>
 
         {/* STAR INGREDIENTS — only surfaces when the pantry has
             proteins. Multi-select: the user's explicit "use these"

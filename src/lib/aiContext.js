@@ -23,6 +23,8 @@
 // payload. The edge function's prompt still trusts the shape, but
 // the strings themselves can't smuggle instructions.
 
+import { filterPantryByCourse } from "./courseCompat";
+
 const MAX_PANTRY_ITEMS   = 40;   // keep the prompt bounded
 const EXPIRING_SOON_DAYS = 7;    // "about to spoil" threshold
 const COOK_HISTORY_LIMIT = 20;   // recent cooks summarized
@@ -54,9 +56,22 @@ export function buildAIContext({
   cookLogs = [],
   mode = "rich",
   starIngredientIds = [],
+  // Category-priority pantry filter. When the user picks a tight
+  // course (bake / dessert / prep) AND priority === "category", we
+  // pre-filter the pantry rows Claude sees to items compatible with
+  // that category. Claude physically can't draft a hot-dog skillet
+  // under Baked Goods when hot dogs aren't in the palette. Pass-
+  // through (no filter) for course="any" / main / side / appetizer
+  // and for priority="pantry".
+  course,
+  priority,
 } = {}) {
   const rich = mode === "rich";
   const now = Date.now();
+  // Pre-filter BEFORE the ranking pass so starred incompatible items
+  // don't get hoisted to the top only to produce narrative pressure
+  // for Claude to respect them.
+  pantry = filterPantryByCourse(pantry, course, priority);
   const getInfo = rich && ingredientInfo?.getInfo
     ? (id) => ingredientInfo.getInfo(id)
     : () => null;

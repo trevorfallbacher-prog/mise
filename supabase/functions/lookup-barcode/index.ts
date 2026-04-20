@@ -310,12 +310,13 @@ async function handleLookup(req: Request): Promise<Response> {
   const servingSize = typeof product.serving_size === "string" ? product.serving_size : null;
   const nutrition = mapNutrition(nutriments, servingSize);
 
-  if (!nutrition) {
-    return new Response(
-      JSON.stringify({ found: false, barcode, reason: "no_nutriments" }),
-      { status: 200, headers: JSON_HEADERS },
-    );
-  }
+  // Nutrition can be null for user-contributed entries OFF hasn't
+  // finished — but the product_name / categoryHints / labels are
+  // often still present and valuable (claim extraction, canonical
+  // resolution, package size). Return found=true with nutrition=null
+  // so the client can still stock the row; previously we bailed with
+  // no_nutriments and the client fell back to the brand_nutrition
+  // cache which strips productName to null, starving claim extraction.
 
   // Package-quantity string ("40g", "1 lb", "250 ml", "12 × 50 g").
   // Client uses this to pre-fill the pantry row's amount + unit so

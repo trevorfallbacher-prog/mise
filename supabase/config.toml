@@ -21,3 +21,6 @@ verify_jwt = false
 [functions.decode-barcode-image]
 verify_jwt = false
 
+[functions.generate-canonical-image]
+verify_jwt = false
+

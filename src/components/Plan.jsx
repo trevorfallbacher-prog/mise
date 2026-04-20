@@ -5,6 +5,7 @@ import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
 import { supabase } from "../lib/supabase";
+import { scaleRecipe } from "../lib/recipeScaling";
 
 const DAY_LABELS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const DAY_SHORTS = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
@@ -40,6 +41,31 @@ function bucketByDay(meals) {
 
 function dayKey(d) {
   return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+// Meal slots for the per-day grid on Plan — breakfast / lunch /
+// dinner rows inside every day card. Matches SchedulePicker's slot
+// set (minus snack, which lives in the time override path there
+// too). Each day card renders all three rows regardless of whether
+// they're filled, so the user sees the 3-meal shape at a glance and
+// can tap an empty row to schedule directly into that slot.
+const PLAN_SLOTS = [
+  { id: "breakfast", label: "Breakfast", emoji: "🥞" },
+  { id: "lunch",     label: "Lunch",     emoji: "🥪" },
+  { id: "dinner",    label: "Dinner",    emoji: "🍽️" },
+];
+
+// Infer which slot a meal / cook belongs to. Prefers the explicit
+// meal_slot column (migration 0069) when present, falls back to
+// hour-based inference for pre-0069 rows and for cook_logs (which
+// don't carry a slot column).
+function slotForTime(ts, explicit) {
+  if (explicit && PLAN_SLOTS.some(s => s.id === explicit)) return explicit;
+  const d = ts instanceof Date ? ts : new Date(ts);
+  const h = d.getHours();
+  if (h < 10) return "breakfast";
+  if (h < 15) return "lunch";
+  return "dinner";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +204,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNo
           <div style={{ fontSize: 40 }}>{recipe.emoji}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
-              {fmtTime(meal.scheduled_for).toUpperCase()}
+              {meal.meal_slot ? `${meal.meal_slot.toUpperCase()} · ` : ""}{fmtTime(meal.scheduled_for).toUpperCase()}
             </div>
             <div style={{ fontFamily: "'Fraunces',serif", fontSize: 22, color: "#f0ece4", fontWeight: 300, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {recipe.title}
@@ -491,6 +517,11 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
 
   // UI state
   const [addingForDay, setAddingForDay] = useState(null);       // Date picked via "+"
+  // Meal slot pre-selected when the user tapped "+ add" on a
+  // specific slot row (breakfast / lunch / dinner) rather than the
+  // day-level "+ ADD" button. SchedulePicker seeds its mealSlot
+  // state from this when present. null = let the picker default.
+  const [addingForSlot, setAddingForSlot] = useState(null);
   const [recipeToSchedule, setRecipeToSchedule] = useState(null); // Recipe picked from modal
   const [isRequesting, setIsRequesting] = useState(false);       // "Request" mode vs. "I'll cook"
   const [openMeal, setOpenMeal] = useState(null);                // Meal tapped to view
@@ -650,94 +681,151 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                 )}
               </div>
 
-              {!hasContent && !isToday && (
-                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#444", fontStyle: "italic" }}>
-                  {isPast ? "Nothing cooked." : "Nothing planned."}
-                </div>
-              )}
-
-              {/* Past cooks — render above any scheduled meals on the same
-                  past day, since \"what got done\" is the review's headline.
-                  Each card is tappable → opens the cook detail via
-                  onOpenCook (Cookbook deep-link path, same as UserProfile
-                  uses). */}
-              {dayCooks.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: dayMeals.length ? 10 : 0 }}>
-                  {dayCooks.map(cook => {
-                    const chef = nameFor ? nameFor(cook.user_id) : "";
-                    const isMine = cook.user_id === userId;
-                    const time = new Date(cook.cooked_at);
-                    return (
-                      <button
-                        key={cook.id}
-                        onClick={() => onOpenCook?.(cook.id)}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 12,
-                          padding: "10px 12px",
-                          background: "#0f140f", border: "1px solid #1e3a1e",
-                          borderRadius: 12, cursor: "pointer", textAlign: "left",
-                        }}
-                      >
-                        <span style={{ fontSize: 22, flexShrink: 0 }}>{cook.recipe_emoji || "🍽️"}</span>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontFamily: "'Fraunces',serif", fontSize: 14, color: "#f0ece4", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {cook.recipe_title}
+              {/* Three-slot grid — breakfast / lunch / dinner rows
+                  always rendered so every day surfaces the same
+                  shape at a glance. Filled slots render their meal
+                  or cook; empty future slots expose a "+" tap to
+                  schedule directly into that specific slot.
+                  Bucketing: prefer meal_slot (migration 0069) when
+                  present, else infer from scheduled_for / cooked_at
+                  hour. Cooks + scheduled meals can share a slot —
+                  past cooks land on the same day's row. */}
+              {(() => {
+                // Bucket both scheduled meals and past cooks by slot.
+                const bySlot = { breakfast: [], lunch: [], dinner: [] };
+                for (const m of dayMeals) {
+                  const s = slotForTime(m.scheduled_for, m.meal_slot);
+                  if (bySlot[s]) bySlot[s].push({ kind: "meal", row: m });
+                }
+                for (const c of dayCooks) {
+                  const s = slotForTime(c.cooked_at);
+                  if (bySlot[s]) bySlot[s].push({ kind: "cook", row: c });
+                }
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {PLAN_SLOTS.map(slot => {
+                      const entries = bySlot[slot.id];
+                      const hasEntries = entries.length > 0;
+                      return (
+                        <div key={slot.id}>
+                          {/* Slot header — visible every row even when empty,
+                              so the day always reads as a three-meal shape. */}
+                          <div style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#555", letterSpacing: "0.12em",
+                            marginBottom: 4, display: "flex", alignItems: "center", gap: 6,
+                          }}>
+                            <span>{slot.emoji}</span>
+                            <span>{slot.label.toUpperCase()}</span>
                           </div>
-                          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#6b8a6b", marginTop: 2, letterSpacing: "0.05em" }}>
-                            ✓ COOKED · {fmtTime(time).toUpperCase()}{isMine ? " · YOU" : chef ? ` · ${chef.toUpperCase()}` : ""}
-                            {Array.isArray(cook.diners) && cook.diners.length > 0 ? ` · ${cook.diners.length} DINER${cook.diners.length === 1 ? "" : "S"}` : ""}
-                          </div>
+                          {hasEntries ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                              {entries.map(({ kind, row }) => {
+                                if (kind === "cook") {
+                                  const chef = nameFor ? nameFor(row.user_id) : "";
+                                  const isMine = row.user_id === userId;
+                                  const time = new Date(row.cooked_at);
+                                  return (
+                                    <button
+                                      key={`cook-${row.id}`}
+                                      onClick={() => onOpenCook?.(row.id)}
+                                      style={{
+                                        display: "flex", alignItems: "center", gap: 12,
+                                        padding: "10px 12px",
+                                        background: "#0f140f", border: "1px solid #1e3a1e",
+                                        borderRadius: 12, cursor: "pointer", textAlign: "left",
+                                      }}
+                                    >
+                                      <span style={{ fontSize: 22, flexShrink: 0 }}>{row.recipe_emoji || "🍽️"}</span>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontFamily: "'Fraunces',serif", fontSize: 14, color: "#f0ece4", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                          {row.recipe_title}
+                                        </div>
+                                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#6b8a6b", marginTop: 2, letterSpacing: "0.05em" }}>
+                                          ✓ COOKED · {fmtTime(time).toUpperCase()}{isMine ? " · YOU" : chef ? ` · ${chef.toUpperCase()}` : ""}
+                                          {Array.isArray(row.diners) && row.diners.length > 0 ? ` · ${row.diners.length} DINER${row.diners.length === 1 ? "" : "S"}` : ""}
+                                        </div>
+                                      </div>
+                                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#4ade80", letterSpacing: "0.08em" }}>→</span>
+                                    </button>
+                                  );
+                                }
+                                // Scheduled meal
+                                const meal = row;
+                                const recipe = findRecipe(meal.recipe_slug, findUserRecipe);
+                                const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
+                                const isRequest = meal.cook_id == null;
+                                const cookLabel = isRequest
+                                  ? `Requested by ${nameFor ? nameFor(meal.user_id) : "someone"}`
+                                  : `Cooking: ${nameFor ? nameFor(meal.cook_id) : ""}`;
+                                return (
+                                  <button
+                                    key={`meal-${meal.id}`}
+                                    onClick={() => setOpenMeal(meal)}
+                                    style={{
+                                      display: "flex", alignItems: "center", gap: 12,
+                                      padding: "12px 14px",
+                                      background: isRequest ? "#1e1408" : "#0f0f0f",
+                                      border: `1px solid ${isRequest ? "#3a2a15" : "#1e1e1e"}`,
+                                      borderRadius: 12, cursor: "pointer", textAlign: "left",
+                                    }}
+                                  >
+                                    <div style={{ fontSize: 26, flexShrink: 0 }}>{recipe?.emoji || "🍽️"}</div>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+                                        <span style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                          {recipe?.title || meal.recipe_slug}
+                                        </span>
+                                        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", flexShrink: 0 }}>
+                                          {fmtTime(meal.scheduled_for)}
+                                        </span>
+                                      </div>
+                                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
+                                        {isRequest && "🙋 "}{cookLabel}
+                                        {meal.servings != null && ` · 👥 ${meal.servings}`}
+                                        {recipe && ` · ${totalTimeMin(recipe)} MIN`}
+                                        {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
+                                        {meal.note && " · 📝"}
+                                      </div>
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : isPast ? (
+                            <div style={{
+                              padding: "8px 12px",
+                              fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                              color: "#333", fontStyle: "italic",
+                            }}>
+                              —
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setIsRequesting(false);
+                                setAddingForSlot(slot.id);
+                                setAddingForDay(d);
+                              }}
+                              style={{
+                                width: "100%", textAlign: "left",
+                                padding: "8px 12px",
+                                background: "transparent",
+                                border: "1px dashed #2a2a2a",
+                                borderRadius: 10, cursor: "pointer",
+                                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                                color: "#555", letterSpacing: "0.08em",
+                              }}
+                            >
+                              + ADD {slot.label.toUpperCase()}
+                            </button>
+                          )}
                         </div>
-                        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#4ade80", letterSpacing: "0.08em" }}>→</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {dayMeals.map(meal => {
-                  const recipe = findRecipe(meal.recipe_slug, findUserRecipe);
-                  const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
-                  const isRequest = meal.cook_id == null;
-                  const cookLabel = isRequest
-                    ? `Requested by ${nameFor ? nameFor(meal.user_id) : "someone"}`
-                    : `Cooking: ${nameFor ? nameFor(meal.cook_id) : ""}`;
-                  return (
-                    <button
-                      key={meal.id}
-                      onClick={() => setOpenMeal(meal)}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 12,
-                        padding: "12px 14px",
-                        background: isRequest ? "#1e1408" : "#0f0f0f",
-                        border: `1px solid ${isRequest ? "#3a2a15" : "#1e1e1e"}`,
-                        borderRadius: 12,
-                        cursor: "pointer", textAlign: "left",
-                      }}
-                    >
-                      <div style={{ fontSize: 26, flexShrink: 0 }}>{recipe?.emoji || "🍽️"}</div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
-                          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            {recipe?.title || meal.recipe_slug}
-                          </span>
-                          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", flexShrink: 0 }}>
-                            {fmtTime(meal.scheduled_for)}
-                          </span>
-                        </div>
-                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
-                          {isRequest && "🙋 "}{cookLabel}
-                          {meal.servings != null && ` · 👥 ${meal.servings}`}
-                          {recipe && ` · ${totalTimeMin(recipe)} MIN`}
-                          {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
-                          {meal.note && " · 📝"}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           );
         })}
@@ -764,11 +852,12 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         <SchedulePicker
           recipe={recipeToSchedule}
           initialDate={addingForDay}
+          initialSlot={addingForSlot}
           userId={userId}
           userName={userName}
           family={family}
           defaultRequest={hasFamily}
-          onClose={() => { setRecipeToSchedule(null); setAddingForDay(null); }}
+          onClose={() => { setRecipeToSchedule(null); setAddingForDay(null); setAddingForSlot(null); }}
           onSave={onSaveSchedule}
         />
       )}
@@ -783,7 +872,16 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           onCookNow={() => {
             const r = findRecipe(openMeal.recipe_slug, findUserRecipe);
             setOpenMeal(null);
-            if (r) setCookingRecipe(r);
+            if (!r) return;
+            // If the scheduled meal carries a servings override
+            // (SchedulePicker let the user scale on the way in),
+            // hand CookMode the pre-scaled recipe so ingredient
+            // amounts already reflect the cook's intent. No override
+            // = original recipe passes through unchanged.
+            const scaled = openMeal.servings && openMeal.servings !== r.serves
+              ? scaleRecipe(r, openMeal.servings)
+              : r;
+            setCookingRecipe(scaled);
           }}
           onClaim={async () => {
             const updated = await claim(openMeal.id);

@@ -34,6 +34,7 @@ import TypePicker from "./TypePicker";
 import { FOOD_TYPES, findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { bumpTypeUse } from "../lib/userTypes";
 import IngredientCard from "./IngredientCard";
+import { canonicalImageUrlFor, tileIconFor } from "../lib/canonicalIcons";
 import ItemCard from "./ItemCard";
 import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
@@ -66,6 +67,7 @@ import {
   parseStateFromText,
   stateForCanonical,
   buildAttributesFromScan,
+  mergeAttributes,
   cleanProductName,
 } from "../lib/canonicalResolver";
 import { enrichIngredient } from "../lib/enrichIngredient";
@@ -972,11 +974,13 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   .then(res => console.log("[upc-debug] 4/write-result", res))
                   .catch(e => console.warn("[upc-debug] write threw:", e));
               }
-              // Single-item barcode scan — commit directly, skip
-              // the "Look right?" confirm screen. Parent's
-              // addScannedItems handles pantry insert + toast.
+              // Single-item barcode scan — hand off as a DRAFT so the
+              // user can confirm identity / axes in ItemCard before
+              // the row actually lands in the pantry. addScannedItems
+              // sees draftMode and stashes the row in Kitchen's
+              // draftItem state; commit happens only on STOCK IN PANTRY.
               setCanonicalCreatePrompt(null);
-              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, draftMode: true });
               console.log("[ramen-debug] 5/committed-via-onItemsScanned");
             } catch (e) {
               console.error("[ramen-debug] onCreate core failed:", e);
@@ -1022,9 +1026,10 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             onClose?.();
           }}
           onSkip={() => {
-            // User opted not to create a canonical — commit the
-            // fallback-named row directly to pantry. They can assign
-            // a canonical later from the ItemCard.
+            // User opted not to create a canonical — hand off the
+            // fallback-named row as a DRAFT. They can assign a
+            // canonical from the same ItemCard (or discard) before
+            // it lands in pantry.
             const skipRow = canonicalCreatePrompt.pendingRow;
             if (canonicalCreatePrompt.pendingBrandNutrition) {
               // Without canonical, brand_nutrition can't be written
@@ -1032,7 +1037,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // that resolves the same brand+canonical will refetch.
             }
             setCanonicalCreatePrompt(null);
-            onItemsScanned([skipRow], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+            onItemsScanned([skipRow], { store: null, date: null, totalCents: null, draftMode: true });
             onClose?.();
           }}
           onCancel={() => {
@@ -1057,7 +1062,10 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brandFromOff: res?.brand,
                 genericName: res?.genericName,
                 categoryHints: res?.categoryHints,
+                labelTags: res?.labelTags,
                 hasNutrition: !!res?.nutrition,
+                cached: res?.cached,
+                source: res?.source,
               });
               if (!res?.found) {
                 const msg = res?.reason === "edge_fn_not_deployed"
@@ -1165,28 +1173,18 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   console.warn("[scanner:barcode] popular package fetch failed:", e);
                 }
               }
-              let attributes = buildAttributesFromScan({
-                productName:   res.productName,
-                categoryHints: res.categoryHints || [],
-                originTags:    res.originTags  || [],
-                countryTags:   res.countryTags || [],
-                labelTags:     res.labelTags   || [],
-              });
-              // OFF responses are inconsistent — the same UPC can
-              // return a rich productName one session and null the
-              // next. When current scan has nothing to extract from,
-              // inherit from the most recent prior pantry_items row
-              // with the same UPC. Preserves Scoops! Original claim
-              // pills, Chicken Flavor variant subtitle, etc., across
-              // rescans.
+              // OFF responses are inconsistent — the cached path
+              // (brand_nutrition hit) always returns productName=null
+              // and the OFF fresh path can strip a sub-line down to a
+              // generic "Tostitos Tortilla Chips" one session and
+              // return the full "Tostitos Scoops Original Tortilla
+              // Chips" the next. Fetch the most recent prior pantry
+              // row for this UPC so every axis the current response
+              // is missing has a fallback source.
               let inheritedScanRaw = null;
+              let inheritedAttributes = null;
               const offProductName = res.productName || null;
-              const attributesEmpty = !attributes || Object.keys(attributes).length === 0;
               const packageEmpty = !packageSize;
-              // Always check for prior-row data on a barcode scan —
-              // same UPC = same product, so any axis the current
-              // OFF response is missing can be filled from a
-              // previous scan that had it.
               if (userId && barcode) {
                 try {
                   const { data: prior } = await supabase
@@ -1197,8 +1195,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                     .limit(1)
                     .maybeSingle();
                   if (prior) {
-                    if (!offProductName && prior.scan_raw) inheritedScanRaw = prior.scan_raw;
-                    if (attributesEmpty && prior.attributes) attributes = prior.attributes;
+                    if (prior.scan_raw)   inheritedScanRaw   = prior.scan_raw;
+                    if (prior.attributes) inheritedAttributes = prior.attributes;
                     if (packageEmpty && prior.package_amount && prior.package_unit) {
                       packageSize = { amount: Number(prior.package_amount), unit: prior.package_unit };
                     }
@@ -1206,13 +1204,50 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   console.log("[upc-debug] inherit", {
                     barcode,
                     inheritedScanRaw,
-                    inheritedAttributes: attributesEmpty && prior?.attributes ? Object.keys(prior.attributes) : null,
+                    inheritedAttributes: inheritedAttributes ? Object.keys(inheritedAttributes) : null,
                     inheritedPackage: packageSize,
                   });
                 } catch (e) {
                   console.warn("[scanner:barcode] prior-row inherit failed:", e);
                 }
               }
+              // Build attributes using the richest text we have —
+              // fresh OFF productName first, prior row's scan_raw as
+              // fallback. Running extraction ONCE against the best
+              // source beats the old "run on OFF, give up, inherit
+              // whatever stale attributes prior row had" path, which
+              // never rescued a UPC whose first stocking predated
+              // claim extraction.
+              const claimSourceText = offProductName || inheritedScanRaw;
+              let attributes = buildAttributesFromScan({
+                productName:   claimSourceText,
+                genericName:   res.genericName,
+                brand:         res.brand,
+                canonicalName: match?.canonical?.name || match?.canonical?.shortName || null,
+                categoryHints: res.categoryHints || [],
+                originTags:    res.originTags  || [],
+                countryTags:   res.countryTags || [],
+                labelTags:     res.labelTags   || [],
+              });
+              // Union with any prior attributes so origins /
+              // certifications captured on a past scan don't vanish
+              // just because this session's response was thinner.
+              if (inheritedAttributes) {
+                attributes = mergeAttributes(attributes || null, inheritedAttributes);
+              }
+              console.log("[claims-debug] extraction", {
+                barcode,
+                resProductName: res.productName,
+                resCached: res.cached,
+                resSource: res.source,
+                inheritedScanRaw,
+                inheritedAttributes,
+                claimSourceText,
+                brand: res.brand,
+                canonicalName: match?.canonical?.name || null,
+                fullAttributes: attributes,
+                resultingClaims: attributes?.claims || [],
+              });
               // Build a single scan row that matches the shape the
               // rest of the confirm flow expects (same fields scan-
               // receipt / scan-shelf produce). Canonical-derived
@@ -1345,14 +1380,15 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 return;   // stay on upload screen until user decides
               }
               // Barcode scans are single-item by nature — the user
-              // scanned ONE package, we built ONE row. The
-              // multi-item "Look right?" confirm screen is always
-              // "FOUND 1 ITEMS" and the user has to click STOCK MY
-              // PANTRY anyway. Skip it: commit the row directly via
-              // onItemsScanned (parent's addScannedItems handles the
-              // pantry insert + toast), then close the Scanner. User
-              // lands back in Kitchen with the new item stocked.
-              onItemsScanned([row], { store: null, date: null, totalCents: null, autoOpenFirst: true });
+              // scanned ONE package, we built ONE row. Skip the
+              // multi-item "Look right?" confirm screen and hand the
+              // row off as a DRAFT instead: addScannedItems sees
+              // draftMode and stashes it so the user gets a full
+              // ItemCard to confirm identity / state / package size
+              // / claims BEFORE anything commits to pantry. STOCK
+              // IN PANTRY is the actual save; DISCARD abandons
+              // the draft with no DB write.
+              onItemsScanned([row], { store: null, date: null, totalCents: null, draftMode: true });
               if (pendingBrandNutrition?.brand && canon?.id) {
                 upsertBrandNutritionForScan?.({
                   canonicalId: canon.id,
@@ -3310,6 +3346,9 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     // the canonical resolved.
                     const attributes = buildAttributesFromScan({
                       productName:   res.productName,
+                      genericName:   res.genericName,
+                      brand:         res.brand,
+                      canonicalName: match?.canonical?.name || match?.canonical?.shortName || null,
                       categoryHints: res.categoryHints || [],
                       originTags:    res.originTags  || [],
                       countryTags:   res.countryTags || [],
@@ -5096,6 +5135,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // 'update during render' when the commit happens mid-render of a
   // provider up the tree.
   const [pendingAutoOpenId, setPendingAutoOpenId] = useState(null);
+  // Barcode-scan draft. A single-item barcode scan stashes the built
+  // row here instead of inserting it into pantry — the user sees a
+  // full ItemCard in DRAFT mode and decides whether to stock after
+  // tweaking axes. Only the user's STOCK IN PANTRY tap actually
+  // persists the row (via addScannedItems sans draftMode). DISCARD /
+  // close clears the draft with no DB write.
+  const [draftItem, setDraftItem] = useState(null);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -5317,6 +5363,57 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     // Null-safe: legacy rows may have null category/name fields.
     const matchesSearch = (text) => !q || (text && String(text).toLowerCase().includes(q));
 
+    // Canonical-aware match for an item. Used to hit rows the user
+    // typed a canonical name for even when item.name is the OFF
+    // productName ("Pepsi" matching a search for "soda pop" because
+    // the canonical is soda_pop). Walks: item.name, item.category,
+    // canonicalId slug (humanized), canonical's display name /
+    // shortName from the registry, user-created canonical's
+    // display_name from ingredient_info, brand, each ingredientId
+    // tag's display name. Any hit counts.
+    const itemMatchesSearch = (item) => {
+      if (!q) return true;
+      if (matchesSearch(item.name)) return true;
+      if (matchesSearch(item.category)) return true;
+      if (matchesSearch(item.brand)) return true;
+      // scanRaw carries the ORIGINAL product text from the scan
+      // ("Pepsi Zero Sugar"), which persists even if name later gets
+      // derived to something shorter. Lets users find items by the
+      // words they saw on the package.
+      if (matchesSearch(item.scanRaw)) return true;
+      // Claims and flavor from attributes — scans stamp these (e.g.
+      // SCOOPS, ORIGINAL). User might search by the variant word
+      // ("original") rather than the full product name.
+      if (item.attributes) {
+        const claims = Array.isArray(item.attributes.claims) ? item.attributes.claims : [];
+        if (claims.some(c => matchesSearch(c))) return true;
+        const flavor = Array.isArray(item.attributes.flavor) ? item.attributes.flavor : [];
+        if (flavor.some(f => matchesSearch(f))) return true;
+      }
+      const canonId = item.canonicalId || item.ingredientId;
+      if (canonId) {
+        if (matchesSearch(canonId)) return true;
+        if (matchesSearch(String(canonId).replace(/_/g, " "))) return true;
+        const canon = findIngredient(canonId);
+        if (canon) {
+          if (matchesSearch(canon.name)) return true;
+          if (matchesSearch(canon.shortName)) return true;
+        }
+        const dbInfo = kitchenDbMap?.[canonId];
+        if (matchesSearch(dbInfo?.display_name)) return true;
+      }
+      if (Array.isArray(item.ingredientIds)) {
+        for (const tagId of item.ingredientIds) {
+          if (!tagId) continue;
+          if (matchesSearch(tagId)) return true;
+          if (matchesSearch(String(tagId).replace(/_/g, " "))) return true;
+          const tag = findIngredient(tagId);
+          if (tag && (matchesSearch(tag.name) || matchesSearch(tag.shortName))) return true;
+        }
+      }
+      return false;
+    };
+
     const groups = new Map(); // hubId → { hub, items }
     const loose = [];
 
@@ -5352,7 +5449,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     const out = [];
     for (const { hub, items } of groups.values()) {
       const hubMatches = matchesSearch(hub.name);
-      const matchedItems = items.filter(i => matchesSearch(i.name));
+      const matchedItems = items.filter(itemMatchesSearch);
       if (hubMatches || matchedItems.length > 0) {
         // When the hub name matches, include all items; otherwise just matches.
         const shown = hubMatches ? items : matchedItems;
@@ -5380,7 +5477,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
     for (const item of loose) {
-      if (matchesSearch(item.name) || matchesSearch(item.category)) {
+      if (itemMatchesSearch(item)) {
         out.push({ type: "item", item });
       }
     }
@@ -5394,6 +5491,20 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // sort it out in the UI. Last-paid priceCents is always overwritten with
   // the freshest receipt price.
   const addScannedItems = async (items, meta = {}) => {
+    // Draft-mode short-circuit for single-item barcode scans. The
+    // scanner used to pass `autoOpenFirst: true` and we'd insert +
+    // open ItemCard on the persisted row — meaning a mis-scanned
+    // item was already in the pantry by the time the user saw it.
+    // Now the scanner passes `draftMode: true`, we stash the built
+    // row as a draft, and render an ItemCard that only commits via
+    // STOCK IN PANTRY. Keeps CLAIMS (SCOOPS / ORIGINAL etc.) on the
+    // row untouched — the same row shape flows through to the
+    // eventual insert when the user confirms.
+    if (meta.draftMode && items?.length === 1) {
+      setDraftItem(items[0]);
+      return;
+    }
+
     // Persist the receipt FIRST (and await it) so the DB-side suppression
     // window in notify_family_pantry() is open before the per-item pantry
     // inserts land. Otherwise a 12-item receipt would fan out 12 individual
@@ -5762,6 +5873,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           // scan_raw also takes last-wins — most recent scan's read is
           // what the user is currently verifying.
           if (s.scanRaw) ex.scanRaw = s.scanRaw;
+          // Union scan-derived attributes (origins / certifications /
+          // flavor / product claims like ORIGINAL / SCOOPS) into the
+          // existing row. Missing this step dropped the fresh scan's
+          // claims on every merge — a re-scan of the same UPC would
+          // keep the existing pill row but silently discard any new
+          // claims OFF surfaced this session.
+          if (s.attributes) {
+            ex.attributes = mergeAttributes(ex.attributes || null, s.attributes);
+          }
         } else {
           addedCount++;
           console.log("[ramen-debug] 6/pantry-row-push", {
@@ -6031,9 +6151,46 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // lowThreshold also dropped out of auto-recompute; it's derived at
   // add-time in AddItemModal and stays stable after unless the user
   // edits it explicitly.
+  // Derive a display name from identity axes. "[Brand] [Canonical]"
+  // when both are set, canonical alone when no brand, brand alone
+  // when no canonical, otherwise a humanized slug fallback, otherwise
+  // the raw scan text. Keeps name + search + the ItemCard header in
+  // lockstep so correcting a canonical reshapes the row end-to-end.
+  const deriveItemName = (merged) => {
+    const canonId = merged.canonicalId || merged.ingredientId || null;
+    const canon = canonId ? findIngredient(canonId) : null;
+    const canonName = canon?.shortName || canon?.name
+      || (canonId ? String(canonId).replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()) : "");
+    const brand = (merged.brand || "").trim();
+    if (brand && canonName) return `${brand} ${canonName}`;
+    if (canonName) return canonName;
+    if (brand) return brand;
+    if (merged.scanRaw) return String(merged.scanRaw);
+    return merged.name || "Item";
+  };
+
+  // Whenever a patch touches the identity axes (canonicalId, brand,
+  // or the composition tags ingredientIds), rewrite `name` so the
+  // row's stored name reflects the new identity. User's explicit
+  // name override (typed into the inline rename input) wins — if
+  // the patch ALREADY sets name, we respect it and don't clobber.
+  //
+  // Motivation: the scanner stamps name from OFF's productName
+  // ("ZERO SUGAR" on a Pepsi), then the user corrects the canonical
+  // to soda_pop — without this, the row still reads "ZERO SUGAR" to
+  // the search index and the row feels disconnected from its actual
+  // identity. Per user spec: "update canonical update brand ...
+  // update name."
+  const IDENTITY_KEYS = new Set(["canonicalId", "ingredientId", "ingredientIds", "brand"]);
   const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
     if (p.id !== id) return p;
-    return { ...p, ...patch };
+    const merged = { ...p, ...patch };
+    const touchesIdentity = Object.keys(patch).some(k => IDENTITY_KEYS.has(k));
+    const userSetName = Object.prototype.hasOwnProperty.call(patch, "name");
+    if (touchesIdentity && !userSetName) {
+      merged.name = deriveItemName(merged);
+    }
+    return merged;
   }));
 
   // Render one pantry-item row. Used both for standalone items and for items
@@ -6070,7 +6227,30 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         style={{ background:"#141414", border:`1px solid ${isCritical(item)?"#ef444422":isLow(item)?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor: tappable ? "pointer" : "default" }}
       >
         <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-          <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>
+          {(() => {
+            // Row-level canonical image resolver. Matches ItemCard's
+            // rule — bundled /icons/<slug>.svg wins, then the admin-
+            // generated info.imageUrl, then fall back to the emoji.
+            // List rows are tighter than the hero (32px), but the
+            // prompt is tuned for 24px readability so the icon still
+            // lands clean. Pantry tiles (Kitchen tile grid) are a
+            // DIFFERENT surface with hand-curated emoji; this is the
+            // flat-list + search-result renderer only.
+            const lookupId = item.canonicalId || item.ingredientId || null;
+            const canonImage = lookupId
+              ? canonicalImageUrlFor(lookupId, kitchenDbMap?.[lookupId])
+              : null;
+            if (canonImage) {
+              return (
+                <img
+                  src={canonImage}
+                  alt=""
+                  style={{ width: 32, height: 32, objectFit: "contain", flexShrink: 0 }}
+                />
+              );
+            }
+            return <span style={{ fontSize:26, flexShrink:0 }}>{item.emoji}</span>;
+          })()}
           <div style={{ flex:1, minWidth:0 }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
               <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
@@ -6554,7 +6734,25 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           style={{ position:"relative", background:"#141414", border:`1px solid ${anyCritical?"#ef444422":anyLow?"#f59e0b22":"#1e1e1e"}`, borderRadius:14, padding:"14px 16px", cursor:"pointer" }}
         >
           <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:10 }}>
-            <span style={{ fontSize:26, flexShrink:0 }}>{top.emoji}</span>
+            {(() => {
+              // Stack top-card icon — same resolver as single-item
+              // rows so a stacked pile of Pepsis uses the soda_pop
+              // canonical image instead of the raw emoji.
+              const lookupId = top.canonicalId || top.ingredientId || null;
+              const canonImage = lookupId
+                ? canonicalImageUrlFor(lookupId, kitchenDbMap?.[lookupId])
+                : null;
+              if (canonImage) {
+                return (
+                  <img
+                    src={canonImage}
+                    alt=""
+                    style={{ width: 32, height: 32, objectFit: "contain", flexShrink: 0 }}
+                  />
+                );
+              }
+              return <span style={{ fontSize:26, flexShrink:0 }}>{top.emoji}</span>;
+            })()}
             <div style={{ flex:1, minWidth:0 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
                 <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6, minWidth:0 }}>
@@ -6993,7 +7191,17 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                       onMouseOut={e =>  { e.currentTarget.style.borderColor = empty ? "#1a1a1a" : "#242424"; }}
                     >
                       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                        <span style={{ fontSize: 30 }}>{tile.emoji}</span>
+                        {(() => {
+                          // STORED IN tile icon — bundled SVG at
+                          // public/icons/tiles/<tile_id>.svg wins
+                          // when registered in BUNDLED_TILE_SLUGS;
+                          // emoji fallback otherwise.
+                          const tileIcon = tileIconFor(tile.id, storageTab);
+                          if (tileIcon) {
+                            return <img src={tileIcon} alt="" style={{ width: 36, height: 36, objectFit: "contain" }} />;
+                          }
+                          return <span style={{ fontSize: 30 }}>{tile.emoji}</span>;
+                        })()}
                         <span style={{
                           fontFamily:"'DM Mono',monospace",
                           fontSize: 10,
@@ -7051,7 +7259,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 >←</button>
                 <div style={{ flex:1, minWidth: 0 }}>
                   <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                    <span style={{ fontSize: 22 }}>{tile.emoji}</span>
+                    {(() => {
+                      const tileIcon = tileIconFor(tile.id, storageTab);
+                      if (tileIcon) {
+                        return <img src={tileIcon} alt="" style={{ width: 28, height: 28, objectFit: "contain" }} />;
+                      }
+                      return <span style={{ fontSize: 22 }}>{tile.emoji}</span>;
+                    })()}
                     <div style={{ fontFamily:"'Fraunces',serif", fontSize: 20, color:"#f0ece4", fontWeight: 400 }}>
                       {tile.label}
                     </div>
@@ -7313,6 +7527,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         if (!fresh) return null;
         return (
           <ItemCard
+            // See draftItem card below — same remount-on-id-change
+            // defense so pendingChanges from a prior open row don't
+            // bleed into the next one when the user closes without
+            // applying and opens a different item.
+            key={fresh.id}
             item={fresh}
             pantry={pantry}
             userId={userId}
@@ -7356,6 +7575,38 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           />
         );
       })()}
+      {draftItem && (
+        <ItemCard
+          // Key by draft id so a back-to-back barcode scan (user
+          // dismisses one draft mid-edit and scans something else)
+          // forces React to remount the card. Without this, the
+          // previous draft's pendingChanges bleed into the new
+          // draft — ItemCard's internal pendingChanges state sticks
+          // around with the old brand / claims and the merged `item`
+          // shows stale values (e.g. milk draft reading as
+          // "Tostitos" brand from a prior Scoops edit).
+          key={draftItem.id}
+          item={draftItem}
+          pantry={pantry}
+          userId={userId}
+          isAdmin={isAdmin}
+          familyIds={familyIds}
+          isDraft
+          onUpdate={(patch) => setDraftItem(prev => prev ? { ...prev, ...patch } : prev)}
+          onEditTags={() => setLinkingItem(draftItem)}
+          onStock={(finalDraft) => {
+            // Commit the draft as if it were a fresh scan row —
+            // reusing addScannedItems keeps the merge-on-existing,
+            // expiration-estimate, receipt-line-index, and toast
+            // paths all consistent with the pre-draft flow. No
+            // draftMode / autoOpenFirst this time so it actually
+            // lands in pantry.
+            setDraftItem(null);
+            addScannedItems([finalDraft], { store: null, date: null, totalCents: null });
+          }}
+          onClose={() => setDraftItem(null)}
+        />
+      )}
       {stackDrilldown && (() => {
         // Re-compute the bucket from the live pantry so add/remove
         // edits inside the drilldown update the list without a close
@@ -7498,6 +7749,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           fallbackName={cardIng.fallbackName}
           fallbackEmoji={cardIng.fallbackEmoji}
           pantry={pantry}
+          isAdmin={isAdmin}
+          userId={userId}
           onClose={() => setCardIng(null)}
         />
       )}

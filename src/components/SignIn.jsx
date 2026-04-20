@@ -27,7 +27,17 @@ export default function SignIn() {
     setErrorMsg("");
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: window.location.origin },
+      options: {
+        redirectTo: window.location.origin,
+        // Force Google to show the account picker every time instead
+        // of silently re-auth'ing the most recent account. Critical
+        // for users who run multiple Google identities (testing
+        // family-share flows with two accounts on the same device,
+        // sign-out → swap-account, etc.). Without `prompt`, Google
+        // SSO returns the cached session and the app loops back into
+        // the same identity.
+        queryParams: { prompt: "select_account" },
+      },
     });
     if (error) {
       setErrorMsg(error.message);

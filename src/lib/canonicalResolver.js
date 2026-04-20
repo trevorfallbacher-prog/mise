@@ -264,9 +264,36 @@ export function resolveCanonicalFromScan({
   // "pasta" canonical. Previously auto-applied; now surfaces the
   // suggestion card so the user can confirm or pick the correct
   // specific canonical.
+  // OFF category tags that are CLASSIFICATIONS rather than ingredient
+  // identities. Feeding these into fuzzyMatchIngredient produces
+  // false-positive hits — "sugary-drinks" fuzzes to the `sugar`
+  // canonical because the prefix overlaps heavily; "salty-snacks"
+  // would fuzz to `salt`; "plant-based-foods" to... no good match.
+  // None of these are what the user means when they scan a Pepsi /
+  // a bag of chips / a block of tofu. Skip the tag entirely; the
+  // resolver falls through to productName / brand / Claude prompts.
+  //
+  // Add to the set when you notice a new OFF tag producing weird
+  // canonical triage. The rule: tags that describe WHAT KIND of
+  // food (beverage / snack / condiment) rather than WHAT it is.
+  const CLASSIFICATION_TAGS = new Set([
+    "sugary-drinks", "sugary-snacks", "sugary-foods",
+    "salty-snacks", "savory-snacks",
+    "fatty-foods", "ultra-processed-foods", "processed-foods",
+    "plant-based-foods", "plant-based-beverages",
+    "beverages", "drinks", "soft-drinks", "sodas", "carbonated-drinks",
+    "alcoholic-beverages",
+    "snacks", "sweet-snacks", "desserts", "confectioneries",
+    "frozen-foods", "canned-foods",
+    "breakfasts", "meals", "dishes",
+    "sauces", "condiments", "seasonings",
+    "dairies", "dairy-desserts",
+  ]);
+
   const tagList = Array.isArray(categoryHints) ? categoryHints : [];
   for (let i = 0; i < tagList.length; i++) {
     const tag = tagList[i];
+    if (!tag || CLASSIFICATION_TAGS.has(String(tag).toLowerCase())) continue;
     const phrase = tagToPhrase(tag);
     if (!phrase) continue;
     const hit = bestMatchAboveFloor(phrase, 70);
@@ -836,8 +863,91 @@ export function parseProductClaims(productName) {
   return out;
 }
 
+// Union a fresh attribute blob onto whatever the row already carries.
+// Origins / flavor / claims union by case-insensitive value;
+// certifications union by id. Used both at scan-row build time and
+// on merge into an existing pantry row (so claims like 'ORIGINAL' /
+// 'SCOOPS' survive a re-scan of the same UPC instead of getting
+// wiped by the merge path).
+export function mergeAttributes(existing, incoming) {
+  if (!incoming) return existing || null;
+  if (!existing) return incoming;
+  const out = { ...existing };
+  for (const key of ["origins", "flavor", "claims"]) {
+    const merged = [...(existing[key] || []), ...(incoming[key] || [])];
+    const seen = new Set();
+    const deduped = [];
+    for (const v of merged) {
+      const k = String(v || "").toLowerCase();
+      if (!k || seen.has(k)) continue;
+      seen.add(k);
+      deduped.push(v);
+    }
+    if (deduped.length > 0) out[key] = deduped;
+  }
+  if (existing.certifications || incoming.certifications) {
+    const seen = new Set();
+    const merged = [];
+    for (const cert of [...(existing.certifications || []), ...(incoming.certifications || [])]) {
+      if (!cert || !cert.id || seen.has(cert.id)) continue;
+      seen.add(cert.id);
+      merged.push(cert);
+    }
+    if (merged.length > 0) out.certifications = merged;
+  }
+  return out;
+}
+
+// Generic English connectives and articles that are never a product
+// claim. Kept tight — anything substantive (even noisy marketing
+// words like 'original' / 'classic' / 'scoops') survives into claims
+// because the whole point of residual extraction is to catch
+// sub-line names the keyword whitelist can't predict.
+const RESIDUAL_NOISE = new Set([
+  "the", "and", "or", "of", "with", "for", "in", "on", "by",
+  "from", "to", "at", "a", "an", "our", "your", "new",
+]);
+
+// Pull product-line claims out of whatever text remains after the
+// brand and canonical name are stripped from the raw OFF productName.
+// Rule: brand = Tostitos, canonical = Tortilla Chips → residual from
+// "Tostitos Original Scoops Tortilla Chips" is ["Original", "Scoops"].
+// Complements the keyword-whitelist path (parseProductClaims) so we
+// don't miss sub-line names nobody's hand-curated yet.
+export function residualClaimsFromName(productName, brand, canonicalName) {
+  if (!productName || typeof productName !== "string") return [];
+  let out = productName.toLowerCase();
+  out = out.replace(UNIT_WITH_NUMBER_RE, " ");
+  out = out.replace(/[^a-z0-9 ]+/g, " ");
+  const tokens = out.split(/\s+/).filter(t => t.length >= 2);
+  const strip = new Set();
+  for (const t of brandTokens(brand)) strip.add(t);
+  if (canonicalName) {
+    String(canonicalName)
+      .toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .split(/\s+/)
+      .forEach(t => { if (t.length >= 2) strip.add(t); });
+  }
+  const seen = new Set();
+  const kept = [];
+  for (const t of tokens) {
+    if (strip.has(t)) continue;
+    if (RESIDUAL_NOISE.has(t)) continue;
+    if (/^\d+$/.test(t)) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    // Title-case for display: "scoops" → "Scoops"
+    kept.push(t.charAt(0).toUpperCase() + t.slice(1));
+  }
+  return kept;
+}
+
 export function buildAttributesFromScan({
   productName   = null,
+  genericName   = null,
+  brand         = null,
+  canonicalName = null,
   categoryHints = [],
   originTags    = [],
   countryTags   = [],
@@ -846,7 +956,40 @@ export function buildAttributesFromScan({
   const origins         = parseOrigins(originTags, countryTags);
   const certifications  = parseCertifications(labelTags);
   const flavor          = parseFlavorVariant(productName, categoryHints);
-  const claims          = parseProductClaims(productName);
+  // Sub-line names like 'Scoops' and 'Original' often appear in
+  // generic_name, labels_tags, or brands rather than product_name —
+  // OFF's product_name for a Tostitos Scoops Original UPC can come
+  // back as bare "Tostitos Tortilla Chips" while the sub-brand lives
+  // in brands ("Tostitos Scoops!") and the variant in labels_tags.
+  // Concatenate every text source into one haystack so
+  // parseProductClaims picks them up regardless of which OFF field
+  // carries the signal.
+  const claimHay = [
+    productName,
+    genericName,
+    brand,
+    ...(Array.isArray(labelTags) ? labelTags : []),
+    ...(Array.isArray(categoryHints) ? categoryHints : []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/[-_]/g, " ");
+  const whitelist = parseProductClaims(claimHay);
+  // Residual path: anything in the raw productName (or genericName
+  // fallback) that ISN'T the brand or the canonical name is almost
+  // certainly a product-line claim. Catches SCOOPS / ORIGINAL /
+  // CANTINA-style sub-lines without needing them on a whitelist.
+  // Union with the whitelist; dedupe case-insensitive, preserve the
+  // first display casing seen.
+  const residual = residualClaimsFromName(productName || genericName, brand, canonicalName);
+  const seen = new Set();
+  const claims = [];
+  for (const c of [...residual, ...whitelist]) {
+    const k = String(c || "").toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    claims.push(c);
+  }
   const out = {};
   if (origins.length > 0)        out.origins        = origins;
   if (certifications.length > 0) out.certifications = certifications;

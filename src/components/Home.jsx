@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { useActivityFeed } from "../lib/useActivityFeed";
 import { useBadges } from "../lib/useBadges";
-import { useCookLog } from "../lib/useCookLog";
 import { pickGreeting } from "../lib/greetings";
 import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
 
@@ -34,9 +33,13 @@ function avatarColor(name) {
 /**
  * Home — social-first. Bands top-to-bottom:
  *
- *   1. Greeting + streak — same warmth as before.
- *   2. Personal stats strip — XP / cooks / badges / streak. Tap any tile
- *      to open your own profile (same overlay the cookbook surfaces use).
+ *   1. Top bar — mise wordmark (opens profile), streak chip, profile
+ *      avatar (primary profile entry). The old XP / cooks / badges /
+ *      streak stats strip lived here; it got pulled because every
+ *      number it surfaced already lives on the profile screen (Quick
+ *      Stats band + Nutrition dashboard), so Home was duplicating
+ *      the profile's own summary and felt like a dashboard clone.
+ *   2. Greeting — large italic serif, rolled per-mount from greetings.
  *   3. YOUR CIRCLE activity feed — cooks and badge earns from self +
  *      accepted family, time-ordered. Cook rows tap into the Cookbook
  *      detail via the existing deep-link rail; badge rows tap into the
@@ -44,7 +47,7 @@ function avatarColor(name) {
  *   4. Profile pill — diet/level/goal snapshot at the bottom.
  *
  * Courses aren't here yet — when we start that work it slots between
- * stats and the feed as a pinned row.
+ * the greeting and the feed as a pinned row.
  */
 export default function Home({
   profile, userId, familyIds = [], familyLoading = false, nameFor,
@@ -63,14 +66,11 @@ export default function Home({
     [profile.name, userId]
   );
 
-  // Self stats — computed on read the same way UserProfile does it,
-  // since the profiles.total_xp column isn't being maintained yet.
-  const cookHook  = useCookLog(userId);
-  const badges    = useBadges(userId);
-  const xpTotal   = useMemo(
-    () => cookHook.logs.reduce((n, c) => n + (c.xpEarned || 0), 0),
-    [cookHook.logs]
-  );
+  // Badges catalog powers the activity feed's badge-earn rows.
+  // useCookLog + xpTotal were dropped alongside the old stats strip —
+  // the user's XP / cook count already lives on the profile screen,
+  // and rendering it twice made Home feel like a dashboard clone.
+  const badges = useBadges(userId);
 
   // Feed runs across self + family. Friends stay out by design.
   const feed = useActivityFeed(userId, familyIds, 20);
@@ -98,14 +98,27 @@ export default function Home({
             mise
           </span>
         </button>
-        {streak > 0 && (
-          <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "4px 10px", display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 12 }}>🔥</span>
-            <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#f5c842" }}>
-              {streak} day{streak === 1 ? "" : "s"}
-            </span>
-          </div>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {streak > 0 && (
+            <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "4px 10px", display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12 }}>🔥</span>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#f5c842" }}>
+                {streak} day{streak === 1 ? "" : "s"}
+              </span>
+            </div>
+          )}
+          {/* Profile avatar — primary visual entry point to your own
+              profile from Home. Replaces the old XP / COOKS / 🏅 / 🔥
+              stats strip: all of that data already lives on your
+              profile (Quick Stats band + Nutrition dashboard), so
+              surfacing it twice made Home feel like a dashboard
+              clone instead of a standalone screen. */}
+          <Avatar
+            name={profile.name}
+            initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
+            onClick={openSelf}
+          />
+        </div>
       </div>
 
       {/* Hero greeting — large italic serif. Rolled per-mount from the
@@ -135,35 +148,6 @@ export default function Home({
           {greeting.text}
         </h1>
       </div>
-
-      {/* Personal stats strip — 4 tiles, whole strip opens your profile */}
-      <button
-        onClick={openSelf}
-        style={{
-          display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8,
-          width: "calc(100% - 40px)", margin: "18px 20px 0", padding: 0,
-          background: "transparent", border: "none", cursor: "pointer",
-        }}
-      >
-        {[
-          { value: xpTotal,                         label: "XP",     color: "#f5c842" },
-          { value: cookHook.logs.length,            label: "COOKS"                     },
-          { value: badges.earnedList.length,        label: "🏅",     color: "#f5c842" },
-          { value: streak,                          label: "🔥",     color: "#e07a3a" },
-        ].map((s, i) => (
-          <div
-            key={i}
-            style={{ background: "#161616", border: "1px solid #2a2a2a", borderRadius: 12, padding: "12px 4px", textAlign: "center" }}
-          >
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 20, color: s.color || "#f0ece4", fontWeight: 500 }}>
-              {s.value}
-            </div>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", marginTop: 2 }}>
-              {s.label}
-            </div>
-          </div>
-        ))}
-      </button>
 
       {/* YOUR CIRCLE activity feed */}
       <div style={{ padding: "28px 20px 0" }}>

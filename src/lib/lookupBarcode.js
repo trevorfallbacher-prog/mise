@@ -52,18 +52,46 @@ export async function lookupBarcode(barcode, { brandNutritionRows = [] } = {}) {
     return { found: false, barcode: normalized, reason: "invalid_barcode" };
   }
 
-  // 1. Cache check — brand_nutrition has a barcode column (indexed
-  //    where not null) that Phase 3 populates on every OFF hit. If
-  //    the user's household, or any other user, has already scanned
-  //    this UPC, we short-circuit. This makes the second-and-beyond
-  //    scan of the same product instant.
   const cached = (brandNutritionRows || []).find(r => r.barcode === normalized);
+
+  // Always hit OFF for the text fields. The brand_nutrition cache
+  // doesn't carry productName / genericName / labels_tags / etc., so
+  // returning from cache alone leaves claim extraction (SCOOPS,
+  // ORIGINAL, …) with null input. When OFF comes back, we use its
+  // text and fall back to cached nutrition if OFF is missing it.
+  const { data, error } = await supabase.functions.invoke("lookup-barcode", {
+    body: { barcode: normalized },
+  });
+
+  console.log("[lookup-barcode] edge-fn result", {
+    barcode: normalized,
+    hasError: !!error,
+    errorMessage: error?.message,
+    errorStatus: error?.context?.status ?? null,
+    dataFound: data?.found,
+    dataReason: data?.reason,
+    dataProductName: data?.productName,
+    willFallBackToCache: !!(error || !data?.found) && !!cached,
+  });
+
+  if (!error && data && data.found) {
+    // Merge: OFF provides fresh text, cache can top up nutrition if
+    // OFF didn't have it (older OFF entries without nutriments).
+    return {
+      ...data,
+      nutrition: data.nutrition || cached?.nutrition || {},
+      cached: false,
+    };
+  }
+
+  // OFF failed. Fall back to the cached row if we have one — better
+  // to surface the nutrition we know than a hard error.
   if (cached) {
     return {
       found:         true,
       barcode:       normalized,
       brand:         cached.displayBrand || null,
-      productName:   null,                    // not carried on brand_nutrition — OFF-only field
+      productName:   null,
       categoryHints: [],
       nutrition:     cached.nutrition || {},
       source:        cached.source || "cache",
@@ -74,15 +102,8 @@ export async function lookupBarcode(barcode, { brandNutritionRows = [] } = {}) {
     };
   }
 
-  // 2. Network fallback — hit the edge function.
-  const { data, error } = await supabase.functions.invoke("lookup-barcode", {
-    body: { barcode: normalized },
-  });
+  // OFF failed and no cache — surface a structured error for the UI.
   if (error) {
-    // supabase-js wraps the upstream Response in error.context.
-    // Extract the detail for a readable error surface + pass through
-    // so the caller can distinguish "edge fn not deployed" (404) from
-    // "edge fn threw" (500) from "network broken" (no status).
     let detail = "";
     let status = null;
     const ctx = error.context;
@@ -93,10 +114,8 @@ export async function lookupBarcode(barcode, { brandNutritionRows = [] } = {}) {
       }
     }
     console.error("[lookup-barcode] edge fn failed:", { message: error.message, status, detail });
-    // 404 from supabase usually means the function is not deployed;
-    // flag that distinctly so the UI can tell the user what to do.
     const reason = status === 404 ? "edge_fn_not_deployed" : "fetch_failed";
     return { found: false, barcode: normalized, reason, status, detail: detail || error.message };
   }
-  return { ...data, cached: false };
+  return { ...(data || { found: false, barcode: normalized }), cached: false };
 }

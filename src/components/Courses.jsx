@@ -9,6 +9,9 @@ import {
   totalTimeMin,
 } from "../data/recipes";
 import { SKILL_TREE } from "../data";
+import { recipeNutrition, formatMacros } from "../lib/nutrition";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useBrandNutrition } from "../lib/useBrandNutrition";
 
 // A course is a LEARN-route recipe whose unlock gate is driven by the
 // user's skill levels. The Courses tab surfaces two things stacked:
@@ -75,8 +78,21 @@ function SkillTile({ skill, onTap, active }) {
   );
 }
 
-function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
+function RecipeCard({ recipe, locked, lockReasons, onOpen, pantry = [], ingredientInfo, brandNutrition }) {
   const bars = difficultyBar(recipe.difficulty);
+  // Per-serving macros rollup. Falls back through pantry override →
+  // brand_nutrition → ingredient_info → bundled canonical.nutrition,
+  // so even a recipe on a row with zero scanned brands still shows
+  // defaults from src/data/ingredients.js. Compact format here —
+  // '500 kcal · 12p · 68c · 25f' — tight enough to sit on the same
+  // line as the prep time. Null when coverage is zero.
+  const macros = useMemo(() => {
+    const n = recipeNutrition(recipe, { pantry, getInfo: ingredientInfo?.getInfo, brandNutrition });
+    if (!n.coverage.resolved) return null;
+    const kcal = Math.round(n.perServing?.kcal || 0);
+    if (kcal <= 0) return null;
+    return formatMacros(n.perServing);
+  }, [recipe, pantry, ingredientInfo, brandNutrition]);
   return (
     <button
       onClick={locked ? undefined : onOpen}
@@ -121,6 +137,19 @@ function RecipeCard({ recipe, locked, lockReasons, onOpen }) {
               {difficultyLabel(recipe.difficulty).toUpperCase()}
             </span>
           </div>
+          {/* Per-serving macros line — compact 'kcal · p · c · f'
+              shape. Only rendered when resolver returned real numbers;
+              a row of zeros on an untracked recipe reads as broken. */}
+          {macros && (
+            <div style={{
+              marginTop: 6,
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              color: locked ? "#444" : "#8a8478",
+              letterSpacing: "0.06em",
+            }}>
+              {macros}
+            </div>
+          )}
           {locked && lockReasons.length > 0 && (
             <div style={{ marginTop: 8, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#e07a3a", letterSpacing: "0.04em" }}>
               Requires {lockReasons.map(g => `${g.skill} ${g.need}`).join(", ")}
@@ -146,6 +175,16 @@ export default function Courses({
   const skillLevels = profile?.skill_levels || {};
   const { schedule } = useScheduledMeals(userId);
   const userName = profile?.name?.trim().split(/\s+/)[0];
+
+  // Nutrition context for every RecipeCard's calorie chip. Shared here
+  // so the resolver hits the brand_nutrition + ingredient_info cache
+  // once for the whole list instead of per-card.
+  const ingredientInfo = useIngredientInfo();
+  const { get: getBrandNutrition } = useBrandNutrition();
+  const brandNutrition = useMemo(
+    () => ({ get: (k) => getBrandNutrition?.(k) || null }),
+    [getBrandNutrition],
+  );
 
   const skills = useMemo(
     () => SKILL_TREE.map(s => ({ ...s, level: skillLevels[s.id] ?? 0 })),
@@ -306,6 +345,9 @@ export default function Courses({
                     locked={locked}
                     lockReasons={gaps}
                     onOpen={() => setOpenRecipe(r)}
+                    pantry={pantry}
+                    ingredientInfo={ingredientInfo}
+                    brandNutrition={brandNutrition}
                   />
                 );
               })}

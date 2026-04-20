@@ -26,7 +26,13 @@ import { registerCanonicalsFromDb } from "../data/ingredients";
 //   * Package chip row resolution — reads `packaging` directly, so
 //     stubs-with-packaging still surface chips (the chip UI only
 //     needs routing data, not enrichment).
-const ROUTING_KEYS = new Set(["_meta", "packaging", "parentId", "display_name", "emoji", "category"]);
+// imageUrl is an asset-identity axis (Recraft-generated image), not
+// descriptive content. Keeping it here ensures isMeaningfullyEnriched
+// still returns false for a canonical whose info has only an image
+// and no description/storage/nutrition — otherwise the "+ ADD AI
+// ENRICHMENT" button would disappear and users couldn't complete the
+// text enrichment after generating an image.
+const ROUTING_KEYS = new Set(["_meta", "packaging", "parentId", "display_name", "emoji", "category", "imageUrl"]);
 
 export function isMeaningfullyEnriched(info) {
   if (!info || typeof info !== "object") return false;

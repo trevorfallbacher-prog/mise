@@ -15,6 +15,7 @@ import {
   parseStateFromText,
   stateForCanonical,
   buildAttributesFromScan,
+  mergeAttributes,
 } from "../lib/canonicalResolver";
 import { useToast } from "../lib/toast";
 import { usePopularPackages } from "../lib/usePopularPackages";
@@ -32,6 +33,7 @@ import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
 import { pantryItemNutrition, formatMacros, sourceBadge } from "../lib/nutrition";
+import { canonicalImageUrlFor } from "../lib/canonicalIcons";
 import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 
 // ItemCard — card for a SPECIFIC pantry item.
@@ -147,7 +149,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose, isDraft = false, onStock }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -246,8 +248,31 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // INSIDE the thing — lives on ingredient_ids[]).
   const currentCanonical = useMemo(() => {
     if (!item?.canonicalId) return null;
-    return findIngredient(item.canonicalId);
-  }, [item?.canonicalId]);
+    const real = findIngredient(item.canonicalId);
+    if (real) return real;
+    // Synthetic fallback. canonicalId set but the registry doesn't
+    // carry this slug (happens for UPC-correction-derived canonicals
+    // like 'tortilla_chips' that were taught by a prior scan but
+    // never promoted into src/data/ingredients.js). Mirror the stub
+    // shape the scan resolver builds at Kitchen.jsx:1099 so the
+    // canonical line renders with a humanized name instead of
+    // collapsing to item.name. Prevents the "canonical known but
+    // hidden" regression where the pantry row knows its tortilla_chips
+    // identity but the card looks like a free-text row.
+    const readable = String(item.canonicalId)
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase());
+    return {
+      id:          item.canonicalId,
+      name:        readable,
+      shortName:   readable,
+      emoji:       item.emoji || "✨",
+      category:    item.category || "pantry",
+      units:       [{ id: "count", label: "count", toBase: 1 }],
+      defaultUnit: "count",
+      _synthetic:  true,
+    };
+  }, [item?.canonicalId, item?.emoji, item?.category]);
 
   // Stacked type picker — separate from tilePicker so both can
   // exist but don't step on each other.
@@ -511,9 +536,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             ITEM
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-            <div style={{ fontSize: 40, flexShrink: 0 }}>{item.emoji || "🥫"}</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Header band: identity stack + canonical image, image
+              absolutely pinned to the top-right. Relative container
+              lets the image float without getting pushed down by
+              text flow; the identity stack reserves paddingRight so
+              its content doesn't run under the image. Width is sized
+              to roughly match the EXPIRES tile column below so the
+              icon reads as visually anchored over that column
+              without being physically attached to it. */}
+          <div style={{ position: "relative", marginBottom: 10 }}>
+            <div style={{ paddingRight: 116, minWidth: 0 }}>
               {/* + ADD BRAND affordance — only rendered when brand
                   is unset. Positioned ABOVE the big italic header so
                   we don't leave a weird empty slot inline when brand
@@ -933,6 +965,38 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 </div>
               )}
             </div>
+            {/* Canonical image — bundled SVG wins, then admin-
+                generated imageUrl, then pantry row's emoji. Pinned
+                top-right of the header band so it stays anchored
+                even as the identity stack grows. Width ~ EXPIRES
+                tile column below for visual alignment. objectFit
+                contain + no frame so the bare SVG breathes on the
+                card's own dark surface. */}
+            {(() => {
+              const lookupId = item.canonicalId || item.ingredientId || null;
+              const canonImage = lookupId
+                ? canonicalImageUrlFor(lookupId, getDbInfo(lookupId))
+                : null;
+              if (!canonImage && !item.emoji) return null;
+              return (
+                <div style={{
+                  position: "absolute", top: 0, right: 0,
+                  width: 104, height: 104,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  pointerEvents: "none",
+                }}>
+                  {canonImage ? (
+                    <img
+                      src={canonImage}
+                      alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 64, lineHeight: 1 }}>{item.emoji || "🥫"}</div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Canonical suggestion — renders after a brand scan when
@@ -941,11 +1005,35 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               + package size), DIFFERENT to clear it + open the
               canonical picker for manual selection. */}
           {/* Attribute pills band — origin, certifications, flavor
-              variants extracted from barcode scans or manually
-              entered. Neutral-tinted pills below the six colored
-              identity axes (per CLAUDE.md: metadata ride-along, not
-              a new reserved axis). Hidden when no attributes present. */}
-          <AttributePillsRow attributes={item.attributes} />
+              variants, product-line claims. Neutral-tinted pills
+              below the six colored identity axes (per CLAUDE.md:
+              metadata ride-along, not a new reserved axis). A
+              + CLAIM affordance is always shown in editable mode so
+              users can add tags like ORIGINAL / SCOOPS when OFF's
+              data for the UPC didn't surface them automatically. */}
+          <AttributePillsRow
+            attributes={item.attributes}
+            canEdit={!readOnly}
+            onAddClaim={(value) => {
+              const v = String(value || "").trim();
+              if (!v) return;
+              const prev = item.attributes || {};
+              const prevClaims = Array.isArray(prev.claims) ? prev.claims : [];
+              // De-dupe case-insensitive. Preserves the existing
+              // display casing on a repeat add ("Original" stays
+              // "Original", doesn't duplicate into "ORIGINAL").
+              if (prevClaims.some(c => String(c).toLowerCase() === v.toLowerCase())) return;
+              commit({ attributes: { ...prev, claims: [...prevClaims, v] } });
+            }}
+            onRemoveClaim={(value) => {
+              const prev = item.attributes || {};
+              const prevClaims = Array.isArray(prev.claims) ? prev.claims : [];
+              const nextClaims = prevClaims.filter(c => c !== value);
+              const nextAttrs = { ...prev, claims: nextClaims };
+              if (nextClaims.length === 0) delete nextAttrs.claims;
+              commit({ attributes: Object.keys(nextAttrs).length ? nextAttrs : null });
+            }}
+          />
 
           {canonicalSuggestion && (
             <CanonicalSuggestionCard
@@ -1932,6 +2020,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 fallbackName={item.name}
                 fallbackEmoji={embedFallbackEmoji}
                 pantry={pantry}
+                isAdmin={isAdmin}
+                userId={userId}
                 onClose={onClose}
                 embedded
                 preview
@@ -1995,6 +2085,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         <IngredientCard
           ingredientId={drilledIngredientId}
           pantry={pantry}
+          isAdmin={isAdmin}
+          userId={userId}
           onClose={() => setDrilledIngredientId(null)}
         />
       )}
@@ -2387,8 +2479,47 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           sub-pickers that open on top). Any sub-picker should cover
           this footer so its own content isn't clipped — previous
           zIndex: 350 let the footer bleed through a LinkIngredient
-          sheet and hide its + CREATE row. */}
-      {hasPending && (
+          sheet and hide its + CREATE row.
+
+          In DRAFT mode the bar is permanent (the draft row isn't in
+          pantry yet — nothing to "update", everything is pending by
+          definition) and the primary action becomes STOCK IN PANTRY.
+          STOCK commits the merged draft via onStock. DISCARD drops
+          the draft and closes the card (onClose). */}
+      {isDraft ? (
+        <div style={{
+          position: "fixed", bottom: 0, left: 0, right: 0, zIndex: Z.card + 1,
+          maxWidth: 480, margin: "0 auto",
+          padding: "10px 14px 14px",
+          background: "linear-gradient(180deg, rgba(10,10,10,0) 0%, rgba(10,10,10,0.97) 30%)",
+          display: "flex", gap: 8,
+        }}>
+          <button
+            onClick={() => { setPendingChanges({}); onClose?.(); }}
+            style={{
+              flex: 1, padding: "14px",
+              background: "#1a1a1a", border: "1px solid #2a2a2a",
+              color: "#888", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12,
+              letterSpacing: "0.1em", cursor: "pointer",
+            }}
+          >
+            DISCARD
+          </button>
+          <button
+            onClick={() => onStock?.(item)}
+            style={{
+              flex: 2, padding: "14px",
+              background: "#7ec87e", border: "none",
+              color: "#0a1a0a", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+              letterSpacing: "0.1em", cursor: "pointer",
+            }}
+          >
+            STOCK IN PANTRY
+          </button>
+        </div>
+      ) : hasPending && (
         <div style={{
           position: "fixed", bottom: 0, left: 0, right: 0, zIndex: Z.card + 1,
           maxWidth: 480, margin: "0 auto",
@@ -2613,6 +2744,9 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               // destructive.
               const scannedAttributes = buildAttributesFromScan({
                 productName:   res.productName,
+                genericName:   res.genericName,
+                brand:         res.brand,
+                canonicalName: currentCanonical?.name || currentCanonical?.shortName || null,
                 categoryHints: res.categoryHints || [],
                 originTags:    res.originTags  || [],
                 countryTags:   res.countryTags || [],
@@ -2753,19 +2887,34 @@ function looksReceiptGenerated(name) {
 }
 
 // Pills band rendering the row's attributes metadata — origins,
-// certifications, flavor variants. Same palette as the suggestion
-// card's metadata row so pills feel continuous across the scan
-// flow → saved row. Hidden when nothing to show.
-function AttributePillsRow({ attributes }) {
-  if (!attributes) return null;
-  const origins        = Array.isArray(attributes.origins)        ? attributes.origins        : [];
-  const certifications = Array.isArray(attributes.certifications) ? attributes.certifications : [];
-  const flavor         = Array.isArray(attributes.flavor)         ? attributes.flavor         : [];
-  const claims         = Array.isArray(attributes.claims)         ? attributes.claims         : [];
-  if (
+// certifications, flavor variants, product-line claims. Same palette
+// as the suggestion card's metadata row so pills feel continuous
+// across the scan flow → saved row.
+//
+// When canEdit is set, always renders (even with no existing pills)
+// and surfaces a + ADD CLAIM affordance so the user can tag things
+// like ORIGINAL / SCOOPS that OFF didn't surface for this UPC.
+// Tapping a claim pill removes it.
+function AttributePillsRow({ attributes, canEdit = false, onAddClaim, onRemoveClaim }) {
+  const origins        = Array.isArray(attributes?.origins)        ? attributes.origins        : [];
+  const certifications = Array.isArray(attributes?.certifications) ? attributes.certifications : [];
+  const flavor         = Array.isArray(attributes?.flavor)         ? attributes.flavor         : [];
+  const claims         = Array.isArray(attributes?.claims)         ? attributes.claims         : [];
+  const empty =
     origins.length === 0 && certifications.length === 0 &&
-    flavor.length === 0 && claims.length === 0
-  ) return null;
+    flavor.length === 0 && claims.length === 0;
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (empty && !canEdit) return null;
+
+  const submit = () => {
+    const v = draft.trim();
+    if (!v) { setAdding(false); setDraft(""); return; }
+    onAddClaim?.(v);
+    setAdding(false);
+    setDraft("");
+  };
+
   return (
     <div style={{
       marginBottom: 12,
@@ -2805,53 +2954,65 @@ function AttributePillsRow({ attributes }) {
           {f.toUpperCase()}
         </span>
       ))}
-      {claims.map((c) => (
-        <span key={`cl-${c}`} style={{
-          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
-          color: "#a8a8a8", background: "#171717",
-          border: "1px solid #2e2e2e",
-          padding: "3px 8px", borderRadius: 6,
-          letterSpacing: "0.06em",
-        }}>
-          {c.toUpperCase()}
-        </span>
-      ))}
+      {claims.map((c) => {
+        const removable = canEdit && typeof onRemoveClaim === "function";
+        return (
+          <span
+            key={`cl-${c}`}
+            onClick={removable ? () => onRemoveClaim(c) : undefined}
+            title={removable ? "Tap to remove" : undefined}
+            style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#a8a8a8", background: "#171717",
+              border: "1px solid #2e2e2e",
+              padding: "3px 8px", borderRadius: 6,
+              letterSpacing: "0.06em",
+              cursor: removable ? "pointer" : "default",
+            }}
+          >
+            {c.toUpperCase()}{removable ? " ×" : ""}
+          </span>
+        );
+      })}
+      {canEdit && (
+        adding ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={submit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter")   { e.preventDefault(); submit(); }
+              if (e.key === "Escape")  { setAdding(false); setDraft(""); }
+            }}
+            placeholder="SCOOPS"
+            style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#f0ece4", background: "#171717",
+              border: "1px solid #3a3a3a",
+              padding: "3px 8px", borderRadius: 6,
+              letterSpacing: "0.06em",
+              width: 90, outline: "none",
+              textTransform: "uppercase",
+            }}
+          />
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#666", background: "transparent",
+              border: "1px dashed #2e2e2e",
+              padding: "3px 8px", borderRadius: 6,
+              letterSpacing: "0.06em", cursor: "pointer",
+            }}
+          >
+            + CLAIM
+          </button>
+        )
+      )}
     </div>
   );
-}
-
-// Merge a scanned attribute blob into whatever the row already
-// carries. Origins / flavor get unioned (deduped by lowercase);
-// certifications get unioned (deduped by id). A second scan of the
-// same product is idempotent; a scan of a DIFFERENT product with
-// overlapping attributes adds without removing existing ones.
-function mergeAttributes(existing, incoming) {
-  if (!incoming) return existing || null;
-  if (!existing) return incoming;
-  const out = { ...existing };
-  for (const key of ["origins", "flavor", "claims"]) {
-    const merged = [...(existing[key] || []), ...(incoming[key] || [])];
-    const seen = new Set();
-    const deduped = [];
-    for (const v of merged) {
-      const k = String(v || "").toLowerCase();
-      if (!k || seen.has(k)) continue;
-      seen.add(k);
-      deduped.push(v);
-    }
-    if (deduped.length > 0) out[key] = deduped;
-  }
-  if (existing.certifications || incoming.certifications) {
-    const seen = new Set();
-    const merged = [];
-    for (const cert of [...(existing.certifications || []), ...(incoming.certifications || [])]) {
-      if (!cert || !cert.id || seen.has(cert.id)) continue;
-      seen.add(cert.id);
-      merged.push(cert);
-    }
-    if (merged.length > 0) out.certifications = merged;
-  }
-  return out;
 }
 
 // Brand chooser sheet button styles — shared between the two options

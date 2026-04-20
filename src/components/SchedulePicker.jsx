@@ -1,5 +1,59 @@
 import { useMemo, useState } from "react";
-import { totalTimeMin, difficultyLabel } from "../data/recipes";
+import { totalTimeMin, difficultyLabel, findRecipe } from "../data/recipes";
+import { scaleRecipe } from "../lib/recipeScaling";
+import { useScheduledMeals } from "../lib/useScheduledMeals";
+import { useUserRecipes } from "../lib/useUserRecipes";
+
+// Meal slots — the structural-time axis the user wanted in place of
+// (or alongside) raw HH:MM input. Default times per slot are
+// reasonable middle-of-the-window picks; the user can still override
+// via the TIME input below. Persisted on scheduled_meals.meal_slot
+// (migration 0069) so Plan can surface 'DINNER · Thu 6:30 PM' instead
+// of just 'Thu 6:30 PM'.
+const MEAL_SLOTS = [
+  { id: "breakfast", label: "Breakfast", emoji: "🥞", defaultTime: "08:00" },
+  { id: "lunch",     label: "Lunch",     emoji: "🥪", defaultTime: "12:30" },
+  { id: "dinner",    label: "Dinner",    emoji: "🍽️", defaultTime: "18:30" },
+];
+// Snack is NOT in the day-strip grid (keeps the grid to 3 clean rows).
+// Users who want to schedule a snack can pick via the optional time
+// override — snack falls out naturally from inferSlotFromTime. If
+// this becomes a frequent ask we expand the grid to 4 rows.
+const SNACK_SLOT = { id: "snack", label: "Snack", emoji: "🍎", defaultTime: "15:00" };
+const ALL_SLOTS = [...MEAL_SLOTS, SNACK_SLOT];
+
+// Infer a meal slot from an HH:MM string so the chip row lights up
+// correctly when the scheduler opens with a pre-set time.
+function inferSlotFromTime(timeStr) {
+  const [h] = (timeStr || "").split(":").map(Number);
+  if (!Number.isFinite(h)) return "dinner";
+  if (h < 10)  return "breakfast";
+  if (h < 14)  return "lunch";
+  if (h < 17)  return "snack";
+  return "dinner";
+}
+
+// Local-tz date key "YYYY-MM-DD" for bucketing scheduled meals.
+// Same shape the nutrition tally uses so consumers agree on "today."
+function dayKey(d) {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Infer the slot for an existing scheduled_meals row. Prefers the
+// explicit meal_slot column (migration 0069), falls back to a
+// time-based inference for pre-0069 rows so the grid still renders
+// them in the right row.
+function slotForMeal(meal) {
+  if (meal?.meal_slot) return meal.meal_slot;
+  if (!meal?.scheduled_for) return "dinner";
+  const t = new Date(meal.scheduled_for);
+  const hh = `${String(t.getHours()).padStart(2, "0")}:${String(t.getMinutes()).padStart(2, "0")}`;
+  return inferSlotFromTime(hh);
+}
 
 // Format a JS Date as a local ISO-ish string for <input type="time"> ("HH:mm").
 const hhmm = (d) =>
@@ -39,7 +93,7 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *   onSave({ scheduledFor, notificationSettings, note, cookId, isRequest, servings })
  */
 export default function SchedulePicker({
-  recipe, initialDate, userId, userName, family = [], defaultRequest = false,
+  recipe, initialDate, initialSlot, userId, userName, family = [], defaultRequest = false,
   onClose, onSave,
 }) {
   const today = useMemo(() => {
@@ -50,6 +104,40 @@ export default function SchedulePicker({
 
   const days = useMemo(() => buildDayStrip(today, 14), [today]);
 
+  // Existing scheduled meals in the visible window — drives the
+  // filled-slot preview on the day grid. Window = start of today
+  // through end of day+13 (14-day strip). Using the hook here means
+  // SchedulePicker re-renders when the user schedules a meal from a
+  // different surface; the grid stays honest.
+  const { meals: existingMeals } = useScheduledMeals(userId, {
+    fromISO: useMemo(() => today.toISOString(), [today]),
+    toISO:   useMemo(() => {
+      const end = new Date(today);
+      end.setDate(end.getDate() + 14);
+      end.setHours(23, 59, 59, 999);
+      return end.toISOString();
+    }, [today]),
+  });
+  // Matches the Plan pattern: useUserRecipes exposes a findBySlug
+  // helper that combines user-authored recipes with the bundled
+  // library. findRecipe(slug, findBySlug) resolves either source.
+  const { findBySlug: findUserRecipe } = useUserRecipes(userId);
+
+  // { "YYYY-MM-DD": { breakfast, lunch, dinner, snack } }.
+  // Each value is the existing meal row (or undefined if empty).
+  // First-wins on collision — a duplicate slot on the same day is
+  // rare but possible; we just surface the earliest-scheduled one.
+  const byDaySlot = useMemo(() => {
+    const out = {};
+    for (const m of existingMeals || []) {
+      const k = dayKey(m.scheduled_for);
+      if (!out[k]) out[k] = {};
+      const slot = slotForMeal(m);
+      if (!out[k][slot]) out[k][slot] = m;
+    }
+    return out;
+  }, [existingMeals]);
+
   const [selectedDay, setSelectedDay] = useState(() => {
     if (initialDate) {
       const d = new Date(initialDate);
@@ -58,10 +146,38 @@ export default function SchedulePicker({
     }
     return today;
   });
-  const [timeStr, setTimeStr] = useState("19:00");
+  // Meal slot drives the default time. Picking Dinner sets 6:30 PM;
+  // picking Lunch sets 12:30 PM. User can still override the TIME
+  // input to any HH:MM. Changing the time manually re-infers the
+  // slot so the chip row always reflects which window they're in.
+  // Seed slot + time from initialSlot when the caller pre-selected
+  // one (e.g. Plan's "+ add to breakfast" tap on an empty slot row).
+  // Falls back to dinner as the sensible default for users opening
+  // the picker without a slot hint.
+  const seededSlotId = (initialSlot && ALL_SLOTS.find(s => s.id === initialSlot))
+    ? initialSlot
+    : "dinner";
+  const [mealSlot, setMealSlot] = useState(seededSlotId);
+  const [timeStr,  setTimeStr]  = useState(() => {
+    const slot = ALL_SLOTS.find(s => s.id === seededSlotId);
+    return slot?.defaultTime || "18:30";
+  });
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // When the user picks a slot chip, snap time to that slot's default.
+  // When they manually change the TIME input, re-infer the slot.
+  const pickSlot = (slotId) => {
+    const slot = MEAL_SLOTS.find(s => s.id === slotId);
+    if (!slot) return;
+    setMealSlot(slotId);
+    setTimeStr(slot.defaultTime);
+  };
+  const pickTime = (t) => {
+    setTimeStr(t);
+    setMealSlot(inferSlotFromTime(t));
+  };
 
   // Cook picker. "request" = nobody assigned yet, userId = self, other uuid = family
   // member. Default to request per user spec ("start as request until changed").
@@ -114,6 +230,7 @@ export default function SchedulePicker({
         cookId: isRequest ? null : cookChoice,
         isRequest,
         servings,
+        mealSlot,
       });
       onClose();
     } catch (e) {
@@ -149,49 +266,140 @@ export default function SchedulePicker({
           </div>
         </div>
 
-        {/* Day strip */}
+        {/* Day grid — each day is a vertical column of three slot
+            cells (breakfast / lunch / dinner). Tapping a cell picks
+            BOTH the day and the slot in one gesture; the gold border
+            marks the target for this schedule-save. Cells that already
+            hold a scheduled meal render its recipe emoji so the grid
+            doubles as a 14-day glance at the week. Skipped meals are
+            dimmed. The TIME input below lets power users nudge the
+            exact clock time (and also unlocks the snack slot — scale
+            outside the 3-row grid via time-based inference). */}
         <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 10 }}>WHEN</div>
         <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, scrollbarWidth: "none" }}>
           {days.map(d => {
-            const isSelected = d.getTime() === selectedDay.getTime();
+            const isSelectedDay = d.getTime() === selectedDay.getTime();
             const isToday = d.getTime() === today.getTime();
+            const k = dayKey(d);
+            const filled = byDaySlot[k] || {};
             return (
-              <button
+              <div
                 key={d.toISOString()}
-                onClick={() => setSelectedDay(d)}
                 style={{
-                  flexShrink: 0, width: 54, padding: "10px 0",
-                  background: isSelected ? "#f5c842" : "#1a1a1a",
-                  color: isSelected ? "#111" : "#bbb",
-                  border: `1px solid ${isSelected ? "#f5c842" : "#2a2a2a"}`,
-                  borderRadius: 10, cursor: "pointer",
-                  fontFamily: "'DM Sans',sans-serif", transition: "all 0.15s",
+                  flexShrink: 0, width: 66,
+                  display: "flex", flexDirection: "column", gap: 4,
                 }}
               >
-                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.1em", opacity: 0.8 }}>
-                  {isToday ? "TODAY" : DAY_LABELS[d.getDay()].toUpperCase()}
-                </div>
-                <div style={{ fontFamily: "'Fraunces',serif", fontSize: 20, fontWeight: 400, marginTop: 2 }}>
-                  {d.getDate()}
-                </div>
-              </button>
+                {/* Day header — selectable separately to jump the
+                    whole column without committing to a slot. */}
+                <button
+                  onClick={() => setSelectedDay(d)}
+                  style={{
+                    padding: "8px 0",
+                    background: isSelectedDay ? "#1e1a0e" : "#141414",
+                    border: `1px solid ${isSelectedDay ? "#f5c842" : "#242424"}`,
+                    color: isSelectedDay ? "#f5c842" : "#bbb",
+                    borderRadius: 10, cursor: "pointer",
+                    fontFamily: "'DM Sans',sans-serif", transition: "all 0.15s",
+                  }}
+                >
+                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, letterSpacing: "0.1em", opacity: 0.8 }}>
+                    {isToday ? "TODAY" : DAY_LABELS[d.getDay()].toUpperCase()}
+                  </div>
+                  <div style={{ fontFamily: "'Fraunces',serif", fontSize: 18, fontWeight: 400, marginTop: 0 }}>
+                    {d.getDate()}
+                  </div>
+                </button>
+
+                {/* Three slot cells — the user taps one to schedule
+                    THIS recipe into that (day, slot). Filled cells
+                    preview the existing meal; tapping overwrites the
+                    target but the existing meal stays in the DB until
+                    the user commits this new save. */}
+                {MEAL_SLOTS.map(slot => {
+                  const meal = filled[slot.id];
+                  const selected = isSelectedDay && mealSlot === slot.id;
+                  const skipped = meal?.status === "skipped";
+                  const hasMeal = !!meal;
+                  let existingRecipe = null;
+                  if (hasMeal) {
+                    existingRecipe = findRecipe(meal.recipe_slug, findUserRecipe) || null;
+                  }
+                  return (
+                    <button
+                      key={slot.id}
+                      onClick={() => {
+                        setSelectedDay(d);
+                        pickSlot(slot.id);
+                      }}
+                      title={hasMeal
+                        ? `${slot.label}: ${existingRecipe?.title || meal.recipe_slug}${skipped ? " (skipped)" : ""}`
+                        : `${slot.label} — tap to schedule`}
+                      style={{
+                        height: 38, padding: "4px 2px",
+                        background: selected
+                          ? "#1e1a0e"
+                          : hasMeal
+                            ? (skipped ? "#0c0c0c" : "#141414")
+                            : "#0f0f0f",
+                        border: `1px solid ${selected
+                          ? "#f5c842"
+                          : hasMeal
+                            ? (skipped ? "#1a1a1a" : "#2a2a2a")
+                            : "#1e1e1e"}`,
+                        borderRadius: 8, cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                        opacity: skipped ? 0.35 : 1,
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {hasMeal ? (
+                        <span style={{ fontSize: 18 }}>{existingRecipe?.emoji || "🍽️"}</span>
+                      ) : (
+                        <>
+                          <span style={{ fontSize: 13, opacity: 0.6 }}>{slot.emoji}</span>
+                          <span style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 12,
+                            color: selected ? "#f5c842" : "#444",
+                          }}>
+                            +
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </div>
 
-        {/* Time */}
-        <div style={{ marginTop: 20, display: "flex", gap: 12, alignItems: "center" }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 6 }}>TIME</div>
+        {/* Selected target line — plain-language confirmation of what
+            this save will commit. Also reveals the TIME field so users
+            who care about exact clock times (or want the snack slot)
+            can nudge it. Collapsed by default behind a CUSTOMIZE TIME
+            toggle to keep the picker simple. */}
+        <div style={{ marginTop: 14, padding: "10px 12px", background: "#141414", border: "1px solid #242424", borderRadius: 10 }}>
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.08em" }}>
+            {(() => {
+              const slot = ALL_SLOTS.find(s => s.id === mealSlot);
+              const label = slot?.label?.toUpperCase() || "DINNER";
+              return `${label} · ${DAY_LABELS[selectedDay.getDay()]}, ${selectedDay.getDate()}`;
+            })()}
+          </div>
+          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 10 }}>
+            <label style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.08em" }}>
+              TIME
+            </label>
             <input
               type="time"
               value={timeStr}
-              onChange={(e) => setTimeStr(e.target.value)}
+              onChange={(e) => pickTime(e.target.value)}
               style={{
-                width: "100%", padding: "12px 14px",
-                background: "#1a1a1a", border: "1px solid #2a2a2a",
-                borderRadius: 10, color: "#f0ece4",
-                fontFamily: "'DM Mono',monospace", fontSize: 14,
+                flex: 1, padding: "6px 10px",
+                background: "#0b0b0b", border: "1px solid #2a2a2a",
+                borderRadius: 8, color: "#bbb",
+                fontFamily: "'DM Mono',monospace", fontSize: 12,
                 outline: "none", colorScheme: "dark",
               }}
             />
@@ -270,11 +478,36 @@ export default function SchedulePicker({
               }}
             >+</button>
           </div>
-          {recipe.serves && servings !== recipe.serves && (
-            <div style={{ marginTop: 6, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#555", fontStyle: "italic" }}>
-              Recipe is written for {recipe.serves}. You'll want to scale ingredients accordingly.
-            </div>
-          )}
+          {recipe.serves && servings !== recipe.serves && (() => {
+            // Live scaling preview. Instead of nagging the user to
+            // "scale ingredients accordingly" on their own, compute
+            // the scaled recipe right here and show the new amounts.
+            // Helps them sanity-check the scale before committing —
+            // 6 cups of flour hits different than 1.5 cups.
+            const scaled = scaleRecipe(recipe, servings);
+            const scaledIngs = Array.isArray(scaled.ingredients) ? scaled.ingredients : [];
+            if (!scaledIngs.length) return null;
+            return (
+              <div style={{ marginTop: 10, padding: "10px 12px", background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 10 }}>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em", marginBottom: 8 }}>
+                  SCALED FOR {servings} · from {recipe.serves}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {scaledIngs.slice(0, 8).map((ing, i) => (
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb" }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ing.name}</span>
+                      <span style={{ color: "#888", fontFamily: "'DM Mono',monospace", fontSize: 11, flexShrink: 0 }}>{ing.amount || ""}</span>
+                    </div>
+                  ))}
+                  {scaledIngs.length > 8 && (
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.08em", marginTop: 4 }}>
+                      + {scaledIngs.length - 8} MORE
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Prep notifications */}

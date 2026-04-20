@@ -42,9 +42,71 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.13.1";
+export const CURRENT_VERSION = "0.14.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.14.0",
+    date:    "2026-04-20",
+    title:   "Scan drafts, sticky claims, and a nutrition dashboard",
+    summary:
+      "Two big arcs this release. First, the barcode scanner stopped " +
+      "full-sending items into your pantry — every scan opens a draft " +
+      "ItemCard with a DISCARD / STOCK IN PANTRY bar so you can fix the " +
+      "identity, claims, or package size before anything hits your " +
+      "shelf. Second, every cook now remembers its macros. Your profile " +
+      "has a new NUTRITION section with today / week / month tabs, " +
+      "animated goal bars for calories + protein + fat + carbs, and a " +
+      "kcal sparkline across the last 7 or 30 days. Bonus: sub-brand " +
+      "tags like SCOOPS and ORIGINAL finally land on the card instead " +
+      "of getting quietly dropped by Open Food Facts's thinner data.",
+    shipped: [
+      { kind: "feature",
+        text: "Barcode scans return a DRAFT ItemCard instead of full-sending into the pantry. DISCARD drops it; STOCK IN PANTRY commits. Nothing touches your shelf until you confirm.",
+        commits: ["f0d2571"] },
+      { kind: "fix",
+        text: "Claims (SCOOPS, ORIGINAL, CANTINA, etc.) survive a re-scan of the same UPC — the merge path now unions fresh + existing attributes instead of silently dropping incoming claim pills.",
+        commits: ["f0d2571"] },
+      { kind: "feature",
+        text: "Sub-brand auto-extraction. The resolver searches product_name + generic_name + brand + labels_tags + categories_tags for claim keywords, then takes whatever text is left over after stripping brand and canonical as additional claims ('Tostitos Scoops Original Tortilla Chips' → SCOOPS + ORIGINAL automatically, no whitelist needed).",
+        commits: ["fe5a0a1", "bcac489"] },
+      { kind: "feature",
+        text: "Manual + CLAIM affordance on the ItemCard. Tap the dashed pill at the end of the attribute band, type a claim (SCOOPS, SPICY, whatever), Enter to save. Existing claim pills are tappable to remove. Escape hatch for UPCs where OFF genuinely has no sub-line text.",
+        commits: ["598a645"] },
+      { kind: "fix",
+        text: "OFF's brand_nutrition cache no longer starves claim extraction. The scanner always hits Open Food Facts for fresh product text and uses the cache as a nutrition-only fallback, so re-scans of known UPCs finally carry productName through to the resolver.",
+        commits: ["e1d6940", "e499800"] },
+      { kind: "fix",
+        text: "Products OFF doesn't have nutrition for (user-contributed, 'This product page is not complete') now surface their product name, category, and labels instead of getting discarded outright. Nutrition just stays null; everything else flows through.",
+        commits: ["8ca1082"] },
+      { kind: "fix",
+        text: "Canonical identity line renders on the ItemCard even when the canonical slug was taught via UPC correction and doesn't exist in the bundled ingredient registry. Humanizes the slug as a synthetic display stub so you can still see what identity the row resolved to.",
+        commits: ["e711791"] },
+      { kind: "fix",
+        text: "Back-to-back barcode scans no longer bleed each other's edits. The draft ItemCard remounts on every new scan (keyed on item id) so pending brand / claim edits from a prior draft can't leak onto the next one.",
+        commits: ["b56e6c8"] },
+      { kind: "feature",
+        text: "Per-serving calorie + macro display on CookMode's overview screen and every RecipeCard in Courses. Full macros ('~ 500 kcal · 12g protein · 8g carbs · 7g fat') alongside prep time + difficulty. Falls back through the full pantry / brand_nutrition / ingredient_info / bundled-canonical resolver hierarchy so even recipes without scanned brands show estimates.",
+        commits: ["7034ee2", "22bf69c"] },
+      { kind: "feature",
+        text: "Every completed cook stamps its per-serving macros onto cook_logs, with a 'how many servings did each eater consume' stepper (½ · 1 · 1½ · 2 · 3) on the rating screen so leftovers, seconds, and family splits count honestly in your tally.",
+        commits: ["4a0c6fa"] },
+      { kind: "feature",
+        text: "NUTRITION dashboard on your profile. TODAY / THIS WEEK / THIS MONTH tabs; animated progress bars against user-configurable daily goals (calories + protein + fat + carbs); 7-day and 30-day kcal sparkline. Includes meals you ate as a diner (when a family member cooks for you), not just meals you cooked yourself.",
+        commits: ["4a0c6fa"] },
+      { kind: "ux",
+        text: "EDIT GOALS on the nutrition dashboard opens a 4-input modal for your daily kcal / protein / fat / carb targets. Defaults to a rough 2000 / 150 / 65 / 250 baseline; change them any time.",
+        commits: ["4a0c6fa"] },
+      { kind: "architecture",
+        text: "mergeAttributes moved from ItemCard into canonicalResolver so the Kitchen merge path and the ItemCard post-scan enrichment share one implementation. Stops drift between surfaces that all need the same union semantics.",
+        commits: ["f0d2571"] },
+    ],
+    coming_soon: [
+      "Macro breakdown per meal on the cookbook detail view — see what a specific cook contributed to your daily numbers.",
+      "Nutrition goal presets (cutting / bulking / maintenance) so you're not typing kcal targets from scratch.",
+      "Retro-compute nutrition for pre-0068 cook_logs so your history isn't cut off at the feature launch date.",
+    ],
+  },
   {
     version: "0.13.1",
     date:    "2026-04-18",

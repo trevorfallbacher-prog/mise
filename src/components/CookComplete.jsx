@@ -4,6 +4,7 @@ import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
+import { recipeNutrition } from "../lib/nutrition";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
@@ -205,13 +206,21 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   return out;
 }
 
-export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, onFinish }) {
+export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
   const [rating, setRating] = useState(null);
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // How many recipe-servings each eater consumed. Default 1 covers the
+  // common case (four people eat a four-serving recipe, one slice
+  // each). Stepper surfaces on the rating screen so the chef can bump
+  // to 2 for "we went back for seconds", 0.5 for "family of four
+  // split a two-serving soup", or 3 for "solo chef demolished three
+  // of four servings". Stamped on cook_logs.servings_per_eater; the
+  // tally multiplies perServing macros by this.
+  const [servingsPerEater, setServingsPerEater] = useState(1);
   // usedItems captures the user's "what did I actually use" decisions across
   // the ingredients-used → confirm-removal → save sequence. Seeded once from
   // the initial pantry snapshot; realtime pantry changes during the flow are
@@ -312,6 +321,21 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     //    back-references on any pantry rows we're about to create. Errors
     //    here abort everything — we never want to mutate the pantry against
     //    a cook that didn't log.
+    // Nutrition snapshot for the NutritionDashboard tally (migration
+    // 0068). recipeNutrition walks the full resolver chain (pantry
+    // override → brand_nutrition → ingredient_info → bundled
+    // canonical) so the stamped macros reflect whatever was actually
+    // scanned + seeded. Null when coverage is zero — the tally reader
+    // skips nulls and surfaces "based on X of Y meals" honestly
+    // instead of silently treating a zero blob as "this cook had zero
+    // calories". perServing only (not total): the row already stores
+    // one-serving macros and servings_per_eater scales from there.
+    const n = (recipe && recipeNutrition)
+      ? recipeNutrition(recipe, { pantry, brandNutrition, getInfo: ingredientInfo?.getInfo })
+      : null;
+    const nutritionBlob = (n && n.coverage.resolved > 0)
+      ? { ...n.perServing, coverage: n.coverage }
+      : null;
     const payload = {
       user_id: userId,
       recipe_slug:    recipe.slug,
@@ -324,6 +348,8 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       xp_earned: xp,
       diners: [...selectedDiners],
       is_favorite: rating === "good" || rating === "nailed",
+      nutrition:           nutritionBlob,
+      servings_per_eater:  Number(servingsPerEater) || 1,
     };
     const { data: logRow, error: logErr } = await supabase
       .from("cook_logs")
@@ -1531,6 +1557,56 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
           rows={6}
           style={{ width:"100%", padding:"14px 16px", background:"#141414", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", outline:"none", resize:"none", boxSizing:"border-box", marginBottom:14 }}
         />
+
+        {/* Servings-per-eater stepper. Drives cook_logs.servings_per_eater
+            (migration 0068) which the NutritionDashboard tally multiplies
+            against the stamped per-serving macros. Default 1 = one
+            serving each; 0.5 for "family of four split a two-serving
+            recipe"; 2 or 3 for "went back for seconds / solo chef
+            finished the pan". Only rendered when the row will actually
+            have nutrition to scale — no point asking for a portion
+            multiplier on an untracked recipe. */}
+        {(() => {
+          const nPreview = recipeNutrition
+            ? recipeNutrition(recipe, { pantry, brandNutrition, getInfo: ingredientInfo?.getInfo })
+            : null;
+          if (!nPreview || nPreview.coverage.resolved === 0) return null;
+          const options = [0.5, 1, 1.5, 2, 3];
+          return (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#666", letterSpacing: "0.12em", marginBottom: 8 }}>
+                HOW MANY SERVINGS DID EACH PERSON EAT?
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                {options.map(v => {
+                  const active = Math.abs(servingsPerEater - v) < 0.01;
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setServingsPerEater(v)}
+                      style={{
+                        flex: 1, padding: "10px 0",
+                        background: active ? "#f5c842" : "#141414",
+                        border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                        color: active ? "#111" : "#bbb",
+                        borderRadius: 10,
+                        fontFamily: "'DM Mono',monospace", fontSize: 12,
+                        fontWeight: active ? 700 : 400,
+                        cursor: "pointer", letterSpacing: "0.06em",
+                      }}
+                    >
+                      {v === 1 ? "1" : v === 0.5 ? "½" : v === 1.5 ? "1½" : String(v)}
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 6, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
+                ~ {Math.round((nPreview.perServing.kcal || 0) * servingsPerEater)} kcal PER EATER
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Summary row — a visual confirm of what we're saving */}
         <div style={{ padding:"12px 14px", background:"#0f0f0f", border:`1px solid ${ratingDef?.border || "#1e1e1e"}`, borderRadius:12, display:"flex", alignItems:"center", gap:12, marginBottom:8 }}>
