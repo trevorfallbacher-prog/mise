@@ -4,6 +4,7 @@ import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/reci
 import { SKILL_TREE } from "../data";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import EnrichmentButton from "./EnrichmentButton";
+import GenerateImageButton from "./GenerateImageButton";
 
 // Month labels for seasonality. 1-indexed to match peakMonths convention
 // in the ingredient schema.
@@ -145,6 +146,12 @@ const LOCATION_META = {
 export default function IngredientCard({
   ingredientId, fallbackName, fallbackEmoji,
   pantry = [], currentRecipeSlug, onPickRecipe, onClose,
+  // Viewer's admin flag — gates the "Generate image" / "Regenerate
+  // image" button below the hero slot. Recraft is a paid upstream;
+  // only admins can trigger generation. Non-admins never see the
+  // button, and the edge function enforces the same check server-
+  // side so a bypassed client check still 403s.
+  isAdmin = false,
   // When true, the card renders its CONTENT only — no backdrop, no fixed
   // positioning, no bottom Close button. Used by ItemCard to embed the
   // canonical deep-dive below its own item-specific section. The parent
@@ -317,10 +324,46 @@ export default function IngredientCard({
     <>
         <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 16px" }} />
 
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
-          <div style={{ fontSize: 44 }}>{emoji}</div>
-          <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Header. Hero slot = AI-generated image when info.imageUrl
+            is present (admin hit "Generate image" at some point),
+            otherwise falls back to the canonical's emoji at large
+            scale. Admins get a compact Generate/Regenerate button
+            underneath the hero so they can iterate on the output
+            without leaving the card. */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            {info?.imageUrl ? (
+              <img
+                src={info.imageUrl}
+                alt={name}
+                style={{
+                  width: 72, height: 72, borderRadius: 14,
+                  objectFit: "cover",
+                  background: "#0f0f0f",
+                  border: "1px solid #242424",
+                }}
+              />
+            ) : (
+              <div style={{
+                width: 72, height: 72, borderRadius: 14,
+                background: "#0f0f0f", border: "1px solid #242424",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 44,
+              }}>
+                {emoji}
+              </div>
+            )}
+            {viewingId && (
+              <GenerateImageButton
+                canonicalId={viewingId}
+                canonicalName={name}
+                hasExistingImage={!!info?.imageUrl}
+                isAdmin={isAdmin}
+                compact
+              />
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 0, paddingTop: 4 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
               {(canonical?.category || "INGREDIENT").toUpperCase()}
               {canonical?.subcategory ? ` · ${canonical.subcategory.toUpperCase()}` : ""}
