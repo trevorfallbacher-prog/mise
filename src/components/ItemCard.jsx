@@ -2653,6 +2653,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               // destructive.
               const scannedAttributes = buildAttributesFromScan({
                 productName:   res.productName,
+                genericName:   res.genericName,
+                brand:         res.brand,
                 categoryHints: res.categoryHints || [],
                 originTags:    res.originTags  || [],
                 countryTags:   res.countryTags || [],

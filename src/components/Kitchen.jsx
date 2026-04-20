@@ -1171,6 +1171,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               }
               let attributes = buildAttributesFromScan({
                 productName:   res.productName,
+                genericName:   res.genericName,
+                brand:         res.brand,
                 categoryHints: res.categoryHints || [],
                 originTags:    res.originTags  || [],
                 countryTags:   res.countryTags || [],
@@ -3315,6 +3317,8 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     // the canonical resolved.
                     const attributes = buildAttributesFromScan({
                       productName:   res.productName,
+                      genericName:   res.genericName,
+                      brand:         res.brand,
                       categoryHints: res.categoryHints || [],
                       originTags:    res.originTags  || [],
                       countryTags:   res.countryTags || [],

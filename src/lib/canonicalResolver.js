@@ -873,6 +873,8 @@ export function mergeAttributes(existing, incoming) {
 
 export function buildAttributesFromScan({
   productName   = null,
+  genericName   = null,
+  brand         = null,
   categoryHints = [],
   originTags    = [],
   countryTags   = [],
@@ -881,7 +883,25 @@ export function buildAttributesFromScan({
   const origins         = parseOrigins(originTags, countryTags);
   const certifications  = parseCertifications(labelTags);
   const flavor          = parseFlavorVariant(productName, categoryHints);
-  const claims          = parseProductClaims(productName);
+  // Sub-line names like 'Scoops' and 'Original' often appear in
+  // generic_name, labels_tags, or brands rather than product_name —
+  // OFF's product_name for a Tostitos Scoops Original UPC can come
+  // back as bare "Tostitos Tortilla Chips" while the sub-brand lives
+  // in brands ("Tostitos Scoops!") and the variant in labels_tags.
+  // Concatenate every text source into one haystack so
+  // parseProductClaims picks them up regardless of which OFF field
+  // carries the signal.
+  const claimHay = [
+    productName,
+    genericName,
+    brand,
+    ...(Array.isArray(labelTags) ? labelTags : []),
+    ...(Array.isArray(categoryHints) ? categoryHints : []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/[-_]/g, " ");
+  const claims          = parseProductClaims(claimHay);
   const out = {};
   if (origins.length > 0)        out.origins        = origins;
   if (certifications.length > 0) out.certifications = certifications;
