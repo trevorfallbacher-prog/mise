@@ -2552,7 +2552,6 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
     if (amount === "" || !Number.isFinite(parseFloat(amount))) {
       setAmount(String(top.amount));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [popularPackages, primaryCanonicalId, customBrand]);
 
   // Family-shared user templates, newest-first. Empty until the user
