@@ -93,7 +93,7 @@ const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  *   onSave({ scheduledFor, notificationSettings, note, cookId, isRequest, servings })
  */
 export default function SchedulePicker({
-  recipe, initialDate, userId, userName, family = [], defaultRequest = false,
+  recipe, initialDate, initialSlot, userId, userName, family = [], defaultRequest = false,
   onClose, onSave,
 }) {
   const today = useMemo(() => {
@@ -150,9 +150,16 @@ export default function SchedulePicker({
   // picking Lunch sets 12:30 PM. User can still override the TIME
   // input to any HH:MM. Changing the time manually re-infers the
   // slot so the chip row always reflects which window they're in.
-  const [mealSlot, setMealSlot] = useState("dinner");
+  // Seed slot + time from initialSlot when the caller pre-selected
+  // one (e.g. Plan's "+ add to breakfast" tap on an empty slot row).
+  // Falls back to dinner as the sensible default for users opening
+  // the picker without a slot hint.
+  const seededSlotId = (initialSlot && ALL_SLOTS.find(s => s.id === initialSlot))
+    ? initialSlot
+    : "dinner";
+  const [mealSlot, setMealSlot] = useState(seededSlotId);
   const [timeStr,  setTimeStr]  = useState(() => {
-    const slot = MEAL_SLOTS.find(s => s.id === "dinner");
+    const slot = ALL_SLOTS.find(s => s.id === seededSlotId);
     return slot?.defaultTime || "18:30";
   });
   const [note, setNote] = useState("");

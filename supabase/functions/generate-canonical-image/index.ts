@@ -93,17 +93,22 @@ function extractUserIdFromJwt(authHeader: string): string | null {
 }
 
 function buildPrompt(canonicalName: string, hint?: string): string {
-  // House icon style — thick warm-tan outline on pure black. Every
-  // canonical gets the same treatment so the set reads like one
-  // illustrator's sheet. The hex code is a soft hint (models can
-  // lose exact colors); the descriptive language ("warm premium tan")
-  // does the heavy lifting. Canonical name appears in the prompt as
-  // the SUBJECT only — NOT rendered as a text label on the image.
+  // House icon style — thick warm-tan outline on a TRANSPARENT
+  // background. Every canonical gets the same treatment so the set
+  // reads like one illustrator's sheet. Transparent lets the icon
+  // sit on whatever card surface it's rendered against (the card's
+  // own dark charcoal, a list row, a tile grid) without fighting
+  // the layer below. Explicitly NO background fill / rectangle /
+  // solid — V4 Pro Vector tends to draw a solid background when
+  // the prompt isn't clear about wanting nothing there. Canonical
+  // name appears in the prompt as the SUBJECT only — NOT rendered
+  // as a text label on the image.
   const base = `An icon of a single ${canonicalName.trim()}. ` +
-    `Thick warm premium tan (#D4B896) outline stroke only, transparent fill, ` +
-    `on a pure black background. Single weight stroke throughout, ` +
-    `minimal anchor points, clean geometric construction. ` +
-    `No gradients, no shadows, no texture, no fills. ` +
+    `Thick warm premium tan (#D4B896) outline stroke only. ` +
+    `Fully transparent background — NO background fill, NO background rectangle, ` +
+    `NO solid color behind the icon, the canvas is empty except for the stroke. ` +
+    `Single weight stroke throughout, minimal anchor points, clean geometric construction. ` +
+    `No gradients, no shadows, no texture, no interior fills. ` +
     `Bold enough to read at 24 pixels. No padding. ` +
     `Centered subject, no text, no labels, no decorative borders.`;
   if (hint && hint.trim()) {
