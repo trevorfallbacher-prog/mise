@@ -152,6 +152,28 @@ export function useUserRecipes(userId) {
       console.error("[user_recipes] save failed:", err);
       throw new Error(err.message || "save failed");
     }
+
+    // XP: +50 for a substantive user-authored recipe. Anti-spam gate:
+    // ≥3 steps AND ≥3 ingredients. AI-generated saves ('ai' source)
+    // are excluded — the user didn't author those. Fires only on the
+    // first save of a given slug (insert already hit conflict on
+    // unique(user_id,slug) if re-saved — insert path guarantees
+    // first-time here).
+    const stepCount = Array.isArray(stampedRecipe.steps) ? stampedRecipe.steps.length : 0;
+    const ingCount  = Array.isArray(stampedRecipe.ingredients) ? stampedRecipe.ingredients.length : 0;
+    if (source === "custom" && stepCount >= 3 && ingCount >= 3 && data?.id) {
+      supabase
+        .rpc("award_xp", {
+          p_user_id:   userId,
+          p_source:    "authored_recipe",
+          p_ref_table: "user_recipes",
+          p_ref_id:    data.id,
+        })
+        .then(({ error: xpErr }) => {
+          if (xpErr) console.error("[award_xp] authored_recipe failed:", xpErr);
+        });
+    }
+
     return fromDb(data);
   }, [userId, uniqueSlugFor]);
 
