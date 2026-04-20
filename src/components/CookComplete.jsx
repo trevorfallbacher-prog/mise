@@ -213,6 +213,9 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Award_xp breakdown captured during save() — drives the
+  // beat-sequenced summary in CookCompleteSummary (P5-5).
+  const [xpBreakdown, setXpBreakdown] = useState(null);
   // How many recipe-servings each eater consumed. Default 1 covers the
   // common case (four people eat a four-serving recipe, one slice
   // each). Stepper surfaces on the rating screen so the chef can bump
@@ -364,24 +367,24 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     }
     const cookLogId = logRow?.id || null;
 
-    // 1b) Fire the XP ledger via award_xp(). Phase-1 wiring: the
-    //     client-computed xp on cook_logs.xp_earned stays authoritative
-    //     for the celebration pulse and useUserProfile's sum-on-read.
-    //     award_xp writes an xp_events row and bumps profiles.total_xp
-    //     under the new ordering (base → caps → streak/curated mult).
-    //     Fail-soft: log and continue — we never want a telemetry
-    //     write to block a cook save.
+    // 1b) Fire the XP ledger via award_xp() and AWAIT the breakdown.
+    //     Phase-5 evolution from P1's fire-and-forget: the breakdown
+    //     payload (base / curated / caps / streak / total) drives the
+    //     beat-sequenced reveal in CookCompleteSummary. Failures are
+    //     still soft — if the RPC errors we just don't show a summary
+    //     and the legacy +XP pulse handles celebration.
     if (cookLogId) {
-      supabase
-        .rpc("award_xp", {
-          p_user_id:   userId,
-          p_source:    "cook_complete",
-          p_ref_table: "cook_logs",
-          p_ref_id:    cookLogId,
-        })
-        .then(({ error: xpErr }) => {
-          if (xpErr) console.error("[award_xp] cook_complete failed:", xpErr);
-        });
+      const { data: breakdown, error: xpErr } = await supabase.rpc("award_xp", {
+        p_user_id:   userId,
+        p_source:    "cook_complete",
+        p_ref_table: "cook_logs",
+        p_ref_id:    cookLogId,
+      });
+      if (xpErr) {
+        console.error("[award_xp] cook_complete failed:", xpErr);
+      } else {
+        setXpBreakdown(breakdown || null);
+      }
     }
 
     // 2) Apply pantry mutations in a single setPantry call. useSyncedList
