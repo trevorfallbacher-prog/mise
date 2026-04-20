@@ -521,6 +521,58 @@ the level-up ceremony plays. Never interrupts mid-sequence.
    (b) refuse revival, or (c) allow temporary negative-toward-next?
    **Recommendation: (a).** Never take a user backward in level.
 
+### Commit granularity
+
+Each phase below is further broken into micro-commits so a session
+can pick up mid-phase without holding the full context. Rules:
+
+- Every commit compiles, migrations up cleanly, app still boots.
+- Config tables ship schema + seed in one commit (seed is what
+  makes them useful and it's a one-shot insert).
+- Never split a rename from its read-site updates — they ship
+  together or the app breaks.
+- Build `award_xp()` up in stages; each stage leaves the function
+  correct for the features shipped so far.
+
+**Phase 1 commits (21 files):**
+
+*Config scaffolding (one table per commit):*
+1. `0071_xp_config.sql` — table + seed scalars
+2. `0072_xp_source_values.sql` — table + seed rows
+3. `0073_xp_streak_tiers.sql` — table + seed
+4. `0074_xp_curated_ladder.sql` — table + seed
+5. `0075_xp_rarity_rolls.sql` — table + seed
+6. `0076_xp_badge_tier_xp.sql` — table + seed
+7. `0077_xp_level_titles.sql` — table + seed
+8. `0078_xp_config_audit.sql` — table + trigger on all xp_config* tables
+
+*`profiles.level` collision:*
+9. `0079_profiles_skill_self_report.sql` — rename TEXT `level` →
+   `skill_self_report`. Same PR updates every read site.
+10. `0080_profiles_level_numeric.sql` — add new numeric `level`
+    (default 1).
+
+*Ledger + dedup tables:*
+11. `0081_xp_events.sql` — ledger table + indexes.
+12. `0082_recipe_first_cooks.sql` — dedup for first-time bonus.
+13. `0083_recipe_mastery.sql` — cook_count per user/recipe.
+
+*`award_xp()` built up in stages (each commit = one rule, tests
+pass at each step):*
+14. `0084_award_xp_stub.sql` — writes `xp_events`, returns base
+    XP only, no multipliers/caps.
+15. `0085_award_xp_micro_caps.sql` — per-source micro-cap logic.
+16. `0086_award_xp_daily_caps.sql` — soft/hard daily caps. (Streak
+    + curated multipliers defer to Phase 3/4.)
+
+*Integration + backfill:*
+17. Swap `cook_logs.xp_earned` insert path to call `award_xp`
+    (no migration, code only).
+18. `scripts/backfill_xp_events.sql` — replay existing `cook_logs`
+    into `xp_events` so `total_xp` reconciles.
+
+(Phases 2–6 commit breakdowns will be added as each phase begins.)
+
 ### Implementation phases
 
 Each phase is independently shippable and leaves the app better
