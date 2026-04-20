@@ -942,11 +942,35 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               + package size), DIFFERENT to clear it + open the
               canonical picker for manual selection. */}
           {/* Attribute pills band — origin, certifications, flavor
-              variants extracted from barcode scans or manually
-              entered. Neutral-tinted pills below the six colored
-              identity axes (per CLAUDE.md: metadata ride-along, not
-              a new reserved axis). Hidden when no attributes present. */}
-          <AttributePillsRow attributes={item.attributes} />
+              variants, product-line claims. Neutral-tinted pills
+              below the six colored identity axes (per CLAUDE.md:
+              metadata ride-along, not a new reserved axis). A
+              + CLAIM affordance is always shown in editable mode so
+              users can add tags like ORIGINAL / SCOOPS when OFF's
+              data for the UPC didn't surface them automatically. */}
+          <AttributePillsRow
+            attributes={item.attributes}
+            canEdit={!readOnly}
+            onAddClaim={(value) => {
+              const v = String(value || "").trim();
+              if (!v) return;
+              const prev = item.attributes || {};
+              const prevClaims = Array.isArray(prev.claims) ? prev.claims : [];
+              // De-dupe case-insensitive. Preserves the existing
+              // display casing on a repeat add ("Original" stays
+              // "Original", doesn't duplicate into "ORIGINAL").
+              if (prevClaims.some(c => String(c).toLowerCase() === v.toLowerCase())) return;
+              commit({ attributes: { ...prev, claims: [...prevClaims, v] } });
+            }}
+            onRemoveClaim={(value) => {
+              const prev = item.attributes || {};
+              const prevClaims = Array.isArray(prev.claims) ? prev.claims : [];
+              const nextClaims = prevClaims.filter(c => c !== value);
+              const nextAttrs = { ...prev, claims: nextClaims };
+              if (nextClaims.length === 0) delete nextAttrs.claims;
+              commit({ attributes: Object.keys(nextAttrs).length ? nextAttrs : null });
+            }}
+          />
 
           {canonicalSuggestion && (
             <CanonicalSuggestionCard
@@ -2795,19 +2819,34 @@ function looksReceiptGenerated(name) {
 }
 
 // Pills band rendering the row's attributes metadata — origins,
-// certifications, flavor variants. Same palette as the suggestion
-// card's metadata row so pills feel continuous across the scan
-// flow → saved row. Hidden when nothing to show.
-function AttributePillsRow({ attributes }) {
-  if (!attributes) return null;
-  const origins        = Array.isArray(attributes.origins)        ? attributes.origins        : [];
-  const certifications = Array.isArray(attributes.certifications) ? attributes.certifications : [];
-  const flavor         = Array.isArray(attributes.flavor)         ? attributes.flavor         : [];
-  const claims         = Array.isArray(attributes.claims)         ? attributes.claims         : [];
-  if (
+// certifications, flavor variants, product-line claims. Same palette
+// as the suggestion card's metadata row so pills feel continuous
+// across the scan flow → saved row.
+//
+// When canEdit is set, always renders (even with no existing pills)
+// and surfaces a + ADD CLAIM affordance so the user can tag things
+// like ORIGINAL / SCOOPS that OFF didn't surface for this UPC.
+// Tapping a claim pill removes it.
+function AttributePillsRow({ attributes, canEdit = false, onAddClaim, onRemoveClaim }) {
+  const origins        = Array.isArray(attributes?.origins)        ? attributes.origins        : [];
+  const certifications = Array.isArray(attributes?.certifications) ? attributes.certifications : [];
+  const flavor         = Array.isArray(attributes?.flavor)         ? attributes.flavor         : [];
+  const claims         = Array.isArray(attributes?.claims)         ? attributes.claims         : [];
+  const empty =
     origins.length === 0 && certifications.length === 0 &&
-    flavor.length === 0 && claims.length === 0
-  ) return null;
+    flavor.length === 0 && claims.length === 0;
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+  if (empty && !canEdit) return null;
+
+  const submit = () => {
+    const v = draft.trim();
+    if (!v) { setAdding(false); setDraft(""); return; }
+    onAddClaim?.(v);
+    setAdding(false);
+    setDraft("");
+  };
+
   return (
     <div style={{
       marginBottom: 12,
@@ -2847,17 +2886,63 @@ function AttributePillsRow({ attributes }) {
           {f.toUpperCase()}
         </span>
       ))}
-      {claims.map((c) => (
-        <span key={`cl-${c}`} style={{
-          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
-          color: "#a8a8a8", background: "#171717",
-          border: "1px solid #2e2e2e",
-          padding: "3px 8px", borderRadius: 6,
-          letterSpacing: "0.06em",
-        }}>
-          {c.toUpperCase()}
-        </span>
-      ))}
+      {claims.map((c) => {
+        const removable = canEdit && typeof onRemoveClaim === "function";
+        return (
+          <span
+            key={`cl-${c}`}
+            onClick={removable ? () => onRemoveClaim(c) : undefined}
+            title={removable ? "Tap to remove" : undefined}
+            style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#a8a8a8", background: "#171717",
+              border: "1px solid #2e2e2e",
+              padding: "3px 8px", borderRadius: 6,
+              letterSpacing: "0.06em",
+              cursor: removable ? "pointer" : "default",
+            }}
+          >
+            {c.toUpperCase()}{removable ? " ×" : ""}
+          </span>
+        );
+      })}
+      {canEdit && (
+        adding ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={submit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter")   { e.preventDefault(); submit(); }
+              if (e.key === "Escape")  { setAdding(false); setDraft(""); }
+            }}
+            placeholder="SCOOPS"
+            style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#f0ece4", background: "#171717",
+              border: "1px solid #3a3a3a",
+              padding: "3px 8px", borderRadius: 6,
+              letterSpacing: "0.06em",
+              width: 90, outline: "none",
+              textTransform: "uppercase",
+            }}
+          />
+        ) : (
+          <button
+            onClick={() => setAdding(true)}
+            style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+              color: "#666", background: "transparent",
+              border: "1px dashed #2e2e2e",
+              padding: "3px 8px", borderRadius: 6,
+              letterSpacing: "0.06em", cursor: "pointer",
+            }}
+          >
+            + CLAIM
+          </button>
+        )
+      )}
     </div>
   );
 }
