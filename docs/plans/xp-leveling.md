@@ -658,6 +658,42 @@ pass at each step):*
 18. `scripts/backfill_xp_events.sql` — replay existing `cook_logs`
     into `xp_events` so `total_xp` reconciles.
 
+**Phase 2 commits (14 total — locked at phase start):**
+
+*Schema prep:*
+1. `0087_badges_tier_expansion.sql` — expand badges.tier CHECK to
+   allow both legacy (standard/bronze/silver/gold) AND target
+   (common/uncommon/rare/legendary) names. No data remap;
+   xp_badge_tier_xp already covers both.
+
+*Client-side hooks (one call site per commit):*
+2. `scan_add` in usePantry insert path
+3. `pantry_hygiene` in usePantry update (qty / mark-used) path
+4. `photo_upload` in useCookPhotos.upload
+5. `canonical_create` in CanonicalCreatePrompt submit
+6. `review_cook` in useCookLogReviews.upsertMyReview
+7. `authored_recipe` on user_recipes create (≥3 steps AND ≥3
+   ingredients gate, checked at RPC call site)
+8. `plan_cook_closed` + `eat_together` in CookComplete.save
+9. `nutrition_goal_day` in NutritionDashboard (1/day client-fired)
+10. Onboarding starter pack — 6 first-time awards (first household
+    / pantry / cook / canonical / plan / friend) in one commit
+11. `first_time_recipe` + `recipe_mastery` counter bump +
+    mastery_5x/10x/25x milestone fires, in CookComplete.save after
+    the cook_complete RPC
+
+*DB triggers:*
+12. `0088_canonical_approved_trigger.sql` — on ingredient_info
+    insert/update → award_xp to original canonical creator
+13. `0089_badge_earn_trigger.sql` — on user_badges insert →
+    award_xp using tier lookup from xp_badge_tier_xp
+14. `0090_authors_cut_trigger.sql` — on cook_logs insert →
+    award_xp to recipe author (if different user, cap 3/recipe
+    lifetime)
+
+*Deferred to Phase 2b (needs partner-pair dedup design):*
+- `cook_together` — 1× per partner pair per day
+
 **Phase 4 gate commits (preview — final list locked when Phase 4
 begins):**
 
