@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   INGREDIENTS, HUBS,
   findIngredient, findHub, hubForIngredient,
@@ -1981,15 +1982,17 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
       : sourceHint?.productName
         ? `OFF name: ${sourceHint.productName}`
         : null;
-  return (
+  // Portal the prompt directly to document.body so it escapes the
+  // Scanner's parent stacking context (Scanner root has
+  // overflow:hidden + its own z-index, which was clipping the
+  // prompt content even though position:fixed should cover the
+  // viewport). document.body has no constraints so this renders
+  // cleanly over everything.
+  return createPortal(
     // Outer wrapper: full-viewport fixed cover so the Scanner content
-    // behind it is visually suppressed. Separate from the content
-    // container below so the maxWidth constraint doesn't fight the
-    // fixed-position inset:0 (which on iOS PWA standalone can render
-    // an empty black screen if the browser interprets the combo
-    // inconsistently — symptom user hit: 'everything blackened').
+    // behind it is visually suppressed.
     <div style={{
-      position:"fixed", inset:0, zIndex:345,
+      position:"fixed", inset:0, zIndex:999,
       background:"#0b0b0b",
       overflowY:"auto",
       display:"flex", flexDirection:"column", alignItems:"stretch",
@@ -2089,7 +2092,8 @@ function CanonicalCreatePrompt({ initialName, sourceHint, onCreate, onSkip, onCa
         </div>
       </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
