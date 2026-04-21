@@ -127,6 +127,39 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const [note,     setNote]     = useState("");
   const [error,    setError]    = useState(null);
 
+  // Two-phase walkthrough for meal leftovers with reheat data:
+  //   phase="reheat" — cook-style walkthrough with method + optional
+  //                    countdown + "READY" CTA. Gives the user a
+  //                    moment to actually heat the food before
+  //                    logging, rather than treating the sheet as a
+  //                    data-entry form.
+  //   phase="amount" — existing stepper + meal slot + confirm.
+  // Ingredient rows (no canonical reheat) skip straight to amount.
+  const [phase, setPhase] = useState(
+    (isMealRow && reheat) ? "reheat" : "amount"
+  );
+
+  // Reheat countdown state — opt-in: user taps I'M HEATING to start,
+  // tapping again (or READY) advances to the amount phase. Timer is
+  // informational only; nothing in the data layer depends on it.
+  const [heatingSince, setHeatingSince] = useState(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!heatingSince) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [heatingSince]);
+  const elapsedSec = heatingSince ? Math.floor((Date.now() - heatingSince) / 1000) : 0;
+  const targetSec = Number(reheat?.primary?.timeMin) > 0 ? Number(reheat.primary.timeMin) * 60 : 0;
+  const remainingSec = Math.max(0, targetSec - elapsedSec);
+  const fmtTimer = (s) => {
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${String(r).padStart(2, "0")}`;
+  };
+  // Silence "unused" complaints on tick without an explicit reference.
+  void tick;
+
   // Live macro preview. Re-resolves on every amount/unit tick so the
   // number on the confirm button matches exactly what the tally will
   // receive. Null when we can't compute (no canonical / cook_log
@@ -193,8 +226,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
     onClose?.();
   };
 
+  const sheetLabel = phase === "reheat" ? "REHEAT" : "I ATE THIS";
+
   return (
-    <ModalSheet onClose={onClose} zIndex={Z.picker} label="I ATE THIS">
+    <ModalSheet onClose={onClose} zIndex={Z.picker} label={sheetLabel}>
       <div style={{ padding: "4px 22px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
           <div style={{ fontSize: 44, flexShrink: 0 }}>{pantryRow?.emoji || canonical?.emoji || "🍽️"}</div>
@@ -208,46 +243,146 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           </div>
         </div>
 
-        {/* Reheat guidance — leftover-only, shown when the source
-            recipe authored a reheat block. Pantry-shelf ingredients
-            don't have reheat info; this surface is strictly for the
-            "kitchen → grab leftovers" flow. Primary method is the
-            headline; alternatives collapse below; quality/safety
-            note renders in amber so it reads as a caveat. */}
-        {isMealRow && reheat && (
-          <div style={{
-            padding: "12px 14px",
-            background: "#1a1608",
-            border: "1px solid #3a2f10",
-            borderRadius: 10,
-            marginBottom: 14,
-          }}>
-            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em", marginBottom: 6 }}>
-              ♨ REHEAT
+        {phase === "reheat" && reheat && (
+          <div>
+            {/* Method hero — big, cook-style. The primary row reads
+                like a cook step so the walkthrough feels like cooking,
+                not a data form. */}
+            <div style={{
+              padding: "16px 18px", marginBottom: 12,
+              background: "#1a1608", border: "1px solid #3a2f10",
+              borderRadius: 12,
+            }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.14em", marginBottom: 8 }}>
+                ♨ REHEAT · STEP 1 OF 2
+              </div>
+              <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 26, fontWeight: 300, color: "#f0ece4", lineHeight: 1.15, marginBottom: 8 }}>
+                {formatReheatSummary(reheat)}
+              </div>
+              {reheat.primary?.tips && (
+                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#ddd", lineHeight: 1.45 }}>
+                  {reheat.primary.tips}
+                </div>
+              )}
+              {reheat.note && (
+                <div style={{ marginTop: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#e0a868", fontStyle: "italic", lineHeight: 1.45 }}>
+                  ⚠ {reheat.note}
+                </div>
+              )}
             </div>
-            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4", marginBottom: 4 }}>
-              {formatReheatSummary(reheat)}
-            </div>
-            {reheat.primary?.tips && (
-              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb", lineHeight: 1.45 }}>
-                {reheat.primary.tips}
+
+            {/* Timer band. Opt-in — user taps I'M HEATING to start
+                the countdown. Nothing persists; this is a quiet kitchen
+                companion, not a data signal. Hit READY any time. */}
+            {targetSec > 0 && (
+              <div style={{
+                padding: "14px 16px", marginBottom: 12,
+                background: "#0f0f0f", border: "1px solid #2a2a2a",
+                borderRadius: 12, textAlign: "center",
+              }}>
+                {heatingSince ? (
+                  <>
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.14em", marginBottom: 6 }}>
+                      {remainingSec > 0 ? "HEATING" : "READY WHEN YOU ARE"}
+                    </div>
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 36, color: remainingSec > 0 ? "#f5c842" : "#7ec87e", letterSpacing: "0.05em" }}>
+                      {fmtTimer(remainingSec)}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setHeatingSince(null)}
+                      style={{
+                        marginTop: 10, padding: "6px 14px",
+                        background: "transparent", border: "1px solid #2a2a2a",
+                        color: "#888", borderRadius: 8,
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        letterSpacing: "0.08em", cursor: "pointer",
+                      }}
+                    >
+                      STOP TIMER
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setHeatingSince(Date.now())}
+                    style={{
+                      width: "100%", padding: "12px",
+                      background: "#141414", border: "1px solid #3a2f10",
+                      color: "#f5c842", borderRadius: 10,
+                      fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                      letterSpacing: "0.1em", cursor: "pointer",
+                    }}
+                  >
+                    ▶ I'M HEATING · {reheat.primary.timeMin} MIN
+                  </button>
+                )}
               </div>
             )}
+
+            {/* Alternative methods — collapsed details if user prefers
+                another device. Same content as before; compact. */}
             {Array.isArray(reheat.alt) && reheat.alt.length > 0 && (
-              <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #3a2f10" }}>
+              <div style={{ padding: "10px 14px", marginBottom: 12, background: "#0f0f0f", border: "1px dashed #2a2a2a", borderRadius: 10 }}>
                 {reheat.alt.map((a, i) => (
-                  <div key={i} style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#a99870", marginBottom: i === reheat.alt.length - 1 ? 0 : 4, lineHeight: 1.5 }}>
+                  <div key={i} style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#a99870", marginBottom: i === reheat.alt.length - 1 ? 0 : 6, lineHeight: 1.5 }}>
                     OR · {formatReheatSummary({ primary: a })}
                     {a.tips ? <div style={{ color: "#666", marginTop: 2 }}>{a.tips}</div> : null}
                   </div>
                 ))}
               </div>
             )}
-            {reheat.note && (
-              <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#e0a868", fontStyle: "italic", lineHeight: 1.45 }}>
-                ⚠ {reheat.note}
-              </div>
-            )}
+
+            {/* Phase advance. READY jumps straight to how-much logging;
+                SKIP is semantically the same advance but named softer
+                for the "I don't need the walkthrough" case. */}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setPhase("amount")}
+                style={{
+                  flex: 1, padding: "14px",
+                  background: "#1a1a1a", border: "1px solid #2a2a2a",
+                  color: "#888", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.1em", cursor: "pointer",
+                }}
+              >
+                SKIP
+              </button>
+              <button
+                type="button"
+                onClick={() => setPhase("amount")}
+                style={{
+                  flex: 2, padding: "14px",
+                  background: "#f5c842", border: "none",
+                  color: "#111", borderRadius: 12,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+                  letterSpacing: "0.1em", cursor: "pointer",
+                }}
+              >
+                READY · HOW MUCH? →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === "amount" && (
+          <>
+        {/* Compact reheat summary still surfaces on the amount phase
+            for quick reference — collapsed version of step 1 so the
+            user doesn't lose the context while dialing servings. */}
+        {isMealRow && reheat && (
+          <div style={{
+            padding: "8px 12px",
+            background: "#1a1608",
+            border: "1px solid #3a2f10",
+            borderRadius: 8,
+            marginBottom: 12,
+          }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.08em" }}>
+              ♨ {formatReheatSummary(reheat)}
+            </div>
           </div>
         )}
 
@@ -387,21 +522,43 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           </div>
         )}
 
-        <button
-          onClick={confirm}
-          disabled={loading || !(Number(amount) > 0)}
-          style={{
-            width: "100%", padding: "14px",
-            background: loading || !(Number(amount) > 0) ? "#1a1a1a" : "#f5c842",
-            border: "none", borderRadius: 12,
-            fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
-            color: loading || !(Number(amount) > 0) ? "#444" : "#111",
-            cursor: loading || !(Number(amount) > 0) ? "not-allowed" : "pointer",
-            letterSpacing: "0.08em",
-          }}
-        >
-          {loading ? "LOGGING…" : "LOG IT"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {/* Back to reheat phase — only visible when we started there. */}
+          {isMealRow && reheat && (
+            <button
+              type="button"
+              onClick={() => setPhase("reheat")}
+              disabled={loading}
+              style={{
+                flex: 1, padding: "14px",
+                background: "#1a1a1a", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 11,
+                letterSpacing: "0.1em", cursor: loading ? "not-allowed" : "pointer",
+              }}
+            >
+              ← REHEAT
+            </button>
+          )}
+          <button
+            onClick={confirm}
+            disabled={loading || !(Number(amount) > 0)}
+            style={{
+              flex: isMealRow && reheat ? 2 : 1,
+              padding: "14px",
+              background: loading || !(Number(amount) > 0) ? "#1a1a1a" : "#f5c842",
+              border: "none", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+              color: loading || !(Number(amount) > 0) ? "#444" : "#111",
+              cursor: loading || !(Number(amount) > 0) ? "not-allowed" : "pointer",
+              letterSpacing: "0.08em",
+            }}
+          >
+            {loading ? "LOGGING…" : "LOG IT"}
+          </button>
+        </div>
+          </>
+        )}
       </div>
     </ModalSheet>
   );

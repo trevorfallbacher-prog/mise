@@ -179,7 +179,21 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
         const currentServings = Number(pantryRow.servingsRemaining);
         if (Number.isFinite(currentServings)) {
           const nextServings = Math.max(0, Number((currentServings - amt).toFixed(4)));
-          if (nextServings !== currentServings) {
+          if (nextServings <= 0) {
+            // All servings consumed — delete the pantry row outright
+            // so the Kitchen tile disappears. The consumption_logs
+            // row we just inserted preserves the history (and keeps
+            // source_cook_log_id so analytics don't lose the trail).
+            // ON DELETE SET NULL on consumption_logs.pantry_row_id
+            // nulls the fk cleanly when the row goes.
+            const { error: delErr } = await supabase
+              .from("pantry_items")
+              .delete()
+              .eq("id", pantryRow.id);
+            if (delErr) {
+              console.warn("[consumption_logs] meal delete (fully consumed) failed:", delErr.message);
+            }
+          } else if (nextServings !== currentServings) {
             const { error: updErr } = await supabase
               .from("pantry_items")
               .update({ servings_remaining: nextServings })
