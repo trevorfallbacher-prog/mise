@@ -72,17 +72,28 @@ function slotForTime(ts, explicit) {
 // Recipe picker (used when tapping "+" on an empty day)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RecipePickerModal({ onPick, onClose }) {
+function RecipePickerModal({ userRecipes = [], onPick, onClose }) {
   const [query, setQuery] = useState("");
+  // Merge bundled + user-authored into a single list. Bundled wins slug
+  // collisions to mirror findRecipe()'s precedence; user rows get a tag
+  // so the UI can label them "YOURS" / "AI" and the picker handler can
+  // tell which source it's scheduling from.
+  const all = useMemo(() => {
+    const bundledSlugs = new Set(RECIPES.map(r => r.slug));
+    const userOnly = userRecipes
+      .filter(r => r?.recipe && r.slug && !bundledSlugs.has(r.slug))
+      .map(r => ({ ...r.recipe, slug: r.slug, _source: r.source }));
+    return [...RECIPES, ...userOnly];
+  }, [userRecipes]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return RECIPES;
-    return RECIPES.filter(r =>
-      r.title.toLowerCase().includes(q) ||
-      r.cuisine.toLowerCase().includes(q) ||
-      r.category.toLowerCase().includes(q)
+    if (!q) return all;
+    return all.filter(r =>
+      (r.title || "").toLowerCase().includes(q) ||
+      (r.cuisine || "").toLowerCase().includes(q) ||
+      (r.category || "").toLowerCase().includes(q)
     );
-  }, [query]);
+  }, [query, all]);
 
   return (
     <div style={{
@@ -114,28 +125,43 @@ function RecipePickerModal({ onPick, onClose }) {
         />
         <div style={{ marginTop: 14, overflowY: "auto", flex: 1 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map(r => (
-              <button
-                key={r.slug}
-                onClick={() => onPick(r)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "12px 14px", background: "#161616",
-                  border: "1px solid #2a2a2a", borderRadius: 12,
-                  cursor: "pointer", textAlign: "left",
-                }}
-              >
-                <div style={{ fontSize: 26, flexShrink: 0 }}>{r.emoji}</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {r.title}
+            {filtered.map(r => {
+              const bits = [
+                r.cuisine ? r.cuisine.toUpperCase() : null,
+                `${totalTimeMin(r) || 0} MIN`,
+                r.difficulty ? difficultyLabel(r.difficulty).toUpperCase() : null,
+              ].filter(Boolean);
+              const tag = r._source === "custom" ? "YOURS" : r._source === "ai" ? "AI" : null;
+              return (
+                <button
+                  key={r.slug}
+                  onClick={() => onPick(r)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    padding: "12px 14px", background: "#161616",
+                    border: "1px solid #2a2a2a", borderRadius: 12,
+                    cursor: "pointer", textAlign: "left",
+                  }}
+                >
+                  <div style={{ fontSize: 26, flexShrink: 0 }}>{r.emoji || "🍽️"}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+                        {r.title || "(untitled)"}
+                      </div>
+                      {tag && (
+                        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#f5c842", background: "#1a1608", border: "1px solid #3a2f10", borderRadius: 4, padding: "2px 6px", letterSpacing: "0.08em", flexShrink: 0 }}>
+                          {tag}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.05em", marginTop: 2 }}>
+                      {bits.join(" · ")}
+                    </div>
                   </div>
-                  <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.05em", marginTop: 2 }}>
-                    {r.cuisine.toUpperCase()} · {totalTimeMin(r)} MIN · {difficultyLabel(r.difficulty).toUpperCase()}
-                  </div>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
             {filtered.length === 0 && (
               <div style={{ padding: 20, textAlign: "center", color: "#555", fontFamily: "'DM Sans',sans-serif", fontSize: 13 }}>
                 No recipes match "{query}"
@@ -491,7 +517,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // point at user_recipes rows (custom or AI recipes scheduled via
   // Quick Cook). Without this wired in, scheduled user recipes would
   // render as blank tiles on the calendar.
-  const { findBySlug: findUserRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipesList, findBySlug: findUserRecipe } = useUserRecipes(userId);
 
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we
@@ -844,6 +870,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       */}
       {addingForDay && !recipeToSchedule && (
         <RecipePickerModal
+          userRecipes={userRecipesList}
           onPick={onPickRecipe}
           onClose={() => { setAddingForDay(null); }}
         />
