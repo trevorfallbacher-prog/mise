@@ -291,26 +291,57 @@ export function pairRecipeIngredients(ingredients, pantry) {
       }) || null;
     }
 
-    // Tier 2 — name-fuzzy match for pantry rows without canonical
-    // ids. Catches free-text rows the user typed in.
+    // Tier 2 — name-fuzzy match, scoped to genuinely-ambiguous rows.
+    // Fires only when AT LEAST ONE side lacks a resolvable canonical
+    // — e.g. a pre-canonical free-text pantry row, or a recipe
+    // ingredient the AI left untagged. When BOTH sides carry valid
+    // canonicals and Tier 1 didn't match, the canonicals are
+    // authoritative: they're saying "these are different ingredients"
+    // and a name-based match here is a false positive waiting to
+    // happen. (Historical source of the powdered-sugar-vs-string-
+    // cheese class of bug when display names collided on a token.)
     if (!paired && ingName) {
-      paired = (pantry || []).find(p =>
-        p && !used.has(p.id) && namesMatch(p.name, ingName),
-      ) || null;
+      const ingCanonValid = !!(ingCanonId && ingCanon);
+      paired = (pantry || []).find(p => {
+        if (!p || used.has(p.id)) return false;
+        const pCanonId = p.ingredientId || p.canonicalId || null;
+        const pCanon   = pCanonId ? findIngredient(pCanonId) : null;
+        const pCanonValid = !!(pCanonId && pCanon);
+        if (ingCanonValid && pCanonValid) return false;
+        return namesMatch(p.name, ingName);
+      }) || null;
     }
 
-    // Tier 3 — closest-match: same category, different canonical.
-    // "Low-carb tortilla" with no low-carb variant on hand but
-    // regular flour tortillas in pantry → substitute path.
+    // Tier 3 — closest-match (substitute band). Substitute is a real
+    // thing: recipe wants cotija, user has feta, both cheese_hub —
+    // legit swap. But "same category" alone was too broad: "pantry"
+    // bucket holds flour + sugar + salt + crackers + cheese; the
+    // first one in that bucket would become the "closest match" for
+    // string cheese, yielding nonsense like "Closest match in pantry:
+    // Powdered Sugar." Require EITHER same hub (true sibling) OR
+    // same category WITH at least one shared token — kills the
+    // cross-category false positive while still catching dairy-↔-
+    // dairy subs like cream cheese ↔ sour cream via "cream".
     let closestMatch = null;
     if (!paired && ingCanon) {
+      const ingHub = ingCanon.parentId || ingCanon.id;
+      const ingTokens = new Set(
+        normalizeForMatch(ingName).split(/\s+/).filter(Boolean),
+      );
       closestMatch = (pantry || []).find(p => {
         if (!p || used.has(p.id)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
         if (!pCanonId) return false;
         const pCanon = findIngredient(pCanonId);
         if (!pCanon) return false;
-        return pCanon.category && pCanon.category === ingCanon.category;
+        const pHub = pCanon.parentId || pCanon.id;
+        if (pHub && ingHub && pHub === ingHub) return true;
+        if (!pCanon.category || pCanon.category !== ingCanon.category) return false;
+        const pTokens = new Set(
+          normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
+        );
+        for (const t of ingTokens) if (pTokens.has(t)) return true;
+        return false;
       }) || null;
     }
 
