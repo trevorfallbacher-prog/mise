@@ -789,6 +789,34 @@ pass at each step):*
 6. Wire summary phase into CookComplete state machine + suppress
    the realtime toast stack while the summary plays.
 
+**Phase 6 commits — daily roll + polish (5 total):**
+
+1. `0113_profiles_daily_roll_columns.sql` — add daily_roll_date
+   (date) + daily_roll_result (jsonb) columns. daily_roll_date is
+   the local-day bucket the user last rolled; daily_roll_result
+   snapshots the rarity + XP + flair so the UI can re-render the
+   most recent result without re-querying xp_rarity_rolls.
+2. `0114_daily_roll_rpc.sql` — streak_daily_roll() SECURITY
+   DEFINER RPC. Guards on (now local-day > profiles.daily_roll_date),
+   draws a weighted sample from xp_rarity_rolls, calls award_xp
+   with p_base_override = reward XP, writes the result jsonb to
+   profiles. Returns the rolled row so the client can animate.
+3. `DailyRollCard.jsx` + Home wire — scratch card on the Home
+   surface. If the user hasn't rolled today: "scratch to reveal"
+   affordance → tap fires the RPC → flip animation reveals the
+   rarity. If already rolled: compact "today: 🔷 +15 XP" badge
+   reading from profiles.daily_roll_result.
+4. Epic flair avatar cosmetic — 24h gradient border + sparkle
+   particles on the user's avatar (Home + UserProfile) when
+   daily_roll_result.cosmetic_flair === 'avatar_sparkle' and
+   the roll is within xp_rarity_rolls.flair_hours of now.
+5. Admin XP economy panel — new section in AdminPanel with the
+   observability queries from §7 telemetry list: median XP per
+   active user per day, % of events hitting soft/hard cap,
+   streak-length distribution, shield burn vs. regen rate,
+   revival usage, curated vs. non-curated cook share, median
+   time to L10, total XP blocked by gates.
+
 **Phase 4b commits — gates (8 total, locked at phase start):**
 
 1. `0107_xp_level_gates.sql` — config table + seed for 4 gates
