@@ -88,12 +88,30 @@ export function normalizeForMatch(name) {
     .trim();
 }
 
+// Token-level match. Naked `.includes()` was too loose: "tortilla"
+// substring-hits "tortilla chip" and "spice mix" overlaps with
+// "mexican spice mix", so the AI-sketch auto-pairer was happily
+// swapping four tortillas for tortilla chips and a Mexican spice
+// blend for a jar of jalapeños. English food names carry identity
+// in the HEAD NOUN (the last token) — "corn tortilla", "flour
+// tortilla", "whole wheat tortilla" all share head=tortilla and
+// are legitimate subs; "tortilla chip" has head=chip, a different
+// ingredient entirely. We require (a) heads match AND (b) the
+// shorter side's token set is fully contained in the longer's.
 export function namesMatch(a, b) {
   const na = normalizeForMatch(a);
   const nb = normalizeForMatch(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
-  return na.includes(nb) || nb.includes(na);
+  const ta = na.split(/\s+/).filter(Boolean);
+  const tb = nb.split(/\s+/).filter(Boolean);
+  if (!ta.length || !tb.length) return false;
+  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false;
+  const sa = new Set(ta);
+  const sb = new Set(tb);
+  const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+  for (const t of small) if (!big.has(t)) return false;
+  return true;
 }
 
 // Resolve a free-text name to a canonical slug via best-score fuzzy

@@ -5859,6 +5859,30 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
+// Token-subset containment with head-noun equality. Replaces the
+// bare `.includes()` substring check that was mis-resolving
+// "tortillas" onto a `tortilla_chips` canonical (and similar) when
+// the real tortillas slug wasn't available. For a candidate `c` and
+// needle `n` (both post-fuzzyNormalize space-joined strings):
+//   • heads must match (last token) — "tortilla chip" vs "tortilla"
+//     have heads "chip" vs "tortilla", so they are NOT equivalent
+//   • the shorter's token set must be fully contained in the longer's
+// "flour tortilla" ⊇ "tortilla" still matches (both head=tortilla,
+// {tortilla} ⊂ {flour, tortilla}). "Parm" still matches via the
+// equal-string path above because candidates include shortName.
+function headAndSubsetMatch(c, n) {
+  if (!c || !n) return false;
+  const tc = c.split(" ").filter(Boolean);
+  const tn = n.split(" ").filter(Boolean);
+  if (!tc.length || !tn.length) return false;
+  if (tc[tc.length - 1] !== tn[tn.length - 1]) return false;
+  const sc = new Set(tc);
+  const sn = new Set(tn);
+  const [small, big] = sc.size <= sn.size ? [sc, sn] : [sn, sc];
+  for (const t of small) if (!big.has(t)) return false;
+  return true;
+}
+
 // Score one ingredient against a needle string. Picks the best match across
 // the ingredient's name, shortName, and id (underscores → spaces) — so
 // "parm" matches "parmesan" via shortName even if the display name is longer.
@@ -5874,7 +5898,7 @@ function scoreIngredientMatch(needle, ing) {
   let best = 0;
   for (const c of candidates) {
     if (c === n)                           best = Math.max(best, 100);
-    else if (c.includes(n) || n.includes(c)) best = Math.max(best, 80);
+    else if (headAndSubsetMatch(c, n))     best = Math.max(best, 80);
   }
   if (best === 0) {
     const nTokens = new Set(n.split(" "));

@@ -9,6 +9,7 @@ import {
 import {
   extractDietaryClaims,
   namesMatch,
+  normalizeForMatch,
   resolveNameToCanonicalId,
   deriveRowHeader,
   deriveRowCut,
@@ -287,7 +288,14 @@ export default function AIRecipe({
   });
   // Inline picker open state. swapOpenIdx = which pantry-row's swap
   // popover is open (null = none). addOpen = "+ ADD" picker visible.
+  // swapSearch is the live filter query inside the open swap popover
+  // — resets every time a different row's picker opens.
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
+  const [swapSearch,  setSwapSearch]  = useState("");
+  const openSwapPicker = (idx) => {
+    setSwapOpenIdx(idx);
+    setSwapSearch("");
+  };
   const [addOpen, setAddOpen]         = useState(false);
   // Revision instruction for the FINAL cook — the user's "make it
   // spicier, skip the garlic in the steps" note. Sent as
@@ -485,6 +493,7 @@ export default function AIRecipe({
       setPantryEdits({ swaps: autoSwaps, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
+      setSwapSearch("");
       setAddOpen(false);
       if (drafted?.title) {
         setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
@@ -723,6 +732,7 @@ export default function AIRecipe({
       setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
+      setSwapSearch("");
       setAddOpen(false);
       setStarIngredientIds([]);
       setCourse(courseType);
@@ -958,33 +968,62 @@ export default function AIRecipe({
     const pantryById = new Map(pantry.map(p => [p.id, p]));
     const lookupPantryRow = (id) => (id ? pantryById.get(id) : null);
 
-    // Same-category alternates for the swap picker. Falls back to
-    // an empty list when the canonical isn't in the registry.
-    const swapCandidatesFor = (sketchPantryRow) => {
+    // Rank all pantry rows by closeness to a sketch pantry row.
+    // Replaces the old same-category dump (which scrolled past the
+    // screen the moment the user had >10 pantry items in that
+    // bucket). Returns [{ row, score }] sorted highest first.
+    //
+    // Ranking signals (additive):
+    //   +1000  same canonical id as the target
+    //   +500   same parentId / hub as the target (sibling cuts)
+    //   +100   same food category
+    //   +10    per token shared with the target's normalized name
+    //
+    // When `query` is non-empty we also require the row's name to
+    // contain the query as a substring (user is explicitly typing,
+    // so loose substring is fine — we're not auto-pairing, we're
+    // just filtering a list in front of their eyes).
+    const rankSwapCandidates = (sketchPantryRow, query) => {
       const targetCanon = sketchPantryRow.ingredientId
         ? findIngredient(sketchPantryRow.ingredientId)
         : null;
-      const targetCat = targetCanon?.category;
-      const targetId  = targetCanon?.id;
+      const targetCat  = targetCanon?.category || null;
+      const targetSlug = targetCanon?.id || null;
+      const targetHub  = targetCanon?.parentId || targetCanon?.id || null;
+      const targetTokens = new Set(
+        normalizeForMatch(
+          sketchPantryRow.name || targetCanon?.name || "",
+        ).split(/\s+/).filter(Boolean),
+      );
+
+      const q = (query || "").trim().toLowerCase();
       const seen = new Set();
-      const out = [];
-      for (const row of pantry) {
-        const canon = row.ingredientId ? findIngredient(row.ingredientId) : null;
-        // Skip the row that's already the current pick.
-        if (row.id === sketchPantryRow.pantryItemId) continue;
-        // Skip already-listed rows of the same canonical to keep
-        // the picker compact (one chip per canonical, not per
-        // physical instance).
-        const key = canon?.id || row.name?.toLowerCase() || row.id;
+      const scored = [];
+      for (const p of pantry) {
+        if (!p) continue;
+        if (p.id === sketchPantryRow.pantryItemId) continue;
+        const canon = p.ingredientId ? findIngredient(p.ingredientId) : null;
+        const key = canon?.id || (p.name || "").toLowerCase() || p.id;
         if (seen.has(key)) continue;
         seen.add(key);
-        // Same category wins; if no canonical match was available
-        // we just show every other pantry row (rare fallback).
-        if (!targetCat || (canon && canon.category === targetCat) || canon?.id === targetId) {
-          out.push(row);
-        }
+
+        if (q && !(p.name || "").toLowerCase().includes(q)) continue;
+
+        let score = 0;
+        if (canon?.id && targetSlug && canon.id === targetSlug) score += 1000;
+        const pHub = canon?.parentId || canon?.id;
+        if (pHub && targetHub && pHub === targetHub) score += 500;
+        if (canon?.category && targetCat && canon.category === targetCat) score += 100;
+        const pTokens = new Set(
+          normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
+        );
+        let overlap = 0;
+        for (const t of targetTokens) if (pTokens.has(t)) overlap++;
+        score += overlap * 10;
+        scored.push({ row: p, score });
       }
-      return out;
+      scored.sort((a, b) => b.score - a.score);
+      return scored;
     };
 
     const toggleRemove = (i) => setPantryEdits(prev => {
@@ -1516,7 +1555,7 @@ export default function AIRecipe({
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                         <button
-                          onClick={() => setSwapOpenIdx(swapOpen ? null : pantryIdx)}
+                          onClick={() => swapOpen ? openSwapPicker(null) : openSwapPicker(pantryIdx)}
                           style={swapOpen ? swapBtnActive : swapBtn}
                         >
                           ⇌ SWAP
@@ -1525,7 +1564,15 @@ export default function AIRecipe({
                       </div>
                     </div>
                     {swapOpen && (() => {
-                      const candidates = swapCandidatesFor(row);
+                      // Pin the 3 closest matches at the top and let
+                      // the user type to filter the rest of pantry.
+                      // Replaces the old full-category dump that made
+                      // the user scroll past 20+ items every swap.
+                      const q = swapSearch.trim();
+                      const ranked = rankSwapCandidates(row, swapSearch);
+                      const shown = q
+                        ? ranked.slice(0, 8).map(r => r.row)
+                        : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
                       return (
                         <div style={{
                           marginTop: 10, paddingTop: 10,
@@ -1533,17 +1580,30 @@ export default function AIRecipe({
                           display: "flex", flexDirection: "column", gap: 6,
                         }}>
                           <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.08em" }}>
-                            SWAP TO ANOTHER {((findIngredient(row.ingredientId)?.category) || "ingredient").toUpperCase()}:
+                            SWAP {row.name.toUpperCase()} FOR:
                           </div>
-                          {candidates.length === 0 && (
-                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                              Nothing else in that category — try Recipe Feedback below.
+                          <input
+                            type="text"
+                            value={swapSearch}
+                            onChange={e => setSwapSearch(e.target.value)}
+                            placeholder="Search your pantry…"
+                            style={swapSearchInput}
+                            autoFocus
+                          />
+                          {!q && (
+                            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
+                              TOP 3 CLOSEST · TYPE TO SEARCH
                             </div>
                           )}
-                          {candidates.map(c => (
+                          {shown.length === 0 && (
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                              {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                            </div>
+                          )}
+                          {shown.map(c => (
                             <button
                               key={c.id}
-                              onClick={() => { applySwap(pantryIdx, c.id); setSwapOpenIdx(null); }}
+                              onClick={() => { applySwap(pantryIdx, c.id); openSwapPicker(null); }}
                               style={swapOptionBtn}
                             >
                               <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
@@ -1556,7 +1616,7 @@ export default function AIRecipe({
                             </button>
                           ))}
                           {swappedRow && (
-                            <button onClick={() => { clearSwap(pantryIdx); setSwapOpenIdx(null); }} style={swapClearBtn}>
+                            <button onClick={() => { clearSwap(pantryIdx); openSwapPicker(null); }} style={swapClearBtn}>
                               ↺ REVERT TO ORIGINAL ({row.name})
                             </button>
                           )}
@@ -2266,6 +2326,13 @@ const swapClearBtn = {
   color: "#888", borderRadius: 8,
   fontFamily: "'DM Mono',monospace", fontSize: 10,
   letterSpacing: "0.06em", cursor: "pointer",
+};
+const swapSearchInput = {
+  width: "100%", padding: "8px 10px",
+  background: "#0a0a0a", border: "1px solid #2a2a2a",
+  borderRadius: 8, color: "#f0ece4",
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+  outline: "none", boxSizing: "border-box",
 };
 const addBtn = {
   width: "100%", padding: "10px",
