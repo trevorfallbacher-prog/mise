@@ -53,11 +53,11 @@ function avatarColor(name) {
  * the greeting and the feed as a pinned row.
  */
 export default function Home({
-  profile, userId, familyIds = [], familyLoading = false, nameFor,
+  profile, userId, familyIds = [], familyLoading = false, nameFor, avatarFor,
   openProfile, openCook,
   // Google profile picture from the auth session (user_metadata.avatar_url).
-  // Used as the default self-avatar until we ship user-uploaded pics —
-  // saves the signed-in user from staring at their initial forever.
+  // Zero-latency fallback for the first-sign-in frame before the
+  // cached profile.avatar_url upsert completes.
   authAvatarUrl,
 }) {
   const streak      = profile.streak_count || 0;
@@ -165,7 +165,7 @@ export default function Home({
             <Avatar
               name={profile.name}
               initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
-              imageUrl={authAvatarUrl}
+              imageUrl={profile.avatar_url || authAvatarUrl}
               onClick={openSelf}
             />
           </FlairHalo>
@@ -242,6 +242,7 @@ export default function Home({
                 key={`${item.kind}-${item.payload.cookLogId || item.payload.badgeId}-${i}`}
                 item={item}
                 nameFor={nameFor}
+                avatarFor={avatarFor}
                 badgeById={badgeById}
                 onCookTap={openCook}
                 onActorTap={openProfile}
@@ -268,11 +269,12 @@ export default function Home({
 }
 
 // ── Activity row — either a cook event or a badge earn ───────────────────────
-function ActivityRow({ item, nameFor, badgeById, onCookTap, onActorTap, viewerId }) {
+function ActivityRow({ item, nameFor, avatarFor, badgeById, onCookTap, onActorTap, viewerId }) {
   const actorName = nameFor ? nameFor(item.actorId) : "Someone";
   const isSelf = item.actorId === viewerId;
   const displayName = isSelf ? "You" : actorName;
   const avatarInitial = (actorName || "?")[0]?.toUpperCase() || "?";
+  const actorAvatar = avatarFor ? avatarFor(item.actorId) : null;
 
   if (item.kind === "cook") {
     const p = item.payload;
@@ -286,7 +288,7 @@ function ActivityRow({ item, nameFor, badgeById, onCookTap, onActorTap, viewerId
           padding: "12px 14px", cursor: "pointer", textAlign: "left", width: "100%",
         }}
       >
-        <Avatar name={actorName} initial={avatarInitial}
+        <Avatar name={actorName} initial={avatarInitial} imageUrl={actorAvatar}
           onClick={(e) => { e.stopPropagation(); onActorTap?.(item.actorId); }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>

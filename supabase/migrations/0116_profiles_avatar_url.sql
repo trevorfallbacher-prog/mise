@@ -1,0 +1,35 @@
+-- 0116_profiles_avatar_url.sql
+--
+-- Adds profiles.avatar_url so every chef has a stable place to hang a
+-- profile picture. Two producers write into this column:
+--
+--   1. Auto-seed on sign-in — the client pulls the Google OAuth
+--      avatar URL (user_metadata.avatar_url / picture) and upserts it
+--      into the profile row. This means family/friends who also signed
+--      in with Google get a Google-provided pic on every surface
+--      (activity feed, diners picker, family tile, profile header)
+--      without anyone lifting a finger. Previously avatars were gated
+--      to the viewer's own auth session, so other users always
+--      rendered as initials — now we cache the URL so it's visible
+--      cross-user.
+--
+--   2. Manual upload — Settings grows an "upload profile picture"
+--      control that writes into the `avatars` storage bucket (see
+--      0117) and overwrites avatar_url with the public URL. Users
+--      who don't sign in with Google, or who want to override the
+--      Google pic, can do so.
+--
+-- Nullable on purpose: magic-link sign-ins have no OAuth metadata, so
+-- until they upload something we fall back to the initial-letter tile
+-- (handled in the client renderer). No backfill needed — the sign-in
+-- effect covers existing Google users the first time they load the
+-- app after this ships.
+--
+-- RLS: the existing profiles policies already gate SELECT/UPDATE on
+-- auth.uid() + family_ids_of(), so adding a column doesn't require
+-- policy changes. Family members can already read each other's
+-- profile rows by design, which is exactly the cross-user avatar
+-- visibility this column enables.
+
+alter table public.profiles
+  add column if not exists avatar_url text;

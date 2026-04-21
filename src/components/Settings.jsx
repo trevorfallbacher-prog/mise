@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { signOut } from "../lib/useAuth";
 import { useWebPush } from "../lib/useWebPush";
 import { supabase } from "../lib/supabase";
+import { compressImage } from "../lib/compressImage";
 
 // Panel header used at the top of each section in Settings.
 function SectionHeader({ label }) {
@@ -53,9 +54,18 @@ function ConnectionRow({ row, actions, onOpenProfile }) {
           cursor: canOpen ? "pointer" : "default",
         }}
       >
-        <div style={{ width:40, height:40, borderRadius:20, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500, flexShrink:0 }}>
-          {initial}
-        </div>
+        {row.other?.avatar_url ? (
+          <img
+            src={row.other.avatar_url}
+            alt={name}
+            referrerPolicy="no-referrer"
+            style={{ width:40, height:40, borderRadius:20, objectFit:"cover", flexShrink:0, display:"block" }}
+          />
+        ) : (
+          <div style={{ width:40, height:40, borderRadius:20, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500, flexShrink:0 }}>
+            {initial}
+          </div>
+        )}
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
             {name}
@@ -162,6 +172,63 @@ export default function Settings({ userId, profile, relationships, upsertProfile
     }
   };
 
+  // Avatar upload. Pipes the chosen file through the shared
+  // compressImage helper (downscales to 1600px long-side JPEG q=0.72)
+  // to keep the `avatars` bucket light, writes to
+  // `<userId>/<uuid>.jpg` so the RLS prefix policy accepts it (see
+  // migration 0117), then upserts the public URL onto the profile row.
+  // New UUID per upload so the <img> src changes and the browser/CDN
+  // doesn't serve a stale cached version. Old files are orphaned in
+  // storage; cheap and safe to sweep later.
+  const avatarInputRef = useRef(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarError, setAvatarError] = useState(null);
+  const displayAvatar = profile?.avatar_url || null;
+  const displayInitial = (profile?.name || "?")[0]?.toUpperCase() || "?";
+
+  const pickAvatar = () => {
+    setAvatarError(null);
+    avatarInputRef.current?.click();
+  };
+
+  const onAvatarChosen = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";                // allow re-picking the same file
+    if (!file || !userId) return;
+    if (!file.type.startsWith("image/")) {
+      setAvatarError("Pick an image file.");
+      return;
+    }
+    setAvatarBusy(true);
+    setAvatarError(null);
+    try {
+      const { base64, mediaType } = await compressImage(file);
+      // base64 → Uint8Array for Supabase Storage upload.
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const uuid = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const path = `${userId}/${uuid}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from("avatars")
+        .upload(path, bytes, {
+          contentType: mediaType || "image/jpeg",
+          cacheControl: "3600",
+          upsert: false,
+        });
+      if (upErr) throw upErr;
+      const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path);
+      const publicUrl = urlData?.publicUrl;
+      if (!publicUrl) throw new Error("Upload succeeded but no public URL returned.");
+      await upsertProfile({ avatar_url: publicUrl });
+    } catch (err) {
+      console.error("[avatar upload]", err);
+      setAvatarError(err?.message || "Upload failed.");
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
   const myCode = profile?.invite_code || "—";
 
   const copyCode = async () => {
@@ -241,6 +308,48 @@ export default function Settings({ userId, profile, relationships, upsertProfile
             Add your name so your family sees who did what.
           </div>
         )}
+
+        {/* Profile picture — preview + upload. Google users arrive with
+            avatar_url pre-seeded from OAuth; this is how they override
+            it, and how magic-link users set one for the first time. */}
+        <SectionHeader label="PROFILE PICTURE" />
+        <div style={{ display:"flex", alignItems:"center", gap:14, background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:"14px 16px" }}>
+          {displayAvatar ? (
+            <img
+              src={displayAvatar}
+              alt={profile?.name || "Profile"}
+              referrerPolicy="no-referrer"
+              style={{ width:56, height:56, borderRadius:28, objectFit:"cover", flexShrink:0, display:"block" }}
+            />
+          ) : (
+            <div style={{ width:56, height:56, borderRadius:28, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:24, fontWeight:500, flexShrink:0 }}>
+              {displayInitial}
+            </div>
+          )}
+          <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
+              {displayAvatar ? "Replace your picture" : "Add a profile picture"}
+            </div>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginTop:2 }}>
+              Family and friends see this on your cooks and profile.
+            </div>
+            {avatarError && (
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#ef4444", marginTop:6, letterSpacing:"0.04em" }}>
+                {avatarError}
+              </div>
+            )}
+          </div>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            onChange={onAvatarChosen}
+            style={{ display:"none" }}
+          />
+          <SmallButton onClick={pickAvatar}>
+            {avatarBusy ? "…" : (displayAvatar ? "REPLACE" : "UPLOAD")}
+          </SmallButton>
+        </div>
 
         {/* My invite code */}
         <SectionHeader label="MY SHARE CODE" />

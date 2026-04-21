@@ -207,19 +207,30 @@ export default function UserProfile({
                 an avatar_sparkle cosmetic within the flair_hours window. */}
             <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20 }}>
               <FlairHalo active={isSelf && isFlairActive(profile)} size={72}>
-                {isSelf && authAvatarUrl && !avatarBroken ? (
-                  <img
-                    src={authAvatarUrl}
-                    alt={name}
-                    onError={() => setAvatarBroken(true)}
-                    referrerPolicy="no-referrer"
-                    style={{ width:72, height:72, borderRadius:36, objectFit:"cover", flexShrink:0, display:"block" }}
-                  />
-                ) : (
-                  <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
-                    {initial}
-                  </div>
-                )}
+                {(() => {
+                  // Prefer the cached DB URL (works for self AND family
+                  // because useUserProfile selects * and the sign-in
+                  // effect in App.jsx backfills it cross-user). Fall
+                  // back to the signed-in user's own auth URL while
+                  // the first-sign-in upsert is still in flight.
+                  const src = profile?.avatar_url || (isSelf ? authAvatarUrl : null);
+                  if (src && !avatarBroken) {
+                    return (
+                      <img
+                        src={src}
+                        alt={name}
+                        onError={() => setAvatarBroken(true)}
+                        referrerPolicy="no-referrer"
+                        style={{ width:72, height:72, borderRadius:36, objectFit:"cover", flexShrink:0, display:"block" }}
+                      />
+                    );
+                  }
+                  return (
+                    <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
+                      {initial}
+                    </div>
+                  );
+                })()}
               </FlairHalo>
               <div style={{ flex:1, minWidth:0 }}>
                 <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", margin:0, letterSpacing:"-0.02em" }}>

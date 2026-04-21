@@ -82,16 +82,26 @@ export default function App() {
   const { profile, loading: profileLoading, upsert: upsertProfile } =
     useProfile(user?.id);
 
-  // On first sign-in (or if an older account has no name yet), save whatever
-  // the provider gave us so Home can personalise greetings.
+  // On first sign-in (or if an older account has no name / avatar yet),
+  // cache whatever the provider gave us. Name powers Home's greeting;
+  // avatar_url makes the Google profile pic visible to the viewer AND
+  // to family members who see the same row via RLS — which is how
+  // other users' Google pics reach the activity feed / diner picker
+  // / family tile without every viewer needing access to every
+  // chef's OAuth session. Manual uploads (Settings) overwrite this
+  // later; we intentionally don't clobber an existing avatar_url.
   useEffect(() => {
     if (!user || profileLoading) return;
     const googleName = nameFromAuth(user);
+    const googleAvatar = avatarUrlFromAuth(user);
     if (!profile) {
-      upsertProfile({ name: googleName }).catch(console.error);
-    } else if (!profile.name && googleName) {
-      upsertProfile({ name: googleName }).catch(console.error);
+      upsertProfile({ name: googleName, avatar_url: googleAvatar }).catch(console.error);
+      return;
     }
+    const patch = {};
+    if (!profile.name && googleName) patch.name = googleName;
+    if (!profile.avatar_url && googleAvatar) patch.avatar_url = googleAvatar;
+    if (Object.keys(patch).length) upsertProfile(patch).catch(console.error);
   }, [user, profile, profileLoading, upsertProfile]);
 
   if (authLoading) return <LoadingSplash />;
@@ -169,6 +179,22 @@ function AuthedApp({ user, profile, upsertProfile }) {
     }
     return (id) => map.get(id) || "Someone";
   }, [user?.id, profile?.name, relationships.family, relationships.friends]);
+
+  // Parallel lookup for the user's profile picture. Relationships rows
+  // carry avatar_url (see useRelationships select), the viewer's own
+  // row carries it via useProfile. Activity feed rows only have an
+  // actorId — this closure hands them the URL without re-fetching
+  // per row.
+  const avatarFor = useMemo(() => {
+    const map = new Map();
+    if (user?.id && profile?.avatar_url) map.set(user.id, profile.avatar_url);
+    for (const row of [...relationships.family, ...relationships.friends]) {
+      if (row.otherId && row.other?.avatar_url) {
+        map.set(row.otherId, row.other.avatar_url);
+      }
+    }
+    return (id) => map.get(id) || null;
+  }, [user?.id, profile?.avatar_url, relationships.family, relationships.friends]);
 
   // Pantry + shopping list still subscribe to realtime so their UI updates
   // when family edits land — but we no longer raise toasts from them. Toasts
@@ -389,6 +415,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             familyIds={familyIds}
             familyLoading={relationships.loading}
             nameFor={nameFor}
+            avatarFor={avatarFor}
             openProfile={openProfile}
             openCook={openCook}
             authAvatarUrl={avatarUrlFromAuth(user)}
