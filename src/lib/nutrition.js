@@ -178,12 +178,17 @@ export function validateNutrition(n) {
 // declare `toBase=1` per count. The nutrition.per value picks which axis
 // we're scaling along.
 //
-// opts.countWeightG (optional) — per-row override of the canonical's
-// count-unit toBase. When the qty is counted (qty.unit === "count"),
-// we use countWeightG * amount as the base grams instead of
-// fromEntry.toBase * amount. Lets a pantry row say "each breast in
-// THIS pack is 170g" and have all downstream math reflect that
-// calibration without rewriting the canonical for everyone.
+// opts.countWeightG (optional) — per-row grams-per-count. Two distinct
+// roles depending on the canonical's ladder shape:
+//   - Mass ladder (chicken_breast, sausage): overrides the canonical's
+//     default count.toBase so "each breast in THIS pack is 170g"
+//     calibrates downstream math. Delegated to convertWithBridge via
+//     the synthetic row so the same override logic powers CookComplete.
+//   - Count-only ladder (tortillas, bread_slice): acts as the MISSING
+//     grams anchor. The canonical has no `g:1` entry so convertWithBridge's
+//     pure-bridge path can't resolve count→g (the mass-side unit isn't
+//     in the ladder). Compute grams directly from counts × override.
+//     Without the override we still bail — no grams axis to scale along.
 export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   if (!qty || !canonical || !nutrition) return null;
 
@@ -196,25 +201,37 @@ export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   const per = coercePer(nutrition);
   if (!per) return null;
 
-  // qty → base amount math delegates to convertWithBridge so the
-  // count↔mass override logic stays in one place (shared with
-  // CookComplete's conversion UI). Per-row override of grams-per-count
-  // still only applies to mass ladders — pure-count ladders (banana
-  // with per="count", count.toBase=1) have no gram axis and the
-  // override would poison the math. Gated by stripping countWeightG
-  // from the synthetic row when the canonical isn't mass-based.
-  const applyOverride =
-    qty.unit === "count" &&
-    Number.isFinite(Number(opts.countWeightG)) &&
-    Number(opts.countWeightG) > 0 &&
-    isMassLadder(canonical);
-  const synthRow = applyOverride
-    ? { countWeightG: Number(opts.countWeightG) }
+  const rowGramsPerCount = Number(opts.countWeightG);
+  const haveOverride = Number.isFinite(rowGramsPerCount) && rowGramsPerCount > 0;
+  const massLadder = isMassLadder(canonical);
+
+  // Mass-ladder path: delegate qty→grams to convertWithBridge. Pass
+  // the override through synthRow on count units so the row's
+  // calibrated weight wins over the canonical's baked-in count.toBase.
+  const synthRow = haveOverride && massLadder && qty.unit === "count"
+    ? { countWeightG: rowGramsPerCount }
     : null;
+
+  // Count-only ladder + override: roll qty up to counts via the
+  // canonical's own ladder (pack.toBase=10 counts, count.toBase=1),
+  // then multiply by grams-per-count to land on grams.
+  // convertWithBridge's pure-bridge path can't do this because it
+  // requires the mass-side unit to exist in the canonical's ladder,
+  // which tortillas / bread_slice don't declare.
+  let countOnlyGrams = null;
+  if (haveOverride && !massLadder) {
+    const fromEntry = canonical.units?.find(u => u.id === qty.unit);
+    const countEntry = canonical.units?.find(u => u.id === "count");
+    if (fromEntry && countEntry) {
+      const counts = Number(qty.amount) * Number(fromEntry.toBase) / Number(countEntry.toBase);
+      if (Number.isFinite(counts)) countOnlyGrams = counts * rowGramsPerCount;
+    }
+  }
 
   switch (per.kind) {
     case "100g": {
-      if (!isMassLadder(canonical)) return null;
+      if (countOnlyGrams != null) return countOnlyGrams / 100;
+      if (!massLadder) return null;
       const res = convertWithBridge(qty, "g", canonical, synthRow);
       return res.ok ? res.value / 100 : null;
     }
@@ -223,9 +240,10 @@ export function scaleFactor(qty, canonical, nutrition, opts = {}) {
       return res.ok ? res.value : null;
     }
     case "serving": {
-      if (!isMassLadder(canonical)) return null;
       const g = per.serving_g;
       if (!Number.isFinite(g) || g <= 0) return null;
+      if (countOnlyGrams != null) return countOnlyGrams / g;
+      if (!massLadder) return null;
       const res = convertWithBridge(qty, "g", canonical, synthRow);
       return res.ok ? res.value / g : null;
     }
@@ -365,7 +383,8 @@ export function recipeNutrition(recipe, { pantry = [], brandNutrition, getInfo }
     // `amount`.
     const qty = ing.qty || parseAmountString(ing.amount, canon);
     if (!qty) continue;
-    const factor = scaleFactor(qty, canon, nutrition);
+    const countWeightG = effectiveCountWeightG(pantryRow, canon);
+    const factor = scaleFactor(qty, canon, nutrition, { countWeightG });
     if (factor == null) continue;
     for (const key of Object.keys(totals)) {
       if (typeof nutrition[key] === "number") totals[key] += nutrition[key] * factor;
@@ -424,10 +443,18 @@ export function recipeNutritionBreakdown(recipe, { pantry = [], brandNutrition, 
     const parsed = ing.qty || parseAmountString(ing.amount, canon);
     row.parsedQty = parsed;
     if (!parsed) { row.reason = `could not parse amount "${ing.amount}"`; items.push(row); continue; }
-    const factor = scaleFactor(parsed, canon, nutrition);
+    const countWeightG = effectiveCountWeightG(pantryRow, canon);
+    row.countWeightG = countWeightG;
+    const factor = scaleFactor(parsed, canon, nutrition, { countWeightG });
     row.factor = factor;
     if (factor == null) {
-      row.reason = `scaleFactor returned null (per="${nutrition.per}", unit="${parsed.unit}")`;
+      const missingGrams =
+        (nutrition.per === "100g" || nutrition.per === "serving") &&
+        parsed.unit === "count" &&
+        !(Number.isFinite(countWeightG) && countWeightG > 0);
+      row.reason = missingGrams
+        ? `per="${nutrition.per}" needs grams-per-count — set "each ~g" on the pantry row`
+        : `scaleFactor returned null (per="${nutrition.per}", unit="${parsed.unit}")`;
       items.push(row);
       continue;
     }
