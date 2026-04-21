@@ -1013,28 +1013,53 @@ export default function AIRecipe({
     // screen the moment the user had >10 pantry items in that
     // bucket). Returns [{ row, score }] sorted highest first.
     //
-    // Ranking signals (additive):
+    // Ranking signals (additive), highest of the two targets wins:
     //   +1000  same canonical id as the target
-    //   +500   same parentId / hub as the target (sibling cuts)
+    //   +500   same parentId / hub as the target
     //   +100   same food category
     //   +10    per token shared with the target's normalized name
     //
-    // When `query` is non-empty we also require the row's name to
-    // contain the query as a substring (user is explicitly typing,
-    // so loose substring is fine — we're not auto-pairing, we're
-    // just filtering a list in front of their eyes).
+    // TWO TARGETS. When the sketch row is an AI sub ("Croissant
+    // Rolls as wrapper substitute for flour tortillas"), both the
+    // current row AND the `subbedFrom` original count as targets.
+    // Without this the ranker scored only against "croissant roll"
+    // and the user's search for "torti" returned Tortilla Chips
+    // ahead of Mission Tortillas because neither scored against
+    // croissant. Scoring against subbedFrom ("flour tortillas")
+    // pulls Mission Tortillas to +1000 (exact canonical) while
+    // Tortilla Chips stays near zero — the match the user clearly
+    // wants rises to the top.
+    //
+    // When `query` is non-empty we additionally require the row's
+    // name to contain the query as a substring (user is explicitly
+    // typing, so loose substring is fine — we're filtering a list
+    // in front of their eyes, not auto-pairing).
     const rankSwapCandidates = (sketchPantryRow, query) => {
-      const targetCanon = sketchPantryRow.ingredientId
+      const primaryCanon = sketchPantryRow.ingredientId
         ? findIngredient(sketchPantryRow.ingredientId)
         : null;
-      const targetCat  = targetCanon?.category || null;
-      const targetSlug = targetCanon?.id || null;
-      const targetHub  = targetCanon?.parentId || targetCanon?.id || null;
-      const targetTokens = new Set(
-        normalizeForMatch(
-          sketchPantryRow.name || targetCanon?.name || "",
-        ).split(/\s+/).filter(Boolean),
+      const subFromName = sketchPantryRow.subbedFrom || null;
+      const subFromSlug = subFromName ? resolveNameToCanonicalId(subFromName) : null;
+      const subFromCanon = subFromSlug ? findIngredient(subFromSlug) : null;
+
+      const targetSlugs = new Set(
+        [primaryCanon?.id, subFromCanon?.id].filter(Boolean),
       );
+      const targetHubs = new Set(
+        [
+          primaryCanon?.parentId || primaryCanon?.id,
+          subFromCanon?.parentId || subFromCanon?.id,
+        ].filter(Boolean),
+      );
+      const targetCats = new Set(
+        [primaryCanon?.category, subFromCanon?.category].filter(Boolean),
+      );
+      const targetTokens = new Set([
+        ...normalizeForMatch(
+          sketchPantryRow.name || primaryCanon?.name || "",
+        ).split(/\s+/).filter(Boolean),
+        ...normalizeForMatch(subFromName || "").split(/\s+/).filter(Boolean),
+      ]);
 
       const q = (query || "").trim().toLowerCase();
       const seen = new Set();
@@ -1050,10 +1075,10 @@ export default function AIRecipe({
         if (q && !(p.name || "").toLowerCase().includes(q)) continue;
 
         let score = 0;
-        if (canon?.id && targetSlug && canon.id === targetSlug) score += 1000;
+        if (canon?.id && targetSlugs.has(canon.id)) score += 1000;
         const pHub = canon?.parentId || canon?.id;
-        if (pHub && targetHub && pHub === targetHub) score += 500;
-        if (canon?.category && targetCat && canon.category === targetCat) score += 100;
+        if (pHub && targetHubs.has(pHub)) score += 500;
+        if (canon?.category && targetCats.has(canon.category)) score += 100;
         const pTokens = new Set(
           normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
         );
