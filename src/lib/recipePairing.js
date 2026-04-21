@@ -294,24 +294,28 @@ export function pairRecipeIngredients(ingredients, pantry) {
       ) || null;
     }
 
-    // Tier 1 — exact canonical match (or hub/sibling equivalence).
-    // A recipe asking for `chicken_breast` pairs with a pantry row
-    // carrying chicken_breast directly. Hub equivalence (asking for
-    // `chicken_hub` but having `chicken_thigh`) also paired — same
-    // parent means same ingredient family.
+    // Tier 1 — exact canonical match. resolvesToSameCanonical handles
+    // alias redirect so legacy compound slugs (chicken_breast alias
+    // → chicken) still pair with new-model base rows (chicken +
+    // cut=breast). Meat cuts under the same hub all resolve to the
+    // same base canonical through their aliases, so chicken_breast
+    // vs chicken_thigh both resolve to "chicken" and pair cleanly
+    // here — no need for broader hub-widening.
+    //
+    // IMPORTANT: hub-widening used to be in this tier and was too
+    // permissive for non-cut hubs. heavy_cream and milk_2pct both
+    // live under milk_hub but they're distinct ingredients, not
+    // interchangeable cuts of the same animal. Auto-pairing them
+    // made the cook prep show "We'll use your 2% Milk" for a heavy
+    // cream recipe call. That kind of sibling — different canonical
+    // in a flavor-hub — now drops to Tier 3 (closest match), where
+    // the UI labels it as a substitute rather than an exact pair.
     if (!paired && ingCanonId) {
       paired = (pantry || []).find(p => {
         if (!p || used.has(p.id)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
         if (!pCanonId) return false;
-        if (pCanonId === ingCanonId) return true;
-        const pCanon = findIngredient(pCanonId);
-        // hub/sibling match: same hub parent counts as paired for
-        // identity purposes (user can pick the cut at cook time).
-        const pParent = pCanon?.parentId || pCanon?.id;
-        const iParent = ingCanon?.parentId || ingCanon?.id;
-        if (pParent && iParent && pParent === iParent) return true;
-        return false;
+        return resolvesToSameCanonical(pCanonId, ingCanonId);
       }) || null;
     }
 
