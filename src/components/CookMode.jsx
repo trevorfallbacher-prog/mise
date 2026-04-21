@@ -587,11 +587,17 @@ export default function CookMode({
             const tappable = !!ing.ingredientId;
             const swapOpen = swapOpenIdx === i;
             const swapped  = !!session.overrides[i]?.pantryItemId;
-            // Swap/shop affordances surface per-row on the cook prep
-            // screen. SWAP when the ingredient is missing OR paired as
-            // a substitute (user might want to override), SHOP only
-            // when missing (already-paired rows have nothing to buy).
-            const showSwap = status === "missing" || pairing?.status === "substitute" || swapped;
+            // SWAP available on every canonical-tagged row — user
+            // might want to override the default pair on an IN KITCHEN
+            // row (maybe they want to use a different pack that's
+            // closer to expiry) or on a WRONG FORM row (their thigh
+            // for the recipe's breast). Gating it to just missing /
+            // substitute was too narrow — user reported "it won't let
+            // me choose any substitutions" on a screen of mostly IN
+            // KITCHEN + WRONG FORM rows.
+            // SHOP still only on missing — adding a row you already
+            // have to the shopping list is almost always a mistake.
+            const showSwap = !!ing.ingredientId;
             const showShop = status === "missing" && !!setShoppingList;
             const shopDone = !!session.overrides[i]?.promotedToShopping;
             return (
