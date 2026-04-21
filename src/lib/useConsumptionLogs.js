@@ -39,7 +39,7 @@
 import { useCallback, useState } from "react";
 import { supabase } from "./supabase";
 import { findIngredient } from "../data/ingredients";
-import { resolveNutrition, scaleFactor, validateNutrition } from "./nutrition";
+import { resolveNutrition, scaleFactor, validateNutrition, effectiveCountWeightG } from "./nutrition";
 import { decrementRow } from "./unitConvert";
 
 // Hour → default meal slot. Lets the sheet pre-select the most likely
@@ -110,7 +110,8 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
       } else if (canon) {
         const { nutrition } = resolveNutrition(pantryRow, { brandNutrition, getInfo });
         if (nutrition) {
-          const factor = scaleFactor({ amount: amt, unit }, canon, nutrition);
+          const countWeightG = effectiveCountWeightG(pantryRow, canon);
+          const factor = scaleFactor({ amount: amt, unit }, canon, nutrition, { countWeightG });
           if (factor != null && Number.isFinite(factor)) {
             const macros = {};
             for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {

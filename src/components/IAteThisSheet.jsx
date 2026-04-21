@@ -5,7 +5,7 @@ import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { findRecipe } from "../data/recipes";
 import { formatReheatSummary } from "../data/recipes/schema";
-import { resolveNutrition, scaleFactor, formatMacros } from "../lib/nutrition";
+import { resolveNutrition, scaleFactor, formatMacros, effectiveCountWeightG } from "../lib/nutrition";
 import { useConsumptionLogs, inferMealSlot } from "../lib/useConsumptionLogs";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
@@ -225,7 +225,8 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
       getInfo: ingredientInfo?.getInfo,
     });
     if (!nutrition) return { macros: null, source: null };
-    const f = scaleFactor({ amount: amt, unit }, canonical, nutrition);
+    const countWeightG = effectiveCountWeightG(pantryRow, canonical);
+    const f = scaleFactor({ amount: amt, unit }, canonical, nutrition, { countWeightG });
     if (f == null || !Number.isFinite(f)) return { macros: null, source };
     const macros = {};
     for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
