@@ -1289,9 +1289,20 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 ingredientIds: canon?.id ? [canon.id] : [],
                 ...(prefilledTypeId ? { typeId: prefilledTypeId } : {}),
                 ...(prefilledTileId ? { tileId: prefilledTileId } : {}),
-                amount:        packageSize?.amount ?? 1,
-                unit:          packageSize?.unit ?? (canon?.defaultUnit || "count"),
-                max:           packageSize?.amount ?? null,
+                // When the parser extracted BOTH a count and a mass/
+                // volume from the label (e.g. "8 ct 16 oz", multipack
+                // "12 × 50 g"), use count as the consumable quantity
+                // and park the mass in package_amount/unit so
+                // effectiveCountWeightG can derive grams-per-count
+                // downstream. Single-dimension labels fall through to
+                // the existing behavior (amount = parsed dimension).
+                amount:        packageSize?.counterpart?.amount ?? packageSize?.amount ?? 1,
+                unit:          packageSize?.counterpart?.unit   ?? packageSize?.unit ?? (canon?.defaultUnit || "count"),
+                max:           packageSize?.counterpart?.amount ?? packageSize?.amount ?? null,
+                ...(packageSize?.counterpart ? {
+                  packageAmount: packageSize.amount,
+                  packageUnit:   packageSize.unit,
+                } : {}),
                 state:         state || null,
                 attributes:    attributes || null,
                 // Source metadata so the stock step can trace the
