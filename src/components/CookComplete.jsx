@@ -895,8 +895,28 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               ? row.matches.find(m => m.id === row.selectedRowId) || null
               : null;
             const extraMatches = tracked ? Math.max(0, row.matches.length - 1) : 0;
-            const emoji = ing?.emoji || row.recipeIng.emoji || "🥣";
-            const displayName = ing?.name || row.recipeIng.item || "Ingredient";
+            // Display name / emoji prefer the MATCHED pantry row when
+            // one is selected — the user is pulling Tostitos Queso from
+            // the fridge, so the header should read "Tostitos Queso",
+            // not the recipe's original "Fresh Mozzarella." When the
+            // match is a substitute (different canonical than the
+            // recipe's), we also surface a "SUB FOR ..." subtitle so
+            // the user sees both: what they're actually using AND what
+            // the recipe asked for.
+            const matchCanon = match?.ingredientId ? findIngredient(match.ingredientId) : null;
+            const isSubstitute = !!match && !!ing?.id && !!matchCanon?.id
+              && !resolvesToSameCanonical(match.ingredientId, ing.id);
+            const emoji = match?.emoji
+              || matchCanon?.emoji
+              || ing?.emoji
+              || row.recipeIng.emoji
+              || "🥣";
+            const displayName = match?.name
+              || matchCanon?.name
+              || ing?.name
+              || row.recipeIng.item
+              || "Ingredient";
+            const recipeAsk = ing?.name || row.recipeIng.item || null;
             const unitOptions = ing?.units || [];
             const canEditAmount = tracked && row.usedUnit;
             // Card styling: active rows have the yellow underline, skipped
@@ -919,6 +939,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color: row.skipped ? "#555" : "#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {displayName}
                   </div>
+                  {isSubstitute && recipeAsk && (
+                    <div style={{
+                      fontFamily:"'DM Mono',monospace", fontSize:9,
+                      color:"#f59e0b", letterSpacing:"0.05em",
+                      marginTop:1, fontStyle:"italic",
+                    }}>
+                      SUB FOR {recipeAsk.toUpperCase()}
+                    </div>
+                  )}
                   <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.05em", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                     {tracked && match && extraMatches > 0 ? (
                       <button
