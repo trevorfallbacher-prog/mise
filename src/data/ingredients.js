@@ -5812,6 +5812,12 @@ const FUZZY_NOISE_WORDS = new Set([
   "select","prime","pack","packed","value","family","size","pcs","piece",
   "pieces","ea","each","ct","count","bunch","bag","jar","tin","can","tub",
   "carton","bottle","box","pouch",
+  // State / prep axis (separate identity axis per CLAUDE.md — purple
+  // SET STATE row). "chicken breast, cubed" IS chicken_breast with
+  // a prep note, not a distinct canonical. Must be stripped before
+  // scoring or the head-noun becomes "cubed" and identity misses.
+  "ground","sliced","shredded","minced","crumbled","chopped","diced",
+  "cubed","boneless","skinless",
   // dietary / macro modifiers — stripped here, captured as claims by
   // AIRecipe's extractDietaryClaims before the name hits normalization.
   "lowcarb","lowsugar","lowsodium","zerocarb","zerosugar","carb","carbs",

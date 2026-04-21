@@ -68,8 +68,15 @@ export function extractDietaryClaims(name) {
 }
 
 // ── name normalization ───────────────────────────────────────────────
-const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
-const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
+// State terms are a separate identity axis per CLAUDE.md (SET STATE
+// row, purple). "chicken breast, cubed" and "chicken breast" are the
+// same canonical ingredient — only the prep differs. Strip state
+// tokens in ANY position (prefix "sliced chicken", comma-suffix
+// "chicken breast, cubed", paren-suffix "chicken breast (cubed)",
+// inline "ground fresh pork") so the head noun survives for
+// identity matching.
+const STATE_TERMS = "ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless";
+const STATE_TOKEN_RE = new RegExp(`\\b(?:${STATE_TERMS})\\b`, "gi");
 const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
 const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
 
@@ -80,8 +87,7 @@ export function normalizeForMatch(name) {
     .toLowerCase()
     .replace(BRAND_TOKEN_RE, " ")
     .replace(SIZE_TOKEN_RE, " ")
-    .replace(STATE_PREFIX_RE, "")
-    .replace(STATE_SUFFIX_RE, "")
+    .replace(STATE_TOKEN_RE, " ")
     .replace(/[^a-z ]+/g, " ")
     .replace(/s\b/g, "")
     .replace(/\s+/g, " ")
@@ -112,6 +118,25 @@ export function namesMatch(a, b) {
   const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
   for (const t of small) if (!big.has(t)) return false;
   return true;
+}
+
+// True when two canonical slugs belong to the same ingredient family —
+// either the exact same slug, or both children of the same _hub parent.
+// "chicken" and "chicken_breast" both hang off chicken_hub, so a recipe
+// asking for generic Chicken should pair with the user's Chicken
+// Breast even though the leaf slugs differ. Hub-level equivalence is
+// the identity-stable way to match across cuts without falling back
+// to fragile name-string tricks (which tightened namesMatch no longer
+// allows — "chicken" and "chicken breast" have different head nouns).
+export function sameCanonicalFamily(slugA, slugB) {
+  if (!slugA || !slugB) return false;
+  if (slugA === slugB) return true;
+  const a = findIngredient(slugA);
+  const b = findIngredient(slugB);
+  const pa = a?.parentId || a?.id || null;
+  const pb = b?.parentId || b?.id || null;
+  if (!pa || !pb) return false;
+  return pa === pb;
 }
 
 // Resolve a free-text name to a canonical slug via best-score fuzzy

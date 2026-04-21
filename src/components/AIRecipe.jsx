@@ -11,6 +11,7 @@ import {
   namesMatch,
   normalizeForMatch,
   resolveNameToCanonicalId,
+  sameCanonicalFamily,
   deriveRowHeader,
   deriveRowCut,
   pairRecipeIngredients,
@@ -182,10 +183,16 @@ function autoPairShoppingRows(sketch, pantry) {
     const canonId = row.ingredientId || resolveNameToCanonicalId(row.name) || null;
     let found = null;
     if (canonId) {
-      found = pantry.find(p =>
-        p && !used.has(p.id) &&
-        (p.ingredientId === canonId || p.canonicalId === canonId),
-      );
+      // Exact canonical OR same-hub family ("chicken" hub ↔ "chicken_breast"
+      // cut). Without the family check, a recipe asking for generic Chicken
+      // fails to auto-pair with the user's Chicken Breast and the row
+      // misrenders as NOT IN PANTRY — SHOPPING.
+      found = pantry.find(p => {
+        if (!p || used.has(p.id)) return false;
+        const pSlug = p.ingredientId || p.canonicalId || null;
+        if (!pSlug) return false;
+        return sameCanonicalFamily(pSlug, canonId);
+      });
     }
     if (!found && row.name) {
       found = pantry.find(p =>
@@ -1123,12 +1130,19 @@ export default function AIRecipe({
         }
         // (2) canonical-id match — same slug on EITHER side (primary
         // OR any alt from the split) means same ingredient regardless
-        // of brand / size / casing in the display names.
+        // of brand / size / casing in the display names. Hub-family
+        // equivalence also counts here: the ideal's `chicken` hub
+        // pairs with the sketch.pantry row's `chicken_breast` cut
+        // because both resolve to the same chicken_hub parent.
         if (pantryIdx === null && idealCanonIds.size > 0) {
           for (let j = 0; j < sketch.pantry.length; j++) {
             if (matchedPantryIdx.has(j)) continue;
             const p = sketch.pantry[j];
-            if (p.ingredientId && idealCanonIds.has(p.ingredientId)) {
+            if (!p.ingredientId) continue;
+            const familyHit = [...idealCanonIds].some(slug =>
+              sameCanonicalFamily(p.ingredientId, slug),
+            );
+            if (familyHit) {
               pantryIdx = j;
               isSub = false;
               break;
@@ -1234,13 +1248,17 @@ export default function AIRecipe({
         const rowCanon = row.ingredientId ? findIngredient(row.ingredientId) : null;
         const rowCategory = rowCanon?.category || null;
 
-        // Tier 1 — exact canonical match against ANY target slug.
-        // "Ciabatta Roll" (ingredientId: "ciabatta") lines up with
-        // target {slug: "ciabatta"} from the split, even when the
-        // compound ideal name wouldn't substring-match.
+        // Tier 1 — canonical match against ANY target slug. Exact
+        // match OR hub-family equivalence (a `chicken` target pairs
+        // with a pantry row tagged `chicken_breast` because both
+        // hang off chicken_hub). Hub-family is how the user's actual
+        // cuts surface under a generic recipe call like "Chicken".
         let matched = null;
         for (const t of targets) {
-          if (t.slug && row.ingredientId === t.slug) { matched = "exact"; break; }
+          if (!t.slug) continue;
+          if (row.ingredientId && sameCanonicalFamily(row.ingredientId, t.slug)) {
+            matched = "exact"; break;
+          }
         }
 
         // Tier 2 — category match, BUT only when the row's name also
@@ -1357,6 +1375,8 @@ export default function AIRecipe({
                   const ideal = sketch.ideal[entry.idealIdx];
                   const promoted = pantryEdits.shopping.has(entry.idealIdx);
                   const rawCandidates = findRawPantryCandidates(ideal);
+                  const missSwapKey = `miss-${entry.idealIdx}`;
+                  const missSwapOpen = swapOpenIdx === missSwapKey;
                   return (
                     <div key={`miss-${idx}`} style={{
                       padding: "10px 12px",
@@ -1378,10 +1398,81 @@ export default function AIRecipe({
                             {ideal.role && !promoted ? ` · ${String(ideal.role).toUpperCase()}` : ""}
                           </div>
                         </div>
-                        <button onClick={() => togglePromoteToShopping(entry.idealIdx)} style={promoted ? shopActiveBtn : shopBtn}>
-                          {promoted ? "✓ ON LIST" : "+ SHOP"}
-                        </button>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button
+                            onClick={() => missSwapOpen ? openSwapPicker(null) : openSwapPicker(missSwapKey)}
+                            style={missSwapOpen ? swapBtnActive : swapBtn}
+                          >
+                            ⇌ SWAP
+                          </button>
+                          <button onClick={() => togglePromoteToShopping(entry.idealIdx)} style={promoted ? shopActiveBtn : shopBtn}>
+                            {promoted ? "✓ ON LIST" : "+ SHOP"}
+                          </button>
+                        </div>
                       </div>
+                      {missSwapOpen && (() => {
+                        // Search picker for missing rows. The target is
+                        // the ideal itself (not a sketch.pantry row) so
+                        // rankSwapCandidates scores the user's pantry
+                        // against what the recipe asked for. Picking
+                        // something binds it via addPantryRow → userAdd
+                        // path, which is the same shape + ADD FROM
+                        // PANTRY uses.
+                        const q = swapSearch.trim();
+                        const target = {
+                          name: ideal.name,
+                          ingredientId: ideal.ingredientId || resolveNameToCanonicalId(ideal.name) || null,
+                          pantryItemId: null,
+                        };
+                        const ranked = rankSwapCandidates(target, swapSearch);
+                        const shown = q
+                          ? ranked.slice(0, 8).map(r => r.row)
+                          : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                        return (
+                          <div style={{
+                            marginTop: 10, paddingTop: 10,
+                            borderTop: "1px dashed #2a2a2a",
+                            display: "flex", flexDirection: "column", gap: 6,
+                          }}>
+                            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.08em" }}>
+                              USE SOMETHING FROM PANTRY FOR {ideal.name.toUpperCase()}:
+                            </div>
+                            <input
+                              type="text"
+                              value={swapSearch}
+                              onChange={e => setSwapSearch(e.target.value)}
+                              placeholder="Search your pantry…"
+                              style={swapSearchInput}
+                              autoFocus
+                            />
+                            {!q && (
+                              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
+                                TOP 3 CLOSEST · TYPE TO SEARCH
+                              </div>
+                            )}
+                            {shown.length === 0 && (
+                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                                {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                              </div>
+                            )}
+                            {shown.map(c => (
+                              <button
+                                key={c.id}
+                                onClick={() => { addPantryRow(c); openSwapPicker(null); }}
+                                style={swapOptionBtn}
+                              >
+                                <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                                <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                                  {c.name}
+                                </span>
+                                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                                  {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
                       {rawCandidates.length > 0 && !promoted && (
                         <div style={{
                           marginTop: 10, paddingTop: 10,
