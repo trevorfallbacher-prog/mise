@@ -3,10 +3,13 @@ import ModalSheet from "./ModalSheet";
 import { Z } from "../lib/tokens";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
+import { findRecipe } from "../data/recipes";
+import { formatReheatSummary } from "../data/recipes/schema";
 import { resolveNutrition, scaleFactor, formatMacros } from "../lib/nutrition";
 import { useConsumptionLogs, inferMealSlot } from "../lib/useConsumptionLogs";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { useUserRecipes } from "../lib/useUserRecipes";
 
 /**
  * IAteThisSheet — "I just ate this" declaration flow.
@@ -54,6 +57,18 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const canonical = canonicalId ? findIngredient(canonicalId) : null;
   const isMealRow = pantryRow?.kind === "meal";
   const sourceCookLogId = pantryRow?.sourceCookLogId || null;
+  const sourceRecipeSlug = pantryRow?.sourceRecipeSlug || null;
+
+  // Look up the source recipe for reheat instructions. Meal rows
+  // carry sourceRecipeSlug from CookComplete, which resolves against
+  // either bundled recipes or user_recipes. Null when the row is an
+  // ingredient, the slug is missing, or the recipe has no reheat
+  // block authored yet — all of which render as "no reheat tip".
+  const { findBySlug: findUserRecipe } = useUserRecipes(userId);
+  const sourceRecipe = (isMealRow && sourceRecipeSlug)
+    ? findRecipe(sourceRecipeSlug, findUserRecipe)
+    : null;
+  const reheat = sourceRecipe?.reheat || null;
 
   // Meal-kind leftovers don't have a canonical; their nutrition lives
   // on cook_logs.nutrition (per-serving blob stamped at cook-time).
@@ -192,6 +207,49 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
             </div>
           </div>
         </div>
+
+        {/* Reheat guidance — leftover-only, shown when the source
+            recipe authored a reheat block. Pantry-shelf ingredients
+            don't have reheat info; this surface is strictly for the
+            "kitchen → grab leftovers" flow. Primary method is the
+            headline; alternatives collapse below; quality/safety
+            note renders in amber so it reads as a caveat. */}
+        {isMealRow && reheat && (
+          <div style={{
+            padding: "12px 14px",
+            background: "#1a1608",
+            border: "1px solid #3a2f10",
+            borderRadius: 10,
+            marginBottom: 14,
+          }}>
+            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em", marginBottom: 6 }}>
+              ♨ REHEAT
+            </div>
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4", marginBottom: 4 }}>
+              {formatReheatSummary(reheat)}
+            </div>
+            {reheat.primary?.tips && (
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#bbb", lineHeight: 1.45 }}>
+                {reheat.primary.tips}
+              </div>
+            )}
+            {Array.isArray(reheat.alt) && reheat.alt.length > 0 && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #3a2f10" }}>
+                {reheat.alt.map((a, i) => (
+                  <div key={i} style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#a99870", marginBottom: i === reheat.alt.length - 1 ? 0 : 4, lineHeight: 1.5 }}>
+                    OR · {formatReheatSummary({ primary: a })}
+                    {a.tips ? <div style={{ color: "#666", marginTop: 2 }}>{a.tips}</div> : null}
+                  </div>
+                ))}
+              </div>
+            )}
+            {reheat.note && (
+              <div style={{ marginTop: 8, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#e0a868", fontStyle: "italic", lineHeight: 1.45 }}>
+                ⚠ {reheat.note}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Amount stepper */}
         <div style={{ marginBottom: 14 }}>

@@ -67,6 +67,18 @@ const recipe = {
   ],
 
   tags: ["classic", "roman", "no cream"],
+
+  reheat: {
+    primary: {
+      method: "stovetop",
+      tempF: null,
+      timeMin: 5,
+      covered: false,
+      tips: "Splash of pasta water or plain water into the pan, medium-low heat, toss constantly until the sauce relaxes back onto the noodles.",
+    },
+    alt: null,
+    note: "Carbonara is an egg-sauce dish — it scrambles if you rush it. Avoid the microwave. If you can only nuke it, do 30 sec at 50% power, stir, repeat.",
+  },
 };
 
 export default recipe;

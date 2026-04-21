@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import CookMode from "./CookMode";
 import SchedulePicker from "./SchedulePicker";
+import IAteThisSheet from "./IAteThisSheet";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
@@ -72,7 +73,7 @@ function slotForTime(ts, explicit) {
 // Recipe picker (used when tapping "+" on an empty day)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function RecipePickerModal({ userRecipes = [], onPick, onClose }) {
+function RecipePickerModal({ userRecipes = [], leftovers = [], onPick, onClose }) {
   const [query, setQuery] = useState("");
   // Merge bundled + user-authored into a single list. Bundled wins slug
   // collisions to mirror findRecipe()'s precedence; user rows get a tag
@@ -85,6 +86,18 @@ function RecipePickerModal({ userRecipes = [], onPick, onClose }) {
       .map(r => ({ ...r.recipe, slug: r.slug, _source: r.source }));
     return [...RECIPES, ...userOnly];
   }, [userRecipes]);
+  // Leftovers surface above the recipes list when the query is empty
+  // (or the query matches). Search is case-insensitive against the
+  // leftover's recipe title so typing "lasag" surfaces Sunday's
+  // lasagna leftover alongside the bundled lasagna recipe.
+  const filteredLeftovers = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return leftovers;
+    return leftovers.filter(l =>
+      (l.recipe?.title || "").toLowerCase().includes(q) ||
+      (l.recipe?.cuisine || "").toLowerCase().includes(q),
+    );
+  }, [query, leftovers]);
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return all;
@@ -125,6 +138,53 @@ function RecipePickerModal({ userRecipes = [], onPick, onClose }) {
         />
         <div style={{ marginTop: 14, overflowY: "auto", flex: 1 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {/* LEFTOVERS section — pantry meal-kind rows that have
+                servings remaining. Shown above recipes because the
+                planning goal here is "what's already in my kitchen
+                that I should use up?" before "what should I cook?".
+                Each leftover carries a count chip + amber styling to
+                distinguish it from cook-from-scratch rows. Picking a
+                leftover fires onPick with fromPantryRowId so the
+                scheduler stamps the reference on scheduled_meals
+                (migration 0120). */}
+            {filteredLeftovers.length > 0 && (
+              <>
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#e0a868", letterSpacing: "0.14em", marginTop: 2, marginBottom: 2 }}>
+                  LEFTOVERS · USE FIRST
+                </div>
+                {filteredLeftovers.map(({ pantryRow, recipe: lr }) => {
+                  const servingsLeft = Number(pantryRow.servingsRemaining);
+                  const servingsText = Number.isFinite(servingsLeft)
+                    ? `${servingsLeft % 1 ? servingsLeft.toFixed(1) : servingsLeft} SERVING${servingsLeft === 1 ? "" : "S"} LEFT`
+                    : "LEFTOVER";
+                  return (
+                    <button
+                      key={`leftover-${pantryRow.id}`}
+                      onClick={() => onPick({ ...lr, slug: lr?.slug || pantryRow.sourceRecipeSlug }, { fromPantryRowId: pantryRow.id })}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 12,
+                        padding: "12px 14px", background: "#1a1608",
+                        border: "1px solid #3a2f10", borderRadius: 12,
+                        cursor: "pointer", textAlign: "left",
+                      }}
+                    >
+                      <div style={{ fontSize: 26, flexShrink: 0 }}>{lr?.emoji || pantryRow.emoji || "🍽️"}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {lr?.title || pantryRow.name || "Leftover"}
+                        </div>
+                        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#e0a868", letterSpacing: "0.05em", marginTop: 2 }}>
+                          ♨ {servingsText}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+                <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.14em", marginTop: 10, marginBottom: 2 }}>
+                  OR COOK SOMETHING
+                </div>
+              </>
+            )}
             {filtered.map(r => {
               const bits = [
                 r.cuisine ? r.cuisine.toUpperCase() : null,
@@ -568,6 +628,29 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
 
   const byDay = bucketByDay(meals);
 
+  // Leftover candidates for the schedule picker — kind='meal' rows
+  // with remaining servings, paired with their source recipe for
+  // title / emoji / reheat lookup. Sorted by expiry (earliest first)
+  // so the top of the LEFTOVERS list is always "use this before it
+  // goes bad". Rows without a resolvable recipe are still included
+  // so a recipe we can't look up doesn't silently drop from the list.
+  const leftoverCandidates = useMemo(() => {
+    const rows = (pantry || []).filter(p =>
+      p?.kind === "meal"
+      && Number(p.servingsRemaining) > 0
+      && p.sourceRecipeSlug,
+    );
+    rows.sort((a, b) => {
+      const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+      const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+      return ea - eb;
+    });
+    return rows.map(pantryRow => ({
+      pantryRow,
+      recipe: findRecipe(pantryRow.sourceRecipeSlug, findUserRecipe),
+    }));
+  }, [pantry, findUserRecipe]);
+
   // Bucket past cooks onto their cooked_at local day so each day card can
   // render a \"✓ cooked\" section below its planned meals. Separate map so
   // the ordering inside a day (planned above cooked) stays deterministic.
@@ -606,8 +689,19 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     );
   }
 
-  const onPickRecipe = (recipe) => {
+  // Stash the leftover pantry row id between pick and save — the
+  // SchedulePicker doesn't know about leftovers, it just collects
+  // date/time/notification settings, so we keep fromPantryRowId in
+  // this parent scope and stamp it on the scheduled_meals insert
+  // alongside whatever the picker returns.
+  const [scheduleFromPantryRowId, setScheduleFromPantryRowId] = useState(null);
+  // When a scheduled leftover slot fires, we open IAteThisSheet on
+  // that pantry row instead of CookMode. Held here at the Plan level
+  // so the sheet renders above the whole view, not inside MealDetail.
+  const [eatingLeftover, setEatingLeftover] = useState(null);
+  const onPickRecipe = (recipe, opts = {}) => {
     setRecipeToSchedule(recipe);
+    setScheduleFromPantryRowId(opts.fromPantryRowId || null);
   };
 
   const onSaveSchedule = async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
@@ -619,7 +713,9 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       cookId,
       isRequest,
       servings,
+      fromPantryRowId: scheduleFromPantryRowId,
     });
+    setScheduleFromPantryRowId(null);
     setIsRequesting(false);
   };
 
@@ -874,8 +970,9 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       {addingForDay && !recipeToSchedule && (
         <RecipePickerModal
           userRecipes={userRecipesList}
+          leftovers={leftoverCandidates}
           onPick={onPickRecipe}
-          onClose={() => { setAddingForDay(null); }}
+          onClose={() => { setAddingForDay(null); setScheduleFromPantryRowId(null); }}
         />
       )}
       {recipeToSchedule && (
@@ -887,7 +984,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           userName={userName}
           family={family}
           defaultRequest={hasFamily}
-          onClose={() => { setRecipeToSchedule(null); setAddingForDay(null); setAddingForSlot(null); }}
+          onClose={() => { setRecipeToSchedule(null); setAddingForDay(null); setAddingForSlot(null); setScheduleFromPantryRowId(null); }}
           onSave={onSaveSchedule}
         />
       )}
@@ -900,6 +997,22 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           family={family}
           onClose={() => setOpenMeal(null)}
           onCookNow={() => {
+            // Leftover branch — the scheduled slot references a
+            // specific pantry meal row (migration 0120). Instead of
+            // opening CookMode to cook-from-scratch, open the
+            // I-ate-this sheet on that leftover row. The consumption
+            // log lands + pantry decrements; no cook_logs write.
+            if (openMeal.from_pantry_row_id) {
+              const leftoverRow = (pantry || []).find(p => p.id === openMeal.from_pantry_row_id);
+              if (leftoverRow) {
+                setOpenMeal(null);
+                setEatingLeftover(leftoverRow);
+                return;
+              }
+              // Row was deleted / isn't in the synced pantry — fall
+              // through to the normal cook-from-scratch path so the
+              // user isn't stuck.
+            }
             const r = findRecipe(openMeal.recipe_slug, findUserRecipe);
             setOpenMeal(null);
             if (!r) return;
@@ -932,6 +1045,29 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           onDelete={async (id) => {
             await cancel(id);
             setOpenMeal(null);
+          }}
+        />
+      )}
+      {/* Leftover-eat sheet — opened from MealDetailDrawer when the
+          scheduled slot has from_pantry_row_id set. Confirming an
+          I-ate-this logs the consumption, decrements the leftover
+          row, and marks the scheduled_meals row as cooked so the
+          slot reads as complete on the calendar. */}
+      {eatingLeftover && (
+        <IAteThisSheet
+          pantryRow={eatingLeftover}
+          userId={userId}
+          onClose={() => setEatingLeftover(null)}
+          onDone={async () => {
+            // Mark every scheduled_meals row that pointed at this
+            // leftover as cooked. Usually just one, but a user could
+            // plausibly schedule the same leftover for both lunch
+            // and dinner — marking all keeps the calendar honest.
+            const hits = (meals || []).filter(m => m.from_pantry_row_id === eatingLeftover.id && m.status === "planned");
+            for (const m of hits) {
+              try { await updateMeal(m.id, { status: "cooked" }); } catch (_) { /* non-fatal */ }
+            }
+            setEatingLeftover(null);
           }}
         />
       )}

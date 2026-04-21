@@ -570,6 +570,23 @@ exact shape. Every field is REQUIRED unless marked optional.
     ...
   ],
   "tags": ["<short tag>", ...],                         // 2-5 useful tags
+  "reheat": {                                           // REQUIRED when the dish keeps as a leftover
+    "primary": {
+      "method":   "oven" | "microwave" | "stovetop" | "air_fryer" | "toaster_oven" | "cold",
+      "tempF":    <number or null for microwave/cold>,
+      "timeMin":  <number of minutes — single number, not a range>,
+      "covered":  <true | false | null when N/A>,
+      "tips":     "<1-2 sentence specifics — 'splash of water', 'cover with foil until last 5 min', 'medium-low or the sauce breaks'>"
+    },
+    "alt": [                                            // OPTIONAL — 0-2 alternatives
+      { "method": "...", "tempF": ..., "timeMin": ..., "covered": ..., "tips": "..." }
+    ],
+    "note": "<OPTIONAL quality caveat — 'eggs scramble if rushed', 'pasta gets gummy past 2 days', null if none>"
+  },
+                                                         // OMIT reheat entirely for dishes that MUST be eaten fresh:
+                                                         //   vinaigrettes, aiolis, tartares, carpaccios, anything raw,
+                                                         //   delicate foams / whipped creams, blended smoothies.
+                                                         //   For these the leftover pantry flow simply shows no reheat tip.
   "aiRationale": "<1-3 sentences in plain language, written TO the user in second person,
                  explaining WHY you picked this dish. Cite specific signals you used — items
                  about to expire, user's dietary constraints, recent cuisines they've leaned

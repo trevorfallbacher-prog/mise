@@ -100,6 +100,21 @@ const recipe = {
   ],
 
   tags: ["weeknight", "sheet-pan-friendly", "crowd pleaser", "gluten-free with corn tortillas"],
+
+  reheat: {
+    primary: {
+      method: "stovetop",
+      tempF: null,
+      timeMin: 5,
+      covered: false,
+      tips: "Hot dry skillet, chicken + peppers tossed in, 3-5 min until sizzling again. The char from the first cook re-blooms on the second heat.",
+    },
+    alt: [
+      { method: "oven", tempF: 400, timeMin: 8, covered: false, tips: "Spread on a sheet pan — revives the edges of the peppers without steaming." },
+      { method: "microwave", tempF: null, timeMin: 2, covered: true, tips: "Covered to trap steam so the chicken doesn't dry out. The peppers will lose their char — worth it if you're in a hurry." },
+    ],
+    note: "Warm tortillas separately. Microwaving tortillas with the filling turns them rubbery.",
+  },
 };
 
 export default recipe;

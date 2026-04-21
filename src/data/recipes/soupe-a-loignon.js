@@ -74,6 +74,20 @@ const recipe = {
   ],
 
   tags: ["bistro", "cold weather", "make-ahead"],
+
+  reheat: {
+    primary: {
+      method: "stovetop",
+      tempF: null,
+      timeMin: 10,
+      covered: true,
+      tips: "Gentle simmer in a covered pot, stir once or twice. If you're reheating a crock already topped with bread + cheese, run it under the broiler for 2-3 min after the soup is hot to re-crust the top.",
+    },
+    alt: [
+      { method: "oven", tempF: 350, timeMin: 25, covered: true, tips: "Covered oven-safe crock or Dutch oven. Remove cover for the last 5 min if you want the cheese to re-brown." },
+    ],
+    note: "Soup gets BETTER on day 2 — the onions fully dissolve into the broth. Re-toast fresh bread to float on top rather than reheating the soggy original.",
+  },
 };
 
 export default recipe;

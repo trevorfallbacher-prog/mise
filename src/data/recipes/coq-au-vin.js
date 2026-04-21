@@ -89,6 +89,20 @@ const recipe = {
   ],
 
   tags: ["bistro classic", "weekend project", "red wine"],
+
+  reheat: {
+    primary: {
+      method: "stovetop",
+      tempF: null,
+      timeMin: 12,
+      covered: true,
+      tips: "Low and slow in a covered pot, stir a few times until the sauce is glossy and the chicken is warmed through. A splash of stock or water thins the sauce if it's reduced too far.",
+    },
+    alt: [
+      { method: "oven", tempF: 325, timeMin: 20, covered: true, tips: "Same covered vessel you braised in — reheats evenly but takes longer." },
+    ],
+    note: "Better the next day. Avoid the microwave; it'll rubber the chicken and break the sauce.",
+  },
 };
 
 export default recipe;
