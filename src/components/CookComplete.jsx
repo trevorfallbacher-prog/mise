@@ -94,21 +94,35 @@ export function buildInitialUsedItems(recipe, pantry, session) {
     const pairing = pairings[idx] || null;
     const suggested = [pairing?.paired, pairing?.closestMatch].filter(Boolean);
     // Composition-match candidates: compound rows (kind !== "ingredient")
-    // whose ingredientIds[] genuinely contains the target canonical.
-    // User's distinction: a cheese dip that actually HAS mozzarella in
-    // its composition is a legit source — user just scoops from the
-    // jar. A frozen pizza also lists mozzarella in ingredientIds[]
-    // but isn't scoop-able. We can't tell them apart programmatically,
-    // so compounds are a LOWER-priority tier: primary-canonical rows
-    // win first, compounds only surface when nothing else matched.
-    // User can SWAP away if the pick is a pizza, or accept if it's
-    // a dip / sauce / spread.
+    // whose ingredientIds[] genuinely contains the target canonical
+    // AND whose category is in the same family as the target. User's
+    // insight: "wouldn't it look Dairy → Cheese → what contains
+    // mozzarella, not Freezer → Frozen Meals → pizza?" Exactly —
+    // same-category gate uses the pantry-taxonomy lineage as a
+    // scoop-ability proxy:
+    //
+    //   mozzarella (dairy) + italian_cheese_dip (dairy)    → match ✓
+    //   mozzarella (dairy) + frozen_pizza (frozen/entree)  → reject ✗
+    //
+    // No per-canonical scoopable flag needed; the category hierarchy
+    // already tells us whether the compound lives in the "I can
+    // scoop this" aisle or the "I'm eating this as a meal" aisle.
     const compositionMatches = ing.ingredientId
       ? (list || []).filter(p => {
           if (!p || Number(p.amount) <= 0) return false;
           if ((p.kind || "ingredient") === "ingredient") return false;
           const ids = Array.isArray(p.ingredientIds) ? p.ingredientIds : [];
-          return ids.some(id => resolvesToSameCanonical(id, ing.ingredientId));
+          if (!ids.some(id => resolvesToSameCanonical(id, ing.ingredientId))) return false;
+          // Category-lineage gate — scoop from the cheese aisle, not
+          // the frozen-meals aisle. When the target canonical has no
+          // category (rare — synthetic / unenriched), allow through;
+          // when the pantry row has no category, fall back to item
+          // category (set at add-time from tile).
+          const ingCanonCat = canonical?.category || null;
+          const pCanon = p.ingredientId ? findIngredient(p.ingredientId) : null;
+          const pCat = pCanon?.category || p.category || null;
+          if (ingCanonCat && pCat && ingCanonCat !== pCat) return false;
+          return true;
         })
       : [];
     const seen = new Set();
