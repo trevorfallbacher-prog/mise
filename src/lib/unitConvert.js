@@ -89,12 +89,43 @@ export function effectiveCountWeightG(pantryRow, canonical) {
 //
 // Callers that want a soft fallback (display the raw unit when
 // conversion fails) should check `ok` before using `value`.
+// Case-insensitive lookup + common alias map. Pantry data in the
+// wild carries "Lbs", "Oz", "Count" (mixed case from various
+// scanner paths), "lbs" / "lb" interchangeably, etc. Without this,
+// strict === lookups on canonical.units lose rows whose capitalization
+// doesn't match the registry's lowercase id. Real-world reports:
+// "can't convert pantry Oz → clove" when the ladder has "oz".
+const UNIT_ALIASES = {
+  lbs: "lb", pound: "lb", pounds: "lb",
+  ounce: "oz", ounces: "oz",
+  gram: "g", grams: "g",
+  kilogram: "kg", kilograms: "kg",
+  milliliter: "ml", milliliters: "ml", millilitre: "ml", millilitres: "ml",
+  liter: "l", liters: "l", litre: "l", litres: "l",
+  teaspoon: "tsp", teaspoons: "tsp",
+  tablespoon: "tbsp", tablespoons: "tbsp",
+  cups: "cup",
+  clove: "clove", cloves: "clove",
+  count: "count", counts: "count", ct: "count",
+  piece: "count", pieces: "count", pcs: "count",
+};
+function normalizeUnitId(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const lowered = raw.trim().toLowerCase();
+  return UNIT_ALIASES[lowered] || lowered;
+}
+function findUnit(ingredient, unitId) {
+  const want = normalizeUnitId(unitId);
+  if (!want) return null;
+  return ingredient?.units?.find(u => normalizeUnitId(u.id) === want) || null;
+}
+
 export function convert(qty, toUnit, ingredient) {
   if (!qty || !ingredient) {
     return { ok: false, reason: "missing-args", value: NaN };
   }
-  const fromEntry = ingredient.units?.find(u => u.id === qty.unit);
-  const toEntry   = ingredient.units?.find(u => u.id === toUnit);
+  const fromEntry = findUnit(ingredient, qty.unit);
+  const toEntry   = findUnit(ingredient, toUnit);
   if (!fromEntry) return { ok: false, reason: "from-unit-unknown", value: NaN };
   if (!toEntry)   return { ok: false, reason: "to-unit-unknown",   value: NaN };
   const base = Number(qty.amount) * fromEntry.toBase;
@@ -135,8 +166,13 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
   if (!qty || !ingredient || !toUnit) {
     return { ok: false, reason: "missing-args", value: NaN, bridged: false };
   }
-  const fromIsCount = qty.unit === "count";
-  const toIsCount   = toUnit === "count";
+  // Normalize on entry so "Count" / "COUNT" / "count" all read as
+  // count, and aliases like "lbs"/"lb" both resolve. Everything
+  // downstream sees canonical lowercase ids.
+  const normFromUnit = normalizeUnitId(qty.unit);
+  const normToUnit   = normalizeUnitId(toUnit);
+  const fromIsCount = normFromUnit === "count";
+  const toIsCount   = normToUnit === "count";
   const countInvolved = fromIsCount || toIsCount;
 
   // Resolve grams-per-count ONCE. Used in two places below: same-
@@ -159,8 +195,8 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
     // Same-ladder path with the count override applied. Pre-compute
     // grams manually using gramsPerCount for the count side and the
     // canonical's toBase for the mass side, then divide.
-    const fromEntry = fromIsCount ? null : ingredient.units?.find(u => u.id === qty.unit);
-    const toEntry   = toIsCount   ? null : ingredient.units?.find(u => u.id === toUnit);
+    const fromEntry = fromIsCount ? null : findUnit(ingredient, qty.unit);
+    const toEntry   = toIsCount   ? null : findUnit(ingredient, toUnit);
     if ((fromIsCount || fromEntry) && (toIsCount || toEntry)) {
       const grams = fromIsCount
         ? Number(qty.amount) * gramsPerCount
@@ -189,8 +225,8 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
   if (fromIsCount === toIsCount) {
     return { ok: false, reason: "no-bridge", value: NaN, bridged: false };
   }
-  const fromEntry = fromIsCount ? null : ingredient.units?.find(u => u.id === qty.unit);
-  const toEntry   = toIsCount   ? null : ingredient.units?.find(u => u.id === toUnit);
+  const fromEntry = fromIsCount ? null : findUnit(ingredient, qty.unit);
+  const toEntry   = toIsCount   ? null : findUnit(ingredient, toUnit);
   if (!fromIsCount && !fromEntry) return { ok: false, reason: "from-unit-unknown", value: NaN, bridged: false };
   if (!toIsCount   && !toEntry)   return { ok: false, reason: "to-unit-unknown",   value: NaN, bridged: false };
 

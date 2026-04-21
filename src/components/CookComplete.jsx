@@ -929,7 +929,19 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                     : Number(n.toFixed(n >= 10 ? 1 : 2));
                   return (
                     <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0, minWidth:200 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+                      {/* "USE:" label inline with the amount+unit
+                          selectors so the input pair reads as one
+                          phrase: "USE: [5.7] [tortillas ▾]". Kills the
+                          redundant "USED: 5.7 tortillas" corner label
+                          below. Label color tracks leftColor to stay
+                          part of the same visual system. */}
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{
+                          fontFamily:"'DM Mono',monospace", fontSize:10,
+                          color: "#888", letterSpacing:"0.08em",
+                        }}>
+                          USE:
+                        </span>
                         <input
                           type="number" min="0" step="any"
                           value={row.usedAmount ?? ""}
@@ -1045,54 +1057,37 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                         // drawing from this cook.
                         return (
                           <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:6 }}>
-                            {/* Labels row — LEFT on the left side, USED
-                                on the right. The USED label matches the
-                                faded left-color family rather than blue
-                                — delta segment is the same color family
-                                as where we're going, just faded and
-                                hatched. Keeps the palette tight and
-                                reads as "pending consumption of the
-                                thing you're about to commit." */}
+                            {/* Single-line "how much left" label. Drops
+                                the · LOW / · GOOD / · ALMOST OUT tag —
+                                color already telegraphs condition, the
+                                words were redundant noise. Dropped the
+                                right-side USED label too — the input /
+                                dropdown at the top of the row is the
+                                used amount, no need to echo it. */}
                             <div style={{
-                              display:"flex", justifyContent:"space-between",
                               fontFamily:"'DM Mono',monospace", fontSize:9,
                               letterSpacing:"0.04em",
+                              color: leftColor,
                             }}>
-                              <span style={{ color: leftColor }}>
-                                {fmt(leftAfter)} {unitTxt} LEFT · {leftLabel}
-                              </span>
-                              <span style={{ color: leftColor, opacity: 0.55 }}>
-                                USED: {fmt(cur)} {unitTxt}
-                              </span>
+                              {fmt(leftAfter)} {unitTxt} LEFT AFTER COOK
                             </div>
-                            {/* The bar — layered absolute divs. Slider
-                                rides on top invisibly so drag still
-                                updates usedAmount; visible thumb dot
-                                tracks the left/used boundary. */}
+                            {/* The bar. Segment order flipped: USED
+                                (animated delta) grows from the LEFT so
+                                dragging the slider right naturally
+                                increases it — the previous layout had
+                                the thumb moving opposite to the drag
+                                direction. LEFT AFTER COOK is the solid
+                                tail on the right. */}
                             <div style={{ position:"relative", width:"100%", height:22 }}>
                               <div style={{
                                 position:"absolute", top:5, left:0, right:0, height:12,
                                 background:"#2a2a2a", borderRadius:6,
                               }} />
-                              {/* LEFT AFTER COOK segment (solid color) */}
+                              {/* USED TODAY — animated delta growing
+                                  from the left edge. Faded leftColor
+                                  with scrolling diagonal hatches. */}
                               <div style={{
                                 position:"absolute", top:5, left:0, height:12,
-                                width:`${leftPct}%`,
-                                background:leftColor,
-                                borderRadius: leftPct >= 99.5 ? 6 : "6px 0 0 6px",
-                                transition:"width 0.08s linear, background 0.15s linear",
-                              }} />
-                              {/* USED TODAY segment — faded leftColor +
-                                  animated diagonal hatching. No separate
-                                  color; the delta reads as "same family
-                                  as where we're going, just in motion."
-                                  Hatches scroll on a slow loop so the
-                                  eye catches the action without the
-                                  segment feeling loud. prefers-reduced-
-                                  motion pauses the animation for
-                                  accessibility. */}
-                              <div style={{
-                                position:"absolute", top:5, left:`${leftPct}%`, height:12,
                                 width:`${usedPct}%`,
                                 background: `repeating-linear-gradient(
                                   -45deg,
@@ -1103,22 +1098,34 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                                 )`,
                                 backgroundSize: "17px 17px",
                                 animation: "cookCompleteDelta 1.8s linear infinite",
-                                borderRadius: (leftPct + usedPct) >= 99.5 && leftPct < 0.5
-                                  ? 6 : 0,
+                                borderRadius: usedPct >= 99.5 ? 6 : "6px 0 0 6px",
+                                transition:"width 0.08s linear, background 0.15s linear",
+                              }} />
+                              {/* LEFT AFTER COOK — solid-color tail
+                                  starting where the delta ends. */}
+                              <div style={{
+                                position:"absolute", top:5, left:`${usedPct}%`, height:12,
+                                width:`${leftPct}%`,
+                                background: leftColor,
+                                borderRadius:
+                                  (usedPct + leftPct) >= 99.5 && usedPct < 0.5 ? 6
+                                  : (usedPct + leftPct) >= 99.5 ? "0 6px 6px 0"
+                                  : 0,
                                 transition:"width 0.08s linear, left 0.08s linear, background 0.15s linear",
                               }} />
-                              {/* Thumb — yellow dot at the left/used
-                                  boundary, purely decorative (the real
-                                  drag is the invisible range input). */}
+                              {/* Thumb — color-matched to leftColor so
+                                  it reads as part of the same system,
+                                  not a loud yellow accent. */}
                               <div style={{
                                 position:"absolute",
-                                top:2, left:`calc(${leftPct}% - 9px)`,
+                                top:2, left:`calc(${usedPct}% - 9px)`,
                                 width:18, height:18,
-                                background:"#f5c842",
+                                background: leftColor,
                                 border:"3px solid #0a0a0a",
                                 borderRadius:"50%",
                                 pointerEvents:"none",
-                                boxShadow:"0 0 6px #f5c84266",
+                                boxShadow:`0 0 6px ${leftColor}66`,
+                                transition:"background 0.15s linear, box-shadow 0.15s linear, left 0.08s linear",
                               }} />
                               <input
                                 type="range"
