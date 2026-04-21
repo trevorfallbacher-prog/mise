@@ -6192,10 +6192,27 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // the search index and the row feels disconnected from its actual
   // identity. Per user spec: "update canonical update brand ...
   // update name."
-  const IDENTITY_KEYS = new Set(["canonicalId", "ingredientId", "ingredientIds", "brand"]);
+  const IDENTITY_KEYS = new Set(["canonicalId", "ingredientId", "ingredientIds", "components", "brand"]);
   const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
     if (p.id !== id) return p;
     const merged = { ...p, ...patch };
+    // Keep ingredientIds / components in sync. fromDb aliases
+    // components → ingredientIds when hydrating; toDb reads components
+    // FIRST when serializing. If a patch updates only ingredientIds,
+    // the old components array on `merged` would win in toDb and the
+    // new ids would silently drop on write. Mirror whichever the
+    // patch set into the other so both fields reflect the new state.
+    // User bug: picking Mozzarella Jack + Colby in LinkIngredient
+    // never persisted because toDb kept writing the prior components.
+    if ("ingredientIds" in patch && !("components" in patch)) {
+      merged.components = Array.isArray(patch.ingredientIds)
+        ? patch.ingredientIds
+        : [];
+    } else if ("components" in patch && !("ingredientIds" in patch)) {
+      merged.ingredientIds = Array.isArray(patch.components)
+        ? patch.components
+        : [];
+    }
     const touchesIdentity = Object.keys(patch).some(k => IDENTITY_KEYS.has(k));
     const userSetName = Object.prototype.hasOwnProperty.call(patch, "name");
     if (touchesIdentity && !userSetName) {
