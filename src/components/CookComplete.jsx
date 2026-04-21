@@ -279,8 +279,25 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
     const pantryRow = lookup(row.selectedRowId);
     if (!pantryRow) continue;
     const used = { amount: Number(row.usedAmount), unit: row.usedUnit };
-    const displayName = row.canonical?.name || row.recipeIng.item || "Ingredient";
-    const displayEmoji = row.canonical?.emoji || row.recipeIng.emoji || "🥣";
+    // Display prefers the matched pantry row's label so the user sees
+    // "Tostitos Queso" on the confirm-removal screen, not the recipe's
+    // "Fresh Mozzarella" — they're actually decrementing the queso.
+    // Same priority chain as the cook-prep screen uses.
+    const pantryCanon = pantryRow.ingredientId ? findIngredient(pantryRow.ingredientId) : null;
+    const recipeAsk = row.canonical?.name || row.recipeIng.item || null;
+    const isSubstitute = !!pantryRow.ingredientId
+      && !!row.canonical?.id
+      && !resolvesToSameCanonical(pantryRow.ingredientId, row.canonical.id);
+    const displayName = pantryRow.name
+      || pantryCanon?.name
+      || row.canonical?.name
+      || row.recipeIng.item
+      || "Ingredient";
+    const displayEmoji = pantryRow.emoji
+      || pantryCanon?.emoji
+      || row.canonical?.emoji
+      || row.recipeIng.emoji
+      || "🥣";
     // Cascade: consume the selected row first, then fall through to
     // sibling instances FIFO when demand exceeds the seed's stock.
     // Preserves the user's explicit "use this row" pick — we just
@@ -302,6 +319,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
         source: "recipe",
         displayName,
         displayEmoji,
+        subFor: isSubstitute ? recipeAsk : null,
       });
       continue;
     }
@@ -316,6 +334,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
         source: "recipe",
         displayName,
         displayEmoji,
+        subFor: isSubstitute ? recipeAsk : null,
       });
     }
   }
@@ -1670,6 +1689,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                     <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic" }}>
                       {entry.displayName}
                     </div>
+                    {entry.subFor && (
+                      <div style={{
+                        fontFamily:"'DM Mono',monospace", fontSize:9,
+                        color:"#f59e0b", letterSpacing:"0.05em",
+                        marginTop:1, fontStyle:"italic",
+                      }}>
+                        SUB FOR {entry.subFor.toUpperCase()}
+                      </div>
+                    )}
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: entry.convertible ? "#888" : "#ef4444", marginTop:2, letterSpacing:"0.05em" }}>
                       {entry.source === "added" ? "+ ADDED · " : ""}
                       {(entry.pantryRow.location || "pantry").toUpperCase()} · {leaves}

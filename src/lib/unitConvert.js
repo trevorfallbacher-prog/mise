@@ -427,7 +427,7 @@ export function planInstanceDecrement(rows, used, ingredient) {
   if (!Array.isArray(rows) || rows.length === 0 || !used || !ingredient) {
     return { entries: out, unsatisfied: Number(used?.amount) || 0 };
   }
-  let remainingBase = Number(used.amount) * (ingredient.units?.find(u => u.id === used.unit)?.toBase ?? NaN);
+  let remainingBase = Number(used.amount) * (findUnit(ingredient, used.unit)?.toBase ?? NaN);
   if (!Number.isFinite(remainingBase)) {
     // Unit isn't in the ingredient's ladder — caller should fall back
     // to a single-row un-convertible entry, same as decrementRow's
@@ -436,7 +436,7 @@ export function planInstanceDecrement(rows, used, ingredient) {
   }
   for (const row of rows) {
     if (remainingBase <= 0) break;
-    const rowFactor = ingredient.units?.find(u => u.id === row.unit)?.toBase;
+    const rowFactor = findUnit(ingredient, row.unit)?.toBase;
     if (!rowFactor) continue;
     const rowBase = Number(row.amount) * rowFactor;
     if (!Number.isFinite(rowBase) || rowBase <= 0) continue;
@@ -452,7 +452,7 @@ export function planInstanceDecrement(rows, used, ingredient) {
     remainingBase -= consumeBase;
   }
   const unsatisfiedBase = Math.max(0, remainingBase);
-  const usedFactor = ingredient.units?.find(u => u.id === used.unit)?.toBase ?? 1;
+  const usedFactor = findUnit(ingredient, used.unit)?.toBase ?? 1;
   const unsatisfied = Number((unsatisfiedBase / usedFactor).toFixed(4));
   return { entries: out, unsatisfied };
 }
