@@ -6405,6 +6405,24 @@ export const CUT_WEIGHTS_G = {
   },
 };
 
+// Typical grams per count for canonicals whose ladder is count-only
+// (no g:1 or ml:1 anchor). Brand nutrition on these items ships as
+// per="100g" because that's how bakery / packaged-goods labels
+// report it — but without a mass axis the resolver has nothing to
+// scale along. This table supplies the missing grams-per-count as
+// the last-resort fallback in effectiveCountWeightG, after explicit
+// row override, package-derived, and cut-weight tiers.
+//
+// Keep entries conservative — one gram-weight per count, not a
+// range. The pantry row can still override with a measured weight
+// when the user wants precision. Only seed canonicals where the
+// typical weight is well-characterized; otherwise leaving it null
+// surfaces the "set each ~g" prompt, which is more honest than a
+// guess.
+export const COUNT_WEIGHTS_G = {
+  tortillas: 49,  // standard 6-inch flour tortilla
+};
+
 export const CUT_LABELS = {
   breast: "breast", thigh: "thigh", leg: "leg", wing: "wing",
   tenderloin: "tenderloin", back: "back", whole_bird: "whole bird",
