@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
-import { parseAmountString } from "../lib/nutrition";
+import { parseAmountString, effectiveCountWeightG } from "../lib/nutrition";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -119,23 +119,31 @@ export function buildInitialUsedItems(recipe, pantry) {
       if (ladder.ok) {
         displayAmount = Number(ladder.value.toFixed(3));
         displayUnit   = defaultMatch.unit;
-      } else if (defaultMatch.countWeightG) {
-        // Cross-family bridge via countWeightG.
-        const toGrams = (qty) => {
-          if (qty.unit === "count") return Number(qty.amount) * Number(defaultMatch.countWeightG);
-          const entry = canonical.units?.find(u => u.id === qty.unit);
-          return entry ? Number(qty.amount) * Number(entry.toBase) : null;
-        };
-        const grams = toGrams(recipeQty);
-        if (grams != null && Number.isFinite(grams)) {
-          if (defaultMatch.unit === "count") {
-            displayAmount = Number((grams / Number(defaultMatch.countWeightG)).toFixed(3));
-            displayUnit   = "count";
-          } else {
-            const pantryEntry = canonical.units?.find(u => u.id === defaultMatch.unit);
-            if (pantryEntry) {
-              displayAmount = Number((grams / Number(pantryEntry.toBase)).toFixed(3));
-              displayUnit   = defaultMatch.unit;
+      } else {
+        // Cross-family bridge via countWeightG — either the explicit
+        // user-set field (ItemCard "each ~__g") OR the derived value
+        // from packageAmount + packageUnit + max. A 16 oz bag labeled
+        // "8 count" derives to 56.7g / tortilla without anyone
+        // touching the explicit field, so this path works out of the
+        // box for most receipt-scanned multipacks.
+        const gramsPerCount = effectiveCountWeightG(defaultMatch, canonical);
+        if (gramsPerCount) {
+          const toGrams = (qty) => {
+            if (qty.unit === "count") return Number(qty.amount) * gramsPerCount;
+            const entry = canonical.units?.find(u => u.id === qty.unit);
+            return entry ? Number(qty.amount) * Number(entry.toBase) : null;
+          };
+          const grams = toGrams(recipeQty);
+          if (grams != null && Number.isFinite(grams)) {
+            if (defaultMatch.unit === "count") {
+              displayAmount = Number((grams / gramsPerCount).toFixed(3));
+              displayUnit   = "count";
+            } else {
+              const pantryEntry = canonical.units?.find(u => u.id === defaultMatch.unit);
+              if (pantryEntry) {
+                displayAmount = Number((grams / Number(pantryEntry.toBase)).toFixed(3));
+                displayUnit   = defaultMatch.unit;
+              }
             }
           }
         }
