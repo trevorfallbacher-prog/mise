@@ -120,12 +120,16 @@ export function useNutritionTally(userId, familyKey) {
     for (const row of [...(mine.data || []), ...(dined.data || [])]) {
       if (!row?.id || seen.has(row.id)) continue;
       seen.add(row.id);
+      // Zero is a meaningful scale ("saved it all" option on the
+      // cook-complete stepper). Number(0) || 1 would collapse it into
+      // 1 and overstate today's kcal, so we guard with isFinite.
+      const s = Number(row.servings_per_eater);
       normalized.push({
         id:        row.id,
         kind:      "cook",
         ts:        row.cooked_at,
         nutrition: row.nutrition,
-        scale:     Number(row.servings_per_eater) || 1,
+        scale:     Number.isFinite(s) ? s : 1,
       });
     }
     for (const row of ate.data || []) {
@@ -222,7 +226,10 @@ export function useNutritionTally(userId, familyKey) {
       const inMonth = key >= monthStartKey && key <= todayKey;
       const inWeek  = key >= weekStartKey  && key <= todayKey;
       const isToday = key === todayKey;
-      const scale = Number(row.scale) || 1;
+      // `scale` is already normalized at load-time; isFinite guard
+      // preserves zero (cook logs marked "saved it all, ate 0").
+      const scaleRaw = Number(row.scale);
+      const scale = Number.isFinite(scaleRaw) ? scaleRaw : 1;
       const macros = macrosOnly(row.nutrition);
 
       if (inMonth) {

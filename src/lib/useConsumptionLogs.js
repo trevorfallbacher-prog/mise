@@ -69,14 +69,45 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
     try {
       const canonicalId = pantryRow.ingredientId || pantryRow.canonicalId || null;
       const canon = canonicalId ? findIngredient(canonicalId) : null;
+      const isMealRow = pantryRow.kind === "meal";
+      const sourceCookLogId = pantryRow.sourceCookLogId || null;
 
-      // Resolve nutrition for this specific pantry row through the full
-      // chain so pantry-override + brand + canonical all apply. Then
-      // scale to the consumed quantity. A null here is fine — we still
-      // log the event for inventory purposes; the tally just skips
-      // macro contribution and coverage reports the gap honestly.
+      // Resolve nutrition through whichever path applies to this row:
+      //   - meal-kind leftovers: pull cook_logs.nutrition (per-serving
+      //     blob stamped by CookComplete), scale by servings eaten.
+      //   - ingredient rows: the standard resolver chain (pantry
+      //     override → brand → canonical → bundled), scaled by
+      //     scaleFactor against the consumed amount + unit.
+      //
+      // Either path returning null is non-fatal — the event still
+      // logs for inventory; the tally just skips macro contribution
+      // and coverage reports the gap honestly.
       let nutritionSnapshot = null;
-      if (canon) {
+      if (isMealRow && sourceCookLogId) {
+        const { data: cookLog, error: clErr } = await supabase
+          .from("cook_logs")
+          .select("nutrition")
+          .eq("id", sourceCookLogId)
+          .maybeSingle();
+        if (clErr) {
+          console.warn("[consumption_logs] cook_log fetch failed:", clErr.message);
+        } else if (cookLog?.nutrition) {
+          const perServing = cookLog.nutrition;
+          // Meal rows use unit="serving" by convention (enforced by
+          // the sheet). Anything else would imply the caller is
+          // bypassing the sheet with a unit we don't know how to
+          // scale — guard and log rather than writing bad macros.
+          if (unit === "serving" || unit === "servings") {
+            const macros = {};
+            for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
+              if (typeof perServing[k] === "number") macros[k] = perServing[k] * amt;
+            }
+            if (Object.keys(macros).length) nutritionSnapshot = macros;
+          } else {
+            console.warn(`[consumption_logs] meal row eaten in unit=${unit}; only "serving" is supported`);
+          }
+        }
+      } else if (canon) {
         const { nutrition } = resolveNutrition(pantryRow, { brandNutrition, getInfo });
         if (nutrition) {
           const factor = scaleFactor({ amount: amt, unit }, canon, nutrition);
@@ -108,15 +139,20 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
       }
 
       const payload = {
-        user_id:       userId,
-        pantry_row_id: pantryRow.id,
-        ingredient_id: canonicalId,
-        amount:        amt,
+        user_id:            userId,
+        pantry_row_id:      pantryRow.id,
+        ingredient_id:      canonicalId,
+        amount:             amt,
         unit,
-        meal_slot:     mealSlot || inferMealSlot(eatenAt),
-        nutrition:     nutritionSnapshot,
-        eaten_at:      eatenAt || new Date().toISOString(),
-        note:          (note || "").trim() || null,
+        meal_slot:          mealSlot || inferMealSlot(eatenAt),
+        nutrition:          nutritionSnapshot,
+        // Provenance: eating a leftover meal row points back at the
+        // cook that produced it. Lets later analytics ("how much of
+        // Sunday's lasagna did I actually eat?") join through a
+        // single fk rather than guessing via pantry_row_id.
+        source_cook_log_id: isMealRow ? sourceCookLogId : null,
+        eaten_at:           eatenAt || new Date().toISOString(),
+        note:               (note || "").trim() || null,
       };
 
       const { data: row, error: insErr } = await supabase
@@ -133,11 +169,27 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
       // Decrement the pantry row directly. useSyncedList's realtime
       // subscription picks up the UPDATE and every open tab's pantry
       // state reconciles — no need to thread setPantry through the
-      // caller. decrementRow returns null when the consumed unit
-      // isn't in the canonical's ladder (rare — the sheet only
-      // surfaces valid units) in which case we leave inventory alone
-      // rather than writing a bad amount.
-      if (canon) {
+      // caller. Meal-kind rows track remaining portions on
+      // servings_remaining (migration 0026) rather than amount, so we
+      // route to the right column. Ingredient rows go through
+      // decrementRow (which consults the canonical's unit ladder to
+      // translate the consumed unit into the row's own unit).
+      // Clamped at 0 either way — never drive inventory negative.
+      if (isMealRow) {
+        const currentServings = Number(pantryRow.servingsRemaining);
+        if (Number.isFinite(currentServings)) {
+          const nextServings = Math.max(0, Number((currentServings - amt).toFixed(4)));
+          if (nextServings !== currentServings) {
+            const { error: updErr } = await supabase
+              .from("pantry_items")
+              .update({ servings_remaining: nextServings })
+              .eq("id", pantryRow.id);
+            if (updErr) {
+              console.warn("[consumption_logs] meal decrement failed:", updErr.message);
+            }
+          }
+        }
+      } else if (canon) {
         const next = decrementRow(pantryRow, { amount: amt, unit }, canon);
         if (next != null && next !== Number(pantryRow.amount)) {
           const { error: updErr } = await supabase

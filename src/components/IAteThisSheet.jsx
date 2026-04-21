@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ModalSheet from "./ModalSheet";
 import { Z } from "../lib/tokens";
+import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { resolveNutrition, scaleFactor, formatMacros } from "../lib/nutrition";
 import { useConsumptionLogs, inferMealSlot } from "../lib/useConsumptionLogs";
@@ -51,17 +52,51 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
 
   const canonicalId = pantryRow?.ingredientId || pantryRow?.canonicalId || null;
   const canonical = canonicalId ? findIngredient(canonicalId) : null;
-  // Sheet only surfaces units the canonical actually knows — otherwise
-  // the user could pick "cup" on an apple that's count-only and the
-  // resolver would correctly return null, but the UI would pretend a
-  // number was coming. Keep the choices honest.
-  const availableUnits = canonical?.units || [{ id: pantryRow?.unit || "unit", label: pantryRow?.unit || "unit" }];
+  const isMealRow = pantryRow?.kind === "meal";
+  const sourceCookLogId = pantryRow?.sourceCookLogId || null;
 
-  // Default serving depends on the ingredient. Count-based items
-  // (eggs, apples) default to 1 count; mass-based items default to the
-  // smallest convenient unit in the ladder (tsp > tbsp > g > oz > cup).
-  // Falls back to the pantry row's own unit when nothing else fits.
+  // Meal-kind leftovers don't have a canonical; their nutrition lives
+  // on cook_logs.nutrition (per-serving blob stamped at cook-time).
+  // Fetch it once when the sheet opens so the preview updates in real
+  // time as the user dials servings up and down.
+  const [mealCookNutrition, setMealCookNutrition] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    if (!isMealRow || !sourceCookLogId) { setMealCookNutrition(null); return; }
+    (async () => {
+      const { data, error } = await supabase
+        .from("cook_logs")
+        .select("nutrition")
+        .eq("id", sourceCookLogId)
+        .maybeSingle();
+      if (!alive) return;
+      if (error) {
+        console.warn("[IAteThisSheet] cook_log fetch failed:", error.message);
+        return;
+      }
+      setMealCookNutrition(data?.nutrition || null);
+    })();
+    return () => { alive = false; };
+  }, [isMealRow, sourceCookLogId]);
+
+  // Unit axis depends on what the row is:
+  //   - Meal rows: always "serving" — the leftover row tracks portions,
+  //     not grams. Enforced; picking anything else would fall through
+  //     the hook's meal-kind nutrition path.
+  //   - Ingredient rows: every unit in the canonical's ladder.
+  //   - Orphan rows (no canonical, not a meal): fall back to the row's
+  //     own unit so we can at least log the event for inventory history.
+  const availableUnits = isMealRow
+    ? [{ id: "serving", label: "serving" }]
+    : (canonical?.units || [{ id: pantryRow?.unit || "unit", label: pantryRow?.unit || "unit" }]);
+
+  // Default serving depends on the row type. Meal leftovers always
+  // start at 1 serving. Count-based items (eggs, apples) default to 1
+  // count; mass-based items default to the smallest convenient unit
+  // in the ladder (tsp > tbsp > g > oz > cup). Falls back to the
+  // pantry row's own unit when nothing else fits.
   const defaultUnit = useMemo(() => {
+    if (isMealRow) return "serving";
     if (!canonical) return pantryRow?.unit || "unit";
     const ids = (canonical.units || []).map(u => u.id);
     if (ids.includes("count")) return "count";
@@ -69,7 +104,7 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
       if (ids.includes(pref)) return pref;
     }
     return ids[0] || pantryRow?.unit || "unit";
-  }, [canonical, pantryRow?.unit]);
+  }, [isMealRow, canonical, pantryRow?.unit]);
 
   const [amount,   setAmount]   = useState(1);
   const [unit,     setUnit]     = useState(defaultUnit);
@@ -79,28 +114,48 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
 
   // Live macro preview. Re-resolves on every amount/unit tick so the
   // number on the confirm button matches exactly what the tally will
-  // receive. Null when we can't compute (no canonical, no nutrition,
-  // or unit not in the ladder) — in that case we still let them log
-  // for inventory purposes but tell them up front the macros are skipped.
+  // receive. Null when we can't compute (no canonical / cook_log
+  // nutrition, no nutrition, or unit not in the ladder) — in that
+  // case we still let them log for inventory purposes but tell them
+  // up front the macros are skipped.
   const preview = useMemo(() => {
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) return { macros: null, source: null };
+    // Meal-kind leftover: cook_logs.nutrition is already per-serving.
+    // Scaling is just linear multiplication by the number of servings.
+    if (isMealRow) {
+      if (!mealCookNutrition) return { macros: null, source: "cook" };
+      const macros = {};
+      for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
+        if (typeof mealCookNutrition[k] === "number") macros[k] = mealCookNutrition[k] * amt;
+      }
+      return { macros, source: "cook" };
+    }
     if (!canonical) return null;
     const { nutrition, source, brand } = resolveNutrition(pantryRow, {
       brandNutrition,
       getInfo: ingredientInfo?.getInfo,
     });
     if (!nutrition) return { macros: null, source: null };
-    const f = scaleFactor({ amount: Number(amount), unit }, canonical, nutrition);
+    const f = scaleFactor({ amount: amt, unit }, canonical, nutrition);
     if (f == null || !Number.isFinite(f)) return { macros: null, source };
     const macros = {};
     for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
       if (typeof nutrition[k] === "number") macros[k] = nutrition[k] * f;
     }
     return { macros, source, brand };
-  }, [amount, unit, canonical, pantryRow, brandNutrition, ingredientInfo]);
+  }, [amount, unit, isMealRow, mealCookNutrition, canonical, pantryRow, brandNutrition, ingredientInfo]);
 
-  const pantryAmountDisplay = Number.isFinite(Number(pantryRow?.amount))
-    ? `${Number(pantryRow.amount).toFixed(Number(pantryRow.amount) % 1 ? 2 : 0)} ${unitLabel(canonical, pantryRow?.unit) || pantryRow?.unit}`
-    : "—";
+  const pantryAmountDisplay = (() => {
+    if (isMealRow) {
+      const s = Number(pantryRow?.servingsRemaining);
+      if (!Number.isFinite(s)) return "—";
+      return `${s % 1 ? s.toFixed(2) : s} serving${s === 1 ? "" : "s"}`;
+    }
+    const n = Number(pantryRow?.amount);
+    if (!Number.isFinite(n)) return "—";
+    return `${n % 1 ? n.toFixed(2) : n} ${unitLabel(canonical, pantryRow?.unit) || pantryRow?.unit}`;
+  })();
 
   const confirm = async () => {
     setError(null);

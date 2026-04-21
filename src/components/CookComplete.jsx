@@ -357,7 +357,10 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       diners: [...selectedDiners],
       is_favorite: rating === "good" || rating === "nailed",
       nutrition:           nutritionBlob,
-      servings_per_eater:  Number(servingsPerEater) || 1,
+      // Zero is a valid value ("saved it all"), so we guard with
+      // Number.isFinite rather than the || 1 fallback which would
+      // collapse a deliberate 0 into 1.
+      servings_per_eater:  Number.isFinite(Number(servingsPerEater)) ? Number(servingsPerEater) : 1,
     };
     const { data: logRow, error: logErr } = await supabase
       .from("cook_logs")
@@ -1717,7 +1720,20 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             ? recipeNutrition(recipe, { pantry, brandNutrition, getInfo: ingredientInfo?.getInfo })
             : null;
           if (!nPreview || nPreview.coverage.resolved === 0) return null;
-          const options = [0.5, 1, 1.5, 2, 3];
+          // 0 = "saved it all" — the cook_log still records the event
+          // but contributes nothing to the macro tally. Later
+          // consumption through the "I ATE THIS" flow on the leftover
+          // pantry row adds macros at actual eat-time. Perfect fit for
+          // batch recipes (cookies, biscuits) where the cook was a
+          // production event, not a meal.
+          const options = [0, 0.5, 1, 1.5, 2, 3];
+          const labelFor = (v) => {
+            if (v === 0)   return "0";
+            if (v === 1)   return "1";
+            if (v === 0.5) return "½";
+            if (v === 1.5) return "1½";
+            return String(v);
+          };
           return (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#666", letterSpacing: "0.12em", marginBottom: 8 }}>
@@ -1742,13 +1758,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                         cursor: "pointer", letterSpacing: "0.06em",
                       }}
                     >
-                      {v === 1 ? "1" : v === 0.5 ? "½" : v === 1.5 ? "1½" : String(v)}
+                      {labelFor(v)}
                     </button>
                   );
                 })}
               </div>
               <div style={{ marginTop: 6, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
-                ~ {Math.round((nPreview.perServing.kcal || 0) * servingsPerEater)} kcal PER EATER
+                {servingsPerEater === 0
+                  ? "SAVED IT ALL — LOG BITES LATER VIA \"I ATE THIS\""
+                  : `~ ${Math.round((nPreview.perServing.kcal || 0) * servingsPerEater)} kcal PER EATER`}
               </div>
             </div>
           );
