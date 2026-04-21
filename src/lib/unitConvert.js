@@ -24,7 +24,62 @@
 // pantry's 1.5-stick row by 28.4 g → 1.25 sticks remaining".
 
 import { toBase } from "../data/ingredients";
-import { effectiveCountWeightG } from "./nutrition";
+
+// A canonical is "mass-based" iff its ladder includes `{g:1}` or
+// `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
+// ladder declares how many grams (or millilitres, treated as grams
+// for conversion purposes) it equals. Count-based canonicals (eggs,
+// apple) intentionally lack this anchor; callers can gate cross-
+// family bridges on this signal so pure-count ladders don't get a
+// countWeightG override applied where it'd poison the math.
+//
+// Why accept `ml:1`: liquid canonicals (milk, oil, maple syrup) use
+// a millilitre base. For mass-conversion purposes we approximate
+// 1 ml ≈ 1 g — exact for water-based liquids, within ~10% for oils.
+export function isMassLadder(canonical) {
+  return (canonical?.units || []).some(
+    u => (u.id === "g" || u.id === "ml") && Number(u.toBase) === 1,
+  );
+}
+
+// Resolve the effective grams-per-count for a pantry row against its
+// canonical. Precedence:
+//   1. pantryRow.countWeightG (explicit user override from the
+//      ItemCard "each ~__g" field; migration 0121).
+//   2. Derived from packageAmount + packageUnit + max (or current
+//      amount as fallback) when packageUnit is mass-based on this
+//      canonical's ladder — a 680g four-pack derives to 170g each.
+//      The preferred path is to persist the derived value into
+//      countWeightG at write-time (ItemCard does this) so the
+//      calibration doesn't drift as amount decays.
+//   3. null — caller falls back to the canonical's own count.toBase
+//      (often a sensible default already baked into the registry).
+//
+// Only returns a positive finite number or null.
+export function effectiveCountWeightG(pantryRow, canonical) {
+  if (!canonical) return null;
+  const explicit = Number(pantryRow?.countWeightG);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const pkgAmt  = Number(pantryRow?.packageAmount);
+  const pkgUnit = pantryRow?.packageUnit;
+  // Denominator: prefer `max` (original pack count) over `amount`
+  // (current remaining). max is set alongside amount at add-time
+  // (ItemCard PKG row) and doesn't decay as the user consumes,
+  // keeping derivation stable through the lifetime of the row.
+  // Falling back to amount covers legacy rows that never populated max.
+  const maxCount = Number(pantryRow?.max);
+  const count = (Number.isFinite(maxCount) && maxCount > 0)
+    ? maxCount
+    : Number(pantryRow?.amount);
+  if (!Number.isFinite(pkgAmt) || pkgAmt <= 0) return null;
+  if (!Number.isFinite(count)  || count  <= 0) return null;
+  if (!pkgUnit || pkgUnit === "count") return null;
+  const entry = canonical.units?.find(u => u.id === pkgUnit);
+  if (!entry) return null;
+  const g = pkgAmt * Number(entry.toBase);
+  if (!Number.isFinite(g) || g <= 0) return null;
+  return g / count;
+}
 
 // Convert { amount, unit } into a target unit within the same ingredient's
 // ladder. Returns { ok, value } or { ok: false, reason }.
@@ -80,28 +135,60 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
   if (!qty || !ingredient || !toUnit) {
     return { ok: false, reason: "missing-args", value: NaN, bridged: false };
   }
-  // Same-ladder first. Most canonicals encode count-to-mass via
-  // count.toBase (e.g. chicken_breast count.toBase=200g), so this
-  // path handles a surprising number of count↔mass cases already.
-  const direct = convert(qty, toUnit, ingredient);
-  if (direct.ok) return { ...direct, bridged: false };
-
-  // Bridge: find a grams-per-count number. Three-tier resolver:
-  // explicit countWeightG → derived from packageAmount/packageUnit/max
-  // → null. Null means we have no way to bridge count ↔ mass on this
-  // row; caller falls back to showing the raw unit.
-  const gramsPerCount = effectiveCountWeightG(row, ingredient);
-  if (!gramsPerCount) return { ok: false, reason: direct.reason || "no-bridge", value: NaN, bridged: false };
-
   const fromIsCount = qty.unit === "count";
   const toIsCount   = toUnit === "count";
-  // Bridge only activates when exactly one side is count and the
-  // other is a known non-count unit. count↔count would've been
-  // handled by the ladder; mass↔mass also.
-  if (fromIsCount === toIsCount) {
-    return { ok: false, reason: direct.reason || "no-bridge", value: NaN, bridged: false };
+  const countInvolved = fromIsCount || toIsCount;
+
+  // Resolve grams-per-count ONCE. Used in two places below: same-
+  // ladder count↔mass (override the canonical's baked-in count.toBase
+  // when the pantry row knows better) AND pure bridge (units outside
+  // the ladder). "Package size is bible" — if the user calibrated
+  // this row to 170g breasts, 170 wins over the canonical's 200g
+  // default everywhere a count appears.
+  const gramsPerCount = countInvolved ? effectiveCountWeightG(row, ingredient) : null;
+  const canOverride = countInvolved && gramsPerCount && isMassLadder(ingredient);
+
+  // Same-ladder first. Most canonicals encode count-to-mass via
+  // count.toBase (chicken_breast count.toBase=200g). When the row
+  // carries a better gramsPerCount, we substitute it for the count
+  // side of the conversion so row-level calibration takes precedence.
+  if (!canOverride) {
+    const direct = convert(qty, toUnit, ingredient);
+    if (direct.ok) return { ...direct, bridged: false };
+  } else {
+    // Same-ladder path with the count override applied. Pre-compute
+    // grams manually using gramsPerCount for the count side and the
+    // canonical's toBase for the mass side, then divide.
+    const fromEntry = fromIsCount ? null : ingredient.units?.find(u => u.id === qty.unit);
+    const toEntry   = toIsCount   ? null : ingredient.units?.find(u => u.id === toUnit);
+    if ((fromIsCount || fromEntry) && (toIsCount || toEntry)) {
+      const grams = fromIsCount
+        ? Number(qty.amount) * gramsPerCount
+        : Number(qty.amount) * Number(fromEntry.toBase);
+      if (Number.isFinite(grams)) {
+        const value = toIsCount
+          ? grams / gramsPerCount
+          : grams / Number(toEntry.toBase);
+        if (Number.isFinite(value)) {
+          // bridged:true flags this as row-calibrated — the display
+          // uses "≈" because per-row grams-per-count is a calibration
+          // choice, not a universal constant.
+          return { ok: true, value, bridged: true };
+        }
+      }
+    }
   }
 
+  // Pure bridge: count ↔ mass where one side is NOT in the ladder.
+  // Common case: tortillas canonical has only count+pack in its
+  // ladder (no oz), but the pantry row carries packageAmount=16oz.
+  // gramsPerCount from effectiveCountWeightG gives us the bridge.
+  if (!gramsPerCount) {
+    return { ok: false, reason: "no-bridge", value: NaN, bridged: false };
+  }
+  if (fromIsCount === toIsCount) {
+    return { ok: false, reason: "no-bridge", value: NaN, bridged: false };
+  }
   const fromEntry = fromIsCount ? null : ingredient.units?.find(u => u.id === qty.unit);
   const toEntry   = toIsCount   ? null : ingredient.units?.find(u => u.id === toUnit);
   if (!fromIsCount && !fromEntry) return { ok: false, reason: "from-unit-unknown", value: NaN, bridged: false };
@@ -113,7 +200,6 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
   if (!Number.isFinite(grams)) {
     return { ok: false, reason: "bad-amount", value: NaN, bridged: false };
   }
-
   const value = toIsCount
     ? grams / gramsPerCount
     : grams / Number(toEntry.toBase);

@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, convertWithBridge, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
+import { sameCanonicalFamily } from "../lib/recipePairing";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -69,9 +70,18 @@ export function buildInitialUsedItems(recipe, pantry) {
     // auto-picked default is the oldest-expiring instance — consume
     // before it spoils. Matches the stack-drilldown FIFO ordering so
     // the user's mental model ("oldest first") holds across surfaces.
+    // Match pantry rows via sameCanonicalFamily so a recipe ingredient
+    // tagged chicken_breast (legacy compound slug) still pairs with
+    // a pantry row tagged chicken + cut=breast (new model), and vice
+    // versa. Without this, the "What did you use?" screen shows
+    // every row as NOT IN PANTRY whenever there's a canonical-
+    // generation mismatch between the recipe and the pantry — same
+    // class of bug that was in CookMode.rowHasIngredient before the
+    // earlier fix. Shared helper from recipePairing is the single
+    // source of truth for "are these the same ingredient family?"
     const matches = ing.ingredientId
       ? list.filter(p =>
-          p.ingredientId === ing.ingredientId &&
+          sameCanonicalFamily(p.ingredientId, ing.ingredientId) &&
           (p.kind || "ingredient") === "ingredient" &&
           Number(p.amount) > 0
         ).sort((a, b) => {

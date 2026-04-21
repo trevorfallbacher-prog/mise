@@ -21,6 +21,7 @@
 //   "serving" → use nutrition.serving_g to scale grams.
 
 import { findIngredient } from "../data/ingredients";
+import { convertWithBridge, effectiveCountWeightG, isMassLadder } from "./unitConvert";
 
 // Resolve the best available nutrition for a pantry row. Phase 1 only
 // uses tiers 3 + 4 (canonical); the optional `brandNutrition` map hooks
@@ -185,25 +186,6 @@ export function validateNutrition(n) {
 // calibration without rewriting the canonical for everyone.
 export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   if (!qty || !canonical || !nutrition) return null;
-  const fromEntry = canonical.units?.find(u => u.id === qty.unit);
-  if (!fromEntry) return null;
-  // Per-row override of grams-per-count only applies to mass ladders
-  // (chicken_breast, sausage, hot_dog — their count.toBase is a gram
-  // weight, so overriding it simply picks a different weight). For
-  // pure-count ladders (banana with per="count", count.toBase=1)
-  // there's no gram axis at all and the override would poison the
-  // math — ignore it there.
-  const isCount = qty.unit === "count";
-  const rowGramsPerCount = Number(opts.countWeightG);
-  const useRowOverride =
-    isCount &&
-    Number.isFinite(rowGramsPerCount) && rowGramsPerCount > 0 &&
-    isMassLadder(canonical);
-  const effectiveToBase = useRowOverride
-    ? rowGramsPerCount
-    : Number(fromEntry.toBase);
-  const baseAmount = Number(qty.amount) * effectiveToBase;
-  if (!Number.isFinite(baseAmount)) return null;
 
   // Tolerant fallback — pre-v3 AI enrichment wrote free-text into
   // `per` ("1 tsp (5g)", "1 medium apple (182g)"). The gram weight is
@@ -214,18 +196,38 @@ export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   const per = coercePer(nutrition);
   if (!per) return null;
 
+  // qty → base amount math delegates to convertWithBridge so the
+  // count↔mass override logic stays in one place (shared with
+  // CookComplete's conversion UI). Per-row override of grams-per-count
+  // still only applies to mass ladders — pure-count ladders (banana
+  // with per="count", count.toBase=1) have no gram axis and the
+  // override would poison the math. Gated by stripping countWeightG
+  // from the synthetic row when the canonical isn't mass-based.
+  const applyOverride =
+    qty.unit === "count" &&
+    Number.isFinite(Number(opts.countWeightG)) &&
+    Number(opts.countWeightG) > 0 &&
+    isMassLadder(canonical);
+  const synthRow = applyOverride
+    ? { countWeightG: Number(opts.countWeightG) }
+    : null;
+
   switch (per.kind) {
-    case "100g":
+    case "100g": {
       if (!isMassLadder(canonical)) return null;
-      return baseAmount / 100;
-    case "count":
-      // Count ladders have toBase=1 per item. baseAmount is the count.
-      return baseAmount;
+      const res = convertWithBridge(qty, "g", canonical, synthRow);
+      return res.ok ? res.value / 100 : null;
+    }
+    case "count": {
+      const res = convertWithBridge(qty, "count", canonical, synthRow);
+      return res.ok ? res.value : null;
+    }
     case "serving": {
+      if (!isMassLadder(canonical)) return null;
       const g = per.serving_g;
       if (!Number.isFinite(g) || g <= 0) return null;
-      if (!isMassLadder(canonical)) return null;
-      return baseAmount / g;
+      const res = convertWithBridge(qty, "g", canonical, synthRow);
+      return res.ok ? res.value / g : null;
     }
     default:
       return null;
@@ -256,64 +258,14 @@ function coercePer(nutrition) {
   return null;
 }
 
-// A canonical is "mass-based" iff its ladder includes `{g:1}` or
-// `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
-// ladder declares how many grams (or millilitres, treated as grams for
-// nutrition purposes) it equals. Count-based canonicals (eggs, apple)
-// intentionally lack this anchor, which is how `scaleFactor`'s "100g"
-// and "serving" branches know to bail for count ladders and fall
-// through to `per="count"` alone.
-//
-// Why accept `ml:1`: liquid canonicals (milk, oil, maple syrup) use a
-// millilitre base. For nutrition purposes we approximate 1 ml ≈ 1 g,
-// which is exact for water-based liquids and within ~10% for oils
-// (~0.92 g/ml) and ~30% for dense syrups (honey ~1.42 g/ml).
-// Per-liquid density correction is a future refinement — this keeps
-// the 0→nonzero pipeline working today.
-function isMassLadder(canonical) {
-  return (canonical?.units || []).some(
-    u => (u.id === "g" || u.id === "ml") && Number(u.toBase) === 1,
-  );
-}
-
-// Resolve the effective grams-per-count for a pantry row against its
-// canonical. Precedence:
-//   1. pantryRow.countWeightG (explicit user override from the
-//      ItemCard "each ~__g" field; migration 0121).
-//   2. Derived from packageAmount + packageUnit + current amount when
-//      all three signals are present and packageUnit is mass-based on
-//      this canonical's ladder — e.g. a 680g four-pack = 170g each.
-//      Kept as a last-mile fallback; the preferred path is to persist
-//      the derived value into countWeightG at write-time (ItemCard
-//      does this) so the calibration doesn't drift as amount decays.
-//   3. null — caller falls back to the canonical's own count.toBase.
-//
-// Only returns a positive finite number or null. Safe to pass directly
-// into scaleFactor's opts.countWeightG.
-export function effectiveCountWeightG(pantryRow, canonical) {
-  if (!canonical) return null;
-  const explicit = Number(pantryRow?.countWeightG);
-  if (Number.isFinite(explicit) && explicit > 0) return explicit;
-  const pkgAmt  = Number(pantryRow?.packageAmount);
-  const pkgUnit = pantryRow?.packageUnit;
-  // Denominator: prefer `max` (original pack count) over `amount`
-  // (current remaining). max is set alongside amount at add-time
-  // (ItemCard PKG row) and doesn't decay as the user consumes, which
-  // keeps derivation stable through the lifetime of the row. Falling
-  // back to amount covers legacy rows that never populated max.
-  const maxCount = Number(pantryRow?.max);
-  const count = (Number.isFinite(maxCount) && maxCount > 0)
-    ? maxCount
-    : Number(pantryRow?.amount);
-  if (!Number.isFinite(pkgAmt) || pkgAmt <= 0) return null;
-  if (!Number.isFinite(count)  || count  <= 0) return null;
-  if (!pkgUnit || pkgUnit === "count") return null;
-  const entry = canonical.units?.find(u => u.id === pkgUnit);
-  if (!entry) return null;
-  const g = pkgAmt * Number(entry.toBase);
-  if (!Number.isFinite(g) || g <= 0) return null;
-  return g / count;
-}
+// Re-exported from unitConvert to preserve every existing
+// `import { effectiveCountWeightG } from "./nutrition"` call site.
+// Single source of truth for the math lives alongside convertWithBridge
+// in unitConvert.js — they share the countWeightG resolution logic
+// so fixing grams-per-count rules in one spot propagates everywhere.
+// Module-scope binding via the top-of-file import lets scaleFactor
+// below use the same function without a second import.
+export { effectiveCountWeightG, isMassLadder };
 
 // Parse a free-text amount string into { amount, unit } against a
 // canonical's ladder. Handles unicode fractions ("½ cup"), mixed
