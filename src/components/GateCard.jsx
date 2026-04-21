@@ -11,7 +11,7 @@ import { supabase } from "../lib/supabase";
 //   2. Call user_gate_prereq_state RPC to refresh the rules[]
 //      array; server snapshots it onto user_gate_progress in a
 //      follow-up trigger (or the next award_xp call) so we don't
---      re-run the RPC on every render.
+//      re-run the RPC on every render.
 //   3. Render each rule with ✓ / ○ status + have/need copy.
 //   4. When all_met, surface the picker CTA (opens a separate
 //      modal — Phase 4b-8).
