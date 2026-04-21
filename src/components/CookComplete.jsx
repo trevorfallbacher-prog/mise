@@ -93,13 +93,30 @@ export function buildInitialUsedItems(recipe, pantry, session) {
       : [];
     const pairing = pairings[idx] || null;
     const suggested = [pairing?.paired, pairing?.closestMatch].filter(Boolean);
+    // Composition-match candidates: compound rows (kind !== "ingredient")
+    // whose ingredientIds[] genuinely contains the target canonical.
+    // User's distinction: a cheese dip that actually HAS mozzarella in
+    // its composition is a legit source — user just scoops from the
+    // jar. A frozen pizza also lists mozzarella in ingredientIds[]
+    // but isn't scoop-able. We can't tell them apart programmatically,
+    // so compounds are a LOWER-priority tier: primary-canonical rows
+    // win first, compounds only surface when nothing else matched.
+    // User can SWAP away if the pick is a pizza, or accept if it's
+    // a dip / sauce / spread.
+    const compositionMatches = ing.ingredientId
+      ? (list || []).filter(p => {
+          if (!p || Number(p.amount) <= 0) return false;
+          if ((p.kind || "ingredient") === "ingredient") return false;
+          const ids = Array.isArray(p.ingredientIds) ? p.ingredientIds : [];
+          return ids.some(id => resolvesToSameCanonical(id, ing.ingredientId));
+        })
+      : [];
     const seen = new Set();
-    const matches = [...familyMatches, ...suggested]
+    const matches = [...familyMatches, ...suggested, ...compositionMatches]
       .filter(m => {
         if (!m || !m.id || seen.has(m.id)) return false;
         seen.add(m.id);
-        return (m.kind || "ingredient") === "ingredient"
-          && Number(m.amount) > 0;
+        return Number(m.amount) > 0;
       })
       .sort((a, b) => {
         const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
@@ -109,17 +126,23 @@ export function buildInitialUsedItems(recipe, pantry, session) {
         const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
         return pa - pb;
       });
-    // Session override wins over all defaults: if the user explicitly
-    // swapped this slot on the cook-prep screen (CookMode) or during
-    // an AIRecipe tweak, that choice is authoritative. Else prefer the
-    // pairer's exact-match row, then its closest-match substitute,
-    // then the FIFO first from the family universe.
+    // Priority order for the default selection:
+    //   1. Session override — user's explicit choice from cook-prep
+    //      or AIRecipe tweak, authoritative.
+    //   2. pairing.paired — Tier 1 primary canonical match (kind=ingredient).
+    //   3. Composition match — compound row whose ingredientIds[]
+    //      contains the target. Prefers "cheese dip that has mozz"
+    //      over "queso dip as a generic cheese substitute." Only
+    //      fires when no primary-canonical row exists.
+    //   4. pairing.closestMatch — Tier 3 substitute (hub / category).
+    //   5. FIFO first from the family universe.
     const overrideRowId = session?.overrides?.[idx]?.pantryItemId || null;
     const overrideRow = overrideRowId
       ? list.find(p => p.id === overrideRowId) || null
       : null;
     const defaultMatch = overrideRow
       || pairing?.paired
+      || compositionMatches[0]
       || pairing?.closestMatch
       || matches[0]
       || null;
