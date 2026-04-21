@@ -4,7 +4,7 @@ import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
-import { recipeNutrition } from "../lib/nutrition";
+import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
 import CookCompleteSummary from "./CookCompleteSummary";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
@@ -1591,9 +1591,89 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             ← BACK
           </button>
           <button
-            onClick={() => setPhase("notes")}
+            onClick={() => setPhase("nutritionDebug")}
             disabled={!rating}
             style={{ flex:2, padding:"14px", background: rating?"#f5c842":"#1a1a1a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: rating?"#111":"#444", cursor: rating?"pointer":"not-allowed", letterSpacing:"0.08em" }}>
+            CONTINUE →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── DEBUG phase: per-ingredient calorie breakdown ────────────────────────
+  // Temporary diagnostic screen. Surfaces exactly how the resolver chain
+  // scored each recipe ingredient so we can see why cook_logs.nutrition
+  // keeps coming back as null on the dashboard. Safe to remove once the
+  // pipeline is trusted — just delete this block, drop the two
+  // setPhase("nutritionDebug") callers above, and remove the
+  // recipeNutritionBreakdown import.
+  if (phase === "nutritionDebug") {
+    const bd = recipeNutritionBreakdown(recipe, { pantry, brandNutrition, getInfo: ingredientInfo?.getInfo });
+    return shell(
+      <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#ef4444", letterSpacing:"0.15em", marginBottom:8 }}>
+          DEBUG · CALORIE BREAKDOWN
+        </div>
+        <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:26, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:4 }}>
+          Where did the calories come from?
+        </h2>
+        <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666", marginBottom:16 }}>
+          Per-ingredient resolver trace. Rows without a macro contribution show why.
+        </p>
+
+        <div style={{ padding:"10px 12px", background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:10, marginBottom:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#bbb" }}>
+          <div>TOTAL: {Math.round(bd.total.kcal)} kcal · {Math.round(bd.total.protein_g)}p · {Math.round(bd.total.carb_g)}c · {Math.round(bd.total.fat_g)}f</div>
+          <div style={{ marginTop:2 }}>PER SERVING (÷ {bd.serves}): {Math.round(bd.perServing.kcal)} kcal</div>
+          <div style={{ marginTop:2, color:"#888" }}>
+            COVERAGE: {bd.coverage.resolved} / {bd.coverage.total} ingredients
+            {bd.coverage.resolved === 0 && <span style={{ color:"#ef4444" }}> · NOTHING RESOLVED — dashboard will skip this cook</span>}
+          </div>
+        </div>
+
+        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:16 }}>
+          {bd.items.length === 0 && (
+            <div style={{ padding:"12px", background:"#1a0a0a", border:"1px solid #3a1a1a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f87171" }}>
+              Recipe has no ingredients array.
+            </div>
+          )}
+          {bd.items.map((row, i) => {
+            const ok = row.kcal > 0;
+            return (
+              <div key={i} style={{
+                padding:"10px 12px",
+                background: ok ? "#0f1a0f" : "#1a0f0f",
+                border: `1px solid ${ok ? "#1e3a1e" : "#3a1a1a"}`,
+                borderRadius:8,
+                fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc",
+              }}>
+                <div style={{ display:"flex", justifyContent:"space-between", gap:8, marginBottom:4 }}>
+                  <span style={{ color:"#f0ece4", fontWeight:600 }}>{row.name}</span>
+                  <span style={{ color: ok ? "#4ade80" : "#f87171" }}>
+                    {ok ? `+${Math.round(row.kcal)} kcal` : "— kcal"}
+                  </span>
+                </div>
+                <div style={{ color:"#888", fontSize:10, lineHeight:1.5 }}>
+                  <div>canonical: {row.canonicalId || "(none)"}{row.canonical ? ` → ${row.canonical}` : ""}</div>
+                  <div>amount: {row.amount || "(none)"} {row.parsedQty ? `→ ${row.parsedQty.amount} ${row.parsedQty.unit}` : ""}</div>
+                  <div>nutrition source: {row.source || "(none)"}{row.brand ? ` · brand=${row.brand}` : ""}{row.nutrition?.per ? ` · per=${row.nutrition.per}` : ""}</div>
+                  <div>factor: {row.factor == null ? "null" : row.factor.toFixed(3)}</div>
+                  {row.reason && (
+                    <div style={{ color:"#f87171", marginTop:2 }}>× {row.reason}</div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
+          <button onClick={() => setPhase("rating")}
+            style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor:"pointer", letterSpacing:"0.08em" }}>
+            ← BACK
+          </button>
+          <button onClick={() => setPhase("notes")}
+            style={{ flex:2, padding:"14px", background:"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color:"#111", cursor:"pointer", letterSpacing:"0.08em" }}>
             CONTINUE →
           </button>
         </div>
@@ -1703,7 +1783,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         )}
 
         <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
-          <button onClick={() => setPhase("rating")} disabled={saving}
+          <button onClick={() => setPhase("nutritionDebug")} disabled={saving}
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor: saving?"not-allowed":"pointer", letterSpacing:"0.08em" }}>
             ← BACK
           </button>

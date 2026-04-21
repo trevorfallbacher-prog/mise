@@ -209,6 +209,80 @@ export function recipeNutrition(recipe, { pantry = [], brandNutrition, getInfo }
   };
 }
 
+// DEBUG: Per-ingredient breakdown of recipeNutrition. Same resolver
+// chain, but returns one row per recipe ingredient annotated with what
+// happened — canonical match, parsed qty, nutrition source, scale
+// factor, macro contribution, and a `reason` when a row didn't
+// contribute. Used by the CookComplete debug screen to expose where
+// calories are being silently dropped. Safe to delete once the
+// dashboard is trusted.
+export function recipeNutritionBreakdown(recipe, { pantry = [], brandNutrition, getInfo } = {}) {
+  const ingredients = recipe?.ingredients || [];
+  const items = [];
+  const totals = { kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, fiber_g: 0, sodium_mg: 0, sugar_g: 0 };
+  let resolved = 0;
+  for (const ing of ingredients) {
+    const row = {
+      name: ing.item || ing.ingredientId || "(unnamed)",
+      canonicalId: ing.ingredientId || null,
+      amount: ing.amount || null,
+      qty: ing.qty || null,
+      parsedQty: null,
+      source: null,
+      brand: null,
+      factor: null,
+      nutrition: null,
+      macros: null,
+      kcal: 0,
+      reason: null,
+    };
+    if (!ing.ingredientId) { row.reason = "no canonical id on recipe ingredient"; items.push(row); continue; }
+    const canon = findIngredient(ing.ingredientId);
+    if (!canon) { row.reason = `canonical "${ing.ingredientId}" not found in registry`; items.push(row); continue; }
+    row.canonical = canon.name;
+    const pantryRow = pantry.find(p => (p.ingredientId || p.canonicalId) === ing.ingredientId)
+      || { ingredientId: ing.ingredientId, brand: null, nutritionOverride: null };
+    const { nutrition, source, brand } = resolveNutrition(pantryRow, { brandNutrition, getInfo });
+    row.source = source;
+    row.brand = brand || null;
+    row.nutrition = nutrition;
+    if (!nutrition) { row.reason = "no nutrition from any resolver tier"; items.push(row); continue; }
+    const parsed = ing.qty || parseAmountString(ing.amount, canon);
+    row.parsedQty = parsed;
+    if (!parsed) { row.reason = `could not parse amount "${ing.amount}"`; items.push(row); continue; }
+    const factor = scaleFactor(parsed, canon, nutrition);
+    row.factor = factor;
+    if (factor == null) {
+      row.reason = `scaleFactor returned null (per="${nutrition.per}", unit="${parsed.unit}")`;
+      items.push(row);
+      continue;
+    }
+    const macros = {};
+    for (const key of Object.keys(totals)) {
+      if (typeof nutrition[key] === "number") {
+        const v = nutrition[key] * factor;
+        macros[key] = v;
+        totals[key] += v;
+      }
+    }
+    row.macros = macros;
+    row.kcal = macros.kcal || 0;
+    resolved++;
+    items.push(row);
+  }
+  const serves = Math.max(1, Number(recipe?.serves) || 1);
+  const perServing = Object.fromEntries(
+    Object.entries(totals).map(([k, v]) => [k, v / serves])
+  );
+  return {
+    items,
+    total: totals,
+    perServing,
+    serves,
+    coverage: { resolved, total: ingredients.length },
+  };
+}
+
 // Compute nutrition for a MEAL — sum of perServing across pieces.
 // A meal of { main-for-2 + side-for-4 } is still "meal for 2" — each
 // piece contributes its own perServing macros; the resulting totals
