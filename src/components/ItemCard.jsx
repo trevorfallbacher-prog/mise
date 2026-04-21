@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, findHub, membersOfHub, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -34,7 +34,7 @@ import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanon
 import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
-import { pantryItemNutrition, formatMacros, sourceBadge } from "../lib/nutrition";
+import { pantryItemNutrition, formatMacros, sourceBadge, effectiveCountWeightG } from "../lib/nutrition";
 import { canonicalImageUrlFor } from "../lib/canonicalIcons";
 import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 
@@ -860,34 +860,48 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   itself is user-created (no parent hub link) — that's
                   how "pepperoni" with food category=pork still shows
                   the pork cut/form state picker. */}
-              {/* CUT — shown when this item's canonical has ≥2 hub
-                  siblings (chicken_breast / chicken_thigh /
-                  chicken_tenderloin / etc.). Changing cut = changing
-                  canonicalId to a sibling under the same parentId.
-                  Uses the same purple tint as STATE because
-                  cut+state are paired axes in the user's mental
-                  model, both describing the physical item; the
-                  distinction is anatomy (cut) vs preparation (state).
-                  Hidden on hubs and standalone ingredients where
-                  there's nothing to switch between. */}
+              {/* CUT — anatomy axis paired with STATE (preparation).
+                  Same muted purple as STATE because they describe the
+                  same physical item together. Rendered in two modes:
+                    1. Canonical IS a hub (chicken_hub) → "+ SET CUT"
+                       opens a picker of the hub's children. The
+                       calorie-logging refactor moved identity to
+                       canonicalId, so a "chicken" item on the
+                       pantry now sits on the hub and needs this
+                       affordance to promote to a specific cut.
+                    2. Canonical is a hub child (chicken_breast) with
+                       ≥2 siblings → "CUT: BREAST" opens a picker of
+                       hub siblings to swap between.
+                  Reads identity from canonicalId first, then
+                  ingredientId (legacy). Hidden on standalone
+                  ingredients (no hub) and on hubs whose membership is
+                  < 2 (nothing to pick). */}
               {(() => {
-                const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
-                if (siblings.length < 2) return null;
-                const selfCanon = findIngredient(item.ingredientId);
-                const cutLabel = selfCanon?.shortName || selfCanon?.name || "SET CUT";
+                const cutId = item.canonicalId || item.ingredientId || null;
+                if (!cutId) return null;
+                const selfHub   = findHub(cutId);
+                const selfCanon = selfHub ? null : findIngredient(cutId);
+                const options   = selfHub
+                  ? membersOfHub(selfHub.id)
+                  : (selfCanon ? siblingsInHub(cutId) : []);
+                if (options.length < 2) return null;
+                const hasPick = !selfHub && !!selfCanon;
+                const cutLabel = hasPick
+                  ? (selfCanon.shortName || selfCanon.name).toUpperCase()
+                  : "+ SET CUT";
                 return (
                   <div
-                    onClick={e => { e.stopPropagation(); startEdit("cut"); }}
+                    onClick={e => { e.stopPropagation(); if (!readOnly) startEdit("cut"); }}
                     style={{
                       fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: selfCanon ? "#c7a8d4" : "#555",
+                      color: hasPick ? "#c7a8d4" : "#8a7a9a",
                       letterSpacing: "0.08em", marginTop: 3,
                       textTransform: "uppercase",
                       cursor: readOnly ? "default" : "pointer",
                     }}
                   >
                     CUT: <span style={{
-                      color: selfCanon ? "#c7a8d4" : "#888",
+                      color: hasPick ? "#c7a8d4" : "#8a7a9a",
                       borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
                     }}>{cutLabel}</span>
                   </div>
@@ -913,6 +927,58 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       color: stateText ? "#c7a8d4" : "#888",
                       borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
                     }}>{label}</span>
+                  </div>
+                );
+              })()}
+
+              {/* EACH — per-row calibration of grams-per-count for
+                  count-unit items. Shown only when the resolved
+                  canonical is a mass ladder with a count unit
+                  (chicken_breast, sausage, hot_dog, etc.). NOT a
+                  reserved identity-axis color — it's row-level
+                  metadata that sharpens nutrition math, so it reads
+                  in muted gray. Tap to type a specific gram weight;
+                  value with a "~" prefix means it's derived from the
+                  row's packageAmount rather than explicitly pinned.
+                  Canonical default ("each breast = 200g" from the
+                  registry) is shown faintly when nothing better is
+                  known, so the user can see what the math is going
+                  to use without digging. */}
+              {(() => {
+                const canon = currentCanonical;
+                if (!canon) return null;
+                const countEntry = canon.units?.find(u => u.id === "count");
+                if (!countEntry) return null;
+                const isMass = (canon.units || []).some(
+                  u => (u.id === "g" || u.id === "ml") && Number(u.toBase) === 1,
+                );
+                if (!isMass) return null;
+                const explicit = Number(item.countWeightG);
+                const hasExplicit = Number.isFinite(explicit) && explicit > 0;
+                const derived = hasExplicit ? null : effectiveCountWeightG(item, canon);
+                const shown = hasExplicit
+                  ? explicit
+                  : (derived != null ? derived : Number(countEntry.toBase));
+                const prefix = hasExplicit ? "" : "~";
+                const pretty = Number.isFinite(shown)
+                  ? (shown < 10 ? shown.toFixed(1) : Math.round(shown).toString())
+                  : "?";
+                const unitLabelText = (countEntry.label || "count").toUpperCase();
+                return (
+                  <div
+                    onClick={e => { e.stopPropagation(); if (!readOnly) startEdit("countWeight"); }}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: hasExplicit ? "#aaa" : "#777",
+                      letterSpacing: "0.08em", marginTop: 3,
+                      textTransform: "uppercase",
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                  >
+                    EACH {unitLabelText}: <span style={{
+                      color: hasExplicit ? "#ccc" : "#888",
+                      borderBottom: readOnly ? "none" : "1px dashed #44444499",
+                    }}>{prefix}{pretty} G</span>
                   </div>
                 );
               })()}
@@ -2219,15 +2285,29 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           row down every time the user tapped STATE. Stacked sheet now;
           same write path (commit({state})) so clearing + re-picking
           stays atomic. */}
-      {/* CUT picker — hub sibling swap. Pantry identity is bound to
-          canonicalId, so changing the cut rewrites ingredientId. The
-          state axis is preserved through the swap — a pantry row of
-          ground chicken_breast becoming ground chicken_thigh stays
-          "ground". Closing via tap on the active cut is a no-op;
-          the user already has that cut. */}
+      {/* CUT picker — hub promotion or sibling swap. Identity lives
+          on canonicalId (post-calorie-logging refactor), so picking a
+          cut rewrites canonicalId to the chosen child canonical.
+          ingredientId is kept in sync when it was already set
+          (legacy rows written before the refactor) so downstream
+          readers that still fall back to it don't see stale data.
+          State (ground / sliced) rides through unchanged.
+          Two entry points:
+            - Item on a hub (chicken_hub) → options = hub children
+            - Item on a hub child (chicken_breast) → options = siblings
+              + a CLEAR CUT row that drops back to the hub. */}
       {editingField === "cut" && (() => {
-        const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
-        if (siblings.length < 2) return null;
+        const cutId = item.canonicalId || item.ingredientId || null;
+        if (!cutId) return null;
+        const selfHub   = findHub(cutId);
+        const selfCanon = selfHub ? null : findIngredient(cutId);
+        const options   = selfHub
+          ? membersOfHub(selfHub.id)
+          : (selfCanon ? siblingsInHub(cutId) : []);
+        if (options.length < 2) return null;
+        const activeId = selfCanon?.id || null;
+        const hubId    = selfHub?.id || selfCanon?.parentId || null;
+        const itemHadIngredientId = !!item.ingredientId;
         return (
           <ModalSheet
             onClose={() => setEditingField(null)}
@@ -2246,19 +2326,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               fontFamily: "'DM Sans',sans-serif", fontSize: 12,
               color: "#888", lineHeight: 1.5, margin: "0 0 14px",
             }}>
-              Switching cut moves the item to a different canonical in
-              the same family. Your state (ground, sliced, etc.)
+              Picking a cut refines this item to a specific canonical
+              in the same family. Your state (ground, sliced, etc.)
               carries over.
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-              {siblings.map(s => {
-                const active = s.id === item.ingredientId;
+              {options.map(s => {
+                const active = s.id === activeId;
                 return (
                   <button
                     key={s.id}
                     onClick={() => {
-                      if (!active) commit({ ingredientId: s.id });
-                      setEditingField(null);
+                      if (!active) {
+                        const patch = { canonicalId: s.id };
+                        if (itemHadIngredientId) patch.ingredientId = s.id;
+                        commit(patch);
+                      } else {
+                        setEditingField(null);
+                      }
                     }}
                     style={{
                       padding: "14px 10px",
@@ -2282,6 +2367,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 );
               })}
             </div>
+            {activeId && hubId && (
+              <button
+                onClick={() => {
+                  const patch = { canonicalId: hubId };
+                  if (itemHadIngredientId) patch.ingredientId = hubId;
+                  commit(patch);
+                }}
+                style={{
+                  width: "100%", padding: "12px", marginTop: 14,
+                  background: "transparent", border: "1px solid #2a2a2a",
+                  color: "#888", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                CLEAR CUT
+              </button>
+            )}
           </ModalSheet>
         );
       })()}
@@ -2345,6 +2448,118 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 }}
               >
                 CLEAR STATE
+              </button>
+            )}
+          </ModalSheet>
+        );
+      })()}
+
+      {/* EACH editor — per-row grams-per-count override. Writes
+          item.countWeightG; when the user submits empty or taps
+          CLEAR, null goes back and the canonical default reigns.
+          Placeholder shows the derive-from-package suggestion so the
+          user sees "170" as a hint when their packageAmount math
+          says so — confirming with Save persists it. */}
+      {editingField === "countWeight" && (() => {
+        const canon = currentCanonical;
+        if (!canon) return null;
+        const countEntry = canon.units?.find(u => u.id === "count");
+        if (!countEntry) return null;
+        const explicit = Number(item.countWeightG);
+        const hasExplicit = Number.isFinite(explicit) && explicit > 0;
+        const derived = effectiveCountWeightG({ ...item, countWeightG: null }, canon);
+        const canonicalDefault = Number(countEntry.toBase) || null;
+        const placeholder = hasExplicit
+          ? String(Math.round(explicit))
+          : (derived ? String(Math.round(derived))
+                     : (canonicalDefault ? String(Math.round(canonicalDefault)) : ""));
+        const unitLabelText = (countEntry.label || "count").toLowerCase();
+        return (
+          <ModalSheet
+            onClose={() => setEditingField(null)}
+            zIndex={Z.picker}
+            label="EACH"
+            maxHeight="50vh"
+          >
+            <h2 style={{
+              fontFamily: "'Fraunces',serif", fontSize: 22,
+              fontStyle: "italic", color: "#f0ece4",
+              fontWeight: 400, margin: "2px 0 10px",
+            }}>
+              How much does each {unitLabelText.replace(/s$/, "")} weigh?
+            </h2>
+            <p style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+              color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+            }}>
+              Packs vary. A 680 g four-pack of breasts is 170 g each,
+              not the generic {canonicalDefault ? `${Math.round(canonicalDefault)} g` : "default"} baked into the canonical.
+              Setting this makes every "I ate one" log use the real weight.
+            </p>
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                const raw = e.currentTarget.elements.grams.value.trim();
+                if (raw === "") {
+                  commit({ countWeightG: null });
+                  return;
+                }
+                const v = Number(raw);
+                if (!Number.isFinite(v) || v <= 0) {
+                  setEditingField(null);
+                  return;
+                }
+                commit({ countWeightG: v });
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8 }}
+            >
+              <input
+                type="number"
+                name="grams"
+                autoFocus
+                min="0"
+                step="0.1"
+                defaultValue={hasExplicit ? String(explicit) : ""}
+                placeholder={placeholder}
+                style={{
+                  flex: 1, padding: "12px",
+                  background: "#0a0a0a",
+                  border: "1px solid #2a2a2a",
+                  color: "#f0ece4", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 14,
+                  outline: "none",
+                }}
+              />
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 14,
+                color: "#888",
+              }}>g</span>
+              <button
+                type="submit"
+                style={{
+                  padding: "12px 16px",
+                  background: "#0f1620",
+                  border: "1px solid #7eb8d4",
+                  color: "#7eb8d4", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                SAVE
+              </button>
+            </form>
+            {hasExplicit && (
+              <button
+                onClick={() => commit({ countWeightG: null })}
+                style={{
+                  width: "100%", padding: "12px", marginTop: 14,
+                  background: "transparent", border: "1px solid #3a1a1a",
+                  color: "#ef4444", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                CLEAR (USE CANONICAL DEFAULT)
               </button>
             )}
           </ModalSheet>

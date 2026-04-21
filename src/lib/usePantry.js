@@ -132,6 +132,13 @@ function fromDb(row) {
   if (row.package_amount !== undefined) item.packageAmount = row.package_amount != null ? Number(row.package_amount) : null;
   if (row.package_unit   !== undefined) item.packageUnit   = row.package_unit || null;
   if (row.reserve_count  !== undefined) item.reserveCount  = Number(row.reserve_count || 0);
+  // Per-row count→grams override (migration 0121). Non-null value
+  // wins over the canonical's count-unit toBase for scaleFactor math
+  // ("1 breast" = 170g here, not the canonical's generic 200g). Null
+  // means fall back to canonical default (or a derive-on-write path
+  // from packageAmount). Gated on column presence the same way
+  // package_amount is so pre-0121 DBs keep working.
+  if (row.count_weight_g !== undefined) item.countWeightG = row.count_weight_g != null ? Number(row.count_weight_g) : null;
   // Receipt-line dedupe position (migration 0057). Set on rows born
   // from a receipt scan — the flattened post-fan-out index. Unused
   // for manual / cook / conversion / pantry-scan entries.
@@ -212,6 +219,7 @@ function toDb(item) {
     ...(item.packageAmount !== undefined ? { package_amount: item.packageAmount } : {}),
     ...(item.packageUnit   !== undefined ? { package_unit: item.packageUnit || null } : {}),
     ...(item.reserveCount  !== undefined ? { reserve_count: Math.max(0, Number(item.reserveCount) || 0) } : {}),
+    ...(item.countWeightG  !== undefined ? { count_weight_g: item.countWeightG == null ? null : Number(item.countWeightG) } : {}),
     ...(item.receiptLineIndex !== undefined ? { receipt_line_index: item.receiptLineIndex == null ? null : Number(item.receiptLineIndex) } : {}),
   };
 }

@@ -176,11 +176,33 @@ export function validateNutrition(n) {
 // gram-base convention). Count-based canonicals (eggs, apples, bananas)
 // declare `toBase=1` per count. The nutrition.per value picks which axis
 // we're scaling along.
-export function scaleFactor(qty, canonical, nutrition) {
+//
+// opts.countWeightG (optional) — per-row override of the canonical's
+// count-unit toBase. When the qty is counted (qty.unit === "count"),
+// we use countWeightG * amount as the base grams instead of
+// fromEntry.toBase * amount. Lets a pantry row say "each breast in
+// THIS pack is 170g" and have all downstream math reflect that
+// calibration without rewriting the canonical for everyone.
+export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   if (!qty || !canonical || !nutrition) return null;
   const fromEntry = canonical.units?.find(u => u.id === qty.unit);
   if (!fromEntry) return null;
-  const baseAmount = Number(qty.amount) * Number(fromEntry.toBase);
+  // Per-row override of grams-per-count only applies to mass ladders
+  // (chicken_breast, sausage, hot_dog — their count.toBase is a gram
+  // weight, so overriding it simply picks a different weight). For
+  // pure-count ladders (banana with per="count", count.toBase=1)
+  // there's no gram axis at all and the override would poison the
+  // math — ignore it there.
+  const isCount = qty.unit === "count";
+  const rowGramsPerCount = Number(opts.countWeightG);
+  const useRowOverride =
+    isCount &&
+    Number.isFinite(rowGramsPerCount) && rowGramsPerCount > 0 &&
+    isMassLadder(canonical);
+  const effectiveToBase = useRowOverride
+    ? rowGramsPerCount
+    : Number(fromEntry.toBase);
+  const baseAmount = Number(qty.amount) * effectiveToBase;
   if (!Number.isFinite(baseAmount)) return null;
 
   // Tolerant fallback — pre-v3 AI enrichment wrote free-text into
@@ -254,6 +276,45 @@ function isMassLadder(canonical) {
   );
 }
 
+// Resolve the effective grams-per-count for a pantry row against its
+// canonical. Precedence:
+//   1. pantryRow.countWeightG (explicit user override from the
+//      ItemCard "each ~__g" field; migration 0121).
+//   2. Derived from packageAmount + packageUnit + current amount when
+//      all three signals are present and packageUnit is mass-based on
+//      this canonical's ladder — e.g. a 680g four-pack = 170g each.
+//      Kept as a last-mile fallback; the preferred path is to persist
+//      the derived value into countWeightG at write-time (ItemCard
+//      does this) so the calibration doesn't drift as amount decays.
+//   3. null — caller falls back to the canonical's own count.toBase.
+//
+// Only returns a positive finite number or null. Safe to pass directly
+// into scaleFactor's opts.countWeightG.
+export function effectiveCountWeightG(pantryRow, canonical) {
+  if (!canonical) return null;
+  const explicit = Number(pantryRow?.countWeightG);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const pkgAmt  = Number(pantryRow?.packageAmount);
+  const pkgUnit = pantryRow?.packageUnit;
+  // Denominator: prefer `max` (original pack count) over `amount`
+  // (current remaining). max is set alongside amount at add-time
+  // (ItemCard PKG row) and doesn't decay as the user consumes, which
+  // keeps derivation stable through the lifetime of the row. Falling
+  // back to amount covers legacy rows that never populated max.
+  const maxCount = Number(pantryRow?.max);
+  const count = (Number.isFinite(maxCount) && maxCount > 0)
+    ? maxCount
+    : Number(pantryRow?.amount);
+  if (!Number.isFinite(pkgAmt) || pkgAmt <= 0) return null;
+  if (!Number.isFinite(count)  || count  <= 0) return null;
+  if (!pkgUnit || pkgUnit === "count") return null;
+  const entry = canonical.units?.find(u => u.id === pkgUnit);
+  if (!entry) return null;
+  const g = pkgAmt * Number(entry.toBase);
+  if (!Number.isFinite(g) || g <= 0) return null;
+  return g / count;
+}
+
 // Parse a free-text amount string into { amount, unit } against a
 // canonical's ladder. Handles unicode fractions ("½ cup"), mixed
 // fractions ("1½ tbsp"), and common English unit aliases. Returns
@@ -283,6 +344,18 @@ const UNIT_ALIASES = {
   head:  "count", heads: "count",
   count: "count", counts: "count", ct: "count",
   whole: "count",
+  // Countable discrete items in meat/processed categories. Only
+  // resolves to "count" when the canonical's ladder actually has a
+  // count entry — parseAmountString drops the token otherwise so
+  // "1 package of flour" stays unparsed instead of silently claiming
+  // to be 1 count of flour (flour is a mass ladder).
+  link: "count", links: "count",
+  pack: "count", packs: "count",
+  package: "count", packages: "count",
+  pkg: "count", pkgs: "count",
+  piece: "count", pieces: "count",
+  slice: "count", slices: "count",
+  patty: "count", patties: "count",
 };
 export function parseAmountString(str, canonical) {
   if (!str || !canonical) return null;
