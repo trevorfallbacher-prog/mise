@@ -5,6 +5,7 @@ import { pickGreeting } from "../lib/greetings";
 import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
 import StreakRevive from "./StreakRevive";
 import DailyRollCard from "./DailyRollCard";
+import FlairHalo, { isFlairActive } from "./FlairHalo";
 
 // Rating face lookup shared with the activity feed's cook rows.
 const RATING_EMOJI = { nailed: "🤩", good: "😊", meh: "😐", rough: "😬" };
@@ -164,11 +165,13 @@ export default function Home({
               profile (Quick Stats band + Nutrition dashboard), so
               surfacing it twice made Home feel like a dashboard
               clone instead of a standalone screen. */}
-          <Avatar
-            name={profile.name}
-            initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
-            onClick={openSelf}
-          />
+          <FlairHalo active={isFlairActive(profile)} size={36}>
+            <Avatar
+              name={profile.name}
+              initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
+              onClick={openSelf}
+            />
+          </FlairHalo>
         </div>
       </div>
 

@@ -3,6 +3,7 @@ import Cookbook from "./Cookbook";
 import NutritionDashboard from "./NutritionDashboard";
 import GateCard from "./GateCard";
 import GatePicker from "./GatePicker";
+import FlairHalo, { isFlairActive } from "./FlairHalo";
 import { useUserProfile } from "../lib/useUserProfile";
 import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
@@ -154,11 +155,15 @@ export default function UserProfile({
           </div>
         ) : (
           <>
-            {/* Identity block — avatar, name, relationship */}
+            {/* Identity block — avatar, name, relationship. Self view
+                gets the FlairHalo when the user's daily roll awarded
+                an avatar_sparkle cosmetic within the flair_hours window. */}
             <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20 }}>
-              <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
-                {initial}
-              </div>
+              <FlairHalo active={isSelf && isFlairActive(profile)} size={72}>
+                <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
+                  {initial}
+                </div>
+              </FlairHalo>
               <div style={{ flex:1, minWidth:0 }}>
                 <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", margin:0, letterSpacing:"-0.02em" }}>
                   {name}
