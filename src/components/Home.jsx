@@ -4,6 +4,7 @@ import { useBadges } from "../lib/useBadges";
 import { pickGreeting } from "../lib/greetings";
 import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
 import StreakRevive from "./StreakRevive";
+import DailyRollCard from "./DailyRollCard";
 
 // Rating face lookup shared with the activity feed's cook rows.
 const RATING_EMOJI = { nailed: "🤩", good: "😊", meh: "😐", rough: "😬" };
@@ -198,6 +199,12 @@ export default function Home({
           {greeting.text}
         </h1>
       </div>
+
+      {/* Daily scratch-card roll. Self-only affordance; unrolled
+          state tappable, already-rolled state collapses to a
+          compact badge. Placed above the activity feed so the
+          user sees it on their first scroll-free render. */}
+      <DailyRollCard profile={profile} />
 
       {/* YOUR CIRCLE activity feed */}
       <div style={{ padding: "28px 20px 0" }}>
