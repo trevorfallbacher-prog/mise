@@ -205,7 +205,6 @@ function AuthedApp({ user, profile, upsertProfile }) {
   // Lives at App level so every surface (Settings, Cookbook, etc) can
   // route into the same overlay.
   const [profileUserId, setProfileUserId] = useState(null);
-  const incomingCount = relationships.incoming.length;
 
   // Classify a user id relative to the viewer so the UserProfile overlay
   // shows the right chip and doesn't tease cook history it won't have.
@@ -346,36 +345,44 @@ function AuthedApp({ user, profile, upsertProfile }) {
           CookCompleteSummary via context while a beat sequence plays. */}
       <XpToastStack userId={user?.id} />
 
+      {/* Notifications — fixed top-left in the slot freed up by dropping
+          the mise wordmark from Home. The settings gear used to sit
+          top-right; it's gone now, access lives inside the profile
+          screen (reachable via the enlarged avatar in Home's top-right). */}
       <button
-        onClick={() => setSettingsOpen(true)}
-        title="Settings"
+        onClick={openNotifs}
+        title="Notifications"
         style={{
-          position: "fixed", top: 12, right: 12, zIndex: 50,
+          position: "fixed", top: 12, left: 12, zIndex: 50,
           background: "#161616", border: "1px solid #2a2a2a",
           borderRadius: 20, width: 36, height: 36,
-          color: "#aaa", fontSize: 18, cursor: "pointer",
+          color: "#aaa", fontSize: 16, cursor: "pointer",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}
       >
-        ⚙
-        {incomingCount > 0 && (
-          <span style={{ position:"absolute", top:-2, right:-2, width:14, height:14, borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-            {incomingCount}
-          </span>
-        )}
+        🔔
+        {(() => {
+          // Badge counts real unread notifications PLUS the synthetic
+          // release-notes pin when an unacknowledged release exists.
+          const total = notifications.unreadCount + (whatsNew.showNotification ? 1 : 0);
+          if (total <= 0) return null;
+          return (
+            <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              {total > 99 ? "99+" : total}
+            </span>
+          );
+        })()}
       </button>
 
-      {/* Admin quick-link — pill in the top-left that both confirms
-          elevated permissions and opens the admin portal in one tap.
-          Previously display-only; now the primary entry point so the
-          admin doesn't have to walk Settings → ADMIN TOOLS. */}
+      {/* Admin quick-link — sits to the right of the bell. Admin-only,
+          so non-admin users see the bell alone at left:12. */}
       {profile?.role === "admin" && (
         <button
           onClick={() => setAdminOpen(true)}
           title="Open admin tools"
           aria-label="Open admin tools"
           style={{
-            position: "fixed", top: 12, left: 12, zIndex: 50,
+            position: "fixed", top: 18, left: 56, zIndex: 50,
             background: "#2a0a0a",
             border: "1px solid #ef4444",
             color: "#ef4444",
@@ -389,33 +396,6 @@ function AuthedApp({ user, profile, upsertProfile }) {
           🛠 ADMIN
         </button>
       )}
-
-      <button
-        onClick={openNotifs}
-        title="Notifications"
-        style={{
-          position: "fixed", top: 12, right: 56, zIndex: 50,
-          background: "#161616", border: "1px solid #2a2a2a",
-          borderRadius: 20, width: 36, height: 36,
-          color: "#aaa", fontSize: 16, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}
-      >
-        🔔
-        {(() => {
-          // Badge counts real unread notifications PLUS the synthetic
-          // release-notes pin when an unacknowledged release exists.
-          // Mirrors what the user actually sees when they open the
-          // panel — pin is rendered as if it were one extra row.
-          const total = notifications.unreadCount + (whatsNew.showNotification ? 1 : 0);
-          if (total <= 0) return null;
-          return (
-            <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              {total > 99 ? "99+" : total}
-            </span>
-          );
-        })()}
-      </button>
 
       <div style={{ paddingBottom:80 }}>
         {tab === "home"     && (
@@ -513,6 +493,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
           deepLink={deepLink}
           onConsumeDeepLink={() => setDeepLink(null)}
           onOpenProfile={openProfile}
+          onOpenSettings={() => setSettingsOpen(true)}
           onOpenCook={(cookId) => {
             // Cookbook is now an overlay inside UserProfile, so we
             // stay on this profile and just hand the deep link in —

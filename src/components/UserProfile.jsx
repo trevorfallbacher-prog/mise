@@ -65,6 +65,9 @@ function avatarColor(name) {
 export default function UserProfile({
   targetUserId, viewerId, relationship = "stranger",
   familyKey, nameFor, onOpenCook, onOpenProfile, onClose,
+  // Self-view only — opens the Settings overlay. Surfaced here because
+  // the fixed settings gear was removed from the top-right chrome.
+  onOpenSettings,
   // Cook-log deep link handed in from App (notification tap / Home
   // feed). When present, we auto-open the full Cookbook overlay so the
   // embedded Cookbook's own pipeline resolves the detail view.
@@ -126,17 +129,34 @@ export default function UserProfile({
   return (
     <div style={{ position:"fixed", inset:0, background:"#111", zIndex:200, maxWidth:480, margin:"0 auto", overflowY:"auto" }}>
       <div style={{ padding:"20px 20px 80px" }}>
-        {/* Header — back × top-right like Settings */}
+        {/* Header — back-to-home button (left) + label, settings
+            (self only) on the right. Close × moved to a proper back
+            arrow so the exit affordance reads as navigation, not
+            dismiss; settings takes the right slot the × used to hold. */}
         <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:12 }}>
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em" }}>
-            {isSelf ? "YOUR PROFILE" : "CHEF PROFILE"}
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            <button
+              onClick={onClose}
+              title="Back to home"
+              aria-label="Back to home"
+              style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:18, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
+            >
+              ←
+            </button>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em" }}>
+              {isSelf ? "YOUR PROFILE" : "CHEF PROFILE"}
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#888", fontSize:20, cursor:"pointer", lineHeight:1 }}
-          >
-            ×
-          </button>
+          {isSelf && onOpenSettings && (
+            <button
+              onClick={onOpenSettings}
+              title="Settings"
+              aria-label="Settings"
+              style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:18, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
+            >
+              ⚙
+            </button>
+          )}
         </div>
 
         {hidden ? (
