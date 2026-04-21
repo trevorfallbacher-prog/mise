@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useActivityFeed } from "../lib/useActivityFeed";
 import { useBadges } from "../lib/useBadges";
 import { pickGreeting } from "../lib/greetings";
@@ -55,11 +55,6 @@ function avatarColor(name) {
 export default function Home({
   profile, userId, familyIds = [], familyLoading = false, nameFor, avatarFor,
   openProfile, openCook,
-  // In-game avatar system — Home is the shuffle trigger for random
-  // mode. ownedAvatarCount gates the roll so users with only one
-  // avatar don't churn their display every tab-switch. Pinned-mode
-  // users never trigger a shuffle regardless.
-  ownedAvatarCount = 0, onShuffleAvatar,
 }) {
   const streak      = profile.streak_count || 0;
   const streakTier  = profile.streak_tier  || 0;
@@ -102,25 +97,6 @@ export default function Home({
   }, [badges.catalog]);
 
   const openSelf = () => openProfile?.(userId);
-
-  // Per-mount shuffle for random mode. Pinned-mode users never roll;
-  // users with ≤1 owned avatar don't either (would just re-pick the
-  // same one). The ref guard + effect-with-deps combo handles a race:
-  // owned pool may still be loading when Home mounts, so we wait
-  // until ownedAvatarCount crosses the threshold, then fire exactly
-  // once for this mount. Switching tabs away and back re-mounts Home
-  // which resets the ref and lets it shuffle again — the whole point
-  // of the "rolling character" feel the gamification layer is after.
-  const shuffleMode = profile?.avatar_mode || "random";
-  const didShuffleRef = useRef(false);
-  useEffect(() => {
-    if (didShuffleRef.current) return;
-    if (!onShuffleAvatar) return;
-    if (shuffleMode !== "random") return;
-    if (ownedAvatarCount < 2) return;
-    didShuffleRef.current = true;
-    onShuffleAvatar();
-  }, [shuffleMode, ownedAvatarCount, onShuffleAvatar]);
 
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 100 }}>

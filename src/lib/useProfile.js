@@ -51,9 +51,9 @@ export function useProfile(userId) {
   );
 
   // Local-only patch for fields written by server-side RPCs (e.g.
-  // shuffle_avatar bumps avatar_slug + avatar_url). The RPC already
-  // wrote to DB — this just syncs the in-memory copy so the UI
-  // re-renders without a round-trip SELECT.
+  // grant_starter_avatars / set_avatar bump avatar_slug + avatar_url).
+  // The RPC already wrote to DB — this just syncs the in-memory copy
+  // so the UI re-renders without a round-trip SELECT.
   const patchLocal = useCallback((partial) => {
     setProfile((p) => (p ? { ...p, ...partial } : p));
   }, []);

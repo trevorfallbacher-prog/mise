@@ -71,10 +71,10 @@ export default function App() {
   const { profile, loading: profileLoading, upsert: upsertProfile, patchLocal: patchProfile } =
     useProfile(user?.id);
 
-  // Avatar catalog + owned pool + shuffle / pin RPCs. Single source of
-  // truth for anything character-avatar related — Home shuffles on
-  // mount (random mode), Settings renders the collection grid and
-  // drives pin / mode changes. See migration 0117 for the backend.
+  // Avatar catalog + owned pool + pin RPC. Single source of truth
+  // for anything character-avatar related — Settings renders the
+  // collection grid and drives pin. See migrations 0117/0118 for
+  // the backend.
   const avatars = useAvatars(user?.id);
 
   // On first sign-in (or if an older account has no name yet), save whatever
@@ -424,11 +424,6 @@ function AuthedApp({ user, profile, upsertProfile }) {
             avatarFor={avatarFor}
             openProfile={openProfile}
             openCook={openCook}
-            ownedAvatarCount={avatars.owned.size}
-            onShuffleAvatar={async () => {
-              const result = await avatars.shuffle();
-              if (result) patchProfile({ avatar_slug: result.slug, avatar_url: result.url });
-            }}
           />
         )}
         {tab === "courses"  && (
@@ -492,11 +487,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
           onPinAvatar={async (slug) => {
             await avatars.pin(slug);
             const cat = avatars.catalog.find(c => c.slug === slug);
-            patchProfile({ avatar_slug: slug, avatar_url: cat?.image_url || null, avatar_mode: "pinned" });
-          }}
-          onSetAvatarMode={async (mode) => {
-            await avatars.setMode(mode);
-            patchProfile({ avatar_mode: mode });
+            patchProfile({ avatar_slug: slug, avatar_url: cat?.image_url || null });
           }}
           onClose={() => setSettingsOpen(false)}
           onOpenProfile={openProfile}

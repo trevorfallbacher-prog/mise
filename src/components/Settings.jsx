@@ -116,31 +116,17 @@ const RARITY_COLOR = {
   ultra:    "#c77dd9",
 };
 
-// AVATAR section — collection grid + mode toggle. Owned tiles are
-// clickable (tapping pins that character and flips mode to 'pinned').
-// Unowned tiles render as silhouettes so the user sees "there's stuff
-// to unlock" without spoiling exact art. The random/pinned toggle sits
-// above the grid; in random mode the "current" chip on the active
-// tile is still shown so the user can see what they last rolled.
-function AvatarSection({ catalog, owned, currentSlug, mode, onPin, onSetMode }) {
+// AVATAR section — collection grid. Owned tiles are clickable; tapping
+// one makes it the user's current avatar. Unowned tiles render as 🔒
+// silhouettes so the unlock loop reads immediately (future loot-box /
+// level-up work grants more catalog rows). Rarity dot in the bottom-
+// right uses the daily-roll tier palette.
+function AvatarSection({ catalog, owned, currentSlug, onPin }) {
   if (!catalog?.length) return null;
+  const ownedCount = owned.size;
   return (
     <>
       <SectionHeader label="YOUR AVATAR" />
-      <div style={{ display:"flex", gap:0, padding:3, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:12 }}>
-        <button
-          onClick={() => onSetMode?.("random")}
-          style={{ flex:1, padding:"8px", background: mode==="random"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="random"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
-        >
-          RANDOM — ROLL EACH VISIT
-        </button>
-        <button
-          onClick={() => onSetMode?.("pinned")}
-          style={{ flex:1, padding:"8px", background: mode==="pinned"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="pinned"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
-        >
-          PINNED — STAY ON ONE
-        </button>
-      </div>
       <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
         {catalog.map(c => {
           const isOwned   = owned.has(c.slug);
@@ -175,7 +161,6 @@ function AvatarSection({ catalog, owned, currentSlug, mode, onPin, onSetMode }) 
                   🔒
                 </div>
               )}
-              {/* Rarity dot, bottom-right */}
               <span style={{ position:"absolute", bottom:4, right:4, width:8, height:8, borderRadius:4, background: tier, border:"1px solid rgba(0,0,0,0.4)" }} />
               {isCurrent && (
                 <span style={{ position:"absolute", top:4, left:4, fontFamily:"'DM Mono',monospace", fontSize:8, color:"#111", background:"#f5c842", padding:"2px 5px", borderRadius:4, letterSpacing:"0.08em", fontWeight:700 }}>
@@ -187,9 +172,9 @@ function AvatarSection({ catalog, owned, currentSlug, mode, onPin, onSetMode }) 
         })}
       </div>
       <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginTop:8, lineHeight:1.5 }}>
-        {mode === "random"
-          ? "Your avatar rolls a new one from your collection each time you visit Home."
-          : "Your avatar stays locked to the tile you tapped. Switch to Random to let it roll."}
+        {ownedCount < catalog.length
+          ? `Tap any unlocked tile to switch. ${catalog.length - ownedCount} more to unlock.`
+          : "Tap any tile to switch. You've unlocked everything available."}
       </div>
     </>
   );
@@ -207,7 +192,7 @@ function AvatarSection({ catalog, owned, currentSlug, mode, onPin, onSetMode }) 
 export default function Settings({
   userId, profile, relationships, upsertProfile,
   avatarCatalog = [], ownedAvatars = new Set(),
-  onPinAvatar, onSetAvatarMode,
+  onPinAvatar,
   onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin,
 }) {
   const [code, setCode] = useState("");
@@ -345,18 +330,16 @@ export default function Settings({
           </div>
         )}
 
-        {/* Avatar — collection grid + random/pinned toggle. Random
-            rolls a new character each Home mount; pinned locks to the
-            last tile tapped. Locked tiles show as silhouettes to hint
-            at what's out there to unlock (future loot-box / level-up
-            work grants new catalog rows via user_avatars). */}
+        {/* Avatar — collection grid. Users arrive with 8 random
+            commons and one auto-assigned as their current; tapping
+            any other owned tile switches to it. Locked tiles render
+            as silhouettes so the unlock loop reads immediately
+            (future loot-box / level-up work grants new rows). */}
         <AvatarSection
           catalog={avatarCatalog}
           owned={ownedAvatars}
           currentSlug={profile?.avatar_slug || null}
-          mode={profile?.avatar_mode || "random"}
           onPin={onPinAvatar}
-          onSetMode={onSetAvatarMode}
         />
 
         {/* My invite code */}

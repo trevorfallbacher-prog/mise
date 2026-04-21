@@ -13,15 +13,13 @@ import { supabase } from "./supabase";
  *   ready   — true once both loads settle.
  *
  * RPC wrappers:
- *   grantStarters() — one-shot starter pack grant. Safe to call on
- *                     every mount; server short-circuits if the user
- *                     already owns anything. Returns the updated pool.
- *   shuffle()       — random mode only. Asks the server to pick a new
- *                     slug and update profiles.avatar_slug + avatar_url.
- *                     Returns the new { slug, url } for optimistic UI.
- *   pin(slug)       — settles on one avatar, flips avatar_mode to
- *                     'pinned'. Server validates ownership.
- *   setMode(mode)   — 'random' | 'pinned' without changing the slug.
+ *   grantStarters() — one-shot starter pack grant (8 random commons).
+ *                     Safe to call on every mount; server short-
+ *                     circuits if the user already owns anything.
+ *                     Returns the active { slug, url } for local
+ *                     profile-state patching.
+ *   pin(slug)       — switches the user's current avatar. Server
+ *                     validates ownership and rejects unowned slugs.
  */
 export function useAvatars(userId) {
   const [catalog, setCatalog] = useState([]);
@@ -79,18 +77,6 @@ export function useAvatars(userId) {
     return row ? { slug: row.avatar_slug, url: row.avatar_url } : null;
   }, [userId, loadOwned]);
 
-  const shuffle = useCallback(async () => {
-    if (!userId) return null;
-    const { data, error } = await supabase.rpc("shuffle_avatar");
-    if (error) {
-      console.error("[avatars] shuffle:", error);
-      return null;
-    }
-    // RPC returns `setof` so data is an array; take the first row.
-    const row = Array.isArray(data) ? data[0] : data;
-    return row ? { slug: row.avatar_slug, url: row.avatar_url } : null;
-  }, [userId]);
-
   const pin = useCallback(async (slug) => {
     if (!userId || !slug) return;
     const { error } = await supabase.rpc("set_avatar", { p_slug: slug });
@@ -100,23 +86,12 @@ export function useAvatars(userId) {
     }
   }, [userId]);
 
-  const setMode = useCallback(async (mode) => {
-    if (!userId || !mode) return;
-    const { error } = await supabase.rpc("set_avatar_mode", { p_mode: mode });
-    if (error) {
-      console.error("[avatars] set_mode:", error);
-      throw error;
-    }
-  }, [userId]);
-
   return {
     catalog,
     owned,
     ready: !catalogLoading && !ownedLoading,
     grantStarters,
-    shuffle,
     pin,
-    setMode,
     refreshOwned: loadOwned,
   };
 }
