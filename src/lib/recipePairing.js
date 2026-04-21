@@ -1,0 +1,300 @@
+// Live re-pairing of recipe ingredients against the current pantry.
+//
+// The universal rule: pairings are NEVER persisted on the recipe —
+// a saved recipe stores canonical refs + dietary intent only. When
+// the user opens a preview or enters CookMode, we re-run this
+// pairing pass so "We'll use your Great Value Chicken Breast"
+// reflects TODAY's pantry, not whatever was stocked the week the
+// recipe was first drafted. A month later, if the user has
+// different brands or inventory, the pairing is correct without
+// any schema rot.
+//
+// Primitives lifted out of AIRecipe so both the AI-Recipe tweak
+// surface, the preview screen, and CookMode can share one
+// implementation. Import what you need; everything is pure.
+
+import {
+  findIngredient,
+  INGREDIENTS,
+  fuzzyMatchIngredient,
+} from "../data/ingredients";
+
+// ── dietary modifiers ────────────────────────────────────────────────
+// "low-carb tortilla" is a tortilla with a claim tag, not a different
+// ingredient. We strip these for matching but preserve them as claim
+// labels the recipe remembers. If the paired pantry row doesn't
+// carry the same claim, pair() surfaces it as `lostClaims` so the
+// UI can warn "NO LONGER KETO".
+const DIET_MODIFIERS = [
+  { re: /\blow[\s\-]?carb\b/gi,        label: "Low-Carb" },
+  { re: /\blow[\s\-]?fat\b/gi,         label: "Low-Fat" },
+  { re: /\blow[\s\-]?sugar\b/gi,       label: "Low-Sugar" },
+  { re: /\blow[\s\-]?sodium\b/gi,      label: "Low-Sodium" },
+  { re: /\bzero[\s\-]?carb\b/gi,       label: "Zero-Carb" },
+  { re: /\b(?:zero|no)[\s\-]?sugar\b/gi, label: "Sugar-Free" },
+  { re: /\bsugar[\s\-]?free\b/gi,      label: "Sugar-Free" },
+  { re: /\bgluten[\s\-]?free\b/gi,     label: "Gluten-Free" },
+  { re: /\bdairy[\s\-]?free\b/gi,      label: "Dairy-Free" },
+  { re: /\bgrain[\s\-]?free\b/gi,      label: "Grain-Free" },
+  { re: /\bfat[\s\-]?free\b/gi,        label: "Fat-Free" },
+  { re: /\bhigh[\s\-]?protein\b/gi,    label: "High-Protein" },
+  { re: /\bwhole[\s\-]?wheat\b/gi,     label: "Whole-Wheat" },
+  { re: /\bwhole[\s\-]?grain\b/gi,     label: "Whole-Grain" },
+  { re: /\bmulti[\s\-]?grain\b/gi,     label: "Multigrain" },
+  { re: /\bketo\b/gi,                  label: "Keto" },
+  { re: /\bpaleo\b/gi,                 label: "Paleo" },
+  { re: /\bwhole30\b/gi,               label: "Whole30" },
+  { re: /\bvegan\b/gi,                 label: "Vegan" },
+  { re: /\bvegetarian\b/gi,            label: "Vegetarian" },
+  { re: /\borganic\b/gi,               label: "Organic" },
+];
+
+export function extractDietaryClaims(name) {
+  if (!name) return { claims: [], stripped: "" };
+  let stripped = String(name);
+  const found = new Set();
+  for (const { re, label } of DIET_MODIFIERS) {
+    re.lastIndex = 0;
+    if (re.test(stripped)) {
+      found.add(label);
+      re.lastIndex = 0;
+      stripped = stripped.replace(re, " ");
+    }
+  }
+  return {
+    claims: [...found],
+    stripped: stripped.replace(/\s+/g, " ").trim(),
+  };
+}
+
+// ── name normalization ───────────────────────────────────────────────
+const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
+const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
+const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
+const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
+
+export function normalizeForMatch(name) {
+  if (!name) return "";
+  const { stripped } = extractDietaryClaims(name);
+  return String(stripped)
+    .toLowerCase()
+    .replace(BRAND_TOKEN_RE, " ")
+    .replace(SIZE_TOKEN_RE, " ")
+    .replace(STATE_PREFIX_RE, "")
+    .replace(STATE_SUFFIX_RE, "")
+    .replace(/[^a-z ]+/g, " ")
+    .replace(/s\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function namesMatch(a, b) {
+  const na = normalizeForMatch(a);
+  const nb = normalizeForMatch(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  return na.includes(nb) || nb.includes(na);
+}
+
+// Resolve a free-text name to a canonical slug via best-score fuzzy
+// match. Score-based rather than first-match-wins so "flour
+// tortilla" doesn't land on `flour` (listed before `tortillas`).
+export function resolveNameToCanonicalId(name) {
+  if (!name) return null;
+  const { stripped } = extractDietaryClaims(name);
+  const needle = (stripped || name).trim();
+  if (!needle) return null;
+  const hits = fuzzyMatchIngredient(needle, 1);
+  const top = Array.isArray(hits) && hits.length > 0 ? hits[0] : null;
+  if (top && top.ingredient && typeof top.score === "number" && top.score >= 60) {
+    return top.ingredient.id;
+  }
+  return null;
+}
+
+// ── row identity ─────────────────────────────────────────────────────
+// HEADER per CLAUDE.md: [Brand] [Canonical] → Canonical → item.name.
+// Hub-aware: a cut canonical (parentId set) shows the HUB name as
+// the header and the cut slug rides along via deriveRowCut.
+export function deriveRowHeader(row) {
+  if (!row) return "";
+  const canonId = row.ingredientId || row.canonicalId || null;
+  const canon = canonId ? findIngredient(canonId) : null;
+  if (canon) {
+    const hub = canon.parentId ? findIngredient(canon.parentId) : null;
+    const primary = (hub && hub.name) || canon.name;
+    const brand = row.brand ? String(row.brand).trim() : "";
+    return brand ? `${brand} ${primary}` : primary;
+  }
+  return row.name || "";
+}
+
+export function deriveRowCut(row) {
+  if (!row) return null;
+  const canonId = row.ingredientId || row.canonicalId || null;
+  const canon = canonId ? findIngredient(canonId) : null;
+  if (!canon || !canon.parentId) return null;
+  return canon.shortName || canon.name;
+}
+
+// ── claim diff ───────────────────────────────────────────────────────
+// Collect everything claim-shaped off a pantry row: free-text claims
+// the user or a scan attached, plus the label of any formal
+// certification. Certifications count as claims for diet-loss
+// purposes: USDA Organic IS Organic, Gluten-Free cert IS Gluten-Free.
+function pantryRowClaimSet(row) {
+  if (!row || !row.attributes) return new Set();
+  const raw = [
+    ...(Array.isArray(row.attributes.claims) ? row.attributes.claims : []),
+    ...(Array.isArray(row.attributes.certifications)
+      ? row.attributes.certifications.map(c => c?.label).filter(Boolean)
+      : []),
+  ];
+  return new Set(raw.map(c => String(c).toLowerCase()));
+}
+
+function lostClaimsFor(requiredClaims, row) {
+  if (!Array.isArray(requiredClaims) || requiredClaims.length === 0) return [];
+  if (!row) return [];
+  const have = pantryRowClaimSet(row);
+  return requiredClaims.filter(c => !have.has(String(c).toLowerCase()));
+}
+
+// ── pairing ──────────────────────────────────────────────────────────
+// Per-ingredient pairing against the current pantry.
+//
+// Output shape:
+//   {
+//     ingredient,         // the recipe row as-is
+//     paired,             // canonical-match pantry row, or null
+//     closestMatch,       // same-family fallback, or null
+//     lostClaims,         // recipe claims the chosen row doesn't carry
+//     status,             // "paired" | "substitute" | "missing"
+//   }
+//
+// "paired"      — ingredient's canonical id is present in pantry on
+//                 an unclaimed row. Exact identity match.
+// "substitute"  — no canonical hit, but something in the same
+//                 category is on hand (flour tortilla for a
+//                 low-carb tortilla ask, feta for cotija). Shown
+//                 with a "closest match" banner.
+// "missing"     — nothing close on hand. Shopping-list territory.
+export function pairRecipeIngredients(ingredients, pantry) {
+  const used = new Set();
+  const out = [];
+  for (const ing of ingredients || []) {
+    const ingName = ing.item || ing.name || "";
+    const ingCanonId = ing.ingredientId || resolveNameToCanonicalId(ingName) || null;
+    const ingCanon = ingCanonId ? findIngredient(ingCanonId) : null;
+
+    // Tier 1 — exact canonical match (or hub/sibling equivalence).
+    // A recipe asking for `chicken_breast` pairs with a pantry row
+    // carrying chicken_breast directly. Hub equivalence (asking for
+    // `chicken_hub` but having `chicken_thigh`) also paired — same
+    // parent means same ingredient family.
+    let paired = null;
+    if (ingCanonId) {
+      paired = (pantry || []).find(p => {
+        if (!p || used.has(p.id)) return false;
+        const pCanonId = p.ingredientId || p.canonicalId || null;
+        if (!pCanonId) return false;
+        if (pCanonId === ingCanonId) return true;
+        const pCanon = findIngredient(pCanonId);
+        // hub/sibling match: same hub parent counts as paired for
+        // identity purposes (user can pick the cut at cook time).
+        const pParent = pCanon?.parentId || pCanon?.id;
+        const iParent = ingCanon?.parentId || ingCanon?.id;
+        if (pParent && iParent && pParent === iParent) return true;
+        return false;
+      }) || null;
+    }
+
+    // Tier 2 — name-fuzzy match for pantry rows without canonical
+    // ids. Catches free-text rows the user typed in.
+    if (!paired && ingName) {
+      paired = (pantry || []).find(p =>
+        p && !used.has(p.id) && namesMatch(p.name, ingName),
+      ) || null;
+    }
+
+    // Tier 3 — closest-match: same category, different canonical.
+    // "Low-carb tortilla" with no low-carb variant on hand but
+    // regular flour tortillas in pantry → substitute path.
+    let closestMatch = null;
+    if (!paired && ingCanon) {
+      closestMatch = (pantry || []).find(p => {
+        if (!p || used.has(p.id)) return false;
+        const pCanonId = p.ingredientId || p.canonicalId || null;
+        if (!pCanonId) return false;
+        const pCanon = findIngredient(pCanonId);
+        if (!pCanon) return false;
+        return pCanon.category && pCanon.category === ingCanon.category;
+      }) || null;
+    }
+
+    const chosen = paired || closestMatch;
+    if (chosen) used.add(chosen.id);
+
+    // Diet-loss diff. Required claims come from the recipe row's
+    // stored dietaryClaims (persisted intent) OR re-extracted from
+    // the display name as a fallback for older recipes without the
+    // field. If the chosen row doesn't cover every required claim,
+    // the deltas go into lostClaims for the UI to surface.
+    const requiredClaims = Array.isArray(ing.dietaryClaims) && ing.dietaryClaims.length > 0
+      ? ing.dietaryClaims
+      : extractDietaryClaims(ingName).claims;
+    const lostClaims = lostClaimsFor(requiredClaims, chosen);
+
+    const status = paired ? "paired" : closestMatch ? "substitute" : "missing";
+    out.push({ ingredient: ing, paired, closestMatch, lostClaims, status });
+  }
+  return out;
+}
+
+// Render-ready description for a single pairing row. Returns
+//   { tone: "gray" | "amber" | "red", text: "...", lostClaims: [...] }
+// or null when the ingredient shouldn't show a pairing banner
+// (e.g. decorative rows with no ingredientId and no name signal).
+//
+// tone colors (match AIRecipe's existing pill palette):
+//   gray   — clean pair, in-kitchen confirmation
+//   amber  — substitute or missing, no dietary conflict
+//   red    — dietary conflict (keto/vegan/etc. lost on this sub)
+export function describePairing(pairing) {
+  if (!pairing) return null;
+  const { ingredient, paired, closestMatch, lostClaims, status } = pairing;
+  // Skip rows without any identity signal — nothing useful to say.
+  if (!ingredient?.ingredientId && !ingredient?.item && !ingredient?.name) return null;
+
+  if (status === "paired") {
+    const loc = paired.location ? ` from your ${paired.location}` : "";
+    const header = deriveRowHeader(paired) || paired.name || "pantry item";
+    return {
+      tone: lostClaims.length > 0 ? "red" : "gray",
+      text: `We'll use your ${header}${loc}`,
+      lostClaims,
+    };
+  }
+  if (status === "substitute") {
+    const header = deriveRowHeader(closestMatch) || closestMatch.name || "pantry item";
+    return {
+      tone: lostClaims.length > 0 ? "red" : "amber",
+      text: `Closest match in pantry: ${header}`,
+      lostClaims,
+    };
+  }
+  return {
+    tone: "amber",
+    text: "Not in pantry — add to shopping list",
+    lostClaims: [],
+  };
+}
+
+// Intentionally unused by the consumer API but exported for tests /
+// adjacent modules that want the raw claim-set view.
+export { pantryRowClaimSet };
+
+// Keep ESLint from flagging INGREDIENTS as unused — imported for
+// future extensions (hub scans) and to guarantee the registry is
+// warm before consumers call resolve/pair.
+export const _REGISTRY = INGREDIENTS;

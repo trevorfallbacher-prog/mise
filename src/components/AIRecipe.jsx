@@ -4,10 +4,17 @@ import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 import {
   findIngredient,
-  INGREDIENTS,
   coerceRecipeCanonicalIds,
-  fuzzyMatchIngredient,
 } from "../data/ingredients";
+import {
+  extractDietaryClaims,
+  namesMatch,
+  resolveNameToCanonicalId,
+  deriveRowHeader,
+  deriveRowCut,
+  pairRecipeIngredients,
+  describePairing,
+} from "../lib/recipePairing";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 
@@ -116,100 +123,6 @@ function isProteinRow(row) {
   return false;
 }
 
-// State-shaped words for normalizeForMatch below. The bundled
-// registry is clean after migration 0060 (CANONICAL_ALIASES routes
-// the legacy ground_* slugs to base + state), but user-typed or
-// OCR'd display names can still bake state into the string. The
-// regexes give normalizeForMatch something to strip when it's
-// pairing "Ground Beef Patties" (user-entered) against the "beef"
-// canonical.
-const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
-const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
-
-// Dietary / macro modifiers that ride on top of a canonical identity.
-// "low-carb tortilla" is STILL a tortilla — the modifier is a claim
-// the user cares about (keto, gluten-free, vegan), not a different
-// ingredient. We strip these before fuzz-matching so the canonical
-// resolves cleanly, AND we capture the display label so the recipe's
-// ideal slot remembers what the AI asked for. If a paired pantry row
-// doesn't carry the same claim, the UI flags the diet loss inline
-// (swap "vegan sausage" → "sausage" and you see "⚠ NO LONGER VEGAN").
-//
-// Each entry is a regex + display label. Order matters only for
-// overlapping phrases: longer/more-specific first so "low-sugar"
-// wins over "sugar".
-const DIET_MODIFIERS = [
-  { re: /\blow[\s\-]?carb\b/gi,        label: "Low-Carb" },
-  { re: /\blow[\s\-]?fat\b/gi,         label: "Low-Fat" },
-  { re: /\blow[\s\-]?sugar\b/gi,       label: "Low-Sugar" },
-  { re: /\blow[\s\-]?sodium\b/gi,      label: "Low-Sodium" },
-  { re: /\bzero[\s\-]?carb\b/gi,       label: "Zero-Carb" },
-  { re: /\b(?:zero|no)[\s\-]?sugar\b/gi, label: "Sugar-Free" },
-  { re: /\bsugar[\s\-]?free\b/gi,      label: "Sugar-Free" },
-  { re: /\bgluten[\s\-]?free\b/gi,     label: "Gluten-Free" },
-  { re: /\bdairy[\s\-]?free\b/gi,      label: "Dairy-Free" },
-  { re: /\bgrain[\s\-]?free\b/gi,      label: "Grain-Free" },
-  { re: /\bfat[\s\-]?free\b/gi,        label: "Fat-Free" },
-  { re: /\bhigh[\s\-]?protein\b/gi,    label: "High-Protein" },
-  { re: /\bwhole[\s\-]?wheat\b/gi,     label: "Whole-Wheat" },
-  { re: /\bwhole[\s\-]?grain\b/gi,     label: "Whole-Grain" },
-  { re: /\bmulti[\s\-]?grain\b/gi,     label: "Multigrain" },
-  { re: /\bketo\b/gi,                  label: "Keto" },
-  { re: /\bpaleo\b/gi,                 label: "Paleo" },
-  { re: /\bwhole30\b/gi,               label: "Whole30" },
-  { re: /\bvegan\b/gi,                 label: "Vegan" },
-  { re: /\bvegetarian\b/gi,            label: "Vegetarian" },
-  { re: /\borganic\b/gi,               label: "Organic" },
-];
-
-// Pull dietary/macro claims out of a free-text ingredient name.
-// Returns both the claim labels and a stripped version of the name
-// with those phrases removed. The stripped form feeds the canonical
-// resolver; the claims are preserved so the UI can detect diet-loss
-// on substitution.
-export function extractDietaryClaims(name) {
-  if (!name) return { claims: [], stripped: "" };
-  let stripped = String(name);
-  const found = new Set();
-  for (const { re, label } of DIET_MODIFIERS) {
-    // Reset the stateful lastIndex between calls (g-flagged regexes
-    // would otherwise skip alternating matches).
-    re.lastIndex = 0;
-    if (re.test(stripped)) {
-      found.add(label);
-      re.lastIndex = 0;
-      stripped = stripped.replace(re, " ");
-    }
-  }
-  return {
-    claims: [...found],
-    stripped: stripped.replace(/\s+/g, " ").trim(),
-  };
-}
-
-// Normalize an ingredient name for fuzzy matching. Strips known
-// brand prefixes, size labels, state prefixes, dietary modifiers,
-// special characters, and collapses whitespace. "GV Ricotta 32oz"
-// → "ricotta"; "Low-Carb Tortilla" → "tortilla". Used to pair an
-// ideal (classical) ingredient with a pantry row even when the
-// display strings drift.
-const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
-const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
-function normalizeForMatch(name) {
-  if (!name) return "";
-  const { stripped } = extractDietaryClaims(name);
-  return String(stripped)
-    .toLowerCase()
-    .replace(BRAND_TOKEN_RE, " ")
-    .replace(SIZE_TOKEN_RE, " ")
-    .replace(STATE_PREFIX_RE, "")
-    .replace(STATE_SUFFIX_RE, "")
-    .replace(/[^a-z ]+/g, " ")
-    .replace(/s\b/g, "")        // crude de-plural so "rolls" matches "roll"
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 // Split an ideal name on alternative separators into candidate sub-
 // names. Claude frequently emits "ciabatta or crusty bread" / "salt &
 // black pepper" / "penne, rigatoni" — those are alternatives, not
@@ -227,54 +140,6 @@ function splitIdealName(name) {
     .map(s => s.trim())
     .filter(Boolean);
   return parts.length > 0 ? parts : [String(name)];
-}
-
-// Do two ingredient display names refer to the same thing? Uses
-// normalized substring containment both directions — catches
-// "Ricotta" vs "GV Ricotta 32oz", "Crescent Roll" vs "Crescent
-// rolls", "Ground Beef" vs "Beef". Cheap O(n) per call, fine at
-// the scale of 10-20 sketch rows.
-function namesMatch(a, b) {
-  const na = normalizeForMatch(a);
-  const nb = normalizeForMatch(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  return na.includes(nb) || nb.includes(na);
-}
-
-// Derive the big italic HEADER for a pantry/sketch row per the
-// universal identity rule in CLAUDE.md: [Brand] [Canonical], fallback
-// Canonical alone, fallback item.name only when no canonical is set.
-// Hub-aware: a row with a CUT canonical (parentId set — chicken_breast
-// under chicken_hub) displays the HUB name in the header ("Chicken"),
-// not the cut slug's raw storage name ("Breast"). The cut itself is
-// surfaced separately via deriveRowCut below, rendered as a small pill
-// next to the header so the identity reads the way the user thinks
-// about it: "Chicken · BREAST", not just "Breast".
-//
-// Fixes the AI Recipe tweak panel showing "Breast" after auto-pairing
-// a chicken_breast pantry row (the user stored the raw name as "Breast"
-// after picking the cut; the display must still derive from the
-// canonical/hub, per the HEADER rule).
-function deriveRowHeader(row) {
-  if (!row) return "";
-  const canonId = row.ingredientId || row.canonicalId || null;
-  const canon = canonId ? findIngredient(canonId) : null;
-  if (canon) {
-    const hub = canon.parentId ? findIngredient(canon.parentId) : null;
-    const primary = (hub && hub.name) || canon.name;
-    const brand = row.brand ? String(row.brand).trim() : "";
-    return brand ? `${brand} ${primary}` : primary;
-  }
-  return row.name || "";
-}
-
-function deriveRowCut(row) {
-  if (!row) return null;
-  const canonId = row.ingredientId || row.canonicalId || null;
-  const canon = canonId ? findIngredient(canonId) : null;
-  if (!canon || !canon.parentId) return null;
-  return canon.shortName || canon.name;
 }
 
 // Scan the user's actual pantry for rows that can cover a sketch.pantry
@@ -353,33 +218,6 @@ function stampDietaryClaims(sketch) {
   };
 }
 
-// Resolve a classical ingredient display name ("Ricotta",
-// "Mozzarella", "Ground beef") to the canonical registry slug.
-// Pairing pantry rows to ideal slots via this is strictly better
-// than string matching: "GV Ricotta 32oz" (canonical: ricotta)
-// correctly pairs with ideal "Ricotta" because both resolve to the
-// slug `ricotta`, even though the display names share no tokens.
-//
-// Uses fuzzyMatchIngredient (best-score, not first-wins). The old
-// two-pass substring loop was order-dependent: "flour tortilla"
-// resolved to `flour` (listed before `tortillas` in the registry)
-// even though `tortillas` is the better hit. Score-based picks the
-// highest-scoring canonical, which lets "low-carb tortilla",
-// "flour tortilla", "corn tortilla" all land on tortillas. The 60
-// floor matches the "likely match" threshold the fuzzy scorer's
-// comment documents.
-function resolveNameToCanonicalId(name) {
-  if (!name) return null;
-  const { stripped } = extractDietaryClaims(name);
-  const needle = (stripped || name).trim();
-  if (!needle) return null;
-  const hits = fuzzyMatchIngredient(needle, 1);
-  const top = Array.isArray(hits) && hits.length > 0 ? hits[0] : null;
-  if (top && top.ingredient && typeof top.score === "number" && top.score >= 60) {
-    return top.ingredient.id;
-  }
-  return null;
-}
 
 export default function AIRecipe({
   pantry = [],
@@ -746,9 +584,31 @@ export default function AIRecipe({
       // and guarantees the pantry-match loop downstream is operating
       // on real registry slugs.
       const normalized = coerceRecipeCanonicalIds(drafted);
-      setRecipe(normalized);
-      if (normalized?.title) {
-        setPreviousTitles(prev => (prev.includes(normalized.title) ? prev : [...prev, normalized.title]));
+      // Stamp dietaryClaims onto every persisted ingredient row.
+      // Claims are recipe INTENT (the AI asked for "low-carb
+      // tortilla"), not transient pairing — they must survive into
+      // user_recipes so preview/CookMode can warn on diet-loss a
+      // month from now even if the user has different pantry state.
+      // Pairing itself is still re-derived live every render via
+      // pairRecipeIngredients, so brands/availability drift doesn't
+      // fossilize; only the claim labels on each ingredient persist.
+      const claimed = normalized && Array.isArray(normalized.ingredients)
+        ? {
+            ...normalized,
+            ingredients: normalized.ingredients.map(ing => {
+              if (!ing || typeof ing !== "object") return ing;
+              if (Array.isArray(ing.dietaryClaims) && ing.dietaryClaims.length > 0) {
+                return ing;
+              }
+              const { claims } = extractDietaryClaims(ing.item || ing.name || "");
+              if (claims.length === 0) return ing;
+              return { ...ing, dietaryClaims: claims };
+            }),
+          }
+        : normalized;
+      setRecipe(claimed);
+      if (claimed?.title) {
+        setPreviousTitles(prev => (prev.includes(claimed.title) ? prev : [...prev, claimed.title]));
       }
       // Push shopping-source locked items into the parent's shopping
       // list. Happens only after the final cook actually lands so a
@@ -1886,26 +1746,7 @@ export default function AIRecipe({
           )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {(recipe.ingredients || []).map((ing, i) => (
-                <div key={i} style={{
-                  background: "#141414", border: "1px solid #222", borderRadius: 10,
-                  padding: "8px 12px", display: "flex", alignItems: "center", gap: 10,
-                }}>
-                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878", minWidth: 60 }}>
-                    {ing.amount || "—"}
-                  </span>
-                  <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                    {ing.item}
-                  </span>
-                  {ing.ingredientId && (
-                    <span style={{ marginLeft: "auto", fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#b8a878" }}>
-                      · {ing.ingredientId}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
+            <IngredientsWithPairing ingredients={recipe.ingredients || []} pantry={pantry} />
           </Section>
 
           <Section label={`STEPS · ${recipe.steps?.length || 0}`}>
@@ -2209,6 +2050,87 @@ export default function AIRecipe({
 }
 
 // ── Shared bits ──────────────────────────────────────────────────────
+
+// Renders the ingredients list on the preview / cook-ready screen
+// with a live-derived "we'll use your X from your fridge" sub-line
+// per row. The pair lookup runs every render against the CURRENT
+// pantry, so the pairing is always fresh — if the user cooks this
+// dish again in a month with different brands on hand, the banner
+// reflects today's pantry, not whatever was stocked when the recipe
+// was first drafted. Only the canonical + dietaryClaims intent
+// persists on the recipe; pantry identity is re-bound live.
+//
+// Tone conventions match the pill palette already in use:
+//   gray  (#7ec87e) — clean pair, in-kitchen
+//   amber (#f59e0b) — substitute or missing, no dietary conflict
+//   red   (#e8908a) — dietary conflict on the chosen pair/sub
+function IngredientsWithPairing({ ingredients, pantry }) {
+  const pairings = pairRecipeIngredients(ingredients, pantry || []);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {pairings.map((p, i) => {
+        const { ingredient: ing, paired, closestMatch, lostClaims } = p;
+        const describe = describePairing(p);
+        const showRow = paired || closestMatch;
+        const cut = showRow ? deriveRowCut(showRow) : null;
+        const toneColor = describe?.tone === "gray"  ? "#7ec87e"
+                        : describe?.tone === "amber" ? "#f59e0b"
+                        : describe?.tone === "red"   ? "#e8908a"
+                        : "#888";
+        const borderColor = describe?.tone === "red" ? "#3a1f1f"
+                          : describe?.tone === "amber" ? "#3a2a1a"
+                          : "#222";
+        return (
+          <div key={i} style={{
+            background: "#141414", border: `1px solid ${borderColor}`, borderRadius: 10,
+            padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878", minWidth: 60 }}>
+                {ing.amount || "—"}
+              </span>
+              <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                {ing.item}
+              </span>
+              {cut && (
+                <span style={{
+                  padding: "1px 7px",
+                  background: "#201a26", border: "1px solid #3b2f48",
+                  borderRadius: 8,
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#c7a8d4", letterSpacing: "0.08em",
+                }}>
+                  {String(cut).toUpperCase()}
+                </span>
+              )}
+              {ing.ingredientId && (
+                <span style={{ marginLeft: "auto", fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#b8a878" }}>
+                  · {ing.ingredientId}
+                </span>
+              )}
+            </div>
+            {describe && (
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontStyle: "italic",
+                color: toneColor, paddingLeft: 70, lineHeight: 1.4,
+              }}>
+                {describe.text}
+                {lostClaims.length > 0 && (
+                  <>
+                    {" — "}
+                    <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, fontStyle: "normal", letterSpacing: "0.04em" }}>
+                      ⚠ NO LONGER {lostClaims.map(c => c.toUpperCase()).join(" / ")}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function Section({ label, children }) {
   return (

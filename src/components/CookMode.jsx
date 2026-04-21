@@ -6,6 +6,7 @@ import CookComplete from "./CookComplete";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { pairRecipeIngredients, describePairing } from "../lib/recipePairing";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -288,6 +289,13 @@ export default function CookMode({
   // proper unit conversion; untagged ones (pasta water, "to taste" salt,
   // decorative herbs) render without a badge.
   const ingredientStatus = (recipe.ingredients || []).map(ing => statusFor(ing, pantry));
+  // Live pairing pass against CURRENT pantry — intentionally
+  // computed fresh every render, NEVER persisted on the recipe.
+  // The recipe stores canonical + dietaryClaims intent only; which
+  // specific pantry row backs each ingredient is a live decision
+  // so brand/availability drift a month from now doesn't fossilize
+  // a stale pair. Zipped by index into ingredientStatus.
+  const ingredientPairings = pairRecipeIngredients(recipe.ingredients || [], pantry || []);
   const missingIngs    = ingredientStatus.filter(s => s.status === "missing");
   const lowIngs        = ingredientStatus.filter(s => s.status === "low");
   const wrongStateIngs = ingredientStatus.filter(s => s.status === "wrong-state");
@@ -458,6 +466,13 @@ export default function CookMode({
                         : status === "missing"     ? { label:"MISSING",    color:"#ef4444", bg:"#1a0a0a" }
                         : status === "wrong-state" ? { label:"WRONG FORM", color:"#7eb8d4", bg:"#0f1620" }
                         :                            null;
+            const pairing = ingredientPairings[i] || null;
+            const pairDescribe = describePairing(pairing);
+            const pairTone = pairDescribe?.tone === "gray"  ? "#7ec87e"
+                           : pairDescribe?.tone === "amber" ? "#f59e0b"
+                           : pairDescribe?.tone === "red"   ? "#e8908a"
+                           : "#888";
+            const lostClaims = pairing?.lostClaims || [];
             // Only rows with a canonical ingredientId are tappable — everything
             // else ("to taste" salt, decorative herbs) just renders static.
             const tappable = !!ing.ingredientId;
@@ -508,6 +523,30 @@ export default function CookMode({
                       <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#7eb8d4", fontStyle:"italic" }}>
                         Have {candidates[0].amount} {candidates[0].state || "(other form)"} — convert in Pantry to make {ing.state}
                       </span>
+                    )}
+                  </div>
+                )}
+                {/* Live pairing banner — "We'll use your Great Value
+                    Chicken Breast from your fridge" style. Derived
+                    every render from current pantry; never persisted.
+                    Red tint when the chosen pair/substitute loses a
+                    dietary claim the recipe asked for (recipe says
+                    low-carb tortilla, pantry has flour tortilla →
+                    ⚠ NO LONGER KETO). */}
+                {pairDescribe && (
+                  <div style={{
+                    marginTop:6,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:11, fontStyle:"italic",
+                    color: pairTone, lineHeight:1.4,
+                  }}>
+                    {pairDescribe.text}
+                    {lostClaims.length > 0 && (
+                      <>
+                        {" — "}
+                        <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, fontStyle:"normal", letterSpacing:"0.04em" }}>
+                          ⚠ NO LONGER {lostClaims.map(c => c.toUpperCase()).join(" / ")}
+                        </span>
+                      </>
                     )}
                   </div>
                 )}
