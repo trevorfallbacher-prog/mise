@@ -201,7 +201,23 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
       const prettyName = String(id || "")
         .replace(/_/g, " ")
         .replace(/\b\w/g, c => c.toUpperCase());
-      return { id, canonical: { id, name: prettyName, emoji: "🥫" } };
+      // Synthetic canonical fallback for unresolvable slugs. Needs to
+      // match the shape downstream code expects — at minimum a
+      // units[] array because tags[0]?.canonical feeds a
+      // `const canonical = tags[0]?.canonical || null` elsewhere in
+      // ItemCard, and subsequent blocks do `canonical.units.some(...)`.
+      // Leaving units undefined crashed the whole card.
+      return {
+        id,
+        canonical: {
+          id,
+          name: prettyName,
+          shortName: null,
+          emoji: "🥫",
+          category: null,
+          units: [],
+        },
+      };
     });
   }, [item?.ingredientIds, item?.ingredientId]);
 
