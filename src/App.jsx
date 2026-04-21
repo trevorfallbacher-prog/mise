@@ -17,6 +17,7 @@ import XpToastStack from "./components/XpToastStack";
 import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
+import { useAvatars } from "./lib/useAvatars";
 import { usePantry } from "./lib/usePantry";
 import { useShoppingList } from "./lib/useShoppingList";
 import { useRelationships } from "./lib/useRelationships";
@@ -67,11 +68,21 @@ function nameFromAuth(user) {
 
 export default function App() {
   const { user, loading: authLoading } = useAuth();
-  const { profile, loading: profileLoading, upsert: upsertProfile } =
+  const { profile, loading: profileLoading, upsert: upsertProfile, patchLocal: patchProfile } =
     useProfile(user?.id);
 
+  // Avatar catalog + owned pool + pin RPC. Single source of truth
+  // for anything character-avatar related — Settings renders the
+  // collection grid and drives pin. See migrations 0117/0118 for
+  // the backend.
+  const avatars = useAvatars(user?.id);
+
   // On first sign-in (or if an older account has no name yet), save whatever
-  // the provider gave us so Home can personalise greetings.
+  // the provider gave us so Home can personalise greetings. Avatars are
+  // no longer sourced from the OAuth session — we use an in-game catalog
+  // (migration 0117) so users feel like a character, not themselves. The
+  // starter-grant RPC seeds their pool + picks an initial avatar_slug
+  // the first time they land.
   useEffect(() => {
     if (!user || profileLoading) return;
     const googleName = nameFromAuth(user);
@@ -81,6 +92,23 @@ export default function App() {
       upsertProfile({ name: googleName }).catch(console.error);
     }
   }, [user, profile, profileLoading, upsertProfile]);
+
+  // Grant starter avatars as soon as the user + catalog are both
+  // loaded. RPC short-circuits if they already own anything. The
+  // returned row carries the active slug / URL — patch the local
+  // profile so the first render after sign-in already shows a
+  // character instead of the initial-letter fallback.
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!avatars.ready) return;
+    let cancelled = false;
+    (async () => {
+      const result = await avatars.grantStarters();
+      if (cancelled || !result) return;
+      patchProfile({ avatar_slug: result.slug, avatar_url: result.url });
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, avatars.ready, avatars.grantStarters, patchProfile]);
 
   if (authLoading) return <LoadingSplash />;
 
@@ -157,6 +185,22 @@ function AuthedApp({ user, profile, upsertProfile }) {
     }
     return (id) => map.get(id) || "Someone";
   }, [user?.id, profile?.name, relationships.family, relationships.friends]);
+
+  // Parallel lookup for the user's profile picture. Relationships rows
+  // carry avatar_url (see useRelationships select), the viewer's own
+  // row carries it via useProfile. Activity feed rows only have an
+  // actorId — this closure hands them the URL without re-fetching
+  // per row.
+  const avatarFor = useMemo(() => {
+    const map = new Map();
+    if (user?.id && profile?.avatar_url) map.set(user.id, profile.avatar_url);
+    for (const row of [...relationships.family, ...relationships.friends]) {
+      if (row.otherId && row.other?.avatar_url) {
+        map.set(row.otherId, row.other.avatar_url);
+      }
+    }
+    return (id) => map.get(id) || null;
+  }, [user?.id, profile?.avatar_url, relationships.family, relationships.friends]);
 
   // Pantry + shopping list still subscribe to realtime so their UI updates
   // when family edits land — but we no longer raise toasts from them. Toasts
@@ -345,44 +389,16 @@ function AuthedApp({ user, profile, upsertProfile }) {
           CookCompleteSummary via context while a beat sequence plays. */}
       <XpToastStack userId={user?.id} />
 
-      {/* Notifications — fixed top-left in the slot freed up by dropping
-          the mise wordmark from Home. The settings gear used to sit
-          top-right; it's gone now, access lives inside the profile
-          screen (reachable via the enlarged avatar in Home's top-right). */}
-      <button
-        onClick={openNotifs}
-        title="Notifications"
-        style={{
-          position: "fixed", top: 12, left: 12, zIndex: 50,
-          background: "#161616", border: "1px solid #2a2a2a",
-          borderRadius: 20, width: 36, height: 36,
-          color: "#aaa", fontSize: 16, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}
-      >
-        🔔
-        {(() => {
-          // Badge counts real unread notifications PLUS the synthetic
-          // release-notes pin when an unacknowledged release exists.
-          const total = notifications.unreadCount + (whatsNew.showNotification ? 1 : 0);
-          if (total <= 0) return null;
-          return (
-            <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              {total > 99 ? "99+" : total}
-            </span>
-          );
-        })()}
-      </button>
-
-      {/* Admin quick-link — sits to the right of the bell. Admin-only,
-          so non-admin users see the bell alone at left:12. */}
+      {/* Admin quick-link — only fixed chrome left in the top bar.
+          Bell + settings moved into the profile screen header; access
+          them via the enlarged avatar in Home's top-right. */}
       {profile?.role === "admin" && (
         <button
           onClick={() => setAdminOpen(true)}
           title="Open admin tools"
           aria-label="Open admin tools"
           style={{
-            position: "fixed", top: 18, left: 56, zIndex: 50,
+            position: "fixed", top: 12, left: 12, zIndex: 50,
             background: "#2a0a0a",
             border: "1px solid #ef4444",
             color: "#ef4444",
@@ -405,6 +421,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             familyIds={familyIds}
             familyLoading={relationships.loading}
             nameFor={nameFor}
+            avatarFor={avatarFor}
             openProfile={openProfile}
             openCook={openCook}
           />
@@ -465,6 +482,13 @@ function AuthedApp({ user, profile, upsertProfile }) {
           profile={profile}
           relationships={relationships}
           upsertProfile={upsertProfile}
+          avatarCatalog={avatars.catalog}
+          ownedAvatars={avatars.owned}
+          onPinAvatar={async (slug) => {
+            await avatars.pin(slug);
+            const cat = avatars.catalog.find(c => c.slug === slug);
+            patchProfile({ avatar_slug: slug, avatar_url: cat?.image_url || null });
+          }}
           onClose={() => setSettingsOpen(false)}
           onOpenProfile={openProfile}
           // Re-open release notes from Settings — covers both casual
@@ -493,7 +517,14 @@ function AuthedApp({ user, profile, upsertProfile }) {
           deepLink={deepLink}
           onConsumeDeepLink={() => setDeepLink(null)}
           onOpenProfile={openProfile}
-          onOpenSettings={() => setSettingsOpen(true)}
+          // Both handlers close the profile before opening their
+          // overlay — Settings + UserProfile are both zIndex:200, so
+          // stacking them makes the newer one disappear behind this
+          // one. Same goes for NotificationsPanel (zIndex:100, would
+          // land behind us). Close first, land clean.
+          onOpenSettings={() => { setProfileUserId(null); setSettingsOpen(true); }}
+          onOpenNotifs={() => { setProfileUserId(null); openNotifs(); }}
+          notifsUnread={notifications.unreadCount + (whatsNew.showNotification ? 1 : 0)}
           onOpenCook={(cookId) => {
             // Cookbook is now an overlay inside UserProfile, so we
             // stay on this profile and just hand the deep link in —

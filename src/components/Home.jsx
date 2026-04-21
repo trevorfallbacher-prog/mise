@@ -53,7 +53,7 @@ function avatarColor(name) {
  * the greeting and the feed as a pinned row.
  */
 export default function Home({
-  profile, userId, familyIds = [], familyLoading = false, nameFor,
+  profile, userId, familyIds = [], familyLoading = false, nameFor, avatarFor,
   openProfile, openCook,
 }) {
   const streak      = profile.streak_count || 0;
@@ -161,6 +161,7 @@ export default function Home({
             <Avatar
               name={profile.name}
               initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
+              imageUrl={profile.avatar_url}
               onClick={openSelf}
             />
           </FlairHalo>
@@ -237,6 +238,7 @@ export default function Home({
                 key={`${item.kind}-${item.payload.cookLogId || item.payload.badgeId}-${i}`}
                 item={item}
                 nameFor={nameFor}
+                avatarFor={avatarFor}
                 badgeById={badgeById}
                 onCookTap={openCook}
                 onActorTap={openProfile}
@@ -263,11 +265,12 @@ export default function Home({
 }
 
 // ── Activity row — either a cook event or a badge earn ───────────────────────
-function ActivityRow({ item, nameFor, badgeById, onCookTap, onActorTap, viewerId }) {
+function ActivityRow({ item, nameFor, avatarFor, badgeById, onCookTap, onActorTap, viewerId }) {
   const actorName = nameFor ? nameFor(item.actorId) : "Someone";
   const isSelf = item.actorId === viewerId;
   const displayName = isSelf ? "You" : actorName;
   const avatarInitial = (actorName || "?")[0]?.toUpperCase() || "?";
+  const actorAvatar = avatarFor ? avatarFor(item.actorId) : null;
 
   if (item.kind === "cook") {
     const p = item.payload;
@@ -281,7 +284,7 @@ function ActivityRow({ item, nameFor, badgeById, onCookTap, onActorTap, viewerId
           padding: "12px 14px", cursor: "pointer", textAlign: "left", width: "100%",
         }}
       >
-        <Avatar name={actorName} initial={avatarInitial}
+        <Avatar name={actorName} initial={avatarInitial} imageUrl={actorAvatar}
           onClick={(e) => { e.stopPropagation(); onActorTap?.(item.actorId); }}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -357,20 +360,35 @@ function ActivityRow({ item, nameFor, badgeById, onCookTap, onActorTap, viewerId
   return null;
 }
 
-function Avatar({ name, initial, onClick }) {
+function Avatar({ name, initial, imageUrl, onClick }) {
+  // Google avatar URLs occasionally 403 after rotation. Fall back to
+  // the initial-letter tile on load error so we never render a broken
+  // image icon.
+  const [imgBroken, setImgBroken] = useState(false);
+  const showImage = imageUrl && !imgBroken;
   return (
     <button
       onClick={onClick}
       title={name}
       style={{
         width: 48, height: 48, borderRadius: 24,
-        background: avatarColor(name), color: "#f5c842",
+        background: showImage ? "transparent" : avatarColor(name),
+        color: "#f5c842",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 500,
         flexShrink: 0, border: "none", cursor: "pointer", padding: 0,
+        overflow: "hidden",
       }}
     >
-      {initial}
+      {showImage ? (
+        <img
+          src={imageUrl}
+          alt={name || ""}
+          onError={() => setImgBroken(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          referrerPolicy="no-referrer"
+        />
+      ) : initial}
     </button>
   );
 }

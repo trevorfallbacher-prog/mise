@@ -65,9 +65,10 @@ function avatarColor(name) {
 export default function UserProfile({
   targetUserId, viewerId, relationship = "stranger",
   familyKey, nameFor, onOpenCook, onOpenProfile, onClose,
-  // Self-view only — opens the Settings overlay. Surfaced here because
-  // the fixed settings gear was removed from the top-right chrome.
-  onOpenSettings,
+  // Self-view only — opens the Settings / Notifications overlays.
+  // Surfaced here because the fixed top-bar icons were pulled; the
+  // profile header is now the single entry point for both.
+  onOpenSettings, onOpenNotifs, notifsUnread = 0,
   // Cook-log deep link handed in from App (notification tap / Home
   // feed). When present, we auto-open the full Cookbook overlay so the
   // embedded Cookbook's own pipeline resolves the detail view.
@@ -85,6 +86,9 @@ export default function UserProfile({
   // Ranked-match picker state; opened from GateCard when all
   // prereqs are green.
   const [pickerState, setPickerState] = useState(null);
+  // Broken-image fallback for the large identity avatar. Google
+  // avatar URLs sometimes 403 after rotation.
+  const [avatarBroken, setAvatarBroken] = useState(false);
 
   // Auto-open the Cookbook overlay whenever a cook_log deep-link lands.
   // The embedded Cookbook then consumes the same deepLink prop and
@@ -147,15 +151,34 @@ export default function UserProfile({
               {isSelf ? "YOUR PROFILE" : "CHEF PROFILE"}
             </div>
           </div>
-          {isSelf && onOpenSettings && (
-            <button
-              onClick={onOpenSettings}
-              title="Settings"
-              aria-label="Settings"
-              style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:18, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
-            >
-              ⚙
-            </button>
+          {isSelf && (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              {onOpenNotifs && (
+                <button
+                  onClick={onOpenNotifs}
+                  title="Notifications"
+                  aria-label="Notifications"
+                  style={{ position:"relative", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:16, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
+                >
+                  🔔
+                  {notifsUnread > 0 && (
+                    <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      {notifsUnread > 99 ? "99+" : notifsUnread}
+                    </span>
+                  )}
+                </button>
+              )}
+              {onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  title="Settings"
+                  aria-label="Settings"
+                  style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:18, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
+                >
+                  ⚙
+                </button>
+              )}
+            </div>
           )}
         </div>
 
@@ -180,9 +203,18 @@ export default function UserProfile({
                 an avatar_sparkle cosmetic within the flair_hours window. */}
             <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20 }}>
               <FlairHalo active={isSelf && isFlairActive(profile)} size={72}>
-                <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
-                  {initial}
-                </div>
+                {profile?.avatar_url && !avatarBroken ? (
+                  <img
+                    src={profile.avatar_url}
+                    alt={name}
+                    onError={() => setAvatarBroken(true)}
+                    style={{ width:72, height:72, borderRadius:36, objectFit:"cover", flexShrink:0, display:"block", background:"#1a1a1a" }}
+                  />
+                ) : (
+                  <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
+                    {initial}
+                  </div>
+                )}
               </FlairHalo>
               <div style={{ flex:1, minWidth:0 }}>
                 <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", margin:0, letterSpacing:"-0.02em" }}>

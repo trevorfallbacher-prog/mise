@@ -53,9 +53,18 @@ function ConnectionRow({ row, actions, onOpenProfile }) {
           cursor: canOpen ? "pointer" : "default",
         }}
       >
-        <div style={{ width:40, height:40, borderRadius:20, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500, flexShrink:0 }}>
-          {initial}
-        </div>
+        {row.other?.avatar_url ? (
+          <img
+            src={row.other.avatar_url}
+            alt={name}
+            referrerPolicy="no-referrer"
+            style={{ width:40, height:40, borderRadius:20, objectFit:"cover", flexShrink:0, display:"block" }}
+          />
+        ) : (
+          <div style={{ width:40, height:40, borderRadius:20, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:18, fontWeight:500, flexShrink:0 }}>
+            {initial}
+          </div>
+        )}
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#f0ece4", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
             {name}
@@ -98,6 +107,79 @@ function GhostButton({ onClick, children }) {
   );
 }
 
+// Rarity → tier color mapping. Matches the daily-roll palette so the
+// loot-box / level-up work coming later reuses the same language.
+const RARITY_COLOR = {
+  common:   "#8e8e8e",
+  uncommon: "#4ade80",
+  rare:     "#77a3d9",
+  ultra:    "#c77dd9",
+};
+
+// AVATAR section — collection grid. Owned tiles are clickable; tapping
+// one makes it the user's current avatar. Unowned tiles render as 🔒
+// silhouettes so the unlock loop reads immediately (future loot-box /
+// level-up work grants more catalog rows). Rarity dot in the bottom-
+// right uses the daily-roll tier palette.
+function AvatarSection({ catalog, owned, currentSlug, onPin }) {
+  if (!catalog?.length) return null;
+  const ownedCount = owned.size;
+  return (
+    <>
+      <SectionHeader label="YOUR AVATAR" />
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
+        {catalog.map(c => {
+          const isOwned   = owned.has(c.slug);
+          const isCurrent = currentSlug === c.slug;
+          const tier      = RARITY_COLOR[c.rarity] || "#2a2a2a";
+          const clickable = isOwned && typeof onPin === "function";
+          return (
+            <button
+              key={c.slug}
+              onClick={clickable ? () => onPin(c.slug) : undefined}
+              disabled={!clickable}
+              style={{
+                position:"relative",
+                aspectRatio:"1 / 1",
+                padding:0,
+                background: isCurrent ? "#1e1a0e" : "#141414",
+                border: `1px solid ${isCurrent ? "#f5c842" : (isOwned ? "#2a2a2a" : "#1a1a1a")}`,
+                borderRadius:14,
+                cursor: clickable ? "pointer" : "default",
+                overflow:"hidden",
+              }}
+              title={isOwned ? c.name : "Locked"}
+            >
+              {isOwned ? (
+                <img
+                  src={c.image_url}
+                  alt={c.name}
+                  style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}
+                />
+              ) : (
+                <div style={{ width:"100%", height:"100%", background:"#0c0c0c", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, color:"#333" }}>
+                  🔒
+                </div>
+              )}
+              <span style={{ position:"absolute", bottom:4, right:4, width:8, height:8, borderRadius:4, background: tier, border:"1px solid rgba(0,0,0,0.4)" }} />
+              {isCurrent && (
+                <span style={{ position:"absolute", top:4, left:4, fontFamily:"'DM Mono',monospace", fontSize:8, color:"#111", background:"#f5c842", padding:"2px 5px", borderRadius:4, letterSpacing:"0.08em", fontWeight:700 }}>
+                  CURRENT
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginTop:8, lineHeight:1.5 }}>
+        {ownedCount < catalog.length
+          ? `Tap any unlocked tile to switch. ${catalog.length - ownedCount} more to unlock.`
+          : "Tap any tile to switch. You've unlocked everything available."}
+      </div>
+    </>
+  );
+}
+
 /**
  * Settings screen. Shown as a full overlay — tap the × to close.
  *
@@ -107,7 +189,12 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ userId, profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin }) {
+export default function Settings({
+  userId, profile, relationships, upsertProfile,
+  avatarCatalog = [], ownedAvatars = new Set(),
+  onPinAvatar,
+  onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin,
+}) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
@@ -161,6 +248,7 @@ export default function Settings({ userId, profile, relationships, upsertProfile
       setNameBusy(false);
     }
   };
+
 
   const myCode = profile?.invite_code || "—";
 
@@ -241,6 +329,18 @@ export default function Settings({ userId, profile, relationships, upsertProfile
             Add your name so your family sees who did what.
           </div>
         )}
+
+        {/* Avatar — collection grid. Users arrive with 8 random
+            commons and one auto-assigned as their current; tapping
+            any other owned tile switches to it. Locked tiles render
+            as silhouettes so the unlock loop reads immediately
+            (future loot-box / level-up work grants new rows). */}
+        <AvatarSection
+          catalog={avatarCatalog}
+          owned={ownedAvatars}
+          currentSlug={profile?.avatar_slug || null}
+          onPin={onPinAvatar}
+        />
 
         {/* My invite code */}
         <SectionHeader label="MY SHARE CODE" />

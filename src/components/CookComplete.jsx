@@ -309,6 +309,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         first: name.split(/\s+/)[0],
         kind: row.kind,                        // "family" | "friend"
         initial: (name[0] || "?").toUpperCase(),
+        avatarUrl: row.other?.avatar_url || null,
       });
     }
     return out;
@@ -1494,15 +1495,27 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   borderRadius:14, cursor:"pointer", transition:"all 0.2s",
                 }}
               >
-                <div style={{
-                  width:44, height:44, borderRadius:"50%",
-                  background: selected ? "#f5c842" : "#222",
-                  color: selected ? "#111" : "#aaa",
-                  display:"flex", alignItems:"center", justifyContent:"center",
-                  fontFamily:"'Fraunces',serif", fontSize:20, fontWeight:500,
-                }}>
-                  {c.initial}
-                </div>
+                {c.avatarUrl ? (
+                  <img
+                    src={c.avatarUrl}
+                    alt={c.name}
+                    referrerPolicy="no-referrer"
+                    style={{
+                      width:44, height:44, borderRadius:"50%", objectFit:"cover", display:"block",
+                      boxShadow: selected ? "0 0 0 2px #f5c842" : "none",
+                    }}
+                  />
+                ) : (
+                  <div style={{
+                    width:44, height:44, borderRadius:"50%",
+                    background: selected ? "#f5c842" : "#222",
+                    color: selected ? "#111" : "#aaa",
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontFamily:"'Fraunces',serif", fontSize:20, fontWeight:500,
+                  }}>
+                    {c.initial}
+                  </div>
+                )}
                 <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color: selected ? "#f5c842" : "#ccc", textAlign:"center", lineHeight:1.2 }}>
                   {c.first}
                 </span>
