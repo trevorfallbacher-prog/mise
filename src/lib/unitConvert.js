@@ -25,6 +25,64 @@
 
 import { toBase, CUT_WEIGHTS_G, CANONICAL_ALIASES } from "../data/ingredients";
 
+// Universal mass / volume conversion factors. These are PHYSICS, not
+// ingredient-specific — 1 lb is always 453.6 g whether we're weighing
+// flour or ribeye. Each canonical used to re-declare these same
+// numbers in its units[] array, which (a) duplicated data and (b)
+// created bugs when a canonical forgot to include a unit (heavy_cream
+// without gallon, garlic without oz, etc.). convertWithBridge now
+// falls back to these tables when the canonical's ladder can't resolve
+// a unit directly — same-family mass↔mass or volume↔volume conversions
+// "just work" regardless of what's declared on the canonical.
+//
+// Each value is toBase where the base is GRAMS (for mass) or
+// MILLILITRES (for volume). Volumes are water-based — for other
+// liquids (oil, honey) the density factor per canonical could refine
+// this; deferred until a user reports drift.
+const UNIVERSAL_MASS_G = {
+  mg: 0.001, g: 1, kg: 1000,
+  oz: 28.35, lb: 453.6,
+};
+const UNIVERSAL_VOLUME_ML = {
+  ml: 1, l: 1000,
+  tsp: 5, tbsp: 15, cup: 240,
+  fl_oz: 29.57, pint: 473, quart: 946,
+  half_gallon: 1893, gallon: 3785,
+};
+const MASS_UNITS   = new Set(Object.keys(UNIVERSAL_MASS_G));
+const VOLUME_UNITS = new Set(Object.keys(UNIVERSAL_VOLUME_ML));
+
+// True when both units are in the same universal family (both mass or
+// both volume). Count is neither — count↔mass bridging still needs
+// effectiveCountWeightG.
+function sameUniversalFamily(a, b) {
+  const na = normalizeUnitId(a);
+  const nb = normalizeUnitId(b);
+  if (!na || !nb) return false;
+  if (MASS_UNITS.has(na)   && MASS_UNITS.has(nb))   return true;
+  if (VOLUME_UNITS.has(na) && VOLUME_UNITS.has(nb)) return true;
+  return false;
+}
+
+// Universal conversion between two mass units or two volume units,
+// ingredient-agnostic. Returns { ok, value } or { ok: false }.
+function convertUniversal(qty, toUnit) {
+  const from = normalizeUnitId(qty.unit);
+  const to   = normalizeUnitId(toUnit);
+  if (!from || !to) return { ok: false };
+  if (MASS_UNITS.has(from) && MASS_UNITS.has(to)) {
+    const g = Number(qty.amount) * UNIVERSAL_MASS_G[from];
+    if (!Number.isFinite(g)) return { ok: false };
+    return { ok: true, value: g / UNIVERSAL_MASS_G[to] };
+  }
+  if (VOLUME_UNITS.has(from) && VOLUME_UNITS.has(to)) {
+    const ml = Number(qty.amount) * UNIVERSAL_VOLUME_ML[from];
+    if (!Number.isFinite(ml)) return { ok: false };
+    return { ok: true, value: ml / UNIVERSAL_VOLUME_ML[to] };
+  }
+  return { ok: false };
+}
+
 // A canonical is "mass-based" iff its ladder includes `{g:1}` or
 // `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
 // ladder declares how many grams (or millilitres, treated as grams
@@ -141,11 +199,24 @@ export function convert(qty, toUnit, ingredient) {
   }
   const fromEntry = findUnit(ingredient, qty.unit);
   const toEntry   = findUnit(ingredient, toUnit);
+  if (fromEntry && toEntry) {
+    const base = Number(qty.amount) * fromEntry.toBase;
+    if (!Number.isFinite(base)) return { ok: false, reason: "bad-amount", value: NaN };
+    return { ok: true, value: base / toEntry.toBase };
+  }
+  // Universal fallback for mass↔mass and volume↔volume. Works when
+  // the canonical's ladder is missing one (or both) of the units
+  // but both live in the same physical family. Bug that drove this:
+  // heavy_cream ladder used to lack gallon, so 0.5 gal → cup
+  // failed silently ("can't convert pantry gallon → cup"). Now any
+  // canonical, even one with a partial ladder, resolves mass↔mass
+  // and volume↔volume through the universal tables.
+  if (sameUniversalFamily(qty.unit, toUnit)) {
+    const univ = convertUniversal(qty, toUnit);
+    if (univ.ok) return { ok: true, value: univ.value };
+  }
   if (!fromEntry) return { ok: false, reason: "from-unit-unknown", value: NaN };
-  if (!toEntry)   return { ok: false, reason: "to-unit-unknown",   value: NaN };
-  const base = Number(qty.amount) * fromEntry.toBase;
-  if (!Number.isFinite(base)) return { ok: false, reason: "bad-amount", value: NaN };
-  return { ok: true, value: base / toEntry.toBase };
+  return { ok: false, reason: "to-unit-unknown", value: NaN };
 }
 
 // Convert { amount, unit } into a target unit, with an automatic
