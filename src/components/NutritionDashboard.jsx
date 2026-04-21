@@ -262,13 +262,92 @@ export default function NutritionDashboard({ userId, targets, onUpdateTargets })
               </div>
             )}
 
+            {/* Itemized breakdown — every cook + every "I ate this"
+                event landed on the selected period, chronological
+                newest-first. Each row: emoji + title + (meal slot,
+                time, amount-unit) + kcal contribution. Cook events
+                show the recipe title + emoji; ingredient-eat events
+                surface the canonical's name + emoji; leftover-eat
+                events show "<recipe> (leftover)" with the recipe's
+                emoji. Hidden when no events in the window — the
+                empty-state message covers that case. */}
+            {(() => {
+              const events = period === "day"
+                ? (tally.todayEvents || [])
+                : (period === "week" ? (tally.weekEvents || []) : []);
+              if (events.length === 0) return null;
+              return (
+                <div style={{ marginTop: 14 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#888", letterSpacing: "0.12em", marginBottom: 8,
+                  }}>
+                    {period === "day" ? "TODAY" : "LAST 7 DAYS"} · {events.length} EVENT{events.length === 1 ? "" : "S"}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {events.map(e => {
+                      const ts = new Date(e.ts);
+                      const h = ts.getHours(), mm = ts.getMinutes();
+                      const ampm = h >= 12 ? "PM" : "AM";
+                      const h12 = ((h + 11) % 12) + 1;
+                      const timeStr = `${h12}:${String(mm).padStart(2, "0")} ${ampm}`;
+                      const dayStr = period === "week"
+                        ? ts.toLocaleDateString(undefined, { weekday: "short" }).toUpperCase()
+                        : null;
+                      const bits = [
+                        dayStr,
+                        e.mealSlot ? e.mealSlot.toUpperCase() : null,
+                        timeStr,
+                        (e.kind === "snack" && e.amount && e.unit) ? `${e.amount} ${e.unit}` : null,
+                      ].filter(Boolean);
+                      return (
+                        <div
+                          key={e.id}
+                          style={{
+                            display: "flex", alignItems: "center", gap: 10,
+                            padding: "10px 12px",
+                            background: "#0f0f0f", border: "1px solid #1e1e1e",
+                            borderRadius: 10,
+                          }}
+                        >
+                          <div style={{ fontSize: 22, flexShrink: 0 }}>{e.emoji}</div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{
+                              fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                              color: "#f0ece4",
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            }}>
+                              {e.title}
+                            </div>
+                            <div style={{
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#666", marginTop: 2, letterSpacing: "0.06em",
+                            }}>
+                              {bits.join(" · ")}
+                            </div>
+                          </div>
+                          <div style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 12,
+                            color: e.kcal > 0 ? "#d4a87a" : "#666",
+                            flexShrink: 0, letterSpacing: "0.04em",
+                          }}>
+                            {e.kcal > 0 ? `${Math.round(e.kcal)} kcal` : "—"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
             {tally.today?.meals === 0 && period === "day" && (
               <p style={{
                 marginTop: 10,
                 fontFamily: "'DM Sans',sans-serif", fontSize: 12,
                 color: "#666", fontStyle: "italic",
               }}>
-                No cooks logged today yet.
+                Nothing logged today yet — cook a meal or tap "I ATE THIS" on a pantry item.
               </p>
             )}
           </>
