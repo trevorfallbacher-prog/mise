@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
-import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
-import { parseAmountString, effectiveCountWeightG } from "../lib/nutrition";
+import { convert, convertWithBridge, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
+import { parseAmountString } from "../lib/nutrition";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -98,55 +98,25 @@ export function buildInitialUsedItems(recipe, pantry) {
     const recipeQty = ing.qty || (canonical ? parseAmountString(ing.amount, canonical) : null);
 
     // Conversion pass: if the recipe's unit differs from the default
-    // pantry row's unit, try to translate so the slider reads in the
-    // pantry row's native unit. Makes the deduction feel natural
-    // ("you have a 16 oz package, recipe used 4 oz") instead of
-    // forcing the user to reconcile unit families mid-flow.
+    // pantry row's unit, translate so the slider reads in the pantry
+    // row's native unit. Package size is bible — we always convert
+    // TOWARD the pantry, never away from it, so the user sees their
+    // stock in the units they stored it in.
     //
-    // Two paths:
-    //   a) Same-ladder conversion via convert() — works when both
-    //      units are on the canonical's ladder (tbsp ↔ stick for
-    //      butter, cup ↔ oz for cream, etc.)
-    //   b) Count ↔ mass via countWeightG — the user's "16 oz
-    //      tortillas package, recipe calls for 8 count" case. The
-    //      pantry row's countWeightG (migration 0121) tells us how
-    //      many grams one discrete unit weighs; we bridge across
-    //      families with it when direct ladder conversion fails.
+    // convertWithBridge handles both same-ladder (tbsp↔stick, count↔lb
+    // on meats) and count↔mass bridging via countWeightG (the "8
+    // tortillas in a 16 oz pack" case) in one call. Returns
+    // bridged:true when the cross-family bridge was used; display
+    // flags that with an "≈" in the shadow readout since bridged
+    // values are approximations (they depend on a per-row average
+    // weight).
     let displayAmount = recipeQty?.amount ?? null;
     let displayUnit   = recipeQty?.unit   ?? (defaultMatch?.unit ?? null);
     if (recipeQty && canonical && defaultMatch?.unit && recipeQty.unit !== defaultMatch.unit) {
-      const ladder = convert(recipeQty, defaultMatch.unit, canonical);
-      if (ladder.ok) {
-        displayAmount = Number(ladder.value.toFixed(3));
+      const result = convertWithBridge(recipeQty, defaultMatch.unit, canonical, defaultMatch);
+      if (result.ok) {
+        displayAmount = Number(result.value.toFixed(3));
         displayUnit   = defaultMatch.unit;
-      } else {
-        // Cross-family bridge via countWeightG — either the explicit
-        // user-set field (ItemCard "each ~__g") OR the derived value
-        // from packageAmount + packageUnit + max. A 16 oz bag labeled
-        // "8 count" derives to 56.7g / tortilla without anyone
-        // touching the explicit field, so this path works out of the
-        // box for most receipt-scanned multipacks.
-        const gramsPerCount = effectiveCountWeightG(defaultMatch, canonical);
-        if (gramsPerCount) {
-          const toGrams = (qty) => {
-            if (qty.unit === "count") return Number(qty.amount) * gramsPerCount;
-            const entry = canonical.units?.find(u => u.id === qty.unit);
-            return entry ? Number(qty.amount) * Number(entry.toBase) : null;
-          };
-          const grams = toGrams(recipeQty);
-          if (grams != null && Number.isFinite(grams)) {
-            if (defaultMatch.unit === "count") {
-              displayAmount = Number((grams / gramsPerCount).toFixed(3));
-              displayUnit   = "count";
-            } else {
-              const pantryEntry = canonical.units?.find(u => u.id === defaultMatch.unit);
-              if (pantryEntry) {
-                displayAmount = Number((grams / Number(pantryEntry.toBase)).toFixed(3));
-                displayUnit   = defaultMatch.unit;
-              }
-            }
-          }
-        }
       }
     }
 
@@ -887,6 +857,43 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                           aria-label={`Estimate ${displayName} used`}
                           style={{ width:"100%", accentColor:"#f5c842" }}
                         />
+                      );
+                    })()}
+                    {/* Conversion shadow — live readout of the current
+                        used-amount translated into the OTHER meaningful
+                        unit on the canonical's ladder. "Package size is
+                        bible" works both ways: if the user types 0.28 lb
+                        we also show "≈ 1.4 breasts" so they know exactly
+                        what chunk of the package they just committed.
+                        Picks a shadow unit that differs from usedUnit —
+                        the recipe's original unit when present, else the
+                        canonical's defaultUnit, else the first non-match
+                        in the ladder. Hidden when there's no meaningful
+                        alternate unit to show. */}
+                    {(() => {
+                      if (!ing || !row.usedAmount || !row.usedUnit) return null;
+                      const curQty = { amount: Number(row.usedAmount), unit: row.usedUnit };
+                      if (!Number.isFinite(curQty.amount) || curQty.amount <= 0) return null;
+                      const recipeUnit = row.recipeIng.qty?.unit
+                        || parseAmountString(row.recipeIng.amount, ing)?.unit
+                        || null;
+                      const ladder = Array.isArray(ing.units) ? ing.units.map(u => u.id) : [];
+                      const candidates = [recipeUnit, ing.defaultUnit, ...ladder]
+                        .filter(Boolean)
+                        .filter(u => u !== row.usedUnit);
+                      if (candidates.length === 0) return null;
+                      const shadowUnit = candidates[0];
+                      const res = convertWithBridge(curQty, shadowUnit, ing, match);
+                      if (!res.ok) return null;
+                      const pretty = Number(res.value.toFixed(res.value >= 10 ? 1 : 2));
+                      const label = unitLabel(ing, shadowUnit);
+                      return (
+                        <div style={{
+                          fontFamily:"'DM Mono',monospace", fontSize:10,
+                          color:"#888", letterSpacing:"0.04em",
+                        }}>
+                          {res.bridged ? "≈ " : "= "}{pretty} {label}
+                        </div>
                       );
                     })()}
                   </div>

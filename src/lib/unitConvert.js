@@ -24,6 +24,7 @@
 // pantry's 1.5-stick row by 28.4 g → 1.25 sticks remaining".
 
 import { toBase } from "../data/ingredients";
+import { effectiveCountWeightG } from "./nutrition";
 
 // Convert { amount, unit } into a target unit within the same ingredient's
 // ladder. Returns { ok, value } or { ok: false, reason }.
@@ -44,6 +45,82 @@ export function convert(qty, toUnit, ingredient) {
   const base = Number(qty.amount) * fromEntry.toBase;
   if (!Number.isFinite(base)) return { ok: false, reason: "bad-amount", value: NaN };
   return { ok: true, value: base / toEntry.toBase };
+}
+
+// Convert { amount, unit } into a target unit, with an automatic
+// cross-family bridge when the same-ladder path can't reach it.
+//
+// Two-stage:
+//   1. convert() — same-ladder, exact, fast. Works for any pair of
+//      units that both live in the ingredient's units[] array.
+//   2. Bridge via effectiveCountWeightG — kicks in when exactly one
+//      side is "count" and the other is a mass-family unit NOT on
+//      the ladder (or when the ladder's count entry has a placeholder
+//      toBase of 1). Uses the pantry row's grams-per-count (explicit
+//      or derived from packageAmount/packageUnit/max) to bridge
+//      count ↔ grams, then grams ↔ target.
+//
+// Returns { ok, value, bridged, reason }. `bridged: true` tells the
+// caller the conversion used the cross-family path, which is useful
+// for display hints ("≈") since bridged values are approximations
+// (they depend on a per-row or canonical average weight).
+//
+// This is the helper to reach for anywhere recipe-unit meets pantry-
+// unit and the two might not be in the same ladder family. Covers:
+//   - recipe "3 chicken breasts" ↔ pantry "1.5 lb" (same ladder: count
+//     has toBase=200g on chicken_breast; 3×200 / 453.6 = 1.32 lb)
+//   - recipe "8 tortillas" ↔ pantry "16 oz pack" (bridged: tortillas
+//     ladder has no oz, but pantry row carries packageAmount=16 oz
+//     + max=8 → effectiveCountWeightG derives 56.7g/tortilla → 8×56.7
+//     / 28.35 = 16 oz)
+//   - recipe "2 oz chicken" ↔ pantry "8 count chicken breasts" (same
+//     ladder, reverse direction, 2oz × 28.35 / 200 = 0.28 breasts —
+//     user sees "you used ~1/3 of a breast")
+export function convertWithBridge(qty, toUnit, ingredient, row) {
+  if (!qty || !ingredient || !toUnit) {
+    return { ok: false, reason: "missing-args", value: NaN, bridged: false };
+  }
+  // Same-ladder first. Most canonicals encode count-to-mass via
+  // count.toBase (e.g. chicken_breast count.toBase=200g), so this
+  // path handles a surprising number of count↔mass cases already.
+  const direct = convert(qty, toUnit, ingredient);
+  if (direct.ok) return { ...direct, bridged: false };
+
+  // Bridge: find a grams-per-count number. Three-tier resolver:
+  // explicit countWeightG → derived from packageAmount/packageUnit/max
+  // → null. Null means we have no way to bridge count ↔ mass on this
+  // row; caller falls back to showing the raw unit.
+  const gramsPerCount = effectiveCountWeightG(row, ingredient);
+  if (!gramsPerCount) return { ok: false, reason: direct.reason || "no-bridge", value: NaN, bridged: false };
+
+  const fromIsCount = qty.unit === "count";
+  const toIsCount   = toUnit === "count";
+  // Bridge only activates when exactly one side is count and the
+  // other is a known non-count unit. count↔count would've been
+  // handled by the ladder; mass↔mass also.
+  if (fromIsCount === toIsCount) {
+    return { ok: false, reason: direct.reason || "no-bridge", value: NaN, bridged: false };
+  }
+
+  const fromEntry = fromIsCount ? null : ingredient.units?.find(u => u.id === qty.unit);
+  const toEntry   = toIsCount   ? null : ingredient.units?.find(u => u.id === toUnit);
+  if (!fromIsCount && !fromEntry) return { ok: false, reason: "from-unit-unknown", value: NaN, bridged: false };
+  if (!toIsCount   && !toEntry)   return { ok: false, reason: "to-unit-unknown",   value: NaN, bridged: false };
+
+  const grams = fromIsCount
+    ? Number(qty.amount) * gramsPerCount
+    : Number(qty.amount) * Number(fromEntry.toBase);
+  if (!Number.isFinite(grams)) {
+    return { ok: false, reason: "bad-amount", value: NaN, bridged: false };
+  }
+
+  const value = toIsCount
+    ? grams / gramsPerCount
+    : grams / Number(toEntry.toBase);
+  if (!Number.isFinite(value)) {
+    return { ok: false, reason: "bad-amount", value: NaN, bridged: false };
+  }
+  return { ok: true, value, bridged: true };
 }
 
 // Subtract a "used" quantity from a pantry row, both keyed to the same
