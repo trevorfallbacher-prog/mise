@@ -172,41 +172,48 @@ function assemblePromptHeader(
   // shopping list, and re-sending 80 pantry rows burns thousands of
   // input tokens for signal Claude no longer needs. Sketch mode
   // still needs the full pantry to HAVE something to draft from.
+  // Labeled-block pantry format. Each item is rendered as a small
+  // structured card with canonical identity first, cut + state next
+  // (so anatomy and prep form register alongside identity), then
+  // brand, amount, location, expiry, and optional enrichment. No
+  // display name is sent — the AI reasons about identity axes
+  // directly, not a derived label. This format replaced an older
+  // dashed-line format ("- Mission Tortillas (id:tortillas · ...)")
+  // that mixed a natural-language display label with the canonical
+  // axes and fed spurious subs ("Croissant Rolls subbed for flour
+  // tortillas" while Mission Tortillas sat in the pantry).
   const pantryLines = opts.skipPantry
     ? "(pantry was surveyed during sketch — see LOCKED INGREDIENTS below for the authoritative set)"
     : pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
-        .map((p) => {
-          const amount = p.amount != null ? `${p.amount}${p.unit || ""}` : "";
-          // Order: id first (identity signal — matters most for slot
-          // matching), then cut (anatomy on meats), then state (prep
-          // form), then category/location/amount/expiry context.
-          // Putting id first nudges Claude to read canonical identity
-          // before the display name and reduces "let me sub something
-          // different" decisions on rows that are already exact matches.
-          const facts = [
-            p.canonicalId ? `id:${p.canonicalId}` : "",
-            p.cut ? `cut:${p.cut}` : "",
-            p.state ? `state:${p.state}` : "",
-            p.star ? "★ STARRED BY USER" : "",
-            amount,
-            p.category || "",
-            p.location ? `loc:${p.location}` : "",
-            p.kind && p.kind !== "ingredient" ? `kind:${p.kind}` : "",
-            typeof p.daysToExpiry === "number"
-              ? (p.daysToExpiry <= 0 ? "EXPIRED" : `expires in ${p.daysToExpiry}d`)
-              : "",
-          ].filter(Boolean).join(" · ");
-          const base = `- ${p.name || "unknown"}${facts ? ` (${facts})` : ""}`;
+        .map((p, i) => {
+          const amount = p.amount != null ? `${p.amount}${p.unit ? ` ${p.unit}` : ""}` : "";
+          const lines: string[] = [`Pantry Item ${i + 1}:`];
+          lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
+          if (p.cut) lines.push(`  Cut: ${p.cut}`);
+          if (p.state) lines.push(`  State: ${p.state}`);
+          if (p.brand) lines.push(`  Brand: ${p.brand}`);
+          if (amount) lines.push(`  Amount: ${amount}`);
+          if (p.category) lines.push(`  Category: ${p.category}`);
+          if (p.location) lines.push(`  Location: ${p.location}`);
+          if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
+          if (typeof p.daysToExpiry === "number") {
+            lines.push(
+              p.daysToExpiry <= 0
+                ? `  Expiry: EXPIRED`
+                : `  Expiry: in ${p.daysToExpiry}d`,
+            );
+          }
+          if (p.star) lines.push(`  ★ STARRED BY USER`);
           const enr = p.enrichment;
-          if (!enr) return base;
-          const enrBits = [
-            enr.flavorProfile ? `flavor: ${enr.flavorProfile}` : "",
-            enr.pairs && enr.pairs.length ? `pairs: ${enr.pairs.join(", ")}` : "",
-            dietSummary(enr.diet),
-          ].filter(Boolean).join(" | ");
-          return enrBits ? `${base}\n    ${enrBits}` : base;
+          if (enr) {
+            if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
+            if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
+            const diet = dietSummary(enr.diet);
+            if (diet) lines.push(`  Diet: ${diet}`);
+          }
+          return lines.join("\n");
         })
         .join("\n");
 
@@ -493,20 +500,25 @@ identical.
 Rules:
   - Same precedence rules as the header above.
   - Every PANTRY entry that uses a real pantry row MUST set
-    "pantryItemId" to that row's id (the "id:..." token in the
-    PANTRY table). null only when this ingredient is something the
-    user would need to shop for.
+    "pantryItemId" to that row's pantry-system id AND set
+    "ingredientId" to the "Canonical [id]:" value from the PANTRY
+    block. null only when this ingredient is something the user
+    would need to shop for.
 
   - NEVER SUBSTITUTE WHEN AN EXACT PANTRY MATCH EXISTS. Before
     writing a PANTRY entry as a sub, scan the PANTRY block above for
-    an item whose canonical id (the "id:..." token) matches the
-    IDEAL's ingredientId. If one exists, you MUST use that row
-    verbatim — no creative subs, no "wrapper substitute" style
-    swaps, no upgrading to a fancier-sounding ingredient.
+    an item whose "Canonical [id]:" matches the IDEAL's
+    ingredientId. If one exists, you MUST use that row verbatim —
+    no creative subs, no "wrapper substitute" style swaps, no
+    upgrading to a fancier-sounding ingredient.
       Example 1 (CORRECT):
         IDEAL: { name: "flour tortillas", ingredientId: "tortillas" }
-        PANTRY has: "Mission Tortillas" (id:tortillas)
-        → PANTRY entry: { name: "Mission Tortillas", ingredientId: "tortillas", subbedFrom: null }
+        PANTRY has:
+          Pantry Item 3:
+            Canonical [id]: tortillas
+            Brand: Mission
+            Amount: 8 count
+        → PANTRY entry: { name: "tortillas", ingredientId: "tortillas", subbedFrom: null }
       Example 2 (WRONG):
         Same inputs
         → PANTRY entry: { name: "Croissant Rolls", subbedFrom: "flour tortillas" }
@@ -722,11 +734,11 @@ Rules (in priority order — higher rules beat lower ones on conflict):
 
   6. CANONICAL_ID BINDING — strict rules, no improvisation:
 
-     - The PANTRY block above shows each item's canonical id as
-       "id:<slug>". When you use that item, echo the slug VERBATIM
-       into the ingredient's "ingredientId" field.
-         pantry shows "id:tortillas" → you write "ingredientId": "tortillas"
-         pantry shows "id:ground_cinnamon" → "ingredientId": "ground_cinnamon"
+     - The PANTRY block above shows each item's canonical id on a
+       "Canonical [id]:" line. When you use that item, echo the slug
+       VERBATIM into the ingredient's "ingredientId" field.
+         block has "Canonical [id]: tortillas"       → "ingredientId": "tortillas"
+         block has "Canonical [id]: ground_cinnamon" → "ingredientId": "ground_cinnamon"
      - Do NOT modify pantry ids. NO adding prefixes like "fresh_" or
        "corn_" or "organic_". NO pluralizing or de-pluralizing. NO
        changing case. NO replacing underscores with spaces or hyphens.
