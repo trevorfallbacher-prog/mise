@@ -2987,6 +2987,18 @@ const AI_MODIFIER_PREFIXES = [
   "grated", "shredded", "crumbled",
   "powdered", "ground",
   "organic", "local",
+  // Dietary / macro modifiers — Claude often emits these as leading
+  // slug tokens ("low_carb_tortillas", "gluten_free_pasta"). Strip to
+  // land on the base canonical; the modifier itself is preserved as
+  // a dietaryClaim on the recipe's ideal slot (AIRecipe).
+  "low_carb", "lowcarb", "low_sugar", "lowsugar", "low_sodium", "lowsodium",
+  "low_fat", "lowfat", "fat_free", "fatfree", "sugar_free", "sugarfree",
+  "zero_carb", "zerocarb", "zero_sugar", "zerosugar",
+  "gluten_free", "glutenfree", "dairy_free", "dairyfree",
+  "grain_free", "grainfree",
+  "keto", "paleo", "whole30", "vegan", "vegetarian",
+  "whole_wheat", "wholewheat", "whole_grain", "wholegrain",
+  "multigrain", "high_protein", "highprotein",
 ];
 
 /**
@@ -5789,6 +5801,10 @@ export function isInSeason(seasonality, hemisphere = "N", month = new Date().get
 
 // Words that add no signal — sizes, descriptors, packaging. Strip these so
 // "Organic EVOO 500ml Extra Virgin" compares cleanly against "olive oil".
+// Dietary / macro modifier tokens are stripped so "low-carb tortilla"
+// scores against the base tortilla canonical. The modifiers themselves
+// are the pantry row's attributes.claims — matching and claim-tracking
+// are separate axes on purpose (see AIRecipe extractDietaryClaims).
 const FUZZY_NOISE_WORDS = new Set([
   "organic","grass","fed","free","range","local","fresh","raw","natural",
   "whole","reduced","fat","lowfat","nonfat","unsalted","salted","sweet",
@@ -5796,6 +5812,12 @@ const FUZZY_NOISE_WORDS = new Set([
   "select","prime","pack","packed","value","family","size","pcs","piece",
   "pieces","ea","each","ct","count","bunch","bag","jar","tin","can","tub",
   "carton","bottle","box","pouch",
+  // dietary / macro modifiers — stripped here, captured as claims by
+  // AIRecipe's extractDietaryClaims before the name hits normalization.
+  "lowcarb","lowsugar","lowsodium","zerocarb","zerosugar","carb","carbs",
+  "sugarfree","glutenfree","dairyfree","grainfree","fatfree","nofat",
+  "keto","paleo","whole30","vegan","vegetarian",
+  "multigrain","wholegrain","wholewheat","highprotein","protein",
 ]);
 const FUZZY_UNIT_WORDS = new Set([
   "oz","lb","lbs","g","kg","ml","l","liter","liters","gal","gallon","gallons",

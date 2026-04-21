@@ -2,7 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { generateRecipe } from "../lib/generateRecipe";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
-import { findIngredient, INGREDIENTS, coerceRecipeCanonicalIds } from "../data/ingredients";
+import {
+  findIngredient,
+  coerceRecipeCanonicalIds,
+} from "../data/ingredients";
+import {
+  extractDietaryClaims,
+  namesMatch,
+  resolveNameToCanonicalId,
+  deriveRowHeader,
+  deriveRowCut,
+  pairRecipeIngredients,
+  describePairing,
+} from "../lib/recipePairing";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 
@@ -111,37 +123,6 @@ function isProteinRow(row) {
   return false;
 }
 
-// State-shaped words for normalizeForMatch below. The bundled
-// registry is clean after migration 0060 (CANONICAL_ALIASES routes
-// the legacy ground_* slugs to base + state), but user-typed or
-// OCR'd display names can still bake state into the string. The
-// regexes give normalizeForMatch something to strip when it's
-// pairing "Ground Beef Patties" (user-entered) against the "beef"
-// canonical.
-const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
-const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
-
-// Normalize an ingredient name for fuzzy matching. Strips known
-// brand prefixes, size labels, state prefixes, special characters,
-// and collapses whitespace. "GV Ricotta 32oz" → "ricotta". Used to
-// pair an ideal (classical) ingredient with a pantry row even when
-// the display strings drift.
-const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
-const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
-function normalizeForMatch(name) {
-  if (!name) return "";
-  return String(name)
-    .toLowerCase()
-    .replace(BRAND_TOKEN_RE, " ")
-    .replace(SIZE_TOKEN_RE, " ")
-    .replace(STATE_PREFIX_RE, "")
-    .replace(STATE_SUFFIX_RE, "")
-    .replace(/[^a-z ]+/g, " ")
-    .replace(/s\b/g, "")        // crude de-plural so "rolls" matches "roll"
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 // Split an ideal name on alternative separators into candidate sub-
 // names. Claude frequently emits "ciabatta or crusty bread" / "salt &
 // black pepper" / "penne, rigatoni" — those are alternatives, not
@@ -161,43 +142,82 @@ function splitIdealName(name) {
   return parts.length > 0 ? parts : [String(name)];
 }
 
-// Do two ingredient display names refer to the same thing? Uses
-// normalized substring containment both directions — catches
-// "Ricotta" vs "GV Ricotta 32oz", "Crescent Roll" vs "Crescent
-// rolls", "Ground Beef" vs "Beef". Cheap O(n) per call, fine at
-// the scale of 10-20 sketch rows.
-function namesMatch(a, b) {
-  const na = normalizeForMatch(a);
-  const nb = normalizeForMatch(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  return na.includes(nb) || nb.includes(na);
+// Scan the user's actual pantry for rows that can cover a sketch.pantry
+// row Claude marked as shopping (pantryItemId == null). Returns a
+// map { sketchPantryIdx → pantryRowId } of recommended auto-pairs.
+//
+// Why this exists: the AI frequently emits a sketch.pantry row with
+// pantryItemId: null ("you need to buy tortillas") even when the
+// user's real pantry has a matching item. The ingredientEntries
+// pairing code then renders that row as "matched" — it's not
+// `missing`, so findRawPantryCandidates never runs — and the user
+// sees "NOT IN PANTRY — SHOPPING" on an item they already own. Plus
+// the top-line coverage count reads "you have everything" because
+// the sketch.pantry length equals the ideal length, regardless of
+// whether any of those rows trace back to a real pantryItemId.
+//
+// Auto-pair fixes both: we promote the real pantry row into the
+// pantryEdits.swaps diff before first render, so `showRow` resolves
+// cleanly and the green "FROM your pantry" tag lights up. The swap
+// is rendered as "⚡ AUTO-PAIRED" (not ✓ FROM) so the substitution
+// is visible and the user can still tap SWAP to override.
+//
+// Rules:
+//   - Never steal a pantry row another sketch.pantry row already
+//     claims via pantryItemId.
+//   - Tier 1: canonical-id match (sketch row's ingredientId or
+//     resolved-from-name canonical ↔ pantry row's ingredientId).
+//   - Tier 2: name-fuzzy match via namesMatch — catches free-text
+//     user pantry rows without canonical ids.
+function autoPairShoppingRows(sketch, pantry) {
+  const swaps = {};
+  if (!sketch || !Array.isArray(sketch.pantry) || !Array.isArray(pantry)) return swaps;
+  const used = new Set();
+  for (const row of sketch.pantry) {
+    if (row && row.pantryItemId) used.add(row.pantryItemId);
+  }
+  sketch.pantry.forEach((row, j) => {
+    if (!row || row.pantryItemId) return;
+    const canonId = row.ingredientId || resolveNameToCanonicalId(row.name) || null;
+    let found = null;
+    if (canonId) {
+      found = pantry.find(p =>
+        p && !used.has(p.id) &&
+        (p.ingredientId === canonId || p.canonicalId === canonId),
+      );
+    }
+    if (!found && row.name) {
+      found = pantry.find(p =>
+        p && !used.has(p.id) && namesMatch(p.name, row.name),
+      );
+    }
+    if (found) {
+      used.add(found.id);
+      swaps[j] = found.id;
+    }
+  });
+  return swaps;
 }
 
-// Resolve a classical ingredient display name ("Ricotta",
-// "Mozzarella", "Ground beef") to the canonical registry slug.
-// Pairing pantry rows to ideal slots via this is strictly better
-// than string matching: "GV Ricotta 32oz" (canonical: ricotta)
-// correctly pairs with ideal "Ricotta" because both resolve to the
-// slug `ricotta`, even though the display names share no tokens.
-// Falls back to name-based match when no canonical is found (the
-// free-text tail of the registry).
-function resolveNameToCanonicalId(name) {
-  if (!name) return null;
-  const norm = normalizeForMatch(name);
-  if (!norm) return null;
-  for (const canon of INGREDIENTS) {
-    if (normalizeForMatch(canon.name) === norm) return canon.id;
-    if (canon.shortName && normalizeForMatch(canon.shortName) === norm) return canon.id;
-  }
-  // Second pass: substring match on the registry names. Handles
-  // cases like "fresh mozzarella" ideal → mozzarella canonical.
-  for (const canon of INGREDIENTS) {
-    const cname = normalizeForMatch(canon.name);
-    if (cname && (cname.includes(norm) || norm.includes(cname))) return canon.id;
-  }
-  return null;
+// Walk a sketch and stamp each ideal slot with the dietary claims
+// extracted from its name. Non-destructive copy. The claims travel
+// with the slot from ingestion through render so the swap/pair UI
+// can diff them against the paired pantry row's attributes.claims
+// and flag "⚠ NO LONGER VEGAN" when the user takes a non-compliant
+// substitution.
+function stampDietaryClaims(sketch) {
+  if (!sketch || !Array.isArray(sketch.ideal)) return sketch;
+  return {
+    ...sketch,
+    ideal: sketch.ideal.map(row => {
+      if (!row || typeof row !== "object") return row;
+      const { claims } = extractDietaryClaims(row.name);
+      if (claims.length === 0) return row;
+      return { ...row, dietaryClaims: claims };
+    }),
+  };
 }
+
 
 export default function AIRecipe({
   pantry = [],
@@ -447,12 +467,22 @@ export default function AIRecipe({
       }
       // Same normalization on the sketch so pantry-coverage + swap
       // matching downstream work against real canonicals, not the
-      // raw strings Claude handed back.
-      const drafted = coerceRecipeCanonicalIds(result.sketch);
+      // raw strings Claude handed back. Stamp dietaryClaims onto
+      // each ideal slot so diet-loss detection has the signal when
+      // a paired pantry row doesn't carry the same claim.
+      const drafted = stampDietaryClaims(coerceRecipeCanonicalIds(result.sketch));
       setSketch(drafted);
       // Reset the tweak diff every fresh sketch — old swaps from a
-      // previous draft don't apply to the new ingredient list.
-      setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
+      // previous draft don't apply to the new ingredient list. The
+      // initial swaps map is pre-populated by autoPairShoppingRows:
+      // any sketch.pantry row Claude marked as shopping (pantryItemId
+      // null) that we can cover from the user's real pantry gets
+      // swap-linked up front, so the UI's "in-kitchen" tag and
+      // coverage count reflect what the user actually owns. The
+      // matched render branch shows "⚡ AUTO-PAIRED" for these so
+      // the substitution is visible and reversible via SWAP.
+      const autoSwaps = autoPairShoppingRows(drafted, pantry);
+      setPantryEdits({ swaps: autoSwaps, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
       setAddOpen(false);
@@ -554,9 +584,31 @@ export default function AIRecipe({
       // and guarantees the pantry-match loop downstream is operating
       // on real registry slugs.
       const normalized = coerceRecipeCanonicalIds(drafted);
-      setRecipe(normalized);
-      if (normalized?.title) {
-        setPreviousTitles(prev => (prev.includes(normalized.title) ? prev : [...prev, normalized.title]));
+      // Stamp dietaryClaims onto every persisted ingredient row.
+      // Claims are recipe INTENT (the AI asked for "low-carb
+      // tortilla"), not transient pairing — they must survive into
+      // user_recipes so preview/CookMode can warn on diet-loss a
+      // month from now even if the user has different pantry state.
+      // Pairing itself is still re-derived live every render via
+      // pairRecipeIngredients, so brands/availability drift doesn't
+      // fossilize; only the claim labels on each ingredient persist.
+      const claimed = normalized && Array.isArray(normalized.ingredients)
+        ? {
+            ...normalized,
+            ingredients: normalized.ingredients.map(ing => {
+              if (!ing || typeof ing !== "object") return ing;
+              if (Array.isArray(ing.dietaryClaims) && ing.dietaryClaims.length > 0) {
+                return ing;
+              }
+              const { claims } = extractDietaryClaims(ing.item || ing.name || "");
+              if (claims.length === 0) return ing;
+              return { ...ing, dietaryClaims: claims };
+            }),
+          }
+        : normalized;
+      setRecipe(claimed);
+      if (claimed?.title) {
+        setPreviousTitles(prev => (prev.includes(claimed.title) ? prev : [...prev, claimed.title]));
       }
       // Push shopping-source locked items into the parent's shopping
       // list. Happens only after the final cook actually lands so a
@@ -1365,6 +1417,28 @@ export default function AIRecipe({
                   : row.subbedFrom && !isSub
                     ? `subbed from ${row.subbedFrom}`
                     : null;
+                // Diet-loss check. When the AI asked for a claimed
+                // variant ("low-carb tortilla", "vegan sausage") and
+                // we paired a pantry row that doesn't carry that
+                // claim, the substitution silently breaks the dietary
+                // intent. Surface it inline so the user sees the
+                // tradeoff before cooking. Claims are compared
+                // case-insensitively; pantry claims come from scan
+                // attributes (buildAttributesFromScan) or manual
+                // ItemCard edits.
+                const idealClaims = Array.isArray(idealRef?.dietaryClaims)
+                  ? idealRef.dietaryClaims
+                  : (idealRef ? extractDietaryClaims(idealRef.name).claims : []);
+                const rowClaimsRaw = [
+                  ...(Array.isArray(showRow?.attributes?.claims) ? showRow.attributes.claims : []),
+                  ...(Array.isArray(showRow?.attributes?.certifications)
+                    ? showRow.attributes.certifications.map(c => c?.label).filter(Boolean)
+                    : []),
+                ];
+                const rowClaimSet = new Set(rowClaimsRaw.map(c => String(c).toLowerCase()));
+                const lostClaims = idealClaims.filter(
+                  c => !rowClaimSet.has(String(c).toLowerCase()),
+                );
                 return (
                   <div key={`p-${idx}`} style={{
                     padding: "10px 12px",
@@ -1372,12 +1446,29 @@ export default function AIRecipe({
                   }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4" }}>
-                          {swappedRow ? swappedRow.name : row.name} · <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{row.amount}</span>
+                        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                          <span>{deriveRowHeader(swappedRow || row)}</span>
+                          {(() => {
+                            const cut = deriveRowCut(swappedRow || row);
+                            if (!cut) return null;
+                            return (
+                              <span style={{
+                                display: "inline-flex", alignItems: "center",
+                                padding: "1px 7px",
+                                background: "#201a26", border: "1px solid #3b2f48",
+                                borderRadius: 8,
+                                fontFamily: "'DM Mono',monospace", fontSize: 9, fontStyle: "normal",
+                                color: "#c7a8d4", letterSpacing: "0.08em",
+                              }}>
+                                {String(cut).toUpperCase()}
+                              </span>
+                            );
+                          })()}
+                          <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>· {row.amount}</span>
                         </div>
                         {showRow && (
                           <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7ec87e", letterSpacing: "0.06em" }}>
-                            ✓ FROM {showRow.amount}{showRow.unit ? ` ${showRow.unit}` : ""} · {showRow.location || "pantry"}
+                            {row.pantryItemId == null && swappedRow ? "⚡ AUTO-PAIRED FROM" : "✓ FROM"} {showRow.amount}{showRow.unit ? ` ${showRow.unit}` : ""} · {showRow.location || "pantry"}
                           </div>
                         )}
                         {!showRow && row.pantryItemId == null && (
@@ -1395,6 +1486,19 @@ export default function AIRecipe({
                             color: "#d4a878", letterSpacing: "0.04em",
                           }}>
                             ⇌ {subHint}
+                          </div>
+                        )}
+                        {lostClaims.length > 0 && (
+                          <div style={{
+                            marginTop: 4, marginLeft: subHint ? 6 : 0,
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "2px 8px",
+                            background: "#2a1210", border: "1px solid #5a2a22",
+                            borderRadius: 10,
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#e8908a", letterSpacing: "0.04em",
+                          }}>
+                            ⚠ NO LONGER {lostClaims.map(c => c.toUpperCase()).join(" / ")}
                           </div>
                         )}
                         {isExtra && (
@@ -1642,26 +1746,7 @@ export default function AIRecipe({
           )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {(recipe.ingredients || []).map((ing, i) => (
-                <div key={i} style={{
-                  background: "#141414", border: "1px solid #222", borderRadius: 10,
-                  padding: "8px 12px", display: "flex", alignItems: "center", gap: 10,
-                }}>
-                  <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878", minWidth: 60 }}>
-                    {ing.amount || "—"}
-                  </span>
-                  <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                    {ing.item}
-                  </span>
-                  {ing.ingredientId && (
-                    <span style={{ marginLeft: "auto", fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#b8a878" }}>
-                      · {ing.ingredientId}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
+            <IngredientsWithPairing ingredients={recipe.ingredients || []} pantry={pantry} />
           </Section>
 
           <Section label={`STEPS · ${recipe.steps?.length || 0}`}>
@@ -1965,6 +2050,87 @@ export default function AIRecipe({
 }
 
 // ── Shared bits ──────────────────────────────────────────────────────
+
+// Renders the ingredients list on the preview / cook-ready screen
+// with a live-derived "we'll use your X from your fridge" sub-line
+// per row. The pair lookup runs every render against the CURRENT
+// pantry, so the pairing is always fresh — if the user cooks this
+// dish again in a month with different brands on hand, the banner
+// reflects today's pantry, not whatever was stocked when the recipe
+// was first drafted. Only the canonical + dietaryClaims intent
+// persists on the recipe; pantry identity is re-bound live.
+//
+// Tone conventions match the pill palette already in use:
+//   gray  (#7ec87e) — clean pair, in-kitchen
+//   amber (#f59e0b) — substitute or missing, no dietary conflict
+//   red   (#e8908a) — dietary conflict on the chosen pair/sub
+function IngredientsWithPairing({ ingredients, pantry }) {
+  const pairings = pairRecipeIngredients(ingredients, pantry || []);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {pairings.map((p, i) => {
+        const { ingredient: ing, paired, closestMatch, lostClaims } = p;
+        const describe = describePairing(p);
+        const showRow = paired || closestMatch;
+        const cut = showRow ? deriveRowCut(showRow) : null;
+        const toneColor = describe?.tone === "gray"  ? "#7ec87e"
+                        : describe?.tone === "amber" ? "#f59e0b"
+                        : describe?.tone === "red"   ? "#e8908a"
+                        : "#888";
+        const borderColor = describe?.tone === "red" ? "#3a1f1f"
+                          : describe?.tone === "amber" ? "#3a2a1a"
+                          : "#222";
+        return (
+          <div key={i} style={{
+            background: "#141414", border: `1px solid ${borderColor}`, borderRadius: 10,
+            padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878", minWidth: 60 }}>
+                {ing.amount || "—"}
+              </span>
+              <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                {ing.item}
+              </span>
+              {cut && (
+                <span style={{
+                  padding: "1px 7px",
+                  background: "#201a26", border: "1px solid #3b2f48",
+                  borderRadius: 8,
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#c7a8d4", letterSpacing: "0.08em",
+                }}>
+                  {String(cut).toUpperCase()}
+                </span>
+              )}
+              {ing.ingredientId && (
+                <span style={{ marginLeft: "auto", fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#b8a878" }}>
+                  · {ing.ingredientId}
+                </span>
+              )}
+            </div>
+            {describe && (
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11, fontStyle: "italic",
+                color: toneColor, paddingLeft: 70, lineHeight: 1.4,
+              }}>
+                {describe.text}
+                {lostClaims.length > 0 && (
+                  <>
+                    {" — "}
+                    <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, fontStyle: "normal", letterSpacing: "0.04em" }}>
+                      ⚠ NO LONGER {lostClaims.map(c => c.toUpperCase()).join(" / ")}
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function Section({ label, children }) {
   return (
