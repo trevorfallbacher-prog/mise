@@ -242,6 +242,63 @@ function namesMatch(a, b) {
   return na.includes(nb) || nb.includes(na);
 }
 
+// Scan the user's actual pantry for rows that can cover a sketch.pantry
+// row Claude marked as shopping (pantryItemId == null). Returns a
+// map { sketchPantryIdx → pantryRowId } of recommended auto-pairs.
+//
+// Why this exists: the AI frequently emits a sketch.pantry row with
+// pantryItemId: null ("you need to buy tortillas") even when the
+// user's real pantry has a matching item. The ingredientEntries
+// pairing code then renders that row as "matched" — it's not
+// `missing`, so findRawPantryCandidates never runs — and the user
+// sees "NOT IN PANTRY — SHOPPING" on an item they already own. Plus
+// the top-line coverage count reads "you have everything" because
+// the sketch.pantry length equals the ideal length, regardless of
+// whether any of those rows trace back to a real pantryItemId.
+//
+// Auto-pair fixes both: we promote the real pantry row into the
+// pantryEdits.swaps diff before first render, so `showRow` resolves
+// cleanly and the green "FROM your pantry" tag lights up. The swap
+// is rendered as "⚡ AUTO-PAIRED" (not ✓ FROM) so the substitution
+// is visible and the user can still tap SWAP to override.
+//
+// Rules:
+//   - Never steal a pantry row another sketch.pantry row already
+//     claims via pantryItemId.
+//   - Tier 1: canonical-id match (sketch row's ingredientId or
+//     resolved-from-name canonical ↔ pantry row's ingredientId).
+//   - Tier 2: name-fuzzy match via namesMatch — catches free-text
+//     user pantry rows without canonical ids.
+function autoPairShoppingRows(sketch, pantry) {
+  const swaps = {};
+  if (!sketch || !Array.isArray(sketch.pantry) || !Array.isArray(pantry)) return swaps;
+  const used = new Set();
+  for (const row of sketch.pantry) {
+    if (row && row.pantryItemId) used.add(row.pantryItemId);
+  }
+  sketch.pantry.forEach((row, j) => {
+    if (!row || row.pantryItemId) return;
+    const canonId = row.ingredientId || resolveNameToCanonicalId(row.name) || null;
+    let found = null;
+    if (canonId) {
+      found = pantry.find(p =>
+        p && !used.has(p.id) &&
+        (p.ingredientId === canonId || p.canonicalId === canonId),
+      );
+    }
+    if (!found && row.name) {
+      found = pantry.find(p =>
+        p && !used.has(p.id) && namesMatch(p.name, row.name),
+      );
+    }
+    if (found) {
+      used.add(found.id);
+      swaps[j] = found.id;
+    }
+  });
+  return swaps;
+}
+
 // Walk a sketch and stamp each ideal slot with the dietary claims
 // extracted from its name. Non-destructive copy. The claims travel
 // with the slot from ingestion through render so the swap/pair UI
@@ -543,8 +600,16 @@ export default function AIRecipe({
       const drafted = stampDietaryClaims(coerceRecipeCanonicalIds(result.sketch));
       setSketch(drafted);
       // Reset the tweak diff every fresh sketch — old swaps from a
-      // previous draft don't apply to the new ingredient list.
-      setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
+      // previous draft don't apply to the new ingredient list. The
+      // initial swaps map is pre-populated by autoPairShoppingRows:
+      // any sketch.pantry row Claude marked as shopping (pantryItemId
+      // null) that we can cover from the user's real pantry gets
+      // swap-linked up front, so the UI's "in-kitchen" tag and
+      // coverage count reflect what the user actually owns. The
+      // matched render branch shows "⚡ AUTO-PAIRED" for these so
+      // the substitution is visible and reversible via SWAP.
+      const autoSwaps = autoPairShoppingRows(drafted, pantry);
+      setPantryEdits({ swaps: autoSwaps, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
       setAddOpen(false);
@@ -1491,7 +1556,7 @@ export default function AIRecipe({
                         </div>
                         {showRow && (
                           <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7ec87e", letterSpacing: "0.06em" }}>
-                            ✓ FROM {showRow.amount}{showRow.unit ? ` ${showRow.unit}` : ""} · {showRow.location || "pantry"}
+                            {row.pantryItemId == null && swappedRow ? "⚡ AUTO-PAIRED FROM" : "✓ FROM"} {showRow.amount}{showRow.unit ? ` ${showRow.unit}` : ""} · {showRow.location || "pantry"}
                           </div>
                         )}
                         {!showRow && row.pantryItemId == null && (
