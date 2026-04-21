@@ -566,9 +566,28 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     didScrollToTodayRef.current = true;
   });
 
+  const byDay = bucketByDay(meals);
+
+  // Bucket past cooks onto their cooked_at local day so each day card can
+  // render a \"✓ cooked\" section below its planned meals. Separate map so
+  // the ordering inside a day (planned above cooked) stays deterministic.
+  const cooksByDay = useMemo(() => {
+    const map = new Map();
+    for (const c of pastCooks) {
+      const d = new Date(c.cooked_at);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(c);
+    }
+    return map;
+  }, [pastCooks]);
+
   // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
   // Pantry + shoppingList wiring is identical to the Cook tab's path so
   // "ADD MISSING TO SHOPPING LIST" works regardless of where you started.
+  // This early return lives AFTER every hook call — moving it earlier
+  // drops the cooksByDay useMemo on Cook-Now transition and trips
+  // "rendered fewer hooks than expected".
   if (cookingRecipe) {
     return (
       <CookMode
@@ -586,22 +605,6 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       />
     );
   }
-
-  const byDay = bucketByDay(meals);
-
-  // Bucket past cooks onto their cooked_at local day so each day card can
-  // render a \"✓ cooked\" section below its planned meals. Separate map so
-  // the ordering inside a day (planned above cooked) stays deterministic.
-  const cooksByDay = useMemo(() => {
-    const map = new Map();
-    for (const c of pastCooks) {
-      const d = new Date(c.cooked_at);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(c);
-    }
-    return map;
-  }, [pastCooks]);
 
   const onPickRecipe = (recipe) => {
     setRecipeToSchedule(recipe);
