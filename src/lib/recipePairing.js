@@ -253,13 +253,29 @@ export function pairRecipeIngredients(ingredients, pantry) {
     const ingCanonId = ing.ingredientId || resolveNameToCanonicalId(ingName) || null;
     const ingCanon = ingCanonId ? findIngredient(ingCanonId) : null;
 
+    // Tier 0 — explicit pantryItemId from an upstream swap/bind.
+    // When the user swaps "Mozzarella" for their Great Value string
+    // cheese on the AI draft, buildLockedIngredients writes
+    // pantryItemId onto the committed recipe row. That binding is
+    // authoritative — re-matching by name at cook time would throw
+    // it away and (as seen in practice) fall through to a category
+    // fallback that pairs the string cheese with powdered sugar.
+    // Honoring pantryItemId here means every downstream render
+    // (cook prep, preview, schedule) shows the exact row the user
+    // picked, not whatever a fresh name-matcher lands on.
+    let paired = null;
+    if (ing.pantryItemId) {
+      paired = (pantry || []).find(p =>
+        p && !used.has(p.id) && p.id === ing.pantryItemId,
+      ) || null;
+    }
+
     // Tier 1 — exact canonical match (or hub/sibling equivalence).
     // A recipe asking for `chicken_breast` pairs with a pantry row
     // carrying chicken_breast directly. Hub equivalence (asking for
     // `chicken_hub` but having `chicken_thigh`) also paired — same
     // parent means same ingredient family.
-    let paired = null;
-    if (ingCanonId) {
+    if (!paired && ingCanonId) {
       paired = (pantry || []).find(p => {
         if (!p || used.has(p.id)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;

@@ -600,6 +600,39 @@ export default function AIRecipe({
       // and guarantees the pantry-match loop downstream is operating
       // on real registry slugs.
       const normalized = coerceRecipeCanonicalIds(drafted);
+      // Re-stamp pantryItemId from the locked set. The AI response
+      // only carries { item, amount, ingredientId, state? } — it
+      // drops the pantryItemId that buildLockedIngredients wrote
+      // for swapped/bound rows. Without this merge the cook-prep
+      // pairing re-matches from scratch and lands on the wrong row
+      // (in practice: swapping Mozzarella for Great Value string
+      // cheese got re-paired with Powdered Sugar by the category
+      // fallback). We key by ingredientId first (tightest signal)
+      // then by normalized name so brand-prefixed reformulations
+      // like "Great Value String Cheese" still find their locked
+      // pantry binding.
+      const pairedNorm = (s) => String(s || "").toLowerCase().trim();
+      const byCanon = new Map();
+      const byName  = new Map();
+      for (const l of locked) {
+        if (!l || !l.pantryItemId) continue;
+        if (l.ingredientId && !byCanon.has(l.ingredientId)) byCanon.set(l.ingredientId, l.pantryItemId);
+        const n = pairedNorm(l.name);
+        if (n && !byName.has(n)) byName.set(n, l.pantryItemId);
+      }
+      const withPantry = normalized && Array.isArray(normalized.ingredients)
+        ? {
+            ...normalized,
+            ingredients: normalized.ingredients.map(ing => {
+              if (!ing || typeof ing !== "object") return ing;
+              if (ing.pantryItemId) return ing;
+              const canonHit = ing.ingredientId ? byCanon.get(ing.ingredientId) : null;
+              const nameHit  = canonHit ? null : byName.get(pairedNorm(ing.item || ing.name));
+              const pantryItemId = canonHit || nameHit || null;
+              return pantryItemId ? { ...ing, pantryItemId } : ing;
+            }),
+          }
+        : normalized;
       // Stamp dietaryClaims onto every persisted ingredient row.
       // Claims are recipe INTENT (the AI asked for "low-carb
       // tortilla"), not transient pairing — they must survive into
@@ -608,10 +641,10 @@ export default function AIRecipe({
       // Pairing itself is still re-derived live every render via
       // pairRecipeIngredients, so brands/availability drift doesn't
       // fossilize; only the claim labels on each ingredient persist.
-      const claimed = normalized && Array.isArray(normalized.ingredients)
+      const claimed = withPantry && Array.isArray(withPantry.ingredients)
         ? {
-            ...normalized,
-            ingredients: normalized.ingredients.map(ing => {
+            ...withPantry,
+            ingredients: withPantry.ingredients.map(ing => {
               if (!ing || typeof ing !== "object") return ing;
               if (Array.isArray(ing.dietaryClaims) && ing.dietaryClaims.length > 0) {
                 return ing;
@@ -621,7 +654,7 @@ export default function AIRecipe({
               return { ...ing, dietaryClaims: claims };
             }),
           }
-        : normalized;
+        : withPantry;
       setRecipe(claimed);
       if (claimed?.title) {
         setPreviousTitles(prev => (prev.includes(claimed.title) ? prev : [...prev, claimed.title]));
