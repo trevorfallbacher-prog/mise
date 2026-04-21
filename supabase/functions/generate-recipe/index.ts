@@ -58,6 +58,10 @@ type PantryItem = {
   unit?: string;
   category?: string;
   state?: string | null;
+  // CUT axis (migration 0122). "breast" / "thigh" / "ribeye". Orthogonal
+  // to state per CLAUDE.md. Surfaced to the AI so it can differentiate
+  // chicken breast from chicken thigh without resorting to subs.
+  cut?: string | null;
   location?: string | null;
   daysToExpiry?: number | null;
   kind?: string | null;
@@ -175,12 +179,19 @@ function assemblePromptHeader(
     : pantry
         .map((p) => {
           const amount = p.amount != null ? `${p.amount}${p.unit || ""}` : "";
+          // Order: id first (identity signal — matters most for slot
+          // matching), then cut (anatomy on meats), then state (prep
+          // form), then category/location/amount/expiry context.
+          // Putting id first nudges Claude to read canonical identity
+          // before the display name and reduces "let me sub something
+          // different" decisions on rows that are already exact matches.
           const facts = [
+            p.canonicalId ? `id:${p.canonicalId}` : "",
+            p.cut ? `cut:${p.cut}` : "",
+            p.state ? `state:${p.state}` : "",
             p.star ? "★ STARRED BY USER" : "",
             amount,
-            p.canonicalId ? `id:${p.canonicalId}` : "",
             p.category || "",
-            p.state ? `state:${p.state}` : "",
             p.location ? `loc:${p.location}` : "",
             p.kind && p.kind !== "ingredient" ? `kind:${p.kind}` : "",
             typeof p.daysToExpiry === "number"
@@ -452,9 +463,10 @@ exact shape:
   "estimatedTime": { "prep": <minutes>, "cook": <minutes> },
   "ideal": [
     {
-      "name":   "<canonical ingredient name, e.g. 'mozzarella'>",
-      "amount": "<display, e.g. '8 oz'>",
-      "role":   "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
+      "name":         "<CLEAN CANONICAL NAME ONLY — e.g. 'mozzarella', 'flour tortillas', 'chicken breast'. One-to-three words. No prep verbs, no counts, no brand, no parentheticals.>",
+      "amount":       "<display, e.g. '8 oz'>",
+      "ingredientId": "<the canonical slug you have in mind — e.g. 'tortillas', 'mozzarella', 'chicken_breast'. Use the registry's canonical id so the client can objectively verify whether the user's pantry covers this slot. null only when no registry slug fits.>",
+      "role":         "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
     },
     ...
   ],
@@ -484,12 +496,43 @@ Rules:
     "pantryItemId" to that row's id (the "id:..." token in the
     PANTRY table). null only when this ingredient is something the
     user would need to shop for.
-  - "subbedFrom" tells the user "we used Parmesan because you
-    didn't have Mozzarella." null when the pantry item matches the
-    ideal directly.
+
+  - NEVER SUBSTITUTE WHEN AN EXACT PANTRY MATCH EXISTS. Before
+    writing a PANTRY entry as a sub, scan the PANTRY block above for
+    an item whose canonical id (the "id:..." token) matches the
+    IDEAL's ingredientId. If one exists, you MUST use that row
+    verbatim — no creative subs, no "wrapper substitute" style
+    swaps, no upgrading to a fancier-sounding ingredient.
+      Example 1 (CORRECT):
+        IDEAL: { name: "flour tortillas", ingredientId: "tortillas" }
+        PANTRY has: "Mission Tortillas" (id:tortillas)
+        → PANTRY entry: { name: "Mission Tortillas", ingredientId: "tortillas", subbedFrom: null }
+      Example 2 (WRONG):
+        Same inputs
+        → PANTRY entry: { name: "Croissant Rolls", subbedFrom: "flour tortillas" }
+        This is a bug. The user has tortillas. Use them.
+
+  - Substitution is ONLY legitimate when the pantry lacks the ideal
+    AND a same-family item is on hand. "Classic calls for parmesan,
+    user has pecorino" is a real sub. "Classic calls for tortillas,
+    user has tortillas" is not a sub at all — just use them.
+
+  - "subbedFrom" is non-null ONLY on genuine swaps (case above).
+    null when the pantry item matches the ideal directly — including
+    when brand/packaging differs (Mission Tortillas for tortillas
+    is NOT a sub).
+
   - "missingFromIdeal: true" only when you ADDED something beyond
     the classical recipe (rare — e.g., the user starred an extra
     protein that doesn't traditionally go in this dish).
+
+  - NAME HYGIENE on both IDEAL and PANTRY entries: "name" is clean
+    identity only. NEVER stuff prep ("chicken breast, cut into
+    bite-sized pieces"), counts ("4 tortillas"), brand inside the
+    name ("Kerrygold butter, softened"), or parentheticals into
+    "name". Prep is a step-level concern handled in the FINAL pass;
+    the sketch traffics in ingredient identities only.
+
   - 4-12 ideal ingredients, 4-12 pantry ingredients.
   - Keep the rationale short — this is a sketch. Detail comes on
     the FINAL pass.

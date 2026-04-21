@@ -204,6 +204,34 @@ function autoPairShoppingRows(sketch, pantry) {
       swaps[j] = found.id;
     }
   });
+
+  // Spurious-sub auto-correct. The AI occasionally substitutes when
+  // the pantry HAS the exact ideal — "classic calls for flour
+  // tortillas, we subbed Croissant Rolls" while Mission Tortillas
+  // sits right there. Prompt rules push against this but belt-and-
+  // suspenders: for every sketch.pantry row with a subbedFrom, try
+  // resolving the original to a canonical and check if the user's
+  // real pantry has a direct family match. If yes, override the
+  // sketch's chosen row with the canonical match — user still sees
+  // the swap affordance and can re-substitute if they actually
+  // wanted the AI's sub.
+  sketch.pantry.forEach((row, j) => {
+    if (!row || !row.subbedFrom) return;
+    const origSlug = resolveNameToCanonicalId(row.subbedFrom);
+    if (!origSlug) return;
+    const directMatch = pantry.find(p => {
+      if (!p || used.has(p.id)) return false;
+      const pSlug = p.ingredientId || p.canonicalId || null;
+      if (!pSlug) return false;
+      return sameCanonicalFamily(pSlug, origSlug);
+    });
+    if (!directMatch) return;
+    // If the AI already pointed this row at directMatch, leave it
+    // alone — nothing to correct.
+    if (row.pantryItemId === directMatch.id) return;
+    used.add(directMatch.id);
+    swaps[j] = directMatch.id;
+  });
   return swaps;
 }
 

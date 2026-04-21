@@ -117,6 +117,12 @@ export function buildAIContext({
       unit:          item.unit ?? null,
       category:      item.category ?? null,
       state:         item.state ?? null,
+      // Cut axis (migration 0122). "breast" / "thigh" / "ribeye" /
+      // etc. Surfaced to the AI so it can differentiate the specific
+      // anatomy the user owns — without this the prompt sees only
+      // "id:chicken" and can't tell breast vs thigh, which feeds
+      // spurious subs ("let me suggest something else instead").
+      cut:           item.cut ?? null,
       location:      item.location ?? null,
       daysToExpiry:  daysToExpiry,            // negative = already expired
       kind:          item.kind ?? null,       // "ingredient" | "leftovers" | "compound"
