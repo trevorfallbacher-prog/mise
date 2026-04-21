@@ -142,6 +142,14 @@ export function namesMatch(a, b) {
 // the identity-stable way to match across cuts without falling back
 // to fragile name-string tricks (which tightened namesMatch no longer
 // allows — "chicken" and "chicken breast" have different head nouns).
+//
+// Use sameCanonicalFamily for PAIRING questions ("does the user have
+// something that can cover this recipe slot?"). Do NOT use it for
+// DEDUCTION questions ("which pantry rows come out when the user
+// cooks this?") — hub siblings like heavy_cream + milk are the same
+// family but different canonicals, and you don't drain milk to cook
+// with heavy cream. resolvesToSameCanonical below is the helper for
+// the deduction path.
 export function sameCanonicalFamily(slugA, slugB) {
   if (!slugA || !slugB) return false;
   if (slugA === slugB) return true;
@@ -151,6 +159,21 @@ export function sameCanonicalFamily(slugA, slugB) {
   const pb = b?.parentId || b?.id || null;
   if (!pa || !pb) return false;
   return pa === pb;
+}
+
+// Narrow companion to sameCanonicalFamily: true iff two slugs resolve
+// to the SAME canonical after alias redirect. Catches the legacy-
+// compound-slug case (chicken_breast alias → chicken matches a
+// pantry row tagged chicken + cut=breast) without widening to hub
+// siblings. Use this for deduction paths where spending one
+// ingredient on another's row would be wrong (heavy_cream recipe
+// must NOT drain milk rows, even though they share milk_hub).
+export function resolvesToSameCanonical(slugA, slugB) {
+  if (!slugA || !slugB) return false;
+  if (slugA === slugB) return true;
+  const a = resolveCanonicalIdentity(slugA);
+  const b = resolveCanonicalIdentity(slugB);
+  return !!a.canonical && !!b.canonical && a.canonical === b.canonical;
 }
 
 // Resolve a free-text name to a canonical slug via best-score fuzzy

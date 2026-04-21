@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, convertWithBridge, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
-import { sameCanonicalFamily } from "../lib/recipePairing";
+import { sameCanonicalFamily, resolvesToSameCanonical } from "../lib/recipePairing";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -70,18 +70,18 @@ export function buildInitialUsedItems(recipe, pantry) {
     // auto-picked default is the oldest-expiring instance — consume
     // before it spoils. Matches the stack-drilldown FIFO ordering so
     // the user's mental model ("oldest first") holds across surfaces.
-    // Match pantry rows via sameCanonicalFamily so a recipe ingredient
-    // tagged chicken_breast (legacy compound slug) still pairs with
-    // a pantry row tagged chicken + cut=breast (new model), and vice
-    // versa. Without this, the "What did you use?" screen shows
-    // every row as NOT IN PANTRY whenever there's a canonical-
-    // generation mismatch between the recipe and the pantry — same
-    // class of bug that was in CookMode.rowHasIngredient before the
-    // earlier fix. Shared helper from recipePairing is the single
-    // source of truth for "are these the same ingredient family?"
+    // Match pantry rows via resolvesToSameCanonical — exact canonical
+    // after alias redirect, NOT hub widening. Deduction is narrower
+    // than pairing: a recipe asking for heavy_cream must NOT drain
+    // milk rows even though they share milk_hub (different canonicals,
+    // different ingredients). User saw "33.3 quarts LEFT AFTER COOK"
+    // when sameCanonicalFamily swept every dairy row into the meter.
+    // Aliases still redirect (chicken_breast legacy slug hits a
+    // chicken + cut=breast new-model row), which is what buildRemoval-
+    // Plan's cascade is built for — but hub-siblings stay distinct.
     const matches = ing.ingredientId
       ? list.filter(p =>
-          sameCanonicalFamily(p.ingredientId, ing.ingredientId) &&
+          resolvesToSameCanonical(p.ingredientId, ing.ingredientId) &&
           (p.kind || "ingredient") === "ingredient" &&
           Number(p.amount) > 0
         ).sort((a, b) => {
@@ -930,6 +930,26 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                           ))}
                         </select>
                       </div>
+                      {/* Meter diagnostic — if the gate below fails
+                          we used to silently render nothing, making
+                          "chicken gives me no slider" a mystery.
+                          Short honest label tells why so we can
+                          debug without staring at the code. */}
+                      {!(match && maxInUsed != null && maxInUsed > 0) && (
+                        <div style={{
+                          fontFamily:"'DM Mono',monospace", fontSize:9,
+                          color:"#555", letterSpacing:"0.04em",
+                          fontStyle:"italic",
+                        }}>
+                          {!match
+                            ? "(no pantry row selected — meter hidden)"
+                            : maxInUsed == null
+                              ? `(can't convert pantry ${match.unit} → ${row.usedUnit} — meter hidden)`
+                              : maxInUsed <= 0
+                                ? "(pantry row shows 0 — meter hidden)"
+                                : "(meter unavailable)"}
+                        </div>
+                      )}
                       {match && maxInUsed != null && maxInUsed > 0 && (() => {
                         // Three nested bars telling the full story
                         // of what happens to the pantry as the user
