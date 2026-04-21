@@ -139,9 +139,28 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
     (isMealRow && reheat) ? "reheat" : "amount"
   );
 
+  // Unified method list: primary first, then any alternatives the
+  // recipe author supplied. User picks which one they're actually
+  // using (pizza is phenomenal stovetop but a microwave works in a
+  // pinch; lasagna wants the oven but a midnight slab can go
+  // stovetop). Selected method drives the hero copy AND the timer's
+  // target duration so the countdown reflects the device actually in
+  // use, not the nominal "primary" one.
+  const reheatMethods = useMemo(() => {
+    if (!reheat?.primary) return [];
+    const primary = { ...reheat.primary, _isPrimary: true };
+    const alts = Array.isArray(reheat.alt) ? reheat.alt.filter(Boolean) : [];
+    return [primary, ...alts];
+  }, [reheat]);
+  const [activeMethodIdx, setActiveMethodIdx] = useState(0);
+  const activeMethod = reheatMethods[activeMethodIdx] || null;
+
   // Reheat countdown state — opt-in: user taps I'M HEATING to start,
   // tapping again (or READY) advances to the amount phase. Timer is
-  // informational only; nothing in the data layer depends on it.
+  // informational only; nothing in the data layer depends on it. The
+  // countdown is tied to whichever method is currently selected, so
+  // switching methods mid-walkthrough resets the timer to that
+  // method's duration.
   const [heatingSince, setHeatingSince] = useState(null);
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -149,8 +168,11 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
     const id = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(id);
   }, [heatingSince]);
+  // Reset the timer when the active method changes — otherwise the
+  // countdown shows stale elapsed time from the previous method.
+  useEffect(() => { setHeatingSince(null); }, [activeMethodIdx]);
   const elapsedSec = heatingSince ? Math.floor((Date.now() - heatingSince) / 1000) : 0;
-  const targetSec = Number(reheat?.primary?.timeMin) > 0 ? Number(reheat.primary.timeMin) * 60 : 0;
+  const targetSec = Number(activeMethod?.timeMin) > 0 ? Number(activeMethod.timeMin) * 60 : 0;
   const remainingSec = Math.max(0, targetSec - elapsedSec);
   const fmtTimer = (s) => {
     const m = Math.floor(s / 60);
@@ -159,6 +181,24 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   };
   // Silence "unused" complaints on tick without an explicit reference.
   void tick;
+
+  // Method label for chips + mini-summary when we need a short name.
+  const METHOD_EMOJI = {
+    oven: "♨",
+    microwave: "📡",
+    stovetop: "🔥",
+    air_fryer: "🌀",
+    toaster_oven: "🥯",
+    cold: "🧊",
+  };
+  const METHOD_LABEL = {
+    oven: "Oven",
+    microwave: "Microwave",
+    stovetop: "Stovetop",
+    air_fryer: "Air fryer",
+    toaster_oven: "Toaster oven",
+    cold: "Cold",
+  };
 
   // Live macro preview. Re-resolves on every amount/unit tick so the
   // number on the confirm button matches exactly what the tally will
@@ -243,11 +283,55 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           </div>
         </div>
 
-        {phase === "reheat" && reheat && (
+        {phase === "reheat" && reheat && activeMethod && (
           <div>
-            {/* Method hero — big, cook-style. The primary row reads
-                like a cook step so the walkthrough feels like cooking,
-                not a data form. */}
+            {/* Method switcher — every authored path (primary + alts)
+                is a pickable chip. Tap to make active; hero, tips, and
+                timer all retarget to that method. The recipe's
+                "best" method carries a small ★ so the original intent
+                is still legible, but the user's kitchen reality wins.
+                Only rendered when there's more than one method to
+                pick from — single-method recipes stay visually clean. */}
+            {reheatMethods.length > 1 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                {reheatMethods.map((m, i) => {
+                  const active = i === activeMethodIdx;
+                  return (
+                    <button
+                      key={`${m.method}-${i}`}
+                      type="button"
+                      onClick={() => setActiveMethodIdx(i)}
+                      style={{
+                        flex: "1 1 auto", minWidth: 0,
+                        padding: "10px 12px",
+                        background: active ? "#f5c842" : "#141414",
+                        border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                        color: active ? "#111" : "#bbb",
+                        borderRadius: 10,
+                        fontFamily: "'DM Mono',monospace", fontSize: 11,
+                        fontWeight: active ? 700 : 500,
+                        letterSpacing: "0.05em",
+                        cursor: "pointer",
+                        display: "flex", alignItems: "center",
+                        justifyContent: "center", gap: 6,
+                      }}
+                    >
+                      <span style={{ fontSize: 14 }}>{METHOD_EMOJI[m.method] || "♨"}</span>
+                      <span>{(METHOD_LABEL[m.method] || m.method).toUpperCase()}</span>
+                      {m._isPrimary && (
+                        <span style={{ fontSize: 9, color: active ? "#111" : "#f5c842" }}>★</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Method hero — big, cook-style. Retargets on chip change.
+                The `primary` flag surfaces as a small subtext so the
+                user knows when they've picked the non-default option
+                (useful signal: "I'm using the alt — expect a different
+                result than the recipe nails"). */}
             <div style={{
               padding: "16px 18px", marginBottom: 12,
               background: "#1a1608", border: "1px solid #3a2f10",
@@ -255,13 +339,16 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
             }}>
               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.14em", marginBottom: 8 }}>
                 ♨ REHEAT · STEP 1 OF 2
+                {!activeMethod._isPrimary && reheatMethods.length > 1 && (
+                  <span style={{ marginLeft: 8, color: "#a99870" }}>· ALTERNATIVE METHOD</span>
+                )}
               </div>
               <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 26, fontWeight: 300, color: "#f0ece4", lineHeight: 1.15, marginBottom: 8 }}>
-                {formatReheatSummary(reheat)}
+                {formatReheatSummary({ primary: activeMethod })}
               </div>
-              {reheat.primary?.tips && (
+              {activeMethod.tips && (
                 <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#ddd", lineHeight: 1.45 }}>
-                  {reheat.primary.tips}
+                  {activeMethod.tips}
                 </div>
               )}
               {reheat.note && (
@@ -271,9 +358,9 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
               )}
             </div>
 
-            {/* Timer band. Opt-in — user taps I'M HEATING to start
-                the countdown. Nothing persists; this is a quiet kitchen
-                companion, not a data signal. Hit READY any time. */}
+            {/* Timer band. Countdown duration tied to the currently
+                selected method — switching chips resets and retargets.
+                Opt-in; nothing persists. */}
             {targetSec > 0 && (
               <div style={{
                 padding: "14px 16px", marginBottom: 12,
@@ -314,22 +401,9 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
                       letterSpacing: "0.1em", cursor: "pointer",
                     }}
                   >
-                    ▶ I'M HEATING · {reheat.primary.timeMin} MIN
+                    ▶ I'M HEATING · {activeMethod.timeMin} MIN
                   </button>
                 )}
-              </div>
-            )}
-
-            {/* Alternative methods — collapsed details if user prefers
-                another device. Same content as before; compact. */}
-            {Array.isArray(reheat.alt) && reheat.alt.length > 0 && (
-              <div style={{ padding: "10px 14px", marginBottom: 12, background: "#0f0f0f", border: "1px dashed #2a2a2a", borderRadius: 10 }}>
-                {reheat.alt.map((a, i) => (
-                  <div key={i} style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#a99870", marginBottom: i === reheat.alt.length - 1 ? 0 : 6, lineHeight: 1.5 }}>
-                    OR · {formatReheatSummary({ primary: a })}
-                    {a.tips ? <div style={{ color: "#666", marginTop: 2 }}>{a.tips}</div> : null}
-                  </div>
-                ))}
               </div>
             )}
 

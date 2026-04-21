@@ -572,14 +572,29 @@ exact shape. Every field is REQUIRED unless marked optional.
   "tags": ["<short tag>", ...],                         // 2-5 useful tags
   "reheat": {                                           // REQUIRED when the dish keeps as a leftover
     "primary": {
+      // The BEST method for this specific dish — not a default.
+      //   Pizza: "stovetop" (cast iron pan, crisps the base).
+      //   Lasagna / casseroles: "oven" (even heat, no sog).
+      //   Soup / braise: "stovetop" (avoid the microwave rubber).
+      //   Fried food / wings: "air_fryer" or "oven" (re-crisp).
+      //   Egg dishes / frittata: "cold" or "toaster_oven" (gentle).
       "method":   "oven" | "microwave" | "stovetop" | "air_fryer" | "toaster_oven" | "cold",
       "tempF":    <number or null for microwave/cold>,
       "timeMin":  <number of minutes — single number, not a range>,
       "covered":  <true | false | null when N/A>,
       "tips":     "<1-2 sentence specifics — 'splash of water', 'cover with foil until last 5 min', 'medium-low or the sauce breaks'>"
     },
-    "alt": [                                            // OPTIONAL — 0-2 alternatives
-      { "method": "...", "tempF": ..., "timeMin": ..., "covered": ..., "tips": "..." }
+    "alt": [                                            // 0-2 alternatives — OFFER WHEN VIABLE
+      // Many dishes genuinely have multiple good paths. Pizza is
+      // great stovetop BUT oven also works and microwave works in a
+      // pinch (with honest quality caveats in each tips field).
+      // Lasagna is best oven BUT microwave is a real fallback for a
+      // single serving. DO include the alternatives the user would
+      // plausibly reach for when the primary isn't convenient.
+      // Skip alts only when the dish truly has one path (mandatory
+      // stovetop for egg sauces like carbonara — microwaving them
+      // scrambles; that's a note, not an alt).
+      { "method": "...", "tempF": ..., "timeMin": ..., "covered": ..., "tips": "<what changes vs primary: 'loses crust crispness', 'faster but uneven'>" }
     ],
     "note": "<OPTIONAL quality caveat — 'eggs scramble if rushed', 'pasta gets gummy past 2 days', null if none>"
   },
