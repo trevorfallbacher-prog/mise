@@ -17,6 +17,7 @@ import {
   findIngredient,
   INGREDIENTS,
   fuzzyMatchIngredient,
+  ALL_STATE_TOKENS,
 } from "../data/ingredients";
 
 // ── dietary modifiers ────────────────────────────────────────────────
@@ -75,8 +76,19 @@ export function extractDietaryClaims(name) {
 // "chicken breast, cubed", paren-suffix "chicken breast (cubed)",
 // inline "ground fresh pork") so the head noun survives for
 // identity matching.
-const STATE_TERMS = "ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless";
-const STATE_TOKEN_RE = new RegExp(`\\b(?:${STATE_TERMS})\\b`, "gi");
+//
+// Token list is DERIVED from the registry's INGREDIENT_STATES +
+// STATE_LABELS via ALL_STATE_TOKENS, so adding a new state in one
+// place propagates here automatically — no parallel hardcoded list.
+// Regex is built once at module-init by escaping and joining every
+// known state token. Word-boundary anchoring catches any position.
+const STATE_TOKEN_RE = (() => {
+  const escaped = [...ALL_STATE_TOKENS]
+    .filter(t => t && /^[a-z]+$/i.test(t))
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  return escaped ? new RegExp(`\\b(?:${escaped})\\b`, "gi") : /(?!)/;
+})();
 const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
 const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
 

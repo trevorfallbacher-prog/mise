@@ -5805,19 +5805,14 @@ export function isInSeason(seasonality, hemisphere = "N", month = new Date().get
 // scores against the base tortilla canonical. The modifiers themselves
 // are the pantry row's attributes.claims — matching and claim-tracking
 // are separate axes on purpose (see AIRecipe extractDietaryClaims).
-const FUZZY_NOISE_WORDS = new Set([
-  "organic","grass","fed","free","range","local","fresh","raw","natural",
-  "whole","reduced","fat","lowfat","nonfat","unsalted","salted","sweet",
+// Packaging / size / descriptor noise — not state, not identity.
+const FUZZY_NOISE_WORDS_BASE = new Set([
+  "organic","grass","fed","free","range","local","fresh","natural",
+  "reduced","fat","lowfat","nonfat","unsalted","salted","sweet",
   "large","medium","small","xl","xxl","jumbo","extra","virgin","premium",
   "select","prime","pack","packed","value","family","size","pcs","piece",
   "pieces","ea","each","ct","count","bunch","bag","jar","tin","can","tub",
   "carton","bottle","box","pouch",
-  // State / prep axis (separate identity axis per CLAUDE.md — purple
-  // SET STATE row). "chicken breast, cubed" IS chicken_breast with
-  // a prep note, not a distinct canonical. Must be stripped before
-  // scoring or the head-noun becomes "cubed" and identity misses.
-  "ground","sliced","shredded","minced","crumbled","chopped","diced",
-  "cubed","boneless","skinless",
   // dietary / macro modifiers — stripped here, captured as claims by
   // AIRecipe's extractDietaryClaims before the name hits normalization.
   "lowcarb","lowsugar","lowsodium","zerocarb","zerosugar","carb","carbs",
@@ -5825,19 +5820,33 @@ const FUZZY_NOISE_WORDS = new Set([
   "keto","paleo","whole30","vegan","vegetarian",
   "multigrain","wholegrain","wholewheat","highprotein","protein",
 ]);
+// Full noise set = packaging/descriptor noise UNION every state token
+// the registry recognizes. Derived at module-init from ALL_STATE_TOKENS
+// so adding a new state in INGREDIENT_STATES automatically updates
+// every free-text matcher — no second list to maintain.
+// Note the module initialization order: ALL_STATE_TOKENS is defined
+// further down the file, so we lazy-merge on first use.
+let _fuzzyNoise = null;
+function fuzzyNoiseSet() {
+  if (_fuzzyNoise) return _fuzzyNoise;
+  _fuzzyNoise = new Set(FUZZY_NOISE_WORDS_BASE);
+  for (const t of ALL_STATE_TOKENS) _fuzzyNoise.add(t);
+  return _fuzzyNoise;
+}
 const FUZZY_UNIT_WORDS = new Set([
   "oz","lb","lbs","g","kg","ml","l","liter","liters","gal","gallon","gallons",
   "qt","quart","pt","pint","cup","cups","tbsp","tsp","fl",
 ]);
 
 function fuzzyNormalize(s) {
+  const noise = fuzzyNoiseSet();
   return String(s || "")
     .toLowerCase()
     .replace(/\([^)]*\)/g, " ")     // strip parenthetical asides
     .replace(/[^a-z0-9 ]+/g, " ")   // punctuation → space
     .replace(/\b\d+(\.\d+)?\b/g, " ") // strip numbers (sizes, counts)
     .split(/\s+/)
-    .filter(t => t && !FUZZY_NOISE_WORDS.has(t) && !FUZZY_UNIT_WORDS.has(t))
+    .filter(t => t && !noise.has(t) && !FUZZY_UNIT_WORDS.has(t))
     // Cheap pluralization strip: "eggs" → "egg", "berries" → "berrie" (good
     // enough — fuzzy scoring tolerates the residual mismatch).
     .map(t => t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t)
@@ -6198,6 +6207,51 @@ export const STATE_LABELS = {
   links: "links",       nuggets: "nuggets",  jerky: "jerky",
   // "loaf" already defined above (reused for meatloaf)
 };
+
+// Every state token the registry knows about, flattened into one set
+// for free-text matchers that need to recognize a prep term wherever
+// it shows up ("chicken breast, cubed", "ground fresh pork", "shredded
+// cheese"). Derived from INGREDIENT_STATES + STATE_LABELS so adding a
+// new state in the registry propagates to every matcher with no extra
+// wiring. Multi-word labels ("steak cut") contribute each word
+// separately since matchers operate token-by-token. Common prep
+// descriptors that live outside the formal STATE axis but function
+// identically in free-text ("boneless", "skinless", "chopped") are
+// added as well.
+// Tokens that would cause canonical collisions if stripped as state.
+// Per the STATE-as-axis design (CLAUDE.md), ingredients like tomato
+// paste, chicken sausage, beef jerky, and bread crumbs are NOT new
+// canonicals — they're the base ingredient carrying a STATE value.
+// So "paste", "sausage", "jerky", "crumbs", etc. all strip freely.
+// The one exception is "steak" because "steak sauce" is a genuinely
+// distinct condiment canonical; stripping would collide with other
+// sauces at the head-noun level ("steak sauce" ↔ "soy sauce" both
+// reduce to "sauce"). Keep this list minimal — add only on proven
+// collision, not hypothetically.
+const STATE_TOKEN_EXCLUSIONS = new Set(["steak"]);
+
+export const ALL_STATE_TOKENS = (() => {
+  const out = new Set();
+  const add = (val) => {
+    if (!val || typeof val !== "string") return;
+    for (const tok of val.toLowerCase().split(/[\s_]+/)) {
+      if (tok.length < 3) continue;
+      if (STATE_TOKEN_EXCLUSIONS.has(tok)) continue;
+      out.add(tok);
+    }
+  };
+  for (const list of Object.values(INGREDIENT_STATES)) {
+    if (Array.isArray(list)) for (const s of list) add(s);
+  }
+  for (const [slug, label] of Object.entries(STATE_LABELS)) {
+    add(slug);
+    add(label);
+  }
+  // Not formally STATE but functionally indistinguishable in free
+  // text — AI and users write them interchangeably with state terms.
+  for (const t of ["boneless", "skinless", "chopped"]) add(t);
+  return out;
+})();
 
 export const DEFAULT_STATE_FOR = {
   bread: "loaf",
