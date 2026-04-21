@@ -12,6 +12,8 @@ import NotificationsPanel from "./components/NotificationsPanel";
 import UserProfile from "./components/UserProfile";
 import WhatsNewNotification from "./components/WhatsNewNotification";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
+import LevelUpCeremony from "./components/LevelUpCeremony";
+import XpToastStack from "./components/XpToastStack";
 import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
@@ -98,10 +100,10 @@ export default function App() {
         <Onboarding
           onComplete={async (answers) => {
             await upsertProfile({
-              dietary:     answers.dietary,
-              vegan_style: answers.veganStyle || null,
-              level:       answers.level,
-              goal:        answers.goal,
+              dietary:           answers.dietary,
+              vegan_style:       answers.veganStyle || null,
+              skill_self_report: answers.level,
+              goal:              answers.goal,
             });
           }}
         />
@@ -333,6 +335,17 @@ function AuthedApp({ user, profile, upsertProfile }) {
 
   return (
     <div style={{ ...pageShell, backgroundImage:"radial-gradient(ellipse at 70% 100%,#1a1209 0%,transparent 60%)" }}>
+      {/* Level-up ceremony — watches profile.level for upward
+          movement and plays a full-screen celebration. Self-dismissing
+          and zIndex 9999 so it lands on top of any open sheet. */}
+      <LevelUpCeremony level={profile?.level || 1} />
+
+      {/* Realtime XP toast stack — top-right slide-ins for non-cook
+          earn events (scans, photos, reviews, badges, …). Subscribes
+          to xp_events filtered to this user; suppressed by
+          CookCompleteSummary via context while a beat sequence plays. */}
+      <XpToastStack userId={user?.id} />
+
       <button
         onClick={() => setSettingsOpen(true)}
         title="Settings"

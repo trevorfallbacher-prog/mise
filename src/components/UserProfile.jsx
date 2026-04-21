@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Cookbook from "./Cookbook";
 import NutritionDashboard from "./NutritionDashboard";
+import GateCard from "./GateCard";
+import GatePicker from "./GatePicker";
+import FlairHalo, { isFlairActive } from "./FlairHalo";
 import { useUserProfile } from "../lib/useUserProfile";
 import { useBadges } from "../lib/useBadges";
 import { SKILL_TREE, DIETARY_OPTIONS, LEVEL_OPTIONS, GOAL_OPTIONS } from "../data";
@@ -76,6 +79,9 @@ export default function UserProfile({
   // surface without duplicating that logic. Limited to self + family
   // since RLS only returns cook_logs for those scopes anyway.
   const [showCookbook, setShowCookbook] = useState(false);
+  // Ranked-match picker state; opened from GateCard when all
+  // prereqs are green.
+  const [pickerState, setPickerState] = useState(null);
 
   // Auto-open the Cookbook overlay whenever a cook_log deep-link lands.
   // The embedded Cookbook then consumes the same deepLink prop and
@@ -100,7 +106,7 @@ export default function UserProfile({
   const hasAnySkill = skills.some(s => s.level > 0);
 
   const diet = DIETARY_OPTIONS.find(d => d.id === profile?.dietary);
-  const level = LEVEL_OPTIONS.find(l => l.id === profile?.level);
+  const level = LEVEL_OPTIONS.find(l => l.id === profile?.skill_self_report);
   const goal  = GOAL_OPTIONS.find(g => g.id === profile?.goal);
 
   // Badges — earned (colored) vs catalog-leftover (silhouette) so the
@@ -149,11 +155,15 @@ export default function UserProfile({
           </div>
         ) : (
           <>
-            {/* Identity block — avatar, name, relationship */}
+            {/* Identity block — avatar, name, relationship. Self view
+                gets the FlairHalo when the user's daily roll awarded
+                an avatar_sparkle cosmetic within the flair_hours window. */}
             <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20 }}>
-              <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
-                {initial}
-              </div>
+              <FlairHalo active={isSelf && isFlairActive(profile)} size={72}>
+                <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
+                  {initial}
+                </div>
+              </FlairHalo>
               <div style={{ flex:1, minWidth:0 }}>
                 <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", margin:0, letterSpacing:"-0.02em" }}>
                   {name}
@@ -172,12 +182,33 @@ export default function UserProfile({
               </div>
             </div>
 
+            {/* Level band — numeric level + title + progress bar to
+                next. Curve and titles match xp_config / xp_level_titles
+                so the display is correct until product retunes. */}
+            <LevelBand level={profile?.level || 1} totalXp={profile?.total_xp || 0} />
+
+            {/* Gate card — visible only when the user has an active
+                (non-passed) user_gate_progress row. Self-only: a
+                family member shouldn't see your in-progress
+                ranked-match until you pass it. */}
+            {isSelf && (
+              <GateCard
+                userId={viewerId}
+                onOpenPicker={(gate, progress) => setPickerState({ gate, progress })}
+              />
+            )}
+
+
             {/* Quick stats band — XP / cooks / nailed / streak */}
             <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:8, marginBottom:20 }}>
               <Stat value={stats.xp} label="XP" color="#f5c842" />
               <Stat value={stats.cookCount} label="COOKS" />
               <Stat value={stats.nailedCount} label="🤩" color="#f5c842" />
-              <Stat value={profile?.streak_count ?? 0} label="🔥" color="#e07a3a" />
+              <FlameStat
+                count={profile?.streak_count ?? 0}
+                tier={profile?.streak_tier ?? 0}
+                shields={profile?.streak_shields ?? 0}
+              />
             </div>
 
             {/* Nutrition dashboard — per-user tally of calories/protein/
@@ -356,6 +387,16 @@ export default function UserProfile({
           />
         </div>
       )}
+
+      {pickerState && (
+        <GatePicker
+          userId={viewerId}
+          gate={pickerState.gate}
+          progress={pickerState.progress}
+          onClose={() => setPickerState(null)}
+          onPicked={() => setPickerState(null)}
+        />
+      )}
     </div>
   );
 }
@@ -381,11 +422,105 @@ function Chip({ color = "#2a2a2a", bg = "#1a1a1a", text = "#bbb", children }) {
   );
 }
 
+// Numeric level + title + XP-to-next progress bar. Pure client math
+// mirrors xp_to_next(L) = round(100 * L^1.6) from 0102. Source of
+// truth is xp_config / xp_level_titles; if product retunes the curve
+// the DB stays authoritative and this component re-renders against
+// the user's recomputed profile.level.
+const LEVEL_TITLES = [
+  { min: 1,  max: 5,   title: "Apprentice" },
+  { min: 6,  max: 10,  title: "Line Cook" },
+  { min: 11, max: 20,  title: "Home Chef" },
+  { min: 21, max: 35,  title: "Sous Chef" },
+  { min: 36, max: 50,  title: "Head Chef" },
+  { min: 51, max: 75,  title: "Executive Chef" },
+  { min: 76, max: 999, title: "Iron Chef" },
+];
+function titleForLevel(L) {
+  const row = LEVEL_TITLES.find(r => L >= r.min && L <= r.max);
+  return row?.title || "Apprentice";
+}
+function xpToNext(L) {
+  return Math.max(1, Math.round(100 * Math.pow(L, 1.6)));
+}
+function xpInLevel(totalXp, L) {
+  // Sum cumulative xp_to_next(1..L-1) and subtract from totalXp.
+  let sum = 0;
+  for (let i = 1; i < L; i++) sum += xpToNext(i);
+  return Math.max(0, totalXp - sum);
+}
+
+function LevelBand({ level, totalXp }) {
+  const title = titleForLevel(level);
+  const inLevel = xpInLevel(totalXp, level);
+  const toNext = xpToNext(level);
+  const pct = Math.min(100, (inLevel / toNext) * 100);
+
+  return (
+    <div style={{
+      background: "#161616", border: "1px solid #2a2a2a", borderRadius: 12,
+      padding: "12px 14px", marginBottom: 20,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+        <div>
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#666", letterSpacing: "0.08em" }}>
+            L
+          </span>
+          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 28, fontWeight: 400, color: "#f5c842", marginLeft: 2 }}>
+            {level}
+          </span>
+          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 15, fontStyle: "italic", color: "#f0ece4", marginLeft: 10 }}>
+            {title}
+          </span>
+        </div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+          {inLevel.toLocaleString()} / {toNext.toLocaleString()}
+        </div>
+      </div>
+      <div style={{ background: "#0a0a0a", borderRadius: 6, height: 8, overflow: "hidden" }}>
+        <div style={{
+          width: `${pct}%`, height: "100%",
+          background: "linear-gradient(90deg, #e07a3a, #f5c842)",
+          transition: "width 400ms ease-out",
+        }} />
+      </div>
+    </div>
+  );
+}
+
 function Stat({ value, label, color = "#f0ece4" }) {
   return (
     <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"12px 4px", textAlign:"center" }}>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color, fontWeight:500 }}>{value}</div>
       <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginTop:2 }}>{label}</div>
+    </div>
+  );
+}
+
+// Fire-mode flame-stack stat. Flame count matches the streak tier
+// (0-4 from xp_streak_tiers.flame_count). Particle-halo intensity
+// is a hint encoded in the border/shadow strength here; the richer
+// particle field lands with the celebration layer in Phase 5.
+// Shield dots render below the count when the user is holding any.
+function FlameStat({ count, tier, shields }) {
+  const flames = Math.max(0, Math.min(4, tier));
+  const halo = ["none", "0 0 6px rgba(224,122,58,.25)", "0 0 10px rgba(224,122,58,.4)", "0 0 14px rgba(224,122,58,.55)", "0 0 20px rgba(245,200,66,.7)"][flames];
+  return (
+    <div style={{
+      background:"#161616", border:"1px solid #2a2a2a", borderRadius:12,
+      padding:"12px 4px", textAlign:"center", boxShadow: halo,
+    }}>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:20, color:"#e07a3a", fontWeight:500 }}>
+        {count}
+      </div>
+      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.08em", marginTop:2, display:"flex", alignItems:"center", justifyContent:"center", gap:2 }}>
+        <span>{flames > 0 ? "🔥".repeat(flames) : "🔥"}</span>
+      </div>
+      {shields > 0 && (
+        <div style={{ marginTop:4, fontSize:9, color:"#7eb8d4", fontFamily:"'DM Mono',monospace", letterSpacing:"0.08em" }}>
+          {"🛡".repeat(shields)}
+        </div>
+      )}
     </div>
   );
 }

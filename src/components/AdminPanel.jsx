@@ -81,6 +81,7 @@ export default function AdminPanel({ userId, onClose }) {
             { id: "enrichments", label: "ENRICHMENTS" },
             { id: "canonicals",  label: "CANONICALS" },
             { id: "recipes",     label: "RECIPES" },
+            { id: "xp",          label: "XP ECONOMY" },
           ].map(t => (
             <button
               key={t.id}
@@ -104,6 +105,7 @@ export default function AdminPanel({ userId, onClose }) {
         {tab === "enrichments" && <PendingEnrichmentsList viewerId={userId} />}
         {tab === "canonicals"  && <CanonicalsList viewerId={userId} />}
         {tab === "recipes"     && <RecipeSubmissionsList viewerId={userId} />}
+        {tab === "xp"          && <XpEconomyStats viewerId={userId} />}
       </div>
     </div>
   );
@@ -1248,3 +1250,112 @@ function Empty({ msg }) {
     </div>
   );
 }
+
+// XP economy observability panel. Calls the xp_economy_stats RPC
+// (admin-gated, SECURITY DEFINER) and renders the telemetry from
+// §7 of the XP plan: median/P90 per-user XP, cap-hit counts,
+// streak histogram, curated share, revival usage, gate-blocked
+// XP, median time to L10.
+function XpEconomyStats() {
+  const [stats, setStats]   = useState(null);
+  const [loading, setLoad]  = useState(true);
+  const [error,   setError] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data, error: e } = await supabase.rpc("xp_economy_stats");
+      if (!alive) return;
+      if (e) { setError(e); setStats(null); }
+      else   { setStats(data || {}); setError(null); }
+      setLoad(false);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (loading) return <div style={statusStyle}>Loading XP stats…</div>;
+  if (error)   return <div style={statusStyle}>Load failed: {error.message}</div>;
+  if (!stats)  return <div style={statusStyle}>No stats returned.</div>;
+
+  const hist = stats.streak_length_histogram || {};
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <StatRow label="Active users (7d)"        value={stats.active_users_last_7} />
+      <StatRow label="Median XP/user/day (28d)" value={stats.median_xp_per_user_day} />
+      <StatRow label="P90 XP/user/day (28d)"    value={stats.p90_xp_per_user_day} />
+      <StatRow label="Events (30d)"             value={stats.total_events_30} />
+      <StatRow label="Cap-trimmed events (30d)" value={stats.cap_hit_count_30} sub={pctOf(stats.cap_hit_count_30, stats.total_events_30)} />
+      <StatRow label="Hard-capped zeros (30d)"  value={stats.hard_cap_zeroed_count_30} sub={pctOf(stats.hard_cap_zeroed_count_30, stats.total_events_30)} />
+      <StatRow label="Curated share (30d)"      value={`${stats.curated_share_pct}%`} />
+      <StatRow label="Revivals (30d)"           value={stats.revival_usage_30} />
+      <StatRow label="XP blocked by gates (30d)" value={stats.xp_blocked_by_gates_30} />
+      <StatRow label="Median days to L10"       value={stats.median_days_to_l10} />
+
+      <div style={{
+        marginTop: 4, background: "#0a0a0a", border: "1px solid #1e1e1e",
+        borderRadius: 10, padding: "12px 14px",
+      }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666",
+          letterSpacing: "0.14em", marginBottom: 8,
+        }}>
+          STREAK LENGTH · CURRENT
+        </div>
+        {["0", "1-2", "3-6", "7-13", "14-29", "30+"].map(b => (
+          <div key={b} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <div style={{ width: 44, fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>{b}</div>
+            <div style={{ flex: 1, background: "#141414", borderRadius: 4, height: 6, overflow: "hidden" }}>
+              <div style={{
+                height: "100%", background: "#e07a3a",
+                width: `${pctBar(hist[b] || 0, hist)}%`,
+                transition: "width 240ms ease-out",
+              }} />
+            </div>
+            <div style={{ width: 34, textAlign: "right", fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#aaa" }}>
+              {hist[b] || 0}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StatRow({ label, value, sub }) {
+  return (
+    <div style={{
+      background: "#0a0a0a", border: "1px solid #1e1e1e", borderRadius: 10,
+      padding: "10px 14px", display: "flex", alignItems: "baseline", justifyContent: "space-between",
+    }}>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888", letterSpacing: "0.08em" }}>
+        {label}
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+        <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 16, color: "#f5c842", fontWeight: 500 }}>
+          {value ?? "—"}
+        </span>
+        {sub && (
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#666" }}>
+            {sub}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function pctOf(n, d) {
+  if (!d || d === 0) return "";
+  return `(${Math.round((n / d) * 100)}%)`;
+}
+function pctBar(value, hist) {
+  const max = Math.max(1, ...Object.values(hist || {}).map(Number));
+  return Math.round((Number(value || 0) / max) * 100);
+}
+
+const statusStyle = {
+  padding: "28px 16px", textAlign: "center",
+  background: "#0a0a0a", border: "1px dashed #242424", borderRadius: 10,
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic",
+};

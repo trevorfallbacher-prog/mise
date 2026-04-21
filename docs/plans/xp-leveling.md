@@ -169,6 +169,77 @@ L20→L21 ≈ 12,100, L50→L51 ≈ 61,800. Curated 3× ladder is what
 makes L50+ tractable for the dedicated cook without requiring
 decades.
 
+### Level gates (ranked-match progression walls)
+
+Raw XP alone doesn't make a chef. At each title-tier boundary the
+user hits a **gate** — a hard wall that only lifts when they
+demonstrate they can actually cook at the next tier. Without gates,
+a user could grind cereal + chicken-and-rice to L76 and wear the
+Iron Chef title without ever having made anything challenging.
+
+**Gate points** (aligned to title-tier transitions):
+
+| Gate | From → To                              | Key change  |
+| ---- | -------------------------------------- | ----------- |
+| L20  | Home Chef → Sous Chef                  | First gate  |
+| L35  | Sous Chef → Head Chef                  |             |
+| L50  | Head Chef → Executive Chef             |             |
+| L75  | Executive Chef → Iron Chef             | Last gate   |
+
+L10 deliberately NOT gated — new users need a smooth first month.
+
+**Hard XP stop (critical):** when a user reaches a gate's floor XP,
+`profiles.level` stops advancing AND `profiles.total_xp` stops
+accruing. Additional earns write `xp_events` rows with `final_xp =
+0` and the adjustment logged in a new `gate_adjustment` column for
+telemetry ("how much XP did gates block"). Missed XP is genuinely
+lost — otherwise a user could bank XP behind the gate, fluke the
+challenge, and skyrocket up multiple levels without ever actually
+cooking at tier. The mechanic's teeth are why it works.
+
+**Gate passage — two stages:**
+
+1. **Prerequisites** — a fixed set of real-cooking achievements
+   the user must complete BEFORE the gate recipe picker unlocks.
+   Prereqs are concrete, measurable things already tracked
+   elsewhere in the system (skill courses, recipe categories,
+   streak count, curated-ladder depth, etc.).
+
+2. **Ranked match** — once prereqs are all green, we present
+   **3 gate recipes** (config-chosen difficult dishes). The user
+   picks 1 as their ranked match. They cook it. The gate passes
+   only if **every diner (including the chef) rates it "Nailed
+   it."** Any other rating = fail, must re-cook (same recipe or
+   swap to another of the 3). Unlimited retries, but each is a
+   real cook — no shortcuts.
+
+**Per-gate spec (prereqs lock now; gate-recipe slugs are TBD and
+config-filled as the curated library fleshes out):**
+
+| Gate | Prerequisites                                                                                                                                                                | Ranked-match |
+| ---- | --- | --- |
+| L20  | 1 skill course completed · cooked ≥1 breakfast + ≥1 lunch + ≥1 dinner recipe · 3-day streak active                                                                          | 3 difficult cross-cuisine picks |
+| L35  | 2 skill courses at ≥L3 · hosted a meal with ≥3 diners · 5+ curated lessons in ≥3 cuisines · 7-day streak active                                                             | 3 signature mains |
+| L50  | 4 skill courses at max L5 · 25+ curated cooks total · 2 curated collections mastered · 14-day streak active                                                                  | 3 chef-tier multi-component dishes |
+| L75  | ALL skill courses maxed · curated ladder max (20+ lessons) in ≥5 cuisines · every curated collection mastered · 30-day streak active                                         | 3 legendary-tier dishes |
+
+**UX beats (Phase 4):**
+
+1. Approaching the gate — progress card appears on UserProfile
+   listing prereqs with progress bars.
+2. Hitting the gate — full-screen "Gate: Home Chef → Sous Chef"
+   ceremony; XP ticker freezes with a lock icon.
+3. Each prereq completed plays a small beat toast.
+4. Once all prereqs green — "ranked match" picker unlocks with the
+   3 gate recipes. User picks, cooks through CookMode normally.
+5. On the cook complete flow for the chosen recipe, rating UI
+   shows "ranked match" framing. Chef rates → diners rate via
+   push. All diners "nailed" = gate breaks, big catch-up animation
+   as `profiles.level` unlocks and the title-tier transition plays.
+6. Any sub-"nailed" rating → fail celebration (warm, not
+   punishing): "good cooks have rough nights — try again when
+   you're ready." Gate stays blocked.
+
 ---
 
 ## 3. Fire mode — streak multiplier & shields
@@ -454,6 +525,22 @@ the level-up ceremony plays. Never interrupts mid-sequence.
 12. **`recipe_mastery`** — `(user_id, recipe_key, cook_count)` to
     drive 5×/10×/25× milestones without scanning `cook_logs` on
     every cook.
+12a. **`xp_level_gates`** — config table, one row per gate level.
+    Columns: `gate_level` (PK), `prereqs_jsonb` (structured DSL
+    listing the concrete achievements required), `gate_recipe_slugs`
+    (text[], the 3 picker options for the ranked match), `label`,
+    `description`, `updated_at`, `updated_by`. Read-all for
+    authenticated; audited via the same trigger family as the
+    other `xp_config*` tables. §2.
+12b. **`user_gate_progress`** — per-user gate state machine.
+    Columns: `user_id`, `gate_level`, `status` ('pending' |
+    'prereqs_met' | 'in_match' | 'passed'), `prereqs_state_jsonb`,
+    `chosen_gate_recipe_slug`, `match_cook_log_id` (uuid ref to
+    `cook_logs`), `started_at`, `passed_at`. Self-select RLS;
+    `award_xp` + a gate-check trigger are the only writers. §2.
+12c. **`xp_events.gate_adjustment`** — new int column (default 0)
+    captures the XP a gated user would have earned but didn't.
+    Pure telemetry; never credited to `profiles.total_xp`. §2.
 
 **Server logic (new Postgres functions + triggers OR edge functions):**
 
@@ -521,6 +608,243 @@ the level-up ceremony plays. Never interrupts mid-sequence.
    (b) refuse revival, or (c) allow temporary negative-toward-next?
    **Recommendation: (a).** Never take a user backward in level.
 
+### Commit granularity
+
+Each phase below is further broken into micro-commits so a session
+can pick up mid-phase without holding the full context. Rules:
+
+- Every commit compiles, migrations up cleanly, app still boots.
+- Config tables ship schema + seed in one commit (seed is what
+  makes them useful and it's a one-shot insert).
+- Never split a rename from its read-site updates — they ship
+  together or the app breaks.
+- Build `award_xp()` up in stages; each stage leaves the function
+  correct for the features shipped so far.
+
+**Phase 1 commits (21 files):**
+
+*Config scaffolding (one table per commit):*
+1. `0071_xp_config.sql` — table + seed scalars
+2. `0072_xp_source_values.sql` — table + seed rows
+3. `0073_xp_streak_tiers.sql` — table + seed
+4. `0074_xp_curated_ladder.sql` — table + seed
+5. `0075_xp_rarity_rolls.sql` — table + seed
+6. `0076_xp_badge_tier_xp.sql` — table + seed
+7. `0077_xp_level_titles.sql` — table + seed
+8. `0078_xp_config_audit.sql` — table + trigger on all xp_config* tables
+
+*`profiles.level` collision:*
+9. `0079_profiles_skill_self_report.sql` — rename TEXT `level` →
+   `skill_self_report`. Same PR updates every read site.
+10. `0080_profiles_level_numeric.sql` — add new numeric `level`
+    (default 1).
+
+*Ledger + dedup tables:*
+11. `0081_xp_events.sql` — ledger table + indexes.
+12. `0082_recipe_first_cooks.sql` — dedup for first-time bonus.
+13. `0083_recipe_mastery.sql` — cook_count per user/recipe.
+
+*`award_xp()` built up in stages (each commit = one rule, tests
+pass at each step):*
+14. `0084_award_xp_stub.sql` — writes `xp_events`, returns base
+    XP only, no multipliers/caps.
+15. `0085_award_xp_micro_caps.sql` — per-source micro-cap logic.
+16. `0086_award_xp_daily_caps.sql` — soft/hard daily caps. (Streak
+    + curated multipliers defer to Phase 3/4.)
+
+*Integration + backfill:*
+17. Swap `cook_logs.xp_earned` insert path to call `award_xp`
+    (no migration, code only).
+18. `scripts/backfill_xp_events.sql` — replay existing `cook_logs`
+    into `xp_events` so `total_xp` reconciles.
+
+**Phase 2 commits (14 total — locked at phase start):**
+
+*Schema prep:*
+1. `0087_badges_tier_expansion.sql` — expand badges.tier CHECK to
+   allow both legacy (standard/bronze/silver/gold) AND target
+   (common/uncommon/rare/legendary) names. No data remap;
+   xp_badge_tier_xp already covers both.
+
+*Client-side hooks (one call site per commit):*
+2. `scan_add` in usePantry insert path
+3. `pantry_hygiene` in usePantry update (qty / mark-used) path
+4. `photo_upload` in useCookPhotos.upload
+5. `canonical_create` in CanonicalCreatePrompt submit
+6. `review_cook` in useCookLogReviews.upsertMyReview
+7. `authored_recipe` on user_recipes create (≥3 steps AND ≥3
+   ingredients gate, checked at RPC call site)
+8. `plan_cook_closed` + `eat_together` in CookComplete.save
+9. `nutrition_goal_day` in NutritionDashboard (1/day client-fired)
+10. Onboarding starter pack — 6 first-time awards (first household
+    / pantry / cook / canonical / plan / friend) in one commit
+11. `first_time_recipe` + `recipe_mastery` counter bump +
+    mastery_5x/10x/25x milestone fires, in CookComplete.save after
+    the cook_complete RPC
+
+*DB triggers:*
+12. `0088_canonical_approved_trigger.sql` — on ingredient_info
+    insert/update → award_xp to original canonical creator
+13. `0089_badge_earn_trigger.sql` — on user_badges insert →
+    award_xp using tier lookup from xp_badge_tier_xp
+14. `0090_authors_cut_trigger.sql` — on cook_logs insert →
+    award_xp to recipe author (if different user, cap 3/recipe
+    lifetime)
+
+*Deferred to Phase 2b (needs partner-pair dedup design):*
+- `cook_together` — 1× per partner pair per day
+
+**Phase 3 commits (9 total — locked at phase start):**
+
+*Schema + clock:*
+1. `0096_profiles_streak_columns.sql` — add streak_shields,
+   streak_peak, streak_tier, streak_insurance_last_used, timezone.
+   Backfill existing rows to 'UTC' so day_local math still works.
+2. `0097_award_xp_timezone_aware.sql` — rewrite award_xp so
+   day_local is computed from profiles.timezone with the 04:00
+   local-hour rollover from xp_config.streak_rollover_hour.
+
+*Streak engine:*
+3. `0098_streak_tick_trigger.sql` — trigger on xp_events INSERT
+   (skipping streak_revival rows) that runs the state machine:
+   increment on consecutive day, burn shield on 1-day gap if
+   available, reset otherwise. Updates streak_count,
+   last_cooked_date, streak_tier, streak_peak.
+4. `0099_shield_regen_fn.sql` — shield regen function callable
+   from a daily cron. Reads xp_streak_tiers.shield_regen_days and
+   shield_capacity, bumps streak_shields up toward the cap.
+5. `0100_award_xp_streak_multiplier.sql` — plug streak_mult into
+   award_xp AFTER the cap (§4 step 5). Reads profiles.streak_tier
+   → xp_streak_tiers.multiplier. streak_revival events skip this.
+
+*Revival:*
+6. `0101_streak_revive_rpc.sql` — SECURITY DEFINER RPC: L≥30
+   gate, 48h window, 14d cooldown, 200 XP fee, never below
+   current level floor. Restores streak_count to peak, bumps
+   streak_insurance_last_used.
+
+*Client:*
+7. UserProfile flame-stack display (particle intensity keyed to
+   streak_tier via xp_streak_tiers.particle_intensity).
+8. Home avatar flame overlay + streak-break tombstone UX.
+9. Revive UI (L30+ gate), triggered when streak is mid-break
+   (in the 48h revival window).
+
+**Phase 4a commits — curated ladder + level system (8 total):**
+
+*Level curve:*
+1. `0102_xp_level_fn.sql` — xp_to_next(L) + level_from_xp(xp)
+   SQL functions reading xp_curve_coefficient + xp_curve_exponent
+   from xp_config. Pure math, no side effects.
+2. `0103_profiles_level_trigger.sql` — trigger on profiles
+   UPDATE of total_xp that recomputes level via level_from_xp()
+   and fires a level-up notification when crossing a boundary.
+
+*Curated ladder (multiplier):*
+3. `0104_curated_recipes_table.sql` — reference table
+   (slug PK, cuisine text, route_tags text[]) so award_xp can
+   tell which slugs qualify for the 1.5×→3× ladder. Empty seed;
+   populated by the script in step 4.
+4. `scripts/seed_curated_recipes.js` — one-shot Node script that
+   reads src/data/recipes/*.js and upserts rows into
+   curated_recipes. Run from the Supabase dashboard or CI.
+5. `0105_user_curated_lessons.sql` — per-user per-cuisine
+   lesson counter. Trigger on cook_logs insert that increments
+   when the cooked slug is in curated_recipes.
+6. `0106_award_xp_curated_multiplier.sql` — plug curated
+   multiplier into award_xp BEFORE cap (§4 step 2). Reads
+   xp_curated_ladder by the user's cuisine-specific lesson count.
+   Skips sources with flat_bonus=true.
+
+*Client:*
+7. UserProfile level/title display — replaces old L{skill_self_report}
+   reading profile.level + xp_level_titles + xp_to_next(L).
+8. Level-up ceremony modal — triggered by profile.level change
+   via realtime sub. Full-screen celebration per §5.
+
+**Phase 5 commits — celebration layer (6 total):**
+
+*Realtime +N toasts:*
+1. `useXpEvents.js` — realtime sub on xp_events filtered to the
+   current user_id; exposes a queue of new earns since mount.
+2. `XpToast.jsx` — single top-right slide-in toast. Color pulled
+   from the reserved palette (CLAUDE.md identity hierarchy) when
+   the source maps to an axis (canonical → tan, scan → blue,
+   review → muted, etc.). 2s default hold.
+3. `XpToastStack.jsx` — queue renderer mounted at AuthedApp.
+   Throttles overlap (events within 400ms queue rather than
+   stack visually). Suppressed while a CookComplete summary is
+   playing so beats and toasts don't compete.
+
+*CookComplete beat choreography:*
+4. `CookComplete.jsx` save() refactor — await the award_xp RPC
+   instead of fire-and-forget; capture breakdown jsonb in state.
+5. `CookCompleteSummary.jsx` — beat-sequenced reveal component
+   driven by the breakdown. Beats per §5: base cook → flat
+   bonuses (first-time / plan→cook / eat-together / photo) →
+   curated multiplier reveal → per-skill rollup → streak
+   multiplier → total counter ramp. 600-800ms per beat. Tap
+   anywhere fast-forwards to total. 7s hard cap with overflow
+   batched into a "+N more bonuses" beat.
+6. Wire summary phase into CookComplete state machine + suppress
+   the realtime toast stack while the summary plays.
+
+**Phase 6 commits — daily roll + polish (5 total):**
+
+1. `0113_profiles_daily_roll_columns.sql` — add daily_roll_date
+   (date) + daily_roll_result (jsonb) columns. daily_roll_date is
+   the local-day bucket the user last rolled; daily_roll_result
+   snapshots the rarity + XP + flair so the UI can re-render the
+   most recent result without re-querying xp_rarity_rolls.
+2. `0114_daily_roll_rpc.sql` — streak_daily_roll() SECURITY
+   DEFINER RPC. Guards on (now local-day > profiles.daily_roll_date),
+   draws a weighted sample from xp_rarity_rolls, calls award_xp
+   with p_base_override = reward XP, writes the result jsonb to
+   profiles. Returns the rolled row so the client can animate.
+3. `DailyRollCard.jsx` + Home wire — scratch card on the Home
+   surface. If the user hasn't rolled today: "scratch to reveal"
+   affordance → tap fires the RPC → flip animation reveals the
+   rarity. If already rolled: compact "today: 🔷 +15 XP" badge
+   reading from profiles.daily_roll_result.
+4. Epic flair avatar cosmetic — 24h gradient border + sparkle
+   particles on the user's avatar (Home + UserProfile) when
+   daily_roll_result.cosmetic_flair === 'avatar_sparkle' and
+   the roll is within xp_rarity_rolls.flair_hours of now.
+5. Admin XP economy panel — new section in AdminPanel with the
+   observability queries from §7 telemetry list: median XP per
+   active user per day, % of events hitting soft/hard cap,
+   streak-length distribution, shield burn vs. regen rate,
+   revival usage, curated vs. non-curated cook share, median
+   time to L10, total XP blocked by gates.
+
+**Phase 4b commits — gates (8 total, locked at phase start):**
+
+1. `0107_xp_level_gates.sql` — config table + seed for 4 gates
+   (L20/35/50/75). Prereqs as jsonb DSL; gate_recipe_slugs[]
+   starts empty (TBD fill-in as curated library grows).
+   Attached to xp_config_audit trigger family.
+2. `0108_user_gate_progress.sql` — state-machine table with
+   self-select RLS.
+3. `0109_xp_events_gate_adjustment.sql` — add int column + index.
+4. `0110_user_gate_prereq_state.sql` — RPC that reads concrete
+   achievements (skill_levels, cook_logs categories, streak_count,
+   user_curated_lessons depth) and returns per-prereq green/red
+   status for a given user + gate.
+5. `0111_award_xp_gate_check.sql` — rewrite award_xp to zero
+   final_xp when the user is at a gate and their
+   user_gate_progress.status < 'passed'. Writes the blocked
+   amount into gate_adjustment on the xp_events row.
+6. `0112_gate_ranked_match_pass_trigger.sql` — trigger on
+   cook_log_reviews INSERT that detects unanimous "nailed" on
+   the user's active gate cook_log, flips user_gate_progress to
+   'passed', and fires a special level-up-style notification.
+7. UserProfile gate card — prereq list with per-row progress
+   bars; unlocks the ranked-match picker when all green.
+8. Gate ceremony modal + ranked-match picker + fail/pass UX.
+
+(Phases 2, 3, 5, 6 commit breakdowns will be added as each phase
+begins.)
+
 ### Implementation phases
 
 Each phase is independently shippable and leaves the app better
@@ -556,13 +880,21 @@ than it found it.
 - Streak break UX (tombstone).
 - Insurance flow (L30+ only).
 
-**Phase 4 — Curated ladder + level system**
+**Phase 4 — Curated ladder + level system + gates**
 - Curated multiplier calculation in `award_xp` (cuisine-scoped
   lesson count).
 - Level curve + `xp_to_next()`.
 - Level titles on UserProfile.
 - Level-up ceremony modal.
 - Audit bundled "learn" recipes for cuisine completeness.
+- **Gates:** `xp_level_gates` table + seed, `user_gate_progress`
+  table, `xp_events.gate_adjustment` column. Gate-check branch
+  in `award_xp` that zeros `final_xp` when the user is at a gate
+  and records the blocked amount. Prereq-progress aggregator
+  (reads from skill_levels, cook_logs categories, streak_count,
+  curated-lesson counts). Gate UX: prereq card on UserProfile,
+  full-screen gate ceremony, ranked-match picker, all-diners-
+  nailed pass check, catch-up animation on pass.
 
 **Phase 5 — Celebration layer (the "WHY" reveal)**
 - Rewrite `CookComplete.jsx` cook-complete scene to beat-sequenced

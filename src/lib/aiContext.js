@@ -155,7 +155,7 @@ export function buildAIContext({
   const profileSlice = profile ? {
     dietary:    safeStr(profile.dietary)   || null,
     veganStyle: safeStr(profile.vegan_style) || null,
-    level:      safeStr(profile.level)     || null,
+    level:      safeStr(profile.skill_self_report) || null,
     goal:       safeStr(profile.goal)      || null,
     // Top skills by level, 3 at most. Surfaces what the user is
     // actively practicing so the draft picks appropriately-difficult

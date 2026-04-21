@@ -1,8 +1,11 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useActivityFeed } from "../lib/useActivityFeed";
 import { useBadges } from "../lib/useBadges";
 import { pickGreeting } from "../lib/greetings";
 import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
+import StreakRevive from "./StreakRevive";
+import DailyRollCard from "./DailyRollCard";
+import FlairHalo, { isFlairActive } from "./FlairHalo";
 
 // Rating face lookup shared with the activity feed's cook rows.
 const RATING_EMOJI = { nailed: "🤩", good: "😊", meh: "😐", rough: "😬" };
@@ -53,7 +56,18 @@ export default function Home({
   profile, userId, familyIds = [], familyLoading = false, nameFor,
   openProfile, openCook,
 }) {
-  const streak    = profile.streak_count || 0;
+  const streak      = profile.streak_count || 0;
+  const streakTier  = profile.streak_tier  || 0;
+  const brokenPeak  = profile.streak_broken_peak || 0;
+  const brokenAt    = profile.streak_broken_at;
+  const userLevel   = profile.level || 1;
+  // Tombstone: visible only while we're still inside the 48h revival
+  // window — beyond that the break becomes history and we stop
+  // interrupting the home surface with it.
+  const tombstoneActive = brokenPeak > 0 && brokenAt &&
+    (Date.now() - new Date(brokenAt).getTime()) < 48 * 60 * 60 * 1000;
+  const canRevive = tombstoneActive && userLevel >= 30;
+  const [showRevive, setShowRevive] = useState(false);
 
   // Greeting is picked once per mount — re-tabbing back to Home rolls
   // again, which is the whole point (easter eggs should feel like a
@@ -99,13 +113,51 @@ export default function Home({
           </span>
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {streak > 0 && (
-            <div style={{ background: "#1a1a1a", border: "1px solid #2a2a2a", borderRadius: 20, padding: "4px 10px", display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12 }}>🔥</span>
+          {streak > 0 && !tombstoneActive && (
+            <div style={{
+              background: "#1a1a1a",
+              border: "1px solid #2a2a2a",
+              borderRadius: 20,
+              padding: "4px 10px",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              boxShadow: streakTier >= 3 ? "0 0 10px rgba(224,122,58,.4)" : "none",
+            }}>
+              <span style={{ fontSize: 12 }}>
+                {streakTier > 0 ? "🔥".repeat(Math.min(4, streakTier)) : "🔥"}
+              </span>
               <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#f5c842" }}>
                 {streak} day{streak === 1 ? "" : "s"}
               </span>
             </div>
+          )}
+          {tombstoneActive && (
+            <button
+              onClick={canRevive ? () => setShowRevive(true) : undefined}
+              title={canRevive
+                ? `Your ${brokenPeak}-day streak ended — tap to revive`
+                : `Your ${brokenPeak}-day streak ended — revival unlocks at L30`}
+              disabled={!canRevive}
+              style={{
+                background: "#1a0f0a",
+                border: "1px solid #3a1a0a",
+                borderRadius: 20,
+                padding: "4px 10px",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                opacity: 0.85,
+                cursor: canRevive ? "pointer" : "default",
+                font: "inherit",
+                color: "inherit",
+              }}
+            >
+              <span style={{ fontSize: 12 }}>🕯️</span>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#c78b6a" }}>
+                {brokenPeak}-day streak
+              </span>
+            </button>
           )}
           {/* Profile avatar — primary visual entry point to your own
               profile from Home. Replaces the old XP / COOKS / 🏅 / 🔥
@@ -113,11 +165,13 @@ export default function Home({
               profile (Quick Stats band + Nutrition dashboard), so
               surfacing it twice made Home feel like a dashboard
               clone instead of a standalone screen. */}
-          <Avatar
-            name={profile.name}
-            initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
-            onClick={openSelf}
-          />
+          <FlairHalo active={isFlairActive(profile)} size={36}>
+            <Avatar
+              name={profile.name}
+              initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
+              onClick={openSelf}
+            />
+          </FlairHalo>
         </div>
       </div>
 
@@ -148,6 +202,12 @@ export default function Home({
           {greeting.text}
         </h1>
       </div>
+
+      {/* Daily scratch-card roll. Self-only affordance; unrolled
+          state tappable, already-rolled state collapses to a
+          compact badge. Placed above the activity feed so the
+          user sees it on their first scroll-free render. */}
+      <DailyRollCard profile={profile} />
 
       {/* YOUR CIRCLE activity feed */}
       <div style={{ padding: "28px 20px 0" }}>
@@ -197,6 +257,15 @@ export default function Home({
 
       {/* Profile pill — compact diet/level/goal snapshot */}
       <ProfilePill profile={profile} />
+
+      {showRevive && (
+        <StreakRevive
+          userId={userId}
+          peak={brokenPeak}
+          onClose={() => setShowRevive(false)}
+          onRevived={() => { /* realtime profiles sub reconciles the UI */ }}
+        />
+      )}
     </div>
   );
 }
@@ -318,7 +387,7 @@ function Avatar({ name, initial, onClick }) {
 // old Home had. The old EDIT button was never wired — removed.
 function ProfilePill({ profile }) {
   const diet  = DIETARY_OPTIONS.find(d => d.id === profile.dietary);
-  const level = LEVEL_OPTIONS.find(l => l.id === profile.level);
+  const level = LEVEL_OPTIONS.find(l => l.id === profile.skill_self_report);
   const goal  = GOAL_OPTIONS.find(g => g.id === profile.goal);
   const bits = [diet?.label || "Everything", level?.label, goal?.label].filter(Boolean);
   return (

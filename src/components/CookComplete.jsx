@@ -5,6 +5,7 @@ import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition } from "../lib/nutrition";
+import CookCompleteSummary from "./CookCompleteSummary";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
@@ -213,6 +214,12 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Award_xp breakdown captured during save() — drives the
+  // beat-sequenced summary in CookCompleteSummary (P5-5).
+  const [xpBreakdown, setXpBreakdown] = useState(null);
+  // The cook_log id we just inserted — handed to the summary
+  // overlay so it can fetch every related xp_events row.
+  const [summaryCookLogId, setSummaryCookLogId] = useState(null);
   // How many recipe-servings each eater consumed. Default 1 covers the
   // common case (four people eat a four-serving recipe, one slice
   // each). Stepper surfaces on the rating screen so the chef can bump
@@ -363,6 +370,26 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       return;
     }
     const cookLogId = logRow?.id || null;
+
+    // 1b) Fire the XP ledger via award_xp() and AWAIT the breakdown.
+    //     Phase-5 evolution from P1's fire-and-forget: the breakdown
+    //     payload (base / curated / caps / streak / total) drives the
+    //     beat-sequenced reveal in CookCompleteSummary. Failures are
+    //     still soft — if the RPC errors we just don't show a summary
+    //     and the legacy +XP pulse handles celebration.
+    if (cookLogId) {
+      const { data: breakdown, error: xpErr } = await supabase.rpc("award_xp", {
+        p_user_id:   userId,
+        p_source:    "cook_complete",
+        p_ref_table: "cook_logs",
+        p_ref_id:    cookLogId,
+      });
+      if (xpErr) {
+        console.error("[award_xp] cook_complete failed:", xpErr);
+      } else {
+        setXpBreakdown(breakdown || null);
+      }
+    }
 
     // 2) Apply pantry mutations in a single setPantry call. useSyncedList
     //    diffs prev vs next and fires INSERT / UPDATE / DELETE behind the
@@ -573,7 +600,18 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
     }
 
     setSaving(false);
-    onFinish?.({ saved: true, rating });
+
+    // Phase-5: gate onFinish on the summary overlay. If the
+    // award_xp call landed (we have a cookLogId and no fatal
+    // error), surface the beat-sequenced reveal first; the
+    // summary's onClose calls onFinish. Otherwise (RPC failed,
+    // no cookLogId) finish immediately so the legacy flow still
+    // works end-to-end.
+    if (cookLogId) {
+      setSummaryCookLogId(cookLogId);
+    } else {
+      onFinish?.({ saved: true, rating });
+    }
   };
 
   // ── shared modal shell ───────────────────────────────────────────────────
@@ -587,6 +625,21 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       `}</style>
     </div>
   );
+
+  // Summary overlay short-circuits the phase tree once save() has
+  // landed. The summary's onClose calls onFinish so the parent's
+  // navigation only fires after the beat sequence wraps.
+  if (summaryCookLogId) {
+    return (
+      <CookCompleteSummary
+        cookLogId={summaryCookLogId}
+        onClose={() => {
+          setSummaryCookLogId(null);
+          onFinish?.({ saved: true, rating });
+        }}
+      />
+    );
+  }
 
   // ── phase 1: celebrate ───────────────────────────────────────────────────
   if (phase === "celebrate") {
