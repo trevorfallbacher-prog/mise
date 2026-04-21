@@ -26,6 +26,7 @@ import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
+import IAteThisSheet from "./IAteThisSheet";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
@@ -163,6 +164,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // hook in this component can close over the merged `item` without
   // a TDZ error.
   const [pendingChanges, setPendingChanges] = useState({});
+  // "I ate this" sheet state. Toggled from the pill below the nutrition
+  // chip; closes itself on confirm or dismiss. Kept here (not deeper
+  // in the render tree) so the sheet renders at the ItemCard's top
+  // level and doesn't inherit layout constraints from the nutrition
+  // band.
+  const [iAteOpen, setIAteOpen] = useState(false);
   const item = useMemo(
     () => ({ ...(itemProp || {}), ...pendingChanges }),
     [itemProp, pendingChanges],
@@ -1124,6 +1131,30 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             getBrandNutrition={getBrandNutrition}
             onUpdate={onUpdate}
           />
+
+          {/* "I ate this" — one-tap consumption log. Hidden on draft
+              rows (nothing's in the pantry yet to eat) and on rows
+              with zero amount (the button would decrement below zero
+              which we clamp, but the UX of tapping an empty row to
+              "eat it" is just confusing). Writes a consumption_logs
+              row + decrements pantry_items.amount; the nutrition
+              dashboard picks up the event via realtime. */}
+          {!isDraft && Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId) && (
+            <button
+              type="button"
+              onClick={() => setIAteOpen(true)}
+              style={{
+                width: "100%", padding: "12px 14px", marginBottom: 14,
+                background: "#0f1a0f", border: "1px solid #1e3a1e",
+                color: "#7ec87e", borderRadius: 10,
+                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                letterSpacing: "0.08em", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 16 }}>🍽️</span> I ATE THIS
+            </button>
+          )}
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -2552,6 +2583,18 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             UPDATE · {Object.keys(pendingChanges).length} CHANGE{Object.keys(pendingChanges).length === 1 ? "" : "S"}
           </button>
         </div>
+      )}
+
+      {/* "I ate this" overlay. Stacks above the ItemCard (Z.picker) so
+          it reads like a modal, not an inline expander. Closes itself
+          on confirm or backdrop/Escape dismissal. */}
+      {iAteOpen && (
+        <IAteThisSheet
+          pantryRow={item}
+          userId={userId}
+          onClose={() => setIAteOpen(false)}
+          onDone={() => setIAteOpen(false)}
+        />
       )}
 
       {/* Full-screen success after UPDATE commits. Lists every field

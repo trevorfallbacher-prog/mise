@@ -35,9 +35,32 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
   }
   const canonId = pantryRow.ingredientId || pantryRow.canonicalId || null;
   // 2. brand_nutrition row (Phase 2). Key format mirrors useBrandNutrition.
+  // Exact match first (O(1) Map lookup). On a miss, fall through to a
+  // word-boundary prefix match so a pantry row branded "Philadelphia"
+  // still resolves against a brand_nutrition row written as
+  // "Philadelphia Original". Word-boundary discipline (next char must
+  // be whitespace or end-of-string) prevents misfires like "Joe's" →
+  // "Trader Joe's" (fails because "Joe's" is not a prefix of "Trader
+  // Joe's" from char 0). The prefix branch walks `rows` once per miss;
+  // the table is small (one row per popular (canonical, brand) pair).
   if (canonId && pantryRow.brand && brandNutrition) {
     const brandKey = String(pantryRow.brand).trim().toLowerCase();
-    const hit = brandNutrition.get?.(`${canonId}::${brandKey}`);
+    let hit = brandNutrition.get?.(`${canonId}::${brandKey}`);
+    if (!hit?.nutrition && Array.isArray(brandNutrition.rows)) {
+      const candidates = brandNutrition.rows.filter(
+        r => r?.canonicalId === canonId
+          && r?.nutrition
+          && isBrandPrefixMatch(brandKey, r.brand),
+      );
+      if (candidates.length) {
+        // When multiple fuzzy candidates qualify, prefer the shortest
+        // stored brand — a generic "Philadelphia" row beats a
+        // hyper-specific "Philadelphia Original Limited Edition"
+        // because the shorter string is closer to the user's input.
+        candidates.sort((a, b) => (a.brand || "").length - (b.brand || "").length);
+        hit = candidates[0];
+      }
+    }
     if (hit?.nutrition && acceptableForResolve(hit.nutrition)) {
       return { nutrition: hit.nutrition, source: "brand", brand: hit.displayBrand || pantryRow.brand };
     }
@@ -81,6 +104,20 @@ function acceptableForResolve(n) {
   if (typeof n.per === "string" && /\(\s*[\d.]+\s*g\s*\)/i.test(n.per)) return true;
   // Anything else is garbage — skip the tier.
   return false;
+}
+
+// Word-boundary prefix match on two already-lowercased brand strings.
+// One must be a prefix of the other, with the break point at a word
+// boundary so we never match mid-word (e.g. "Phil" → "Philadelphia").
+// Intentionally symmetric: both "stored shorter than input" and "input
+// shorter than stored" match, since either ordering can be the
+// generic-vs-specific case depending on which end has more data.
+function isBrandPrefixMatch(a, b) {
+  if (!a || !b) return false;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (!longer.startsWith(shorter)) return false;
+  if (longer.length === shorter.length) return true; // exact (Map.get handles; safety net here)
+  return /\s/.test(longer[shorter.length]);
 }
 
 function hasNumbers(n) {

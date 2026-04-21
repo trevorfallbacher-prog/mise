@@ -80,13 +80,24 @@ export function useNutritionTally(userId, familyKey) {
   const load = useCallback(async () => {
     if (!userId) { setLogs([]); setLoading(false); return; }
     setLoading(true);
-    // Two parallel queries: chef-mine + diner-mine. Supabase can't
-    // express user_id=me OR diners @> [me] in a single filter chain
-    // cleanly (the .or() helper doesn't support the @> operator
-    // against array columns as of the current client version), so we
-    // fan out and merge. Cost: two small queries; benefit: correct
-    // results today.
-    const [mine, dined] = await Promise.all([
+    // Three parallel queries now:
+    //   1. cook_logs where I'm the chef
+    //   2. cook_logs where I'm in the diners array
+    //   3. consumption_logs (the "I ate this" stream) — my own rows
+    // Supabase can't express user_id=me OR diners @> [me] in a single
+    // filter chain cleanly (the .or() helper doesn't support the @>
+    // operator against array columns as of the current client version),
+    // so we fan out cook_logs across two queries and merge by id.
+    // consumption_logs has a simpler scope: only the eater writes;
+    // family visibility is handled by RLS but every row we care about
+    // for the tally has user_id = me.
+    //
+    // Shape normalization: cook_logs.nutrition is PER SERVING and
+    // needs servings_per_eater as the scale; consumption_logs.nutrition
+    // is ALREADY SCALED at write-time to the exact amount eaten, so
+    // scale=1. Both get a common `ts` (cooked_at / eaten_at) and
+    // `kind` tag so downstream bucketing is source-agnostic.
+    const [mine, dined, ate] = await Promise.all([
       supabase
         .from("cook_logs")
         .select("id, user_id, cooked_at, nutrition, servings_per_eater, diners")
@@ -95,17 +106,40 @@ export function useNutritionTally(userId, familyKey) {
         .from("cook_logs")
         .select("id, user_id, cooked_at, nutrition, servings_per_eater, diners")
         .contains("diners", [userId]),
+      supabase
+        .from("consumption_logs")
+        .select("id, user_id, eaten_at, nutrition, meal_slot, pantry_row_id, ingredient_id")
+        .eq("user_id", userId),
     ]);
-    if (mine.error) console.error("[nutrition_tally:mine] load failed:", mine.error);
+    if (mine.error)  console.error("[nutrition_tally:mine] load failed:",  mine.error);
     if (dined.error) console.error("[nutrition_tally:dined] load failed:", dined.error);
+    if (ate.error)   console.error("[nutrition_tally:ate] load failed:",   ate.error);
+
+    const normalized = [];
     const seen = new Set();
-    const merged = [];
     for (const row of [...(mine.data || []), ...(dined.data || [])]) {
       if (!row?.id || seen.has(row.id)) continue;
       seen.add(row.id);
-      merged.push(row);
+      normalized.push({
+        id:        row.id,
+        kind:      "cook",
+        ts:        row.cooked_at,
+        nutrition: row.nutrition,
+        scale:     Number(row.servings_per_eater) || 1,
+      });
     }
-    setLogs(merged);
+    for (const row of ate.data || []) {
+      if (!row?.id) continue;
+      normalized.push({
+        id:        row.id,
+        kind:      "snack",
+        ts:        row.eaten_at,
+        nutrition: row.nutrition,
+        scale:     1,        // consumption rows are pre-scaled
+        mealSlot:  row.meal_slot || null,
+      });
+    }
+    setLogs(normalized);
     setLoading(false);
   }, [userId]);
 
@@ -123,6 +157,22 @@ export function useNutritionTally(userId, familyKey) {
         const chefMe = row?.user_id === userId;
         const dinerMe = Array.isArray(row?.diners) && row.diners.includes(userId);
         if (chefMe || dinerMe) load();
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [userId, load]);
+
+  // Second realtime channel for consumption_logs. Separate from the
+  // cook_logs one because the tables have different RLS / filter
+  // semantics and batching them into one subscription would force a
+  // reload on unrelated events. Tapping "I ATE THIS" on any device
+  // should bump today's kcal without a manual refresh.
+  useEffect(() => {
+    if (!userId) return;
+    const ch = safeChannel(`rt:consumption_logs:tally:${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "consumption_logs" }, (payload) => {
+        const row = payload.new || payload.old;
+        if (row?.user_id === userId) load();
       })
       .subscribe();
     return () => { supabase.removeChannel(ch); };
@@ -164,11 +214,15 @@ export function useNutritionTally(userId, familyKey) {
     let coverageTotal = 0;
 
     for (const row of logs) {
-      const key = localDayKey(row.cooked_at);
+      // `ts` and `scale` are normalized at load-time: cook_logs use
+      // cooked_at + servings_per_eater, consumption_logs use eaten_at
+      // + 1 (the nutrition blob is already scaled at write time). The
+      // bucketing below is source-agnostic.
+      const key = localDayKey(row.ts);
       const inMonth = key >= monthStartKey && key <= todayKey;
       const inWeek  = key >= weekStartKey  && key <= todayKey;
       const isToday = key === todayKey;
-      const scale = Number(row.servings_per_eater) || 1;
+      const scale = Number(row.scale) || 1;
       const macros = macrosOnly(row.nutrition);
 
       if (inMonth) {
