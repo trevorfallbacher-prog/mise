@@ -6,7 +6,7 @@ import CookComplete from "./CookComplete";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
-import { pairRecipeIngredients, describePairing, normalizeForMatch } from "../lib/recipePairing";
+import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -169,12 +169,22 @@ function Timer({ seconds, onDone }) {
 // the legacy singular (row.ingredientId) — lets composite items (frozen
 // pizza tagged with mozzarella + sausage + dough) satisfy a recipe calling
 // for any one of their components.
+//
+// Hub-family aware: a recipe asking for `chicken_breast` (legacy
+// compound slug) matches a pantry row tagged `chicken` + cut=breast
+// (new model) and vice-versa, because both resolve to chicken_hub.
+// Without this, a user with Chicken Breast in the pantry saw
+// "Not in pantry — add to shopping list" on any recipe the AI tagged
+// with the legacy slug — the exact "it's purposely trying to fuck us"
+// bug user hit on Chicken Tortillas.
 function rowHasIngredient(row, ingredientId) {
   if (!row || !ingredientId) return false;
   if (Array.isArray(row.ingredientIds) && row.ingredientIds.length) {
-    return row.ingredientIds.includes(ingredientId);
+    if (row.ingredientIds.includes(ingredientId)) return true;
+    return row.ingredientIds.some(id => sameCanonicalFamily(id, ingredientId));
   }
-  return row.ingredientId === ingredientId;
+  if (row.ingredientId === ingredientId) return true;
+  return sameCanonicalFamily(row.ingredientId, ingredientId);
 }
 
 // Look up a recipe ingredient in the pantry by canonical ingredientId.

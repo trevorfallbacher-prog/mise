@@ -550,8 +550,10 @@ exact shape. Every field is REQUIRED unless marked optional.
   "ingredients": [
     {
       "amount":       "<display string, e.g. '2 tbsp' or '½ cup'>",
-      "item":         "<display text, e.g. 'olive oil'>",
-      "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>"
+      "item":         "<CLEAN CANONICAL NAME ONLY — e.g. 'olive oil', 'chicken breast', 'mozzarella'. Do NOT stuff prep ('cut into bite-sized pieces', 'chopped fine'), brand ('Kerrygold'), or counts ('4 count') into this field. Prep goes in the step instruction; identity lives here.>",
+      "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
+      "cut":          "<optional: anatomical cut for meats — 'breast', 'thigh', 'ribeye', 'brisket', 'loin', 'shoulder' — null for non-meats>",
+      "state":        "<optional: prep STATE after you work on it — 'cubed', 'diced', 'sliced', 'ground', 'minced', 'shredded'. NOT prep instructions like 'cut into pieces' — just the terminal form. null when not applicable>"
     },
     ...
   ],
@@ -641,6 +643,39 @@ Rules (in priority order — higher rules beat lower ones on conflict):
   5. When the user has NOT asked for something specific, prefer
      recipes that use pantry items marked "EXPIRED" or "expires in Nd"
      where N is small. Reducing waste is the default goal.
+
+  5b. INGREDIENT "item" IS IDENTITY, NOT PREP — hard rule, no
+     exceptions:
+
+     - "item" holds the clean canonical name of the ingredient and
+       nothing else. Keep it the way you'd write it on a grocery
+       shopping list: "chicken breast", "olive oil", "mozzarella",
+       "heavy cream". One-to-three words, no commas, no verbs, no
+       sizes, no counts, no brand.
+     - NEVER stuff prep into "item". These are ALL wrong:
+         "chicken breast, cut into bite-sized pieces"     ← prep in name
+         "olive oil (about 3 tablespoons)"                ← amount in name
+         "Kerrygold unsalted butter, softened"            ← brand + state in name
+         "4 tortillas, warmed"                            ← count + prep in name
+     - Prep belongs in the STEP INSTRUCTION:
+         item: "chicken breast"
+         step instruction: "Cut the chicken breast into bite-sized
+         pieces, season with salt and pepper..."
+     - Terminal STATE (the form the ingredient ends up in before it
+       goes in the dish — cubed, diced, sliced, ground, minced,
+       shredded) goes in the "state" field, not in "item".
+     - Anatomical CUT for meats (breast, thigh, ribeye, brisket)
+       goes in the "cut" field, not in "item". For "item" on a meat
+       row write just the species: "chicken", "beef", "pork".
+     - Counts and sizes live in "amount" ("4 count", "1.5 lbs",
+       "2 tbsp"). Never in "item".
+
+     This separation matters. The UI displays "item" as the
+     ingredient's name on the shopping-list style ingredient panel,
+     and pairs it to pantry canonical ids downstream. Stuffing prep
+     into "item" breaks pairing (the matcher sees garbage), the
+     shopping list (user can't buy "chicken, cut into pieces"), and
+     the cook-mode panel (the line is 80 chars of clutter).
 
   6. CANONICAL_ID BINDING — strict rules, no improvisation:
 
@@ -979,7 +1014,7 @@ Deno.serve(async (req) => {
     time:       recipe.time       || { prep: 10, cook: 20 },
     serves:     clampInt(recipe.serves, 1, 12, 2),
     tools:      Array.isArray(recipe.tools) ? recipe.tools : [],
-    ingredients: recipe.ingredients,
+    ingredients: normalizeIngredients(recipe.ingredients),
     // Backfill step shape so CookMode never has to defend against a
     // step that skipped `uses`, `heat`, or `doneCue`. If the model
     // dropped `uses` entirely, default to an empty array (CookMode
@@ -1065,6 +1100,36 @@ function normalizeMealTiming(v: unknown): string | null {
 }
 function normalizeCourse(v: unknown): string | null {
   return typeof v === "string" && COURSE_VALUES.has(v) ? v : null;
+}
+
+// Normalize every ingredient row. `item` is stripped of trailing
+// prep clauses ("chicken breast, cut into bite-sized pieces" →
+// "chicken breast") so the identity surfaces clean even when
+// Claude slips and stuffs prep into the name. `cut` and `state`
+// axes pass through when the model emitted them; null otherwise.
+// Canonical id is left verbatim — coerceRecipeCanonicalIds on the
+// client handles any drift to the registry.
+function normalizeIngredients(ings: unknown): unknown[] {
+  if (!Array.isArray(ings)) return [];
+  return ings.map((i) => {
+    const ing = (i && typeof i === "object") ? i as Record<string, unknown> : {};
+    const rawItem = typeof ing.item === "string" ? ing.item : "";
+    // Strip a trailing prep clause after a comma. "chicken breast,
+    // cut into bite-sized pieces" → "chicken breast". Single rule —
+    // if the tail starts with a present-tense prep verb, drop it.
+    // Keep parentheticals ("chicken breast (boneless)") alone.
+    const PREP_CLAUSE_RE = /,\s+(cut|chopped|diced|sliced|minced|shredded|crumbled|cubed|grated|ground|torn|halved|quartered|trimmed|pounded|drained|rinsed|peeled|deveined|boned|skinned|stemmed|seeded|crushed|julienned|shaved)\s.*$/i;
+    const item = rawItem.replace(PREP_CLAUSE_RE, "").trim();
+    return {
+      amount:       typeof ing.amount === "string" ? ing.amount : ing.amount,
+      item:         item || rawItem,
+      ingredientId: typeof ing.ingredientId === "string" ? ing.ingredientId : null,
+      cut:          typeof ing.cut === "string"          ? ing.cut          : null,
+      state:        typeof ing.state === "string"        ? ing.state        : null,
+      qty:          ing.qty,
+      role:         ing.role,
+    };
+  });
 }
 
 // Ensure every step carries the fields CookMode reads without
