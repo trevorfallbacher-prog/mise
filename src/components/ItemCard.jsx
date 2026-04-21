@@ -185,9 +185,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
     const ids = Array.isArray(item?.ingredientIds) && item.ingredientIds.length
       ? item.ingredientIds
       : (item?.ingredientId ? [item.ingredientId] : []);
-    return ids
-      .map(id => ({ id, canonical: findIngredient(id) }))
-      .filter(t => t.canonical);
+    // Keep every tag id — don't filter unresolvable slugs. LinkIngredient
+    // can commit slugs that aren't in the bundled registry (admin-minted
+    // dbCanonicals that haven't loaded yet, user-typed freeform, or
+    // cheeses like "colby_jack" the seeds don't cover). Previously we
+    // did `.filter(t => t.canonical)` and those ids vanished from the
+    // UI — user reported "I pick Mozzarella Jack and it goes back to
+    // nothing." The save WAS persisting; the UI was hiding them.
+    // Now every id renders: canonical name when resolvable, pretty-
+    // cased slug fallback otherwise ("mozzarella_jack" → "Mozzarella
+    // Jack").
+    return ids.map(id => {
+      const canonical = findIngredient(id);
+      if (canonical) return { id, canonical };
+      const prettyName = String(id || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, c => c.toUpperCase());
+      return { id, canonical: { id, name: prettyName, emoji: "🥫" } };
+    });
   }, [item?.ingredientIds, item?.ingredientId]);
 
   // Which tag's deep-dive is currently open. Resets when the item or
