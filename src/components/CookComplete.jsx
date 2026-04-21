@@ -803,6 +803,22 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
 
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        {/* Keyframes for the delta segment's scrolling hatches.
+            Scoped to the component via a single inline <style> tag
+            so we don't pollute the global stylesheet. Honors
+            prefers-reduced-motion — pauses the animation entirely
+            for users who've opted out of motion. */}
+        <style>{`
+          @keyframes cookCompleteDelta {
+            from { background-position: 0 0; }
+            to   { background-position: 34px 0; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            [style*="cookCompleteDelta"] {
+              animation: none !important;
+            }
+          }
+        `}</style>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>STEP {num} OF {denom}</div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           What did you use?
@@ -1030,8 +1046,13 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                         return (
                           <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:6 }}>
                             {/* Labels row — LEFT on the left side, USED
-                                on the right. Colors telegraph which
-                                segment each number describes. */}
+                                on the right. The USED label matches the
+                                faded left-color family rather than blue
+                                — delta segment is the same color family
+                                as where we're going, just faded and
+                                hatched. Keeps the palette tight and
+                                reads as "pending consumption of the
+                                thing you're about to commit." */}
                             <div style={{
                               display:"flex", justifyContent:"space-between",
                               fontFamily:"'DM Mono',monospace", fontSize:9,
@@ -1040,7 +1061,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                               <span style={{ color: leftColor }}>
                                 {fmt(leftAfter)} {unitTxt} LEFT · {leftLabel}
                               </span>
-                              <span style={{ color:"#7eb8d4" }}>
+                              <span style={{ color: leftColor, opacity: 0.55 }}>
                                 USED: {fmt(cur)} {unitTxt}
                               </span>
                             </div>
@@ -1053,7 +1074,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                                 position:"absolute", top:5, left:0, right:0, height:12,
                                 background:"#2a2a2a", borderRadius:6,
                               }} />
-                              {/* LEFT AFTER COOK segment (colored) */}
+                              {/* LEFT AFTER COOK segment (solid color) */}
                               <div style={{
                                 position:"absolute", top:5, left:0, height:12,
                                 width:`${leftPct}%`,
@@ -1061,13 +1082,30 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                                 borderRadius: leftPct >= 99.5 ? 6 : "6px 0 0 6px",
                                 transition:"width 0.08s linear, background 0.15s linear",
                               }} />
-                              {/* USED TODAY segment (blue) — stacks to the
-                                  right of left-after */}
+                              {/* USED TODAY segment — faded leftColor +
+                                  animated diagonal hatching. No separate
+                                  color; the delta reads as "same family
+                                  as where we're going, just in motion."
+                                  Hatches scroll on a slow loop so the
+                                  eye catches the action without the
+                                  segment feeling loud. prefers-reduced-
+                                  motion pauses the animation for
+                                  accessibility. */}
                               <div style={{
                                 position:"absolute", top:5, left:`${leftPct}%`, height:12,
                                 width:`${usedPct}%`,
-                                background:"#7eb8d4",
-                                transition:"width 0.08s linear, left 0.08s linear",
+                                background: `repeating-linear-gradient(
+                                  -45deg,
+                                  ${leftColor}66 0px,
+                                  ${leftColor}66 6px,
+                                  ${leftColor}22 6px,
+                                  ${leftColor}22 12px
+                                )`,
+                                backgroundSize: "17px 17px",
+                                animation: "cookCompleteDelta 1.8s linear infinite",
+                                borderRadius: (leftPct + usedPct) >= 99.5 && leftPct < 0.5
+                                  ? 6 : 0,
+                                transition:"width 0.08s linear, left 0.08s linear, background 0.15s linear",
                               }} />
                               {/* Thumb — yellow dot at the left/used
                                   boundary, purely decorative (the real
