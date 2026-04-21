@@ -242,6 +242,41 @@ function namesMatch(a, b) {
   return na.includes(nb) || nb.includes(na);
 }
 
+// Derive the big italic HEADER for a pantry/sketch row per the
+// universal identity rule in CLAUDE.md: [Brand] [Canonical], fallback
+// Canonical alone, fallback item.name only when no canonical is set.
+// Hub-aware: a row with a CUT canonical (parentId set — chicken_breast
+// under chicken_hub) displays the HUB name in the header ("Chicken"),
+// not the cut slug's raw storage name ("Breast"). The cut itself is
+// surfaced separately via deriveRowCut below, rendered as a small pill
+// next to the header so the identity reads the way the user thinks
+// about it: "Chicken · BREAST", not just "Breast".
+//
+// Fixes the AI Recipe tweak panel showing "Breast" after auto-pairing
+// a chicken_breast pantry row (the user stored the raw name as "Breast"
+// after picking the cut; the display must still derive from the
+// canonical/hub, per the HEADER rule).
+function deriveRowHeader(row) {
+  if (!row) return "";
+  const canonId = row.ingredientId || row.canonicalId || null;
+  const canon = canonId ? findIngredient(canonId) : null;
+  if (canon) {
+    const hub = canon.parentId ? findIngredient(canon.parentId) : null;
+    const primary = (hub && hub.name) || canon.name;
+    const brand = row.brand ? String(row.brand).trim() : "";
+    return brand ? `${brand} ${primary}` : primary;
+  }
+  return row.name || "";
+}
+
+function deriveRowCut(row) {
+  if (!row) return null;
+  const canonId = row.ingredientId || row.canonicalId || null;
+  const canon = canonId ? findIngredient(canonId) : null;
+  if (!canon || !canon.parentId) return null;
+  return canon.shortName || canon.name;
+}
+
 // Scan the user's actual pantry for rows that can cover a sketch.pantry
 // row Claude marked as shopping (pantryItemId == null). Returns a
 // map { sketchPantryIdx → pantryRowId } of recommended auto-pairs.
@@ -1551,8 +1586,25 @@ export default function AIRecipe({
                   }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4" }}>
-                          {swappedRow ? swappedRow.name : row.name} · <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{row.amount}</span>
+                        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4", display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                          <span>{deriveRowHeader(swappedRow || row)}</span>
+                          {(() => {
+                            const cut = deriveRowCut(swappedRow || row);
+                            if (!cut) return null;
+                            return (
+                              <span style={{
+                                display: "inline-flex", alignItems: "center",
+                                padding: "1px 7px",
+                                background: "#201a26", border: "1px solid #3b2f48",
+                                borderRadius: 8,
+                                fontFamily: "'DM Mono',monospace", fontSize: 9, fontStyle: "normal",
+                                color: "#c7a8d4", letterSpacing: "0.08em",
+                              }}>
+                                {String(cut).toUpperCase()}
+                              </span>
+                            );
+                          })()}
+                          <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>· {row.amount}</span>
                         </div>
                         {showRow && (
                           <div style={{ marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#7ec87e", letterSpacing: "0.06em" }}>
