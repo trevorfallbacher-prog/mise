@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
+import { parseAmountString } from "../lib/nutrition";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -83,6 +84,64 @@ export function buildInitialUsedItems(recipe, pantry) {
         })
       : [];
     const defaultMatch = matches[0] || null;
+    // Resolve the recipe's called-for quantity so the slider + amount
+    // field prefill instead of loading at 0 (seen in the wild: "What
+    // did you use?" screen with every slider pinned to 0 because
+    // AI-drafted recipes only carry the display string "2 tbsp" and
+    // not the structured qty {amount, unit}). Three-tier resolve:
+    //   1. ing.qty — explicit structured qty (bundled recipes, older
+    //      drafts that kept it)
+    //   2. parseAmountString(ing.amount, canonical) — parse "2 tbsp"
+    //      or "¼ cup" or "8" off the display string using the unit
+    //      ladder of the matched canonical
+    //   3. null — untracked / free-text, slider stays manual
+    const recipeQty = ing.qty || (canonical ? parseAmountString(ing.amount, canonical) : null);
+
+    // Conversion pass: if the recipe's unit differs from the default
+    // pantry row's unit, try to translate so the slider reads in the
+    // pantry row's native unit. Makes the deduction feel natural
+    // ("you have a 16 oz package, recipe used 4 oz") instead of
+    // forcing the user to reconcile unit families mid-flow.
+    //
+    // Two paths:
+    //   a) Same-ladder conversion via convert() — works when both
+    //      units are on the canonical's ladder (tbsp ↔ stick for
+    //      butter, cup ↔ oz for cream, etc.)
+    //   b) Count ↔ mass via countWeightG — the user's "16 oz
+    //      tortillas package, recipe calls for 8 count" case. The
+    //      pantry row's countWeightG (migration 0121) tells us how
+    //      many grams one discrete unit weighs; we bridge across
+    //      families with it when direct ladder conversion fails.
+    let displayAmount = recipeQty?.amount ?? null;
+    let displayUnit   = recipeQty?.unit   ?? (defaultMatch?.unit ?? null);
+    if (recipeQty && canonical && defaultMatch?.unit && recipeQty.unit !== defaultMatch.unit) {
+      const ladder = convert(recipeQty, defaultMatch.unit, canonical);
+      if (ladder.ok) {
+        displayAmount = Number(ladder.value.toFixed(3));
+        displayUnit   = defaultMatch.unit;
+      } else if (defaultMatch.countWeightG) {
+        // Cross-family bridge via countWeightG.
+        const toGrams = (qty) => {
+          if (qty.unit === "count") return Number(qty.amount) * Number(defaultMatch.countWeightG);
+          const entry = canonical.units?.find(u => u.id === qty.unit);
+          return entry ? Number(qty.amount) * Number(entry.toBase) : null;
+        };
+        const grams = toGrams(recipeQty);
+        if (grams != null && Number.isFinite(grams)) {
+          if (defaultMatch.unit === "count") {
+            displayAmount = Number((grams / Number(defaultMatch.countWeightG)).toFixed(3));
+            displayUnit   = "count";
+          } else {
+            const pantryEntry = canonical.units?.find(u => u.id === defaultMatch.unit);
+            if (pantryEntry) {
+              displayAmount = Number((grams / Number(pantryEntry.toBase)).toFixed(3));
+              displayUnit   = defaultMatch.unit;
+            }
+          }
+        }
+      }
+    }
+
     return {
       idx,
       recipeIng: ing,
@@ -90,8 +149,8 @@ export function buildInitialUsedItems(recipe, pantry) {
       matches,
       skipped: false,
       selectedRowId: defaultMatch?.id || null,
-      usedAmount: ing.qty?.amount ?? null,
-      usedUnit:   ing.qty?.unit   ?? (defaultMatch?.unit ?? null),
+      usedAmount: displayAmount,
+      usedUnit:   displayUnit,
     };
   });
 }
