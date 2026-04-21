@@ -2779,18 +2779,26 @@ export function siblingsInHub(id) {
 }
 
 /**
- * Resolve a canonical slug into its { canonical, state } pair.
- * Callers that want the state axis (pantry row hydration, UI
- * chips) use this instead of findIngredient's flattening lookup.
+ * Resolve a canonical slug into its { canonical, state, cut } triple.
+ * Callers that want the state or cut axis (pantry row hydration,
+ * UI chips, scan correction) use this instead of findIngredient's
+ * flattening lookup. Slug form — mirrors resolveSlug's shape but
+ * returns slug strings instead of ingredient objects.
  *
- * Non-aliased slugs return the slug with state = null so callers
- * can treat every identity uniformly.
+ * Non-aliased slugs return the slug itself with state and cut both
+ * null so callers can treat every identity uniformly.
  */
 export function resolveCanonicalIdentity(id) {
-  if (!id) return { canonical: null, state: null };
+  if (!id) return { canonical: null, state: null, cut: null };
   const alias = CANONICAL_ALIASES[id];
-  if (alias) return { canonical: alias.base, state: alias.state };
-  return { canonical: id, state: null };
+  if (alias) {
+    return {
+      canonical: alias.base,
+      state:     alias.state || null,
+      cut:       alias.cut   || null,
+    };
+  }
+  return { canonical: id, state: null, cut: null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

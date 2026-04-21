@@ -15,9 +15,11 @@
 
 import {
   findIngredient,
+  resolveSlug,
   INGREDIENTS,
   fuzzyMatchIngredient,
   ALL_STATE_TOKENS,
+  cutLabel,
 } from "../data/ingredients";
 
 // ── dietary modifiers ────────────────────────────────────────────────
@@ -168,28 +170,37 @@ export function resolveNameToCanonicalId(name) {
 }
 
 // ── row identity ─────────────────────────────────────────────────────
-// HEADER per CLAUDE.md: [Brand] [Canonical] → Canonical → item.name.
-// Hub-aware: a cut canonical (parentId set) shows the HUB name as
-// the header and the cut slug rides along via deriveRowCut.
+// HEADER per CLAUDE.md: [Brand] [Canonical] — the big italic title.
+// Cut rides along on a SEPARATE row (deriveRowCut) in the rust-
+// colored CUT axis below the canonical.
+//
+// Legacy compound slugs (chicken_breast, ribeye, ...) redirect
+// through CANONICAL_ALIASES to the base canonical + a cut hint, so
+// a row written before migration 0122 still renders "Chicken · Breast"
+// instead of fossilizing as "Chicken Breast" in the header.
 export function deriveRowHeader(row) {
   if (!row) return "";
   const canonId = row.ingredientId || row.canonicalId || null;
-  const canon = canonId ? findIngredient(canonId) : null;
-  if (canon) {
-    const hub = canon.parentId ? findIngredient(canon.parentId) : null;
-    const primary = (hub && hub.name) || canon.name;
+  const { ingredient } = resolveSlug(canonId);
+  if (ingredient) {
     const brand = row.brand ? String(row.brand).trim() : "";
-    return brand ? `${brand} ${primary}` : primary;
+    return brand ? `${brand} ${ingredient.name}` : ingredient.name;
   }
   return row.name || "";
 }
 
+// The CUT axis row. Sources in priority order:
+//   1. row.cut — new explicit column (migration 0122), authoritative
+//   2. alias.cut — legacy compound slug still in ingredient_id /
+//                  canonical_id, decoded via resolveSlug
+// Returns null when the row has no cut AND the canonical has no
+// CUTS_FOR entry (produce, pantry staples — no cut axis rendering).
 export function deriveRowCut(row) {
   if (!row) return null;
+  if (row.cut) return cutLabel(row.cut);
   const canonId = row.ingredientId || row.canonicalId || null;
-  const canon = canonId ? findIngredient(canonId) : null;
-  if (!canon || !canon.parentId) return null;
-  return canon.shortName || canon.name;
+  const { cut } = resolveSlug(canonId);
+  return cut ? cutLabel(cut) : null;
 }
 
 // ── claim diff ───────────────────────────────────────────────────────
