@@ -55,6 +55,10 @@ function avatarColor(name) {
 export default function Home({
   profile, userId, familyIds = [], familyLoading = false, nameFor,
   openProfile, openCook,
+  // Google profile picture from the auth session (user_metadata.avatar_url).
+  // Used as the default self-avatar until we ship user-uploaded pics —
+  // saves the signed-in user from staring at their initial forever.
+  authAvatarUrl,
 }) {
   const streak      = profile.streak_count || 0;
   const streakTier  = profile.streak_tier  || 0;
@@ -161,6 +165,7 @@ export default function Home({
             <Avatar
               name={profile.name}
               initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
+              imageUrl={authAvatarUrl}
               onClick={openSelf}
             />
           </FlairHalo>
@@ -357,20 +362,35 @@ function ActivityRow({ item, nameFor, badgeById, onCookTap, onActorTap, viewerId
   return null;
 }
 
-function Avatar({ name, initial, onClick }) {
+function Avatar({ name, initial, imageUrl, onClick }) {
+  // Google avatar URLs occasionally 403 after rotation. Fall back to
+  // the initial-letter tile on load error so we never render a broken
+  // image icon.
+  const [imgBroken, setImgBroken] = useState(false);
+  const showImage = imageUrl && !imgBroken;
   return (
     <button
       onClick={onClick}
       title={name}
       style={{
         width: 48, height: 48, borderRadius: 24,
-        background: avatarColor(name), color: "#f5c842",
+        background: showImage ? "transparent" : avatarColor(name),
+        color: "#f5c842",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 500,
         flexShrink: 0, border: "none", cursor: "pointer", padding: 0,
+        overflow: "hidden",
       }}
     >
-      {initial}
+      {showImage ? (
+        <img
+          src={imageUrl}
+          alt={name || ""}
+          onError={() => setImgBroken(true)}
+          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+          referrerPolicy="no-referrer"
+        />
+      ) : initial}
     </button>
   );
 }

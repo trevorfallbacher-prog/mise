@@ -65,6 +65,18 @@ function nameFromAuth(user) {
   );
 }
 
+// Profile-picture URL from the auth provider. Google populates
+// `avatar_url` and/or `picture` in user_metadata after OAuth; magic-link
+// sign-ins have neither, in which case we render the initial-letter
+// circle as before. Preferred over the initial fallback everywhere we
+// show the signed-in user to themselves. Not available for other users
+// (their auth session isn't ours) — that path waits on an upload
+// feature that caches the URL into profiles.avatar_url.
+function avatarUrlFromAuth(user) {
+  const md = user?.user_metadata || {};
+  return md.avatar_url || md.picture || null;
+}
+
 export default function App() {
   const { user, loading: authLoading } = useAuth();
   const { profile, loading: profileLoading, upsert: upsertProfile } =
@@ -379,6 +391,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
             nameFor={nameFor}
             openProfile={openProfile}
             openCook={openCook}
+            authAvatarUrl={avatarUrlFromAuth(user)}
           />
         )}
         {tab === "courses"  && (
@@ -473,6 +486,7 @@ function AuthedApp({ user, profile, upsertProfile }) {
           onOpenSettings={() => { setProfileUserId(null); setSettingsOpen(true); }}
           onOpenNotifs={() => { setProfileUserId(null); openNotifs(); }}
           notifsUnread={notifications.unreadCount + (whatsNew.showNotification ? 1 : 0)}
+          authAvatarUrl={avatarUrlFromAuth(user)}
           onOpenCook={(cookId) => {
             // Cookbook is now an overlay inside UserProfile, so we
             // stay on this profile and just hand the deep link in —

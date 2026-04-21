@@ -69,6 +69,10 @@ export default function UserProfile({
   // Surfaced here because the fixed top-bar icons were pulled; the
   // profile header is now the single entry point for both.
   onOpenSettings, onOpenNotifs, notifsUnread = 0,
+  // Google profile picture from the auth session — rendered as the
+  // self-view large avatar until user-uploaded pics ship. Not passed
+  // for other users (their auth session isn't ours).
+  authAvatarUrl,
   // Cook-log deep link handed in from App (notification tap / Home
   // feed). When present, we auto-open the full Cookbook overlay so the
   // embedded Cookbook's own pipeline resolves the detail view.
@@ -86,6 +90,9 @@ export default function UserProfile({
   // Ranked-match picker state; opened from GateCard when all
   // prereqs are green.
   const [pickerState, setPickerState] = useState(null);
+  // Broken-image fallback for the large identity avatar. Google
+  // avatar URLs sometimes 403 after rotation.
+  const [avatarBroken, setAvatarBroken] = useState(false);
 
   // Auto-open the Cookbook overlay whenever a cook_log deep-link lands.
   // The embedded Cookbook then consumes the same deepLink prop and
@@ -200,9 +207,19 @@ export default function UserProfile({
                 an avatar_sparkle cosmetic within the flair_hours window. */}
             <div style={{ display:"flex", alignItems:"center", gap:16, marginBottom:20 }}>
               <FlairHalo active={isSelf && isFlairActive(profile)} size={72}>
-                <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
-                  {initial}
-                </div>
+                {isSelf && authAvatarUrl && !avatarBroken ? (
+                  <img
+                    src={authAvatarUrl}
+                    alt={name}
+                    onError={() => setAvatarBroken(true)}
+                    referrerPolicy="no-referrer"
+                    style={{ width:72, height:72, borderRadius:36, objectFit:"cover", flexShrink:0, display:"block" }}
+                  />
+                ) : (
+                  <div style={{ width:72, height:72, borderRadius:36, background: avatarColor(name), color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:34, fontWeight:500, flexShrink:0 }}>
+                    {initial}
+                  </div>
+                )}
               </FlairHalo>
               <div style={{ flex:1, minWidth:0 }}>
                 <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", margin:0, letterSpacing:"-0.02em" }}>
