@@ -161,8 +161,16 @@ function assemblePromptHeader(
   prefs: Prefs,
   avoidTitles: string[],
   context: RichContext,
+  opts: { skipPantry?: boolean } = {},
 ): string {
-  const pantryLines = pantry.length === 0
+  // Final-mode skips the pantry listing — the sketch already picked
+  // a dish, the LOCKED INGREDIENTS block below is the authoritative
+  // shopping list, and re-sending 80 pantry rows burns thousands of
+  // input tokens for signal Claude no longer needs. Sketch mode
+  // still needs the full pantry to HAVE something to draft from.
+  const pantryLines = opts.skipPantry
+    ? "(pantry was surveyed during sketch — see LOCKED INGREDIENTS below for the authoritative set)"
+    : pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
         .map((p) => {
@@ -521,7 +529,7 @@ ${lockedIngredients.map((i) => {
 ${prefs.recipeFeedback!.trim()}\n`
     : "";
 
-  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context)}${lockedBlock}${feedbackBlock}
+  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${lockedBlock}${feedbackBlock}
 Return ONLY a single JSON object (no markdown, no prose) with this
 exact shape. Every field is REQUIRED unless marked optional.
 
@@ -551,19 +559,10 @@ exact shape. Every field is REQUIRED unless marked optional.
     {
       "id":          "step1",
       "title":       "<short step title>",
-      "instruction": "<1-3 sentences>",
+      "instruction": "<1-3 sentences — reference ingredients by display name; the UI zips them back to the top-level ingredients[] list>",
       "icon":        "🔪",
       "timer":       <seconds or null>,
       "tip":         "<optional one-line tip or null>",
-      "uses": [
-        {
-          "amount":       "<display string matching the amount used AT THIS STEP>",
-          "item":         "<display text, e.g. 'butter'>",
-          "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
-          "state":        "<optional physical form: 'minced', 'sliced', 'grated'>"
-        },
-        ...
-      ],
       "heat":    "<optional: 'low' | 'medium-low' | 'medium' | 'medium-high' | 'high' | 'off'>",
       "doneCue": "<optional short qualitative ready-signal: 'nutty smell, color of wet sand'>"
     },
@@ -729,17 +728,16 @@ function profileSection(p: NonNullable<NonNullable<RichContext>["profile"]>): st
 
 function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): string {
   if (!h.cookCount) return "";
-  const ratings = h.ratingCounts
-    ? Object.entries(h.ratingCounts)
-        .filter(([, c]) => c > 0)
-        .map(([k, c]) => `${k}:${c}`).join(" ")
-    : "";
+  // Token-trim: cookCount + topCuisines only. Earlier iteration also
+  // emitted rating distribution and favorited titles, but neither
+  // meaningfully moves the draft — Claude doesn't read
+  // "user rated 3 dishes 🤩 and 2 dishes 😐" and produce materially
+  // different output, and favorited titles are a string list of
+  // specific dish names with low actionable signal for a fresh draft.
+  // topCuisines genuinely biases toward preference when cuisine="any".
   const cuisines = (h.topCuisines || []).map((c) => `${c.id}(${c.count})`).join(", ");
-  const favs = (h.topFavoritedTitles || []).join(" | ");
   const lines: string[] = [`- recent cooks: ${h.cookCount}`];
-  if (ratings)  lines.push(`- rating mix: ${ratings}`);
   if (cuisines) lines.push(`- top cuisines: ${cuisines}`);
-  if (favs)     lines.push(`- favorited: ${favs}`);
   return `\nRECENT HISTORY:\n${lines.join("\n")}\n`;
 }
 
@@ -1070,24 +1068,18 @@ function normalizeCourse(v: unknown): string | null {
 }
 
 // Ensure every step carries the fields CookMode reads without
-// blowing up on a model that skipped one. `uses` defaults to an
-// empty array (triggers CookMode's fallback to the top-level
-// ingredients list); `heat` and `doneCue` default to null.
+// blowing up on a model that skipped one. `uses` was historically a
+// per-step ingredient list, but it duplicated top-level
+// ingredients[] and burned 15-30% of output tokens on complex
+// recipes (one of the drivers behind max_tokens truncation). The
+// step renderer falls back to the top-level list when uses is
+// empty, which is now always. Defaults to [] here so saved
+// pre-trim recipes still hydrate without nulls breaking
+// CookMode's uses.map.
 function normalizeSteps(steps: unknown): unknown[] {
   if (!Array.isArray(steps)) return [];
   return steps.map((s, i) => {
     const step = (s && typeof s === "object") ? s as Record<string, unknown> : {};
-    const uses = Array.isArray(step.uses)
-      ? (step.uses as unknown[]).map((u) => {
-          const row = (u && typeof u === "object") ? u as Record<string, unknown> : {};
-          return {
-            amount:       typeof row.amount === "string" ? row.amount : null,
-            item:         typeof row.item   === "string" ? row.item   : null,
-            ingredientId: typeof row.ingredientId === "string" ? row.ingredientId : null,
-            state:        typeof row.state  === "string" ? row.state  : null,
-          };
-        })
-      : [];
     return {
       id:          typeof step.id          === "string" ? step.id          : `step${i + 1}`,
       title:       typeof step.title       === "string" ? step.title       : `Step ${i + 1}`,
@@ -1095,7 +1087,7 @@ function normalizeSteps(steps: unknown): unknown[] {
       icon:        typeof step.icon        === "string" ? step.icon        : "👨‍🍳",
       timer:       typeof step.timer       === "number" ? step.timer       : null,
       tip:         typeof step.tip         === "string" ? step.tip         : null,
-      uses,
+      uses:        [],
       heat:        typeof step.heat        === "string" ? step.heat        : null,
       doneCue:     typeof step.doneCue     === "string" ? step.doneCue     : null,
     };

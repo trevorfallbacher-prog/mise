@@ -734,6 +734,37 @@ export default function CookMode({
             );
           })}
         </div>
+
+        {/* TOOLS — equipment the recipe needs. Surfaces what the
+            AI (or bundled recipe author) specified so the user can
+            do a mise-en-place scan before starting: "do I have a
+            12\" cast iron? a microplane? a fine-mesh strainer?".
+            Was previously emitted into the persisted recipe but
+            never rendered. Hidden when the recipe carries no
+            tools (older drafts, bundled recipes that omitted it). */}
+        {Array.isArray(recipe.tools) && recipe.tools.length > 0 && (
+          <div style={{ marginTop:24 }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em", marginBottom:10 }}>
+              TOOLS
+            </div>
+            <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"10px 14px" }}>
+              <ul style={{ margin:0, padding:0, listStyle:"none", display:"flex", flexDirection:"column", gap:6 }}>
+                {recipe.tools.map((t, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      fontFamily:"'DM Sans',sans-serif", fontSize:13,
+                      color:"#bbb", display:"flex", alignItems:"center", gap:8,
+                    }}
+                  >
+                    <span style={{ color:"#555", fontSize:10 }}>▸</span>
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ display:"flex", gap:10, marginTop:32 }}>
         {onSchedule && (
