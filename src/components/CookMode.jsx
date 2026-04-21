@@ -165,11 +165,18 @@ function Timer({ seconds, onDone }) {
   );
 }
 
-// True when a pantry row carries the given canonical ingredient id in its
-// tag set. Handles both the new plural shape (row.ingredientIds array) and
-// the legacy singular (row.ingredientId) — lets composite items (frozen
-// pizza tagged with mozzarella + sausage + dough) satisfy a recipe calling
-// for any one of their components.
+// True when a pantry row's PRIMARY canonical identity matches the given
+// ingredient id (after alias / hub-family redirect). A recipe calling for
+// standalone mozzarella is NOT satisfied by a frozen pizza that happens
+// to list mozzarella in its ingredientIds[] composition — user won't
+// crack open the pizza to cook with. Deduction needs primary identity.
+//
+// Previously this function ALSO checked ingredientIds[] membership (the
+// migration-0033 "composite items satisfy component calls" rule), which
+// caused pizzas / leftovers to auto-pair with component ingredients.
+// The composition axis still exists in the data; it's useful for "what
+// macros does this pizza contain?" questions but not for deduction
+// pairing.
 //
 // Hub-family aware: a recipe asking for `chicken_breast` (legacy
 // compound slug) matches a pantry row tagged `chicken` + cut=breast
@@ -180,10 +187,6 @@ function Timer({ seconds, onDone }) {
 // bug user hit on Chicken Tortillas.
 function rowHasIngredient(row, ingredientId) {
   if (!row || !ingredientId) return false;
-  if (Array.isArray(row.ingredientIds) && row.ingredientIds.length) {
-    if (row.ingredientIds.includes(ingredientId)) return true;
-    return row.ingredientIds.some(id => sameCanonicalFamily(id, ingredientId));
-  }
   if (row.ingredientId === ingredientId) return true;
   return sameCanonicalFamily(row.ingredientId, ingredientId);
 }

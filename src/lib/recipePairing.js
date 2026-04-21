@@ -310,9 +310,23 @@ export function pairRecipeIngredients(ingredients, pantry) {
     // cream recipe call. That kind of sibling — different canonical
     // in a flavor-hub — now drops to Tier 3 (closest match), where
     // the UI labels it as a substitute rather than an exact pair.
+    // Shared predicate across all three match tiers: a row is a
+    // candidate for standalone recipe-ingredient pairing ONLY when
+    // it's kind="ingredient" (the raw pantry default). Compound
+    // dishes (kind="compound" — frozen pizzas, pre-made lasagnas)
+    // and leftovers (kind="leftovers" — last night's fried rice)
+    // carry ingredientIds[] for composition tracking but can't be
+    // cracked open to satisfy a standalone mozzarella call. Without
+    // this filter the pairer happily offered "use your Fresh
+    // Mozzarella from your fridge" when the mozzarella was actually
+    // a component of a frozen pizza the user had no intention of
+    // disassembling.
+    const rowIsRawIngredient = (p) =>
+      !!p && !used.has(p.id) && (p.kind || "ingredient") === "ingredient";
+
     if (!paired && ingCanonId) {
       paired = (pantry || []).find(p => {
-        if (!p || used.has(p.id)) return false;
+        if (!rowIsRawIngredient(p)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
         if (!pCanonId) return false;
         return resolvesToSameCanonical(pCanonId, ingCanonId);
@@ -331,7 +345,7 @@ export function pairRecipeIngredients(ingredients, pantry) {
     if (!paired && ingName) {
       const ingCanonValid = !!(ingCanonId && ingCanon);
       paired = (pantry || []).find(p => {
-        if (!p || used.has(p.id)) return false;
+        if (!rowIsRawIngredient(p)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
         const pCanon   = pCanonId ? findIngredient(pCanonId) : null;
         const pCanonValid = !!(pCanonId && pCanon);
@@ -357,7 +371,7 @@ export function pairRecipeIngredients(ingredients, pantry) {
         normalizeForMatch(ingName).split(/\s+/).filter(Boolean),
       );
       closestMatch = (pantry || []).find(p => {
-        if (!p || used.has(p.id)) return false;
+        if (!rowIsRawIngredient(p)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
         if (!pCanonId) return false;
         const pCanon = findIngredient(pCanonId);
