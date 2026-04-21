@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -859,6 +859,40 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   itself is user-created (no parent hub link) — that's
                   how "pepperoni" with food category=pork still shows
                   the pork cut/form state picker. */}
+              {/* CUT — shown when this item's canonical has ≥2 hub
+                  siblings (chicken_breast / chicken_thigh /
+                  chicken_tenderloin / etc.). Changing cut = changing
+                  canonicalId to a sibling under the same parentId.
+                  Uses the same purple tint as STATE because
+                  cut+state are paired axes in the user's mental
+                  model, both describing the physical item; the
+                  distinction is anatomy (cut) vs preparation (state).
+                  Hidden on hubs and standalone ingredients where
+                  there's nothing to switch between. */}
+              {(() => {
+                const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
+                if (siblings.length < 2) return null;
+                const selfCanon = findIngredient(item.ingredientId);
+                const cutLabel = selfCanon?.shortName || selfCanon?.name || "SET CUT";
+                return (
+                  <div
+                    onClick={e => { e.stopPropagation(); startEdit("cut"); }}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: selfCanon ? "#c7a8d4" : "#555",
+                      letterSpacing: "0.08em", marginTop: 3,
+                      textTransform: "uppercase",
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                  >
+                    CUT: <span style={{
+                      color: selfCanon ? "#c7a8d4" : "#888",
+                      borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
+                    }}>{cutLabel}</span>
+                  </div>
+                );
+              })()}
+
               {(() => {
                 const states = statesForItem(item);
                 if (!states || states.length === 0) return null;
@@ -2184,6 +2218,73 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           row down every time the user tapped STATE. Stacked sheet now;
           same write path (commit({state})) so clearing + re-picking
           stays atomic. */}
+      {/* CUT picker — hub sibling swap. Pantry identity is bound to
+          canonicalId, so changing the cut rewrites ingredientId. The
+          state axis is preserved through the swap — a pantry row of
+          ground chicken_breast becoming ground chicken_thigh stays
+          "ground". Closing via tap on the active cut is a no-op;
+          the user already has that cut. */}
+      {editingField === "cut" && (() => {
+        const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
+        if (siblings.length < 2) return null;
+        return (
+          <ModalSheet
+            onClose={() => setEditingField(null)}
+            zIndex={Z.picker}
+            label="CUT"
+            maxHeight="60vh"
+          >
+            <h2 style={{
+              fontFamily: "'Fraunces',serif", fontSize: 22,
+              fontStyle: "italic", color: "#f0ece4",
+              fontWeight: 400, margin: "2px 0 10px",
+            }}>
+              Which cut is it?
+            </h2>
+            <p style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+              color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+            }}>
+              Switching cut moves the item to a different canonical in
+              the same family. Your state (ground, sliced, etc.)
+              carries over.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+              {siblings.map(s => {
+                const active = s.id === item.ingredientId;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      if (!active) commit({ ingredientId: s.id });
+                      setEditingField(null);
+                    }}
+                    style={{
+                      padding: "14px 10px",
+                      background: active ? "#0f1620" : "#141414",
+                      color: active ? "#7eb8d4" : "#ccc",
+                      border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                      borderRadius: 10,
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      letterSpacing: "0.05em", cursor: "pointer",
+                      textTransform: "uppercase",
+                      textAlign: "left",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 18 }}>{s.emoji || "🍗"}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      {(s.shortName || s.name || s.id).toUpperCase()}
+                    </span>
+                    {active && <span style={{ color: "#7eb8d4", fontSize: 14 }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </ModalSheet>
+        );
+      })()}
+
       {editingField === "state" && (() => {
         const states = statesForItem(item) || [];
         if (states.length === 0) return null;

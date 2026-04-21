@@ -7,6 +7,7 @@
 //   recipesByCategory(category)
 //   recipesOnRoute(route) — "plan" | "learn"
 
+import { findIngredient } from "../ingredients";
 import aglioEOlio          from "./aglio-e-olio";
 import cacioEPepe          from "./cacio-e-pepe";
 import carbonara           from "./carbonara";
@@ -83,8 +84,20 @@ export function suggestMeals(pantry = [], { limit = 5, minCoverage = 0 } = {}) {
   const pantryByIng = new Map();
   for (const p of pantry) {
     if (!p.ingredientId) continue;
-    const prev = pantryByIng.get(p.ingredientId) || 0;
-    pantryByIng.set(p.ingredientId, prev + Number(p.amount || 0));
+    const amt = Number(p.amount || 0);
+    pantryByIng.set(p.ingredientId, (pantryByIng.get(p.ingredientId) || 0) + amt);
+    // Hub-aware indexing: also book the pantry amount under the
+    // canonical's parent hub so a recipe referencing the hub id
+    // ("chicken_hub") matches any cut in that family. Recipes that
+    // reference a specific cut stay strict — they land on the cut's
+    // own id, not the hub. Prevents the "I have chicken thighs but
+    // the recipe asks for 'chicken family' and it reads as missing"
+    // failure mode that showed up on AI-drafted recipes.
+    const canon = findIngredient(p.ingredientId);
+    if (canon?.parentId) {
+      const hub = canon.parentId;
+      pantryByIng.set(hub, (pantryByIng.get(hub) || 0) + amt);
+    }
   }
 
   const scored = RECIPES.map(recipe => {

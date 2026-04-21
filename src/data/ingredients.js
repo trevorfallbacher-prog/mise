@@ -592,6 +592,43 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "count",
   },
+  {
+    // Tenderloin is the strip of muscle attached to the underside of
+    // the breast. Sold separately (and named differently — "chicken
+    // tenders") often enough that it earns its own canonical rather
+    // than riding on chicken_breast with a state modifier. Pre-fix,
+    // "tenderloin" lived in MEAT_STATES which conflated cut (anatomy)
+    // with state (preparation); this is the cut half of that split.
+    id: "chicken_tenderloin", name: "Chicken Tenderloins", shortName: "Tenderloins",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    units: [
+      { id: "count", label: "tenders", toBase: 50 }, // typical strip ~50g
+      { id: "lb",    label: "lb",      toBase: 453.6 },
+      { id: "oz",    label: "oz",      toBase: 28.35 },
+      { id: "g",     label: "g",       toBase: 1 },
+    ],
+    defaultUnit: "lb",
+    // Tenderloin has the same macro profile as breast — same muscle
+    // group, just a different cut. USDA figures for raw
+    // boneless/skinless chicken tenderloin.
+    nutrition: { per: "100g", kcal: 119, protein_g: 25, fat_g: 1.3, carb_g: 0, sodium_mg: 58 },
+  },
+  {
+    // Ground chicken — separate canonical because it's a distinct
+    // grocery SKU (ground chicken breast packs vs ground thigh packs
+    // exist, but the generic "ground chicken" is its own product).
+    // Recipes routinely call for it specifically (chicken meatballs,
+    // Thai larb, weeknight skillet dishes).
+    id: "ground_chicken", name: "Ground Chicken", shortName: "Ground",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "g",  label: "g",  toBase: 1 },
+    ],
+    defaultUnit: "lb",
+    nutrition: { per: "100g", kcal: 143, protein_g: 17, fat_g: 8, carb_g: 0, sodium_mg: 60 },
+  },
   // Beef ───────────────────
   {
     id: "steak", name: "Steak", shortName: "Steak",
@@ -2658,6 +2695,34 @@ export function findIngredient(id) {
   const bundled = byId.get(id);
   if (bundled) return bundled;
   return dbCanonicals.get(id) || null;
+}
+
+/**
+ * Return every canonical that shares a parent hub with `id` —
+ * including `id` itself. Used by the ItemCard CUT picker so the user
+ * can swap between siblings of the same hub (chicken_breast ↔
+ * chicken_thigh ↔ chicken_tenderloin, etc.) without retyping the
+ * item from scratch. Sort is registry order so the picker reads
+ * top-to-bottom the way the file was authored.
+ *
+ * Returns [] when the canonical has no parentId (a hub itself, or a
+ * standalone ingredient like "flour"). Callers render the picker
+ * only when the list has ≥2 entries — a single-sibling hub has no
+ * cuts to switch between.
+ */
+export function siblingsInHub(id) {
+  const self = findIngredient(id);
+  if (!self) return [];
+  const hubId = self.parentId;
+  if (!hubId) return [];
+  const out = [];
+  for (const ing of INGREDIENTS) {
+    if (ing.parentId === hubId) out.push(ing);
+  }
+  for (const ing of dbCanonicals.values()) {
+    if (ing.parentId === hubId) out.push(ing);
+  }
+  return out;
 }
 
 /**
