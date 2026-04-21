@@ -6,7 +6,8 @@ import CookComplete from "./CookComplete";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
-import { pairRecipeIngredients, describePairing } from "../lib/recipePairing";
+import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
+import { useCookSession } from "../lib/useCookSession";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -164,17 +165,30 @@ function Timer({ seconds, onDone }) {
   );
 }
 
-// True when a pantry row carries the given canonical ingredient id in its
-// tag set. Handles both the new plural shape (row.ingredientIds array) and
-// the legacy singular (row.ingredientId) — lets composite items (frozen
-// pizza tagged with mozzarella + sausage + dough) satisfy a recipe calling
-// for any one of their components.
+// True when a pantry row's PRIMARY canonical identity matches the given
+// ingredient id (after alias / hub-family redirect). A recipe calling for
+// standalone mozzarella is NOT satisfied by a frozen pizza that happens
+// to list mozzarella in its ingredientIds[] composition — user won't
+// crack open the pizza to cook with. Deduction needs primary identity.
+//
+// Previously this function ALSO checked ingredientIds[] membership (the
+// migration-0033 "composite items satisfy component calls" rule), which
+// caused pizzas / leftovers to auto-pair with component ingredients.
+// The composition axis still exists in the data; it's useful for "what
+// macros does this pizza contain?" questions but not for deduction
+// pairing.
+//
+// Hub-family aware: a recipe asking for `chicken_breast` (legacy
+// compound slug) matches a pantry row tagged `chicken` + cut=breast
+// (new model) and vice-versa, because both resolve to chicken_hub.
+// Without this, a user with Chicken Breast in the pantry saw
+// "Not in pantry — add to shopping list" on any recipe the AI tagged
+// with the legacy slug — the exact "it's purposely trying to fuck us"
+// bug user hit on Chicken Tortillas.
 function rowHasIngredient(row, ingredientId) {
   if (!row || !ingredientId) return false;
-  if (Array.isArray(row.ingredientIds) && row.ingredientIds.length) {
-    return row.ingredientIds.includes(ingredientId);
-  }
-  return row.ingredientId === ingredientId;
+  if (row.ingredientId === ingredientId) return true;
+  return sameCanonicalFamily(row.ingredientId, ingredientId);
 }
 
 // Look up a recipe ingredient in the pantry by canonical ingredientId.
@@ -255,6 +269,18 @@ export default function CookMode({
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
   const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
+  // Shared cook-time session state (src/lib/useCookSession.js). Owns
+  // per-ingredient overrides (pantryItemId swaps, shopping promotions,
+  // skip flags) and user-added extras. Passed as a prop to
+  // CookComplete so the "What did you use?" screen reads the same
+  // swaps the user made on cook-prep. Previously each screen kept
+  // its own parallel override shape and overrides vanished on screen
+  // transition; session fixes that permanently.
+  const cookSession = useCookSession();
+  const { session, setOverride, clearOverride } = cookSession;
+  const [swapOpenIdx, setSwapOpenIdx] = useState(null);
+  const [swapSearch, setSwapSearch] = useState("");
+  const openSwapPicker = (idx) => { setSwapOpenIdx(idx); setSwapSearch(""); };
   // Non-null while the 4-phase celebration/rating/notes flow is on screen.
   // Mounts CookComplete; on finish we hand off to parent's onDone.
   const [completing, setCompleting] = useState(false);
@@ -295,7 +321,19 @@ export default function CookMode({
   // specific pantry row backs each ingredient is a live decision
   // so brand/availability drift a month from now doesn't fossilize
   // a stale pair. Zipped by index into ingredientStatus.
-  const ingredientPairings = pairRecipeIngredients(recipe.ingredients || [], pantry || []);
+  //
+  // cookSession.overrides[i].pantryItemId layers the user's per-row
+  // cook-time swap choices on top — stamping pantryItemId on the
+  // ingredient so the Tier 0 short-circuit in pairRecipeIngredients
+  // uses the exact row the user picked, even when the canonical
+  // doesn't match. CookComplete reads the same map so the swap
+  // carries through to the deduction flow.
+  const ingredientsForPairing = (recipe.ingredients || []).map((ing, i) => {
+    const swapId = session.overrides[i]?.pantryItemId;
+    if (!swapId) return ing;
+    return { ...ing, pantryItemId: swapId };
+  });
+  const ingredientPairings = pairRecipeIngredients(ingredientsForPairing, pantry || []);
   const missingIngs    = ingredientStatus.filter(s => s.status === "missing");
   const lowIngs        = ingredientStatus.filter(s => s.status === "low");
   const wrongStateIngs = ingredientStatus.filter(s => s.status === "wrong-state");
@@ -343,6 +381,80 @@ export default function CookMode({
     setJustAdded(toAdd.length);
     setTimeout(() => setJustAdded(0), 3500);
   };
+
+  // Single-row "+ SHOP" — mirrors addMissingToShoppingList's canonical-
+  // backfill logic but scoped to one ingredient at a time. Marks the
+  // row as added locally so the button flips to ✓ without a re-render
+  // race on the parent's shopping list.
+  const addOneToShoppingList = (ing, row, idx) => {
+    if (!setShoppingList) return;
+    if (session.overrides[idx]?.promotedToShopping) return;
+    setShoppingList(prev => {
+      const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
+      const candidateName = row?.name || ing.item;
+      const resolvedId = ing.ingredientId
+        || inferCanonicalFromName(candidateName)
+        || null;
+      const canonical = findIngredient(resolvedId);
+      const key = resolvedId || candidateName.toLowerCase();
+      if (existing.has(key)) return prev;
+      return [...prev, {
+        id: crypto.randomUUID(),
+        ingredientId: resolvedId,
+        name: canonical?.name || row?.name || ing.item,
+        emoji: canonical?.emoji || row?.emoji || "🥫",
+        amount: ing.qty?.amount ?? 1,
+        unit: ing.qty?.unit ?? (row?.unit || "unit"),
+        category: canonical?.category || row?.category || "pantry",
+        source: "recipe",
+      }];
+    });
+    setOverride(idx, { promotedToShopping: true });
+  };
+
+  // Rank every pantry row by closeness to a recipe ingredient. Same
+  // signal stack as AIRecipe's swap picker: exact canonical (+1000),
+  // same hub (+500), same category (+100), plus token overlap. When
+  // the user is typing we narrow to substring-matches on the pantry
+  // row name so the list feels like a live search, not a rank.
+  const rankSwapCandidates = (ing, query) => {
+    const targetCanon = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
+    const targetCat  = targetCanon?.category || null;
+    const targetSlug = targetCanon?.id || null;
+    const targetHub  = targetCanon?.parentId || targetCanon?.id || null;
+    const targetTokens = new Set(
+      normalizeForMatch(ing.item || ing.name || targetCanon?.name || "")
+        .split(/\s+/).filter(Boolean),
+    );
+    const q = (query || "").trim().toLowerCase();
+    const seen = new Set();
+    const scored = [];
+    for (const p of pantry || []) {
+      if (!p) continue;
+      const canon = p.ingredientId ? findIngredient(p.ingredientId) : null;
+      const key = canon?.id || (p.name || "").toLowerCase() || p.id;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (q && !(p.name || "").toLowerCase().includes(q)) continue;
+      let score = 0;
+      if (canon?.id && targetSlug && canon.id === targetSlug) score += 1000;
+      const pHub = canon?.parentId || canon?.id;
+      if (pHub && targetHub && pHub === targetHub) score += 500;
+      if (canon?.category && targetCat && canon.category === targetCat) score += 100;
+      const pTokens = new Set(
+        normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
+      );
+      let overlap = 0;
+      for (const t of targetTokens) if (pTokens.has(t)) overlap++;
+      score += overlap * 10;
+      scored.push({ row: p, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return scored;
+  };
+
+  const applySwap = (idx, pantryItemId) => setOverride(idx, { pantryItemId });
+  const clearSwap = (idx) => clearOverride(idx, ["pantryItemId"]);
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
@@ -476,33 +588,49 @@ export default function CookMode({
             // Only rows with a canonical ingredientId are tappable — everything
             // else ("to taste" salt, decorative herbs) just renders static.
             const tappable = !!ing.ingredientId;
-            const Row = tappable ? "button" : "div";
+            const swapOpen = swapOpenIdx === i;
+            const swapped  = !!session.overrides[i]?.pantryItemId;
+            // SWAP available on every canonical-tagged row — user
+            // might want to override the default pair on an IN KITCHEN
+            // row (maybe they want to use a different pack that's
+            // closer to expiry) or on a WRONG FORM row (their thigh
+            // for the recipe's breast). Gating it to just missing /
+            // substitute was too narrow — user reported "it won't let
+            // me choose any substitutions" on a screen of mostly IN
+            // KITCHEN + WRONG FORM rows.
+            // SHOP still only on missing — adding a row you already
+            // have to the shopping list is almost always a mistake.
+            const showSwap = !!ing.ingredientId;
+            const showShop = status === "missing" && !!setShoppingList;
+            const shopDone = !!session.overrides[i]?.promotedToShopping;
             return (
-              <Row
+              <div
                 key={i}
-                onClick={tappable ? () => setCardIng({
-                  ingredientId: ing.ingredientId,
-                  fallbackName: row?.name || ing.item,
-                  fallbackEmoji: row?.emoji,
-                }) : undefined}
                 style={{
-                  display:"block", width:"100%", textAlign:"left",
                   padding:"12px 16px",
-                  borderBottom: i<ingredientStatus.length-1?"1px solid #222":"none",
-                  background: "transparent", border: "none",
-                  borderBottomStyle: i<ingredientStatus.length-1 ? "solid" : "none",
-                  borderBottomWidth: i<ingredientStatus.length-1 ? 1 : 0,
-                  borderBottomColor: "#222",
-                  cursor: tappable ? "pointer" : "default",
-                  color:"inherit",
+                  borderBottom: i<ingredientStatus.length-1 ? "1px solid #222" : "none",
                 }}
               >
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <span style={{ color:"#bbb", fontSize:14, display:"flex", alignItems:"center", gap:6 }}>
-                    {ing.item}
-                    {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
-                  </span>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500 }}>{ing.amount}</span>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:10 }}>
+                  <button
+                    onClick={tappable ? () => setCardIng({
+                      ingredientId: ing.ingredientId,
+                      fallbackName: row?.name || ing.item,
+                      fallbackEmoji: row?.emoji,
+                    }) : undefined}
+                    disabled={!tappable}
+                    style={{
+                      flex: 1, minWidth: 0, textAlign:"left",
+                      background:"transparent", border:"none", padding: 0,
+                      cursor: tappable ? "pointer" : "default", color:"inherit",
+                    }}
+                  >
+                    <span style={{ color:"#bbb", fontSize:14, display:"inline-flex", alignItems:"center", gap:6 }}>
+                      {ing.item}
+                      {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
+                    </span>
+                  </button>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500, flexShrink:0 }}>{ing.amount}</span>
                 </div>
                 {badge && (
                   <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
@@ -514,11 +642,6 @@ export default function CookMode({
                         have {Math.round(row.amount*10)/10} {unitLabel(findIngredient(row.ingredientId), row.unit)}
                       </span>
                     )}
-                    {/* WRONG-FORM hint — surfaces when the recipe wants a
-                        specific state (crumbs) and the user has the same
-                        ingredient in a different state (loaf). Tells them
-                        what they CAN work with; the convert chip on the
-                        pantry row is the actual action site. */}
                     {status === "wrong-state" && candidates && candidates.length > 0 && (
                       <span style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#7eb8d4", fontStyle:"italic" }}>
                         Have {candidates[0].amount} {candidates[0].state || "(other form)"} — convert in Pantry to make {ing.state}
@@ -526,13 +649,6 @@ export default function CookMode({
                     )}
                   </div>
                 )}
-                {/* Live pairing banner — "We'll use your Great Value
-                    Chicken Breast from your fridge" style. Derived
-                    every render from current pantry; never persisted.
-                    Red tint when the chosen pair/substitute loses a
-                    dietary claim the recipe asked for (recipe says
-                    low-carb tortilla, pantry has flour tortilla →
-                    ⚠ NO LONGER KETO). */}
                 {pairDescribe && (
                   <div style={{
                     marginTop:6,
@@ -550,10 +666,118 @@ export default function CookMode({
                     )}
                   </div>
                 )}
-              </Row>
+                {(showSwap || showShop) && (
+                  <div style={{ marginTop:8, display:"flex", gap:6 }}>
+                    {showSwap && (
+                      <button
+                        onClick={() => swapOpen ? openSwapPicker(null) : openSwapPicker(i)}
+                        style={swapOpen ? cookSwapBtnActive : cookSwapBtn}
+                      >
+                        ⇌ SWAP
+                      </button>
+                    )}
+                    {showShop && (
+                      <button
+                        onClick={() => addOneToShoppingList(ing, row, i)}
+                        disabled={shopDone}
+                        style={shopDone ? cookShopBtnDone : cookShopBtn}
+                      >
+                        {shopDone ? "✓ ON LIST" : "+ SHOP"}
+                      </button>
+                    )}
+                  </div>
+                )}
+                {swapOpen && (() => {
+                  const q = swapSearch.trim();
+                  const ranked = rankSwapCandidates(ing, swapSearch);
+                  const shown = q
+                    ? ranked.slice(0, 8).map(r => r.row)
+                    : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                  return (
+                    <div style={{
+                      marginTop:10, paddingTop:10,
+                      borderTop:"1px dashed #2a2a2a",
+                      display:"flex", flexDirection:"column", gap:6,
+                    }}>
+                      <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#888", letterSpacing:"0.08em" }}>
+                        SWAP {String(ing.item).toUpperCase()} FOR:
+                      </div>
+                      <input
+                        type="text"
+                        value={swapSearch}
+                        onChange={e => setSwapSearch(e.target.value)}
+                        placeholder="Search your pantry…"
+                        style={cookSwapSearchInput}
+                        autoFocus
+                      />
+                      {!q && (
+                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
+                          TOP 3 CLOSEST · TYPE TO SEARCH
+                        </div>
+                      )}
+                      {shown.length === 0 && (
+                        <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", fontStyle:"italic" }}>
+                          {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                        </div>
+                      )}
+                      {shown.map(c => (
+                        <button
+                          key={c.id}
+                          onClick={() => { applySwap(i, c.id); openSwapPicker(null); }}
+                          style={cookSwapOptionBtn}
+                        >
+                          <span style={{ fontSize:16 }}>{c.emoji || "🥫"}</span>
+                          <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
+                            {c.name}
+                          </span>
+                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888" }}>
+                            {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                          </span>
+                        </button>
+                      ))}
+                      {swapped && (
+                        <button onClick={() => { clearSwap(i); openSwapPicker(null); }} style={cookSwapClearBtn}>
+                          ↺ REVERT TO ORIGINAL ({ing.item})
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
             );
           })}
         </div>
+
+        {/* TOOLS — equipment the recipe needs. Surfaces what the
+            AI (or bundled recipe author) specified so the user can
+            do a mise-en-place scan before starting: "do I have a
+            12\" cast iron? a microplane? a fine-mesh strainer?".
+            Was previously emitted into the persisted recipe but
+            never rendered. Hidden when the recipe carries no
+            tools (older drafts, bundled recipes that omitted it). */}
+        {Array.isArray(recipe.tools) && recipe.tools.length > 0 && (
+          <div style={{ marginTop:24 }}>
+            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em", marginBottom:10 }}>
+              TOOLS
+            </div>
+            <div style={{ background:"#161616", border:"1px solid #2a2a2a", borderRadius:12, padding:"10px 14px" }}>
+              <ul style={{ margin:0, padding:0, listStyle:"none", display:"flex", flexDirection:"column", gap:6 }}>
+                {recipe.tools.map((t, i) => (
+                  <li
+                    key={i}
+                    style={{
+                      fontFamily:"'DM Sans',sans-serif", fontSize:13,
+                      color:"#bbb", display:"flex", alignItems:"center", gap:8,
+                    }}
+                  >
+                    <span style={{ color:"#555", fontSize:10 }}>▸</span>
+                    {t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
       </div>
       <div style={{ display:"flex", gap:10, marginTop:32 }}>
         {onSchedule && (
@@ -700,6 +924,9 @@ export default function CookMode({
         )}
       </div>
 
+      {/* styles for the cook-prep per-row swap / shop affordances —
+          declared inline at module scope at the bottom so the styles
+          object isn't re-allocated on every render. */}
       {completing && (
         <CookComplete
           recipe={recipe}
@@ -708,6 +935,12 @@ export default function CookMode({
           friends={friends}
           pantry={pantry}
           setPantry={setPantry}
+          // Shared cook-time session state (see useCookSession). Lets
+          // CookComplete seed its selected pantry row from the user's
+          // cook-prep swaps — "swap Mozzarella for Parmesan" on this
+          // screen now carries through to the "What did you use?"
+          // screen so the deduction hits the row they actually used.
+          cookSession={cookSession}
           // Threaded so CookComplete can call recipeNutrition() at
           // save time to stamp cook_logs.nutrition (migration 0068).
           // CookMode already reads both for its own meta-row card; no
@@ -723,3 +956,45 @@ export default function CookMode({
     </div>
   );
 }
+
+// ── cook-prep row action styles ──────────────────────────────────────
+// SWAP / + SHOP pills per ingredient on the cook prep screen. Visual
+// language mirrors AIRecipe's tweak phase (same blue SWAP, same
+// yellow SHOP) so the user learns one vocabulary across both screens.
+const cookSwapBtn = {
+  padding: "5px 10px",
+  background: "#0f1620", border: "1px solid #1f3040",
+  color: "#7eb8d4", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  letterSpacing: "0.06em", cursor: "pointer", whiteSpace: "nowrap",
+};
+const cookSwapBtnActive = { ...cookSwapBtn, background: "#1a2430", color: "#9bcae0" };
+const cookShopBtn = {
+  padding: "5px 10px",
+  background: "#1a1608", border: "1px solid #3a2f10",
+  color: "#f5c842", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+  letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
+};
+const cookShopBtnDone = { ...cookShopBtn, background: "#0f1a0f", borderColor: "#22c55e44", color: "#4ade80", cursor: "default" };
+const cookSwapSearchInput = {
+  width: "100%", padding: "8px 10px",
+  background: "#0a0a0a", border: "1px solid #2a2a2a",
+  borderRadius: 8, color: "#f0ece4",
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+  outline: "none", boxSizing: "border-box",
+};
+const cookSwapOptionBtn = {
+  display: "flex", alignItems: "center", gap: 10,
+  padding: "8px 10px", width: "100%",
+  background: "#141414", border: "1px solid #242424",
+  borderRadius: 8, cursor: "pointer", textAlign: "left",
+};
+const cookSwapClearBtn = {
+  marginTop: 4, padding: "6px 10px",
+  background: "transparent", border: "1px dashed #3a3a3a",
+  color: "#888", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 10,
+  letterSpacing: "0.06em", cursor: "pointer",
+};
+

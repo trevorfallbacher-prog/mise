@@ -235,12 +235,16 @@ export const INGREDIENTS = [
     id: "heavy_cream", name: "Heavy Cream", shortName: "Heavy",
     parentId: "milk_hub", emoji: "🥛", category: "dairy",
     units: [
-      { id: "pint",  label: "pints", toBase: 473 },
-      { id: "quart", label: "quarts", toBase: 946 },
-      { id: "cup",   label: "cups",  toBase: 240 },
-      { id: "fl_oz", label: "fl oz", toBase: 29.57 },
-      { id: "tbsp",  label: "tbsp",  toBase: 15 },
-      { id: "ml",    label: "ml",    toBase: 1 },
+      { id: "gallon",      label: "gallons",      toBase: 3785 },
+      { id: "half_gallon", label: "half gallons", toBase: 1893 },
+      { id: "quart",       label: "quarts",       toBase: 946 },
+      { id: "pint",        label: "pints",        toBase: 473 },
+      { id: "cup",         label: "cups",         toBase: 240 },
+      { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
+      { id: "tbsp",        label: "tbsp",         toBase: 15 },
+      { id: "tsp",         label: "tsp",          toBase: 5 },
+      { id: "ml",          label: "ml",           toBase: 1 },
+      { id: "l",           label: "l",            toBase: 1000 },
     ],
     defaultUnit: "pint",
   },
@@ -538,10 +542,19 @@ export const INGREDIENTS = [
     // empty so the registry isn't lying about its role.
     id: "chicken", name: "Chicken", shortName: null,
     parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    // Full mass ladder with a count entry — count defaults to 200g
+    // (middle of USDA 170–225g boneless-skinless breast range) but
+    // cut-specific weights from CUT_WEIGHTS_G override this via
+    // effectiveCountWeightG when the pantry row carries a cut value
+    // (thigh ≈ 120g, wing ≈ 80g, tenderloin ≈ 45g). g:1 anchor
+    // makes this a proper mass ladder so isMassLadder-gated paths
+    // light up (scaleFactor, countWeightG override).
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 200 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -695,10 +708,15 @@ export const INGREDIENTS = [
     // aliased below to this canonical + state='ground'.
     id: "beef", name: "Beef", shortName: "Beef",
     parentId: "beef_hub", emoji: "🥩", category: "meat",
+    // Full mass ladder + count. Count default 340g = ~12 oz (typical
+    // steak portion). Cut-specific weights in CUT_WEIGHTS_G override
+    // per pantry row (brisket ≈ 2.3 kg, chuck roast ≈ 1.4 kg, etc.).
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 340 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -727,10 +745,15 @@ export const INGREDIENTS = [
     // above — same pattern. Aliased slugs: ground_pork.
     id: "pork", name: "Pork", shortName: "Pork",
     parentId: "pork_hub", emoji: "🥩", category: "meat",
+    // Full mass ladder + count. Count default 170g = 6oz (bone-in
+    // chop, common portion). CUT_WEIGHTS_G overrides per cut —
+    // loin ≈ 1.4 kg, shoulder ≈ 1.8 kg, tenderloin ≈ 340 g, etc.
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 170 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -849,10 +872,15 @@ export const INGREDIENTS = [
     // above — same pattern. Aliased slugs: ground_turkey.
     id: "turkey", name: "Turkey", shortName: "Turkey",
     parentId: "turkey_hub", emoji: "🦃", category: "meat",
+    // Full mass ladder + count. Count default 3175g = ~7 lb (turkey
+    // breast is the most common countable portion). CUT_WEIGHTS_G
+    // overrides for thigh / leg / wing / whole bird.
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 3175 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -949,13 +977,26 @@ export const INGREDIENTS = [
   // ── produce ─────────────────────────────────────────────────────────────
   {
     id: "garlic", name: "Garlic", emoji: "🧄", category: "produce",
+    // Unit ladder encodes average weights so a count-only user and a
+    // weight-only user both get accurate conversions. 1 clove ≈ 4g
+    // (the 3–5g range from USDA peeled fresh); 1 head ≈ 10 cloves.
+    // tbsp / tsp sized against minced garlic density (~9g / tbsp,
+    // ~3g / tsp) so a recipe "2 tbsp minced garlic" against a jar of
+    // minced garlic in oz or a head of whole cloves both convert
+    // cleanly. Full mass ladder (g:1 anchor) makes this a mass
+    // canonical, so isMassLadder-gated paths (scaleFactor, count
+    // override via effectiveCountWeightG) light up.
     units: [
-      { id: "clove", label: "cloves", toBase: 1 },
-      { id: "head",  label: "heads",  toBase: 10 },
+      { id: "clove", label: "cloves", toBase: 4 },
+      { id: "head",  label: "heads",  toBase: 40 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "tbsp",  label: "tbsp",   toBase: 9 },
+      { id: "tsp",   label: "tsp",    toBase: 3 },
     ],
     defaultUnit: "clove",
-    // Per clove (~3g). Tiny amount per recipe but gets counted honestly.
-    nutrition: { per: "count", kcal: 4.5, protein_g: 0.2, fat_g: 0, carb_g: 1, sodium_mg: 0.5 },
+    // Per 4g clove.
+    nutrition: { per: "100g", kcal: 149, protein_g: 6.4, fat_g: 0.5, carb_g: 33, fiber_g: 2.1, sodium_mg: 17 },
   },
   {
     id: "yellow_onion", name: "Yellow Onion", emoji: "🧅", category: "produce",
@@ -2662,27 +2703,80 @@ export function dbCanonicalsSnapshot() {
 
 // Canonical aliases — legacy slugs where STATE was baked into the
 // canonical id ("ground_beef", "ground_pork", "ground_turkey").
-// Per CLAUDE.md the identity hierarchy keeps state as a SEPARATE
-// axis (purple), so these deprecated slugs resolve to the BASE
-// canonical + a state hint. findIngredient falls through so
-// pantry_items rows written under an old slug still render
-// correctly until migration 0060 rewrites them to the base.
+// Per CLAUDE.md the identity hierarchy keeps state AND cut as
+// separate axes from the canonical. These deprecated slugs resolve
+// to the BASE canonical + a state or cut hint. findIngredient falls
+// through so pantry_items rows written under an old slug still
+// render correctly until migration 0060 / 0122 rewrites them.
 //
-// Shape: { [legacySlug]: { base: <baseSlug>, state: <stateToken> } }
+// Shape: { [legacySlug]: { base: <baseSlug>, state?: <stateToken>, cut?: <cutToken> } }
+// Exactly one of `state` or `cut` is typically set; they address
+// different axes. "chicken_breast" is chicken + cut=breast; "ground_beef"
+// is beef + state=ground.
 export const CANONICAL_ALIASES = {
+  // STATE-baked slugs — migration 0060 collapsed these.
   ground_beef:   { base: "beef",   state: "ground" },
   ground_pork:   { base: "pork",   state: "ground" },
   ground_turkey: { base: "turkey", state: "ground" },
+  // CUT-baked slugs — migration 0122 collapsed these. Per user
+  // principle: "chicken is canonical, cut is breast". Chicken breast
+  // and chicken thigh are the SAME ingredient in different anatomies,
+  // orthogonal to the state axis (cubed chicken breast and ground
+  // chicken thigh are both legitimate combinations).
+  chicken_breast:     { base: "chicken", cut: "breast" },
+  chicken_thigh:      { base: "chicken", cut: "thigh" },
+  chicken_leg:        { base: "chicken", cut: "leg" },
+  chicken_wing:       { base: "chicken", cut: "wing" },
+  chicken_tenderloin: { base: "chicken", cut: "tenderloin" },
+  ribeye:             { base: "beef",    cut: "ribeye" },
+  ny_strip:           { base: "beef",    cut: "ny_strip" },
+  sirloin:            { base: "beef",    cut: "sirloin" },
+  brisket:            { base: "beef",    cut: "brisket" },
+  chuck_roast:        { base: "beef",    cut: "chuck" },
+  pork_chop:          { base: "pork",    cut: "chop" },
+  pork_loin:          { base: "pork",    cut: "loin" },
+  pork_shoulder:      { base: "pork",    cut: "shoulder" },
+  turkey_breast:      { base: "turkey",  cut: "breast" },
 };
 
 /**
- * Look up an ingredient by slug. Transparently resolves aliased
- * legacy slugs (ground_beef → beef). Returns null when the slug
- * doesn't match any bundled canonical OR alias.
+ * Resolve a slug to its canonical tuple: { ingredient, cut, state }.
+ * Used by callers that need the axis hints carried on legacy slugs
+ * — scan resolution, the pairing resolver, AI-recipe ingestion —
+ * so a row read as "chicken_breast" surfaces as ingredient=Chicken,
+ * cut=breast rather than silently losing the cut on the redirect.
  *
- * This keeps existing pantry_items.canonical_id values working
- * even after migration 0060 rewrites them; the deprecated slugs
- * resolve to the same underlying ingredient object.
+ * Returns { ingredient: null, cut: null, state: null } when the
+ * slug matches neither an alias nor a registered canonical. When an
+ * alias is hit the ingredient is its base (never the deprecated
+ * leaf) and the cut/state field reflects whichever axis the legacy
+ * slug baked in.
+ */
+export function resolveSlug(id) {
+  if (!id) return { ingredient: null, cut: null, state: null };
+  const alias = CANONICAL_ALIASES[id];
+  if (alias) {
+    return {
+      ingredient: byId.get(alias.base) || null,
+      cut:        alias.cut   || null,
+      state:      alias.state || null,
+    };
+  }
+  const ing = byId.get(id) || dbCanonicals.get(id) || null;
+  return { ingredient: ing, cut: null, state: null };
+}
+
+/**
+ * Look up an ingredient by slug. Transparently resolves aliased
+ * legacy slugs (ground_beef → beef, chicken_breast → chicken).
+ * Returns null when the slug doesn't match any bundled canonical
+ * OR alias.
+ *
+ * Loses the cut/state axis info carried by the alias — callers that
+ * need those hints must use resolveSlug(id) instead.
+ *
+ * Kept for compatibility with every site that just wants "what's
+ * this slug's ingredient object?" — the overwhelmingly common case.
  */
 export function findIngredient(id) {
   if (!id) return null;
@@ -2726,18 +2820,26 @@ export function siblingsInHub(id) {
 }
 
 /**
- * Resolve a canonical slug into its { canonical, state } pair.
- * Callers that want the state axis (pantry row hydration, UI
- * chips) use this instead of findIngredient's flattening lookup.
+ * Resolve a canonical slug into its { canonical, state, cut } triple.
+ * Callers that want the state or cut axis (pantry row hydration,
+ * UI chips, scan correction) use this instead of findIngredient's
+ * flattening lookup. Slug form — mirrors resolveSlug's shape but
+ * returns slug strings instead of ingredient objects.
  *
- * Non-aliased slugs return the slug with state = null so callers
- * can treat every identity uniformly.
+ * Non-aliased slugs return the slug itself with state and cut both
+ * null so callers can treat every identity uniformly.
  */
 export function resolveCanonicalIdentity(id) {
-  if (!id) return { canonical: null, state: null };
+  if (!id) return { canonical: null, state: null, cut: null };
   const alias = CANONICAL_ALIASES[id];
-  if (alias) return { canonical: alias.base, state: alias.state };
-  return { canonical: id, state: null };
+  if (alias) {
+    return {
+      canonical: alias.base,
+      state:     alias.state || null,
+      cut:       alias.cut   || null,
+    };
+  }
+  return { canonical: id, state: null, cut: null };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5805,9 +5907,10 @@ export function isInSeason(seasonality, hemisphere = "N", month = new Date().get
 // scores against the base tortilla canonical. The modifiers themselves
 // are the pantry row's attributes.claims — matching and claim-tracking
 // are separate axes on purpose (see AIRecipe extractDietaryClaims).
-const FUZZY_NOISE_WORDS = new Set([
-  "organic","grass","fed","free","range","local","fresh","raw","natural",
-  "whole","reduced","fat","lowfat","nonfat","unsalted","salted","sweet",
+// Packaging / size / descriptor noise — not state, not identity.
+const FUZZY_NOISE_WORDS_BASE = new Set([
+  "organic","grass","fed","free","range","local","fresh","natural",
+  "reduced","fat","lowfat","nonfat","unsalted","salted","sweet",
   "large","medium","small","xl","xxl","jumbo","extra","virgin","premium",
   "select","prime","pack","packed","value","family","size","pcs","piece",
   "pieces","ea","each","ct","count","bunch","bag","jar","tin","can","tub",
@@ -5819,19 +5922,33 @@ const FUZZY_NOISE_WORDS = new Set([
   "keto","paleo","whole30","vegan","vegetarian",
   "multigrain","wholegrain","wholewheat","highprotein","protein",
 ]);
+// Full noise set = packaging/descriptor noise UNION every state token
+// the registry recognizes. Derived at module-init from ALL_STATE_TOKENS
+// so adding a new state in INGREDIENT_STATES automatically updates
+// every free-text matcher — no second list to maintain.
+// Note the module initialization order: ALL_STATE_TOKENS is defined
+// further down the file, so we lazy-merge on first use.
+let _fuzzyNoise = null;
+function fuzzyNoiseSet() {
+  if (_fuzzyNoise) return _fuzzyNoise;
+  _fuzzyNoise = new Set(FUZZY_NOISE_WORDS_BASE);
+  for (const t of ALL_STATE_TOKENS) _fuzzyNoise.add(t);
+  return _fuzzyNoise;
+}
 const FUZZY_UNIT_WORDS = new Set([
   "oz","lb","lbs","g","kg","ml","l","liter","liters","gal","gallon","gallons",
   "qt","quart","pt","pint","cup","cups","tbsp","tsp","fl",
 ]);
 
 function fuzzyNormalize(s) {
+  const noise = fuzzyNoiseSet();
   return String(s || "")
     .toLowerCase()
     .replace(/\([^)]*\)/g, " ")     // strip parenthetical asides
     .replace(/[^a-z0-9 ]+/g, " ")   // punctuation → space
     .replace(/\b\d+(\.\d+)?\b/g, " ") // strip numbers (sizes, counts)
     .split(/\s+/)
-    .filter(t => t && !FUZZY_NOISE_WORDS.has(t) && !FUZZY_UNIT_WORDS.has(t))
+    .filter(t => t && !noise.has(t) && !FUZZY_UNIT_WORDS.has(t))
     // Cheap pluralization strip: "eggs" → "egg", "berries" → "berrie" (good
     // enough — fuzzy scoring tolerates the residual mismatch).
     .map(t => t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t)
@@ -5859,6 +5976,30 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
+// Token-subset containment with head-noun equality. Replaces the
+// bare `.includes()` substring check that was mis-resolving
+// "tortillas" onto a `tortilla_chips` canonical (and similar) when
+// the real tortillas slug wasn't available. For a candidate `c` and
+// needle `n` (both post-fuzzyNormalize space-joined strings):
+//   • heads must match (last token) — "tortilla chip" vs "tortilla"
+//     have heads "chip" vs "tortilla", so they are NOT equivalent
+//   • the shorter's token set must be fully contained in the longer's
+// "flour tortilla" ⊇ "tortilla" still matches (both head=tortilla,
+// {tortilla} ⊂ {flour, tortilla}). "Parm" still matches via the
+// equal-string path above because candidates include shortName.
+function headAndSubsetMatch(c, n) {
+  if (!c || !n) return false;
+  const tc = c.split(" ").filter(Boolean);
+  const tn = n.split(" ").filter(Boolean);
+  if (!tc.length || !tn.length) return false;
+  if (tc[tc.length - 1] !== tn[tn.length - 1]) return false;
+  const sc = new Set(tc);
+  const sn = new Set(tn);
+  const [small, big] = sc.size <= sn.size ? [sc, sn] : [sn, sc];
+  for (const t of small) if (!big.has(t)) return false;
+  return true;
+}
+
 // Score one ingredient against a needle string. Picks the best match across
 // the ingredient's name, shortName, and id (underscores → spaces) — so
 // "parm" matches "parmesan" via shortName even if the display name is longer.
@@ -5874,7 +6015,7 @@ function scoreIngredientMatch(needle, ing) {
   let best = 0;
   for (const c of candidates) {
     if (c === n)                           best = Math.max(best, 100);
-    else if (c.includes(n) || n.includes(c)) best = Math.max(best, 80);
+    else if (headAndSubsetMatch(c, n))     best = Math.max(best, 80);
   }
   if (best === 0) {
     const nTokens = new Set(n.split(" "));
@@ -6118,6 +6259,177 @@ const MEAT_STATES = [
   "shredded_cooked", "diced_cooked",
 ];
 
+// Ingredient densities (grams per millilitre) for mass ↔ volume
+// bridging inside convertWithBridge. Without this, a recipe calling
+// for "2 tbsp olive oil" against a pantry row in oz fails to convert
+// because oil's mass (oz) and volume (tbsp) live in different unit
+// families — the universal ladder only bridges within a family.
+//
+// Values from standard culinary references (USDA, King Arthur Baking,
+// Cook's Illustrated). Close approximations; precision beyond one
+// decimal isn't meaningful for cook-time estimation.
+//
+// CANONICAL DEFAULT when a slug isn't in this table: 1.0 g/ml (water-
+// equivalent). Works for water-like liquids (broth, stock, most
+// milks, juices, vinegars) within ~10% accuracy. Dense syrups and
+// low-density fats need explicit entries to avoid drift.
+export const INGREDIENT_DENSITY_G_PER_ML = {
+  // Fats and oils
+  olive_oil:     0.92,
+  vegetable_oil: 0.92,
+  canola_oil:    0.92,
+  coconut_oil:   0.92,
+  sesame_oil:    0.92,
+  butter:        0.911,
+  ghee:          0.91,
+  // Dairy — close to water; entries here mostly for explicit
+  // calibration, not correction
+  milk:          1.03,
+  milk_2pct:     1.03,
+  milk_skim:     1.035,
+  heavy_cream:   0.994,
+  half_and_half: 1.01,
+  buttermilk:    1.03,
+  yogurt:        1.04,
+  sour_cream:    0.994,
+  // Sweeteners — dense
+  honey:         1.42,
+  maple_syrup:   1.32,
+  corn_syrup:    1.38,
+  molasses:      1.43,
+  agave:         1.40,
+  sugar:         0.85,  // granulated (bulk density — not true density)
+  brown_sugar:   0.93,  // packed
+  powdered_sugar: 0.56,
+  // Flours & starches (bulk density)
+  flour:         0.53,  // all-purpose, sifted
+  bread_flour:   0.53,
+  cake_flour:    0.45,
+  whole_wheat_flour: 0.54,
+  cornstarch:    0.51,
+  cornmeal:      0.68,
+  oats:          0.41,  // rolled
+  // Salts
+  salt:          1.20,  // table salt (fine)
+  kosher_salt:   0.96,
+  sea_salt:      1.04,
+  // Other baking / pantry
+  baking_powder: 0.90,
+  baking_soda:   1.10,
+  cocoa_powder:  0.41,
+  // Condiments / sauces — most are water-adjacent
+  soy_sauce:     1.18,
+  fish_sauce:    1.20,
+  vinegar:       1.01,
+  balsamic_vinegar: 1.06,
+  ketchup:       1.09,
+  mustard:       1.05,
+  mayonnaise:    0.91,
+  // Pastes / concentrates
+  tomato_paste:  1.04,
+  tomato_sauce:  1.05,
+  peanut_butter: 1.09,
+  tahini:        1.07,
+};
+
+// CUT axis — anatomical / butchery slot. Orthogonal to STATE per
+// CLAUDE.md; a given (canonical, cut) pair can take any state value.
+// Chicken breast, cubed is chicken + cut=breast + state=cubed; ground
+// chicken thigh is chicken + cut=thigh + state=ground.
+//
+// Scope is deliberately pragmatic: the cuts listed are what a typical
+// grocery shopper encounters (Jewel, Kroger, Trader Joe's shelf cuts).
+// Full-animal butchery yield trees (primals, subprimals, retail cuts)
+// are out of scope — that's a pro-butcher workflow, not a pantry app.
+//
+// Keyed by BASE canonical slug. Other species (lamb) can be added as
+// new base canonicals ship without touching existing entries.
+export const CUTS_FOR = {
+  chicken: ["breast","thigh","leg","wing","tenderloin","back","whole_bird"],
+  beef:    ["ribeye","ny_strip","sirloin","brisket","chuck","round","flank","skirt","short_rib","tenderloin"],
+  pork:    ["chop","loin","shoulder","belly","tenderloin","rib","ham","shank"],
+  turkey:  ["breast","thigh","leg","wing","tenderloin","whole_bird"],
+};
+
+// Default gram weights per count for each meat cut. The "one piece"
+// conversion — 1 chicken breast ≈ 200g, 1 thigh ≈ 120g, 1 ribeye ≈
+// 340g. Keyed by BASE canonical, then cut slug. Used as a fallback
+// in effectiveCountWeightG when the pantry row doesn't carry an
+// explicit countWeightG and doesn't have a packageAmount-derivable
+// value — "the user has Chicken + cut=breast, recipe wants 3 count,
+// we know a breast is ~200g so 3 count ≈ 600g ≈ 1.32 lb."
+//
+// Users can still override per-row via pantry_items.count_weight_g
+// ("my cloves are big — 6g each, not 4") and that wins over these
+// defaults. These are rough averages good enough for the default
+// prefill + conversion shadow; not claims of precision.
+export const CUT_WEIGHTS_G = {
+  chicken: {
+    breast:      200,  // boneless-skinless, 170–225g USDA range
+    thigh:       120,  // boneless-skinless
+    leg:         180,  // drumstick, bone-in
+    wing:         80,
+    tenderloin:   45,
+    back:        300,
+    whole_bird: 1800,  // ~4 lb whole chicken
+  },
+  beef: {
+    ribeye:      340,  // 12 oz steak
+    ny_strip:    340,
+    sirloin:     225,  // 8 oz
+    brisket:    2270,  // 5 lb point
+    chuck:      1360,  // 3 lb roast
+    round:       680,
+    flank:       680,
+    skirt:       340,
+    short_rib:   170,
+    tenderloin:  340,
+  },
+  pork: {
+    chop:        170,  // 6 oz bone-in
+    loin:       1360,  // 3 lb roast
+    shoulder:   1800,  // 4 lb Boston butt
+    belly:      1360,
+    tenderloin:  340,  // small cut, ~12 oz
+    rib:         680,
+    ham:        3175,  // 7 lb bone-in
+    shank:       680,
+  },
+  turkey: {
+    breast:     3175,  // 7 lb boneless
+    thigh:       900,
+    leg:        1360,
+    wing:        500,
+    tenderloin:  200,
+    whole_bird: 6800,  // 15 lb whole turkey
+  },
+};
+
+export const CUT_LABELS = {
+  breast: "breast", thigh: "thigh", leg: "leg", wing: "wing",
+  tenderloin: "tenderloin", back: "back", whole_bird: "whole bird",
+  ribeye: "ribeye", ny_strip: "NY strip", sirloin: "sirloin",
+  brisket: "brisket", chuck: "chuck", round: "round", flank: "flank",
+  skirt: "skirt", short_rib: "short rib",
+  chop: "chop", loin: "loin", shoulder: "shoulder", belly: "belly",
+  rib: "rib", ham: "ham", shank: "shank",
+};
+
+export function cutsForIngredient(ingredientOrId) {
+  const id = typeof ingredientOrId === "string" ? ingredientOrId : ingredientOrId?.id;
+  if (!id) return null;
+  if (CUTS_FOR[id]) return CUTS_FOR[id];
+  // Walk to base through aliases — "chicken_breast" → "chicken" → has cuts.
+  const alias = CANONICAL_ALIASES[id];
+  if (alias?.base && CUTS_FOR[alias.base]) return CUTS_FOR[alias.base];
+  return null;
+}
+
+export function cutLabel(cut) {
+  if (!cut) return null;
+  return CUT_LABELS[cut] || String(cut).replace(/_/g, " ");
+}
+
 export const INGREDIENT_STATES = {
   bread:         ["loaf", "slices", "crumbs", "cubes", "toasted"],
   // Covers every specific cheese AND the generic cheese hub — all cheeses
@@ -6168,6 +6480,51 @@ export const STATE_LABELS = {
   links: "links",       nuggets: "nuggets",  jerky: "jerky",
   // "loaf" already defined above (reused for meatloaf)
 };
+
+// Every state token the registry knows about, flattened into one set
+// for free-text matchers that need to recognize a prep term wherever
+// it shows up ("chicken breast, cubed", "ground fresh pork", "shredded
+// cheese"). Derived from INGREDIENT_STATES + STATE_LABELS so adding a
+// new state in the registry propagates to every matcher with no extra
+// wiring. Multi-word labels ("steak cut") contribute each word
+// separately since matchers operate token-by-token. Common prep
+// descriptors that live outside the formal STATE axis but function
+// identically in free-text ("boneless", "skinless", "chopped") are
+// added as well.
+// Tokens that would cause canonical collisions if stripped as state.
+// Per the STATE-as-axis design (CLAUDE.md), ingredients like tomato
+// paste, chicken sausage, beef jerky, and bread crumbs are NOT new
+// canonicals — they're the base ingredient carrying a STATE value.
+// So "paste", "sausage", "jerky", "crumbs", etc. all strip freely.
+// The one exception is "steak" because "steak sauce" is a genuinely
+// distinct condiment canonical; stripping would collide with other
+// sauces at the head-noun level ("steak sauce" ↔ "soy sauce" both
+// reduce to "sauce"). Keep this list minimal — add only on proven
+// collision, not hypothetically.
+const STATE_TOKEN_EXCLUSIONS = new Set(["steak"]);
+
+export const ALL_STATE_TOKENS = (() => {
+  const out = new Set();
+  const add = (val) => {
+    if (!val || typeof val !== "string") return;
+    for (const tok of val.toLowerCase().split(/[\s_]+/)) {
+      if (tok.length < 3) continue;
+      if (STATE_TOKEN_EXCLUSIONS.has(tok)) continue;
+      out.add(tok);
+    }
+  };
+  for (const list of Object.values(INGREDIENT_STATES)) {
+    if (Array.isArray(list)) for (const s of list) add(s);
+  }
+  for (const [slug, label] of Object.entries(STATE_LABELS)) {
+    add(slug);
+    add(label);
+  }
+  // Not formally STATE but functionally indistinguishable in free
+  // text — AI and users write them interchangeably with state terms.
+  for (const t of ["boneless", "skinless", "chopped"]) add(t);
+  return out;
+})();
 
 export const DEFAULT_STATE_FOR = {
   bread: "loaf",

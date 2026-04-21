@@ -58,6 +58,10 @@ type PantryItem = {
   unit?: string;
   category?: string;
   state?: string | null;
+  // CUT axis (migration 0122). "breast" / "thigh" / "ribeye". Orthogonal
+  // to state per CLAUDE.md. Surfaced to the AI so it can differentiate
+  // chicken breast from chicken thigh without resorting to subs.
+  cut?: string | null;
   location?: string | null;
   daysToExpiry?: number | null;
   kind?: string | null;
@@ -161,33 +165,55 @@ function assemblePromptHeader(
   prefs: Prefs,
   avoidTitles: string[],
   context: RichContext,
+  opts: { skipPantry?: boolean } = {},
 ): string {
-  const pantryLines = pantry.length === 0
+  // Final-mode skips the pantry listing — the sketch already picked
+  // a dish, the LOCKED INGREDIENTS block below is the authoritative
+  // shopping list, and re-sending 80 pantry rows burns thousands of
+  // input tokens for signal Claude no longer needs. Sketch mode
+  // still needs the full pantry to HAVE something to draft from.
+  // Labeled-block pantry format. Each item is rendered as a small
+  // structured card with canonical identity first, cut + state next
+  // (so anatomy and prep form register alongside identity), then
+  // brand, amount, location, expiry, and optional enrichment. No
+  // display name is sent — the AI reasons about identity axes
+  // directly, not a derived label. This format replaced an older
+  // dashed-line format ("- Mission Tortillas (id:tortillas · ...)")
+  // that mixed a natural-language display label with the canonical
+  // axes and fed spurious subs ("Croissant Rolls subbed for flour
+  // tortillas" while Mission Tortillas sat in the pantry).
+  const pantryLines = opts.skipPantry
+    ? "(pantry was surveyed during sketch — see LOCKED INGREDIENTS below for the authoritative set)"
+    : pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
-        .map((p) => {
-          const amount = p.amount != null ? `${p.amount}${p.unit || ""}` : "";
-          const facts = [
-            p.star ? "★ STARRED BY USER" : "",
-            amount,
-            p.canonicalId ? `id:${p.canonicalId}` : "",
-            p.category || "",
-            p.state ? `state:${p.state}` : "",
-            p.location ? `loc:${p.location}` : "",
-            p.kind && p.kind !== "ingredient" ? `kind:${p.kind}` : "",
-            typeof p.daysToExpiry === "number"
-              ? (p.daysToExpiry <= 0 ? "EXPIRED" : `expires in ${p.daysToExpiry}d`)
-              : "",
-          ].filter(Boolean).join(" · ");
-          const base = `- ${p.name || "unknown"}${facts ? ` (${facts})` : ""}`;
+        .map((p, i) => {
+          const amount = p.amount != null ? `${p.amount}${p.unit ? ` ${p.unit}` : ""}` : "";
+          const lines: string[] = [`Pantry Item ${i + 1}:`];
+          lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
+          if (p.cut) lines.push(`  Cut: ${p.cut}`);
+          if (p.state) lines.push(`  State: ${p.state}`);
+          if (p.brand) lines.push(`  Brand: ${p.brand}`);
+          if (amount) lines.push(`  Amount: ${amount}`);
+          if (p.category) lines.push(`  Category: ${p.category}`);
+          if (p.location) lines.push(`  Location: ${p.location}`);
+          if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
+          if (typeof p.daysToExpiry === "number") {
+            lines.push(
+              p.daysToExpiry <= 0
+                ? `  Expiry: EXPIRED`
+                : `  Expiry: in ${p.daysToExpiry}d`,
+            );
+          }
+          if (p.star) lines.push(`  ★ STARRED BY USER`);
           const enr = p.enrichment;
-          if (!enr) return base;
-          const enrBits = [
-            enr.flavorProfile ? `flavor: ${enr.flavorProfile}` : "",
-            enr.pairs && enr.pairs.length ? `pairs: ${enr.pairs.join(", ")}` : "",
-            dietSummary(enr.diet),
-          ].filter(Boolean).join(" | ");
-          return enrBits ? `${base}\n    ${enrBits}` : base;
+          if (enr) {
+            if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
+            if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
+            const diet = dietSummary(enr.diet);
+            if (diet) lines.push(`  Diet: ${diet}`);
+          }
+          return lines.join("\n");
         })
         .join("\n");
 
@@ -444,9 +470,10 @@ exact shape:
   "estimatedTime": { "prep": <minutes>, "cook": <minutes> },
   "ideal": [
     {
-      "name":   "<canonical ingredient name, e.g. 'mozzarella'>",
-      "amount": "<display, e.g. '8 oz'>",
-      "role":   "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
+      "name":         "<CLEAN CANONICAL NAME ONLY — e.g. 'mozzarella', 'flour tortillas', 'chicken breast'. One-to-three words. No prep verbs, no counts, no brand, no parentheticals.>",
+      "amount":       "<display, e.g. '8 oz'>",
+      "ingredientId": "<the canonical slug you have in mind — e.g. 'tortillas', 'mozzarella', 'chicken_breast'. Use the registry's canonical id so the client can objectively verify whether the user's pantry covers this slot. null only when no registry slug fits.>",
+      "role":         "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
     },
     ...
   ],
@@ -473,15 +500,51 @@ identical.
 Rules:
   - Same precedence rules as the header above.
   - Every PANTRY entry that uses a real pantry row MUST set
-    "pantryItemId" to that row's id (the "id:..." token in the
-    PANTRY table). null only when this ingredient is something the
-    user would need to shop for.
-  - "subbedFrom" tells the user "we used Parmesan because you
-    didn't have Mozzarella." null when the pantry item matches the
-    ideal directly.
+    "pantryItemId" to that row's pantry-system id AND set
+    "ingredientId" to the "Canonical [id]:" value from the PANTRY
+    block. null only when this ingredient is something the user
+    would need to shop for.
+
+  - NEVER SUBSTITUTE WHEN AN EXACT PANTRY MATCH EXISTS. Before
+    writing a PANTRY entry as a sub, scan the PANTRY block above for
+    an item whose "Canonical [id]:" matches the IDEAL's
+    ingredientId. If one exists, you MUST use that row verbatim —
+    no creative subs, no "wrapper substitute" style swaps, no
+    upgrading to a fancier-sounding ingredient.
+      Example 1 (CORRECT):
+        IDEAL: { name: "flour tortillas", ingredientId: "tortillas" }
+        PANTRY has:
+          Pantry Item 3:
+            Canonical [id]: tortillas
+            Brand: Mission
+            Amount: 8 count
+        → PANTRY entry: { name: "tortillas", ingredientId: "tortillas", subbedFrom: null }
+      Example 2 (WRONG):
+        Same inputs
+        → PANTRY entry: { name: "Croissant Rolls", subbedFrom: "flour tortillas" }
+        This is a bug. The user has tortillas. Use them.
+
+  - Substitution is ONLY legitimate when the pantry lacks the ideal
+    AND a same-family item is on hand. "Classic calls for parmesan,
+    user has pecorino" is a real sub. "Classic calls for tortillas,
+    user has tortillas" is not a sub at all — just use them.
+
+  - "subbedFrom" is non-null ONLY on genuine swaps (case above).
+    null when the pantry item matches the ideal directly — including
+    when brand/packaging differs (Mission Tortillas for tortillas
+    is NOT a sub).
+
   - "missingFromIdeal: true" only when you ADDED something beyond
     the classical recipe (rare — e.g., the user starred an extra
     protein that doesn't traditionally go in this dish).
+
+  - NAME HYGIENE on both IDEAL and PANTRY entries: "name" is clean
+    identity only. NEVER stuff prep ("chicken breast, cut into
+    bite-sized pieces"), counts ("4 tortillas"), brand inside the
+    name ("Kerrygold butter, softened"), or parentheticals into
+    "name". Prep is a step-level concern handled in the FINAL pass;
+    the sketch traffics in ingredient identities only.
+
   - 4-12 ideal ingredients, 4-12 pantry ingredients.
   - Keep the rationale short — this is a sketch. Detail comes on
     the FINAL pass.
@@ -521,7 +584,7 @@ ${lockedIngredients.map((i) => {
 ${prefs.recipeFeedback!.trim()}\n`
     : "";
 
-  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context)}${lockedBlock}${feedbackBlock}
+  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${lockedBlock}${feedbackBlock}
 Return ONLY a single JSON object (no markdown, no prose) with this
 exact shape. Every field is REQUIRED unless marked optional.
 
@@ -542,8 +605,10 @@ exact shape. Every field is REQUIRED unless marked optional.
   "ingredients": [
     {
       "amount":       "<display string, e.g. '2 tbsp' or '½ cup'>",
-      "item":         "<display text, e.g. 'olive oil'>",
-      "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>"
+      "item":         "<CLEAN CANONICAL NAME ONLY — e.g. 'olive oil', 'chicken breast', 'mozzarella'. Do NOT stuff prep ('cut into bite-sized pieces', 'chopped fine'), brand ('Kerrygold'), or counts ('4 count') into this field. Prep goes in the step instruction; identity lives here.>",
+      "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
+      "cut":          "<optional: anatomical cut for meats — 'breast', 'thigh', 'ribeye', 'brisket', 'loin', 'shoulder' — null for non-meats>",
+      "state":        "<optional: prep STATE after you work on it — 'cubed', 'diced', 'sliced', 'ground', 'minced', 'shredded'. NOT prep instructions like 'cut into pieces' — just the terminal form. null when not applicable>"
     },
     ...
   ],
@@ -551,19 +616,10 @@ exact shape. Every field is REQUIRED unless marked optional.
     {
       "id":          "step1",
       "title":       "<short step title>",
-      "instruction": "<1-3 sentences>",
+      "instruction": "<1-3 sentences — reference ingredients by display name; the UI zips them back to the top-level ingredients[] list>",
       "icon":        "🔪",
       "timer":       <seconds or null>,
       "tip":         "<optional one-line tip or null>",
-      "uses": [
-        {
-          "amount":       "<display string matching the amount used AT THIS STEP>",
-          "item":         "<display text, e.g. 'butter'>",
-          "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
-          "state":        "<optional physical form: 'minced', 'sliced', 'grated'>"
-        },
-        ...
-      ],
       "heat":    "<optional: 'low' | 'medium-low' | 'medium' | 'medium-high' | 'high' | 'off'>",
       "doneCue": "<optional short qualitative ready-signal: 'nutty smell, color of wet sand'>"
     },
@@ -643,13 +699,46 @@ Rules (in priority order — higher rules beat lower ones on conflict):
      recipes that use pantry items marked "EXPIRED" or "expires in Nd"
      where N is small. Reducing waste is the default goal.
 
+  5b. INGREDIENT "item" IS IDENTITY, NOT PREP — hard rule, no
+     exceptions:
+
+     - "item" holds the clean canonical name of the ingredient and
+       nothing else. Keep it the way you'd write it on a grocery
+       shopping list: "chicken breast", "olive oil", "mozzarella",
+       "heavy cream". One-to-three words, no commas, no verbs, no
+       sizes, no counts, no brand.
+     - NEVER stuff prep into "item". These are ALL wrong:
+         "chicken breast, cut into bite-sized pieces"     ← prep in name
+         "olive oil (about 3 tablespoons)"                ← amount in name
+         "Kerrygold unsalted butter, softened"            ← brand + state in name
+         "4 tortillas, warmed"                            ← count + prep in name
+     - Prep belongs in the STEP INSTRUCTION:
+         item: "chicken breast"
+         step instruction: "Cut the chicken breast into bite-sized
+         pieces, season with salt and pepper..."
+     - Terminal STATE (the form the ingredient ends up in before it
+       goes in the dish — cubed, diced, sliced, ground, minced,
+       shredded) goes in the "state" field, not in "item".
+     - Anatomical CUT for meats (breast, thigh, ribeye, brisket)
+       goes in the "cut" field, not in "item". For "item" on a meat
+       row write just the species: "chicken", "beef", "pork".
+     - Counts and sizes live in "amount" ("4 count", "1.5 lbs",
+       "2 tbsp"). Never in "item".
+
+     This separation matters. The UI displays "item" as the
+     ingredient's name on the shopping-list style ingredient panel,
+     and pairs it to pantry canonical ids downstream. Stuffing prep
+     into "item" breaks pairing (the matcher sees garbage), the
+     shopping list (user can't buy "chicken, cut into pieces"), and
+     the cook-mode panel (the line is 80 chars of clutter).
+
   6. CANONICAL_ID BINDING — strict rules, no improvisation:
 
-     - The PANTRY block above shows each item's canonical id as
-       "id:<slug>". When you use that item, echo the slug VERBATIM
-       into the ingredient's "ingredientId" field.
-         pantry shows "id:tortillas" → you write "ingredientId": "tortillas"
-         pantry shows "id:ground_cinnamon" → "ingredientId": "ground_cinnamon"
+     - The PANTRY block above shows each item's canonical id on a
+       "Canonical [id]:" line. When you use that item, echo the slug
+       VERBATIM into the ingredient's "ingredientId" field.
+         block has "Canonical [id]: tortillas"       → "ingredientId": "tortillas"
+         block has "Canonical [id]: ground_cinnamon" → "ingredientId": "ground_cinnamon"
      - Do NOT modify pantry ids. NO adding prefixes like "fresh_" or
        "corn_" or "organic_". NO pluralizing or de-pluralizing. NO
        changing case. NO replacing underscores with spaces or hyphens.
@@ -729,17 +818,16 @@ function profileSection(p: NonNullable<NonNullable<RichContext>["profile"]>): st
 
 function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): string {
   if (!h.cookCount) return "";
-  const ratings = h.ratingCounts
-    ? Object.entries(h.ratingCounts)
-        .filter(([, c]) => c > 0)
-        .map(([k, c]) => `${k}:${c}`).join(" ")
-    : "";
+  // Token-trim: cookCount + topCuisines only. Earlier iteration also
+  // emitted rating distribution and favorited titles, but neither
+  // meaningfully moves the draft — Claude doesn't read
+  // "user rated 3 dishes 🤩 and 2 dishes 😐" and produce materially
+  // different output, and favorited titles are a string list of
+  // specific dish names with low actionable signal for a fresh draft.
+  // topCuisines genuinely biases toward preference when cuisine="any".
   const cuisines = (h.topCuisines || []).map((c) => `${c.id}(${c.count})`).join(", ");
-  const favs = (h.topFavoritedTitles || []).join(" | ");
   const lines: string[] = [`- recent cooks: ${h.cookCount}`];
-  if (ratings)  lines.push(`- rating mix: ${ratings}`);
   if (cuisines) lines.push(`- top cuisines: ${cuisines}`);
-  if (favs)     lines.push(`- favorited: ${favs}`);
   return `\nRECENT HISTORY:\n${lines.join("\n")}\n`;
 }
 
@@ -810,12 +898,15 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        // Both modes get the full 2500-token budget. Earlier attempts
-        // to trim sketch to 1000 / 1600 kept truncating mid-JSON on
-        // larger pantries (10+ ingredients × IDEAL+PANTRY arrays).
-        // Token cost is secondary to not failing; a truncated draft
-        // is worse than an expensive one.
-        max_tokens: 2500,
+        // Both modes get the full 4000-token budget. Earlier attempts
+        // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
+        // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps
+        // with uses[] arrays). Token cost is secondary to not
+        // failing; a truncated draft is worse than an expensive one.
+        // If this still truncates, the repairTruncatedJson fallback
+        // below attempts to close dangling structures so the user
+        // still gets a usable draft.
+        max_tokens: 4000,
         // temperature=1 is the API default but we set it explicitly so
         // nobody accidentally pins it to 0 during debugging and wipes
         // out regen variety without realizing why.
@@ -867,13 +958,18 @@ Deno.serve(async (req) => {
   const rawBody = data?.content?.[0]?.text ?? "";
   const raw = rawBody ? `{${rawBody}` : "{}";
 
-  // Tolerant JSON extraction as a safety net. Even with prefill,
-  // Claude may still wrap output in fences or produce a truncated
-  // response on a complex pantry. Strip fences first; if a direct
-  // parse fails, carve out between the first { and last } and try
-  // that. Catches both chatty-model and mid-JSON-truncation cases.
+  // Tolerant JSON extraction as a safety net. Three fallbacks in
+  // order of aggressiveness:
+  //   1. direct parse of the response (fences stripped first)
+  //   2. brace-slice — carve out between first { and last } to
+  //      handle a chatty model wrapping JSON in prose
+  //   3. truncation-repair — if Claude hit max_tokens mid-output,
+  //      close any dangling strings / arrays / objects and try
+  //      again. User gets a partial-but-structured draft instead
+  //      of a 502.
   const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-  let recipe: Record<string, unknown>;
+  const truncated = data?.stop_reason === "max_tokens";
+  let recipe: Record<string, unknown> | null = null;
   try {
     recipe = JSON.parse(cleaned);
   } catch {
@@ -884,24 +980,26 @@ Deno.serve(async (req) => {
       try {
         recipe = JSON.parse(sliced);
       } catch {
+        // Fall through to repair below.
+      }
+    }
+    if (!recipe) {
+      const repaired = repairTruncatedJson(cleaned);
+      try {
+        recipe = JSON.parse(repaired);
+      } catch {
         return new Response(
           JSON.stringify({
             error: "couldn't parse model output as JSON",
-            detail: "model returned non-JSON content; tried both direct and brace-slice parse",
+            detail: truncated
+              ? "model output was truncated (hit max_tokens) and couldn't be repaired"
+              : "model returned non-JSON content; tried direct, brace-slice, and truncation-repair",
+            truncated,
             raw,
           }),
           { status: 502, headers: JSON_HEADERS },
         );
       }
-    } else {
-      return new Response(
-        JSON.stringify({
-          error: "couldn't parse model output as JSON",
-          detail: "no JSON object found in model response",
-          raw,
-        }),
-        { status: 502, headers: JSON_HEADERS },
-      );
     }
   }
 
@@ -971,7 +1069,7 @@ Deno.serve(async (req) => {
     time:       recipe.time       || { prep: 10, cook: 20 },
     serves:     clampInt(recipe.serves, 1, 12, 2),
     tools:      Array.isArray(recipe.tools) ? recipe.tools : [],
-    ingredients: recipe.ingredients,
+    ingredients: normalizeIngredients(recipe.ingredients),
     // Backfill step shape so CookMode never has to defend against a
     // step that skipped `uses`, `heat`, or `doneCue`. If the model
     // dropped `uses` entirely, default to an empty array (CookMode
@@ -988,6 +1086,50 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({ recipe: finalRecipe }), { headers: JSON_HEADERS });
 });
+
+// Repair a JSON string that was truncated mid-output. Walks the
+// text closing any open string / array / object, discards a trailing
+// comma that would otherwise dangle after the last closed member,
+// and drops trailing partial key/value pairs where a value is
+// missing entirely. Not a general JSON rescuer — tuned to the
+// specific shape of Claude's recipe output under max_tokens pressure.
+// Returns a best-effort string; JSON.parse still decides if it flies.
+function repairTruncatedJson(input: string): string {
+  let s = String(input || "").trimEnd();
+  if (!s) return s;
+  // Walk the string to track structural depth and whether we're inside
+  // a string literal. Count open braces/brackets. Escape handling
+  // matches the JSON spec (only \" \\ and control escapes count).
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{" || c === "[") stack.push(c);
+    else if (c === "}" || c === "]") stack.pop();
+  }
+  // Truncated mid-string — close it.
+  if (inStr) s += '"';
+  // Drop a trailing comma (would make JSON.parse throw even after
+  // we close remaining structures).
+  s = s.replace(/,\s*$/, "");
+  // If the tail looks like a partial key ("foo": ) with no value,
+  // strip it off back to the previous comma or opening brace — the
+  // partially-emitted field would otherwise make the object invalid
+  // after we try to close braces.
+  s = s.replace(/,\s*"[^"]*"\s*:\s*$/, "");
+  s = s.replace(/\{\s*"[^"]*"\s*:\s*$/, "{");
+  // Close remaining open structures in reverse.
+  while (stack.length > 0) {
+    const open = stack.pop();
+    s += open === "{" ? "}" : "]";
+  }
+  return s;
+}
 
 function slugify(s: string): string {
   return String(s || "recipe")
@@ -1015,25 +1157,49 @@ function normalizeCourse(v: unknown): string | null {
   return typeof v === "string" && COURSE_VALUES.has(v) ? v : null;
 }
 
+// Normalize every ingredient row. `item` is stripped of trailing
+// prep clauses ("chicken breast, cut into bite-sized pieces" →
+// "chicken breast") so the identity surfaces clean even when
+// Claude slips and stuffs prep into the name. `cut` and `state`
+// axes pass through when the model emitted them; null otherwise.
+// Canonical id is left verbatim — coerceRecipeCanonicalIds on the
+// client handles any drift to the registry.
+function normalizeIngredients(ings: unknown): unknown[] {
+  if (!Array.isArray(ings)) return [];
+  return ings.map((i) => {
+    const ing = (i && typeof i === "object") ? i as Record<string, unknown> : {};
+    const rawItem = typeof ing.item === "string" ? ing.item : "";
+    // Strip a trailing prep clause after a comma. "chicken breast,
+    // cut into bite-sized pieces" → "chicken breast". Single rule —
+    // if the tail starts with a present-tense prep verb, drop it.
+    // Keep parentheticals ("chicken breast (boneless)") alone.
+    const PREP_CLAUSE_RE = /,\s+(cut|chopped|diced|sliced|minced|shredded|crumbled|cubed|grated|ground|torn|halved|quartered|trimmed|pounded|drained|rinsed|peeled|deveined|boned|skinned|stemmed|seeded|crushed|julienned|shaved)\s.*$/i;
+    const item = rawItem.replace(PREP_CLAUSE_RE, "").trim();
+    return {
+      amount:       typeof ing.amount === "string" ? ing.amount : ing.amount,
+      item:         item || rawItem,
+      ingredientId: typeof ing.ingredientId === "string" ? ing.ingredientId : null,
+      cut:          typeof ing.cut === "string"          ? ing.cut          : null,
+      state:        typeof ing.state === "string"        ? ing.state        : null,
+      qty:          ing.qty,
+      role:         ing.role,
+    };
+  });
+}
+
 // Ensure every step carries the fields CookMode reads without
-// blowing up on a model that skipped one. `uses` defaults to an
-// empty array (triggers CookMode's fallback to the top-level
-// ingredients list); `heat` and `doneCue` default to null.
+// blowing up on a model that skipped one. `uses` was historically a
+// per-step ingredient list, but it duplicated top-level
+// ingredients[] and burned 15-30% of output tokens on complex
+// recipes (one of the drivers behind max_tokens truncation). The
+// step renderer falls back to the top-level list when uses is
+// empty, which is now always. Defaults to [] here so saved
+// pre-trim recipes still hydrate without nulls breaking
+// CookMode's uses.map.
 function normalizeSteps(steps: unknown): unknown[] {
   if (!Array.isArray(steps)) return [];
   return steps.map((s, i) => {
     const step = (s && typeof s === "object") ? s as Record<string, unknown> : {};
-    const uses = Array.isArray(step.uses)
-      ? (step.uses as unknown[]).map((u) => {
-          const row = (u && typeof u === "object") ? u as Record<string, unknown> : {};
-          return {
-            amount:       typeof row.amount === "string" ? row.amount : null,
-            item:         typeof row.item   === "string" ? row.item   : null,
-            ingredientId: typeof row.ingredientId === "string" ? row.ingredientId : null,
-            state:        typeof row.state  === "string" ? row.state  : null,
-          };
-        })
-      : [];
     return {
       id:          typeof step.id          === "string" ? step.id          : `step${i + 1}`,
       title:       typeof step.title       === "string" ? step.title       : `Step ${i + 1}`,
@@ -1041,7 +1207,7 @@ function normalizeSteps(steps: unknown): unknown[] {
       icon:        typeof step.icon        === "string" ? step.icon        : "👨‍🍳",
       timer:       typeof step.timer       === "number" ? step.timer       : null,
       tip:         typeof step.tip         === "string" ? step.tip         : null,
-      uses,
+      uses:        [],
       heat:        typeof step.heat        === "string" ? step.heat        : null,
       doneCue:     typeof step.doneCue     === "string" ? step.doneCue     : null,
     };

@@ -1289,9 +1289,20 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 ingredientIds: canon?.id ? [canon.id] : [],
                 ...(prefilledTypeId ? { typeId: prefilledTypeId } : {}),
                 ...(prefilledTileId ? { tileId: prefilledTileId } : {}),
-                amount:        packageSize?.amount ?? 1,
-                unit:          packageSize?.unit ?? (canon?.defaultUnit || "count"),
-                max:           packageSize?.amount ?? null,
+                // When the parser extracted BOTH a count and a mass/
+                // volume from the label (e.g. "8 ct 16 oz", multipack
+                // "12 × 50 g"), use count as the consumable quantity
+                // and park the mass in package_amount/unit so
+                // effectiveCountWeightG can derive grams-per-count
+                // downstream. Single-dimension labels fall through to
+                // the existing behavior (amount = parsed dimension).
+                amount:        packageSize?.counterpart?.amount ?? packageSize?.amount ?? 1,
+                unit:          packageSize?.counterpart?.unit   ?? packageSize?.unit ?? (canon?.defaultUnit || "count"),
+                max:           packageSize?.counterpart?.amount ?? packageSize?.amount ?? null,
+                ...(packageSize?.counterpart ? {
+                  packageAmount: packageSize.amount,
+                  packageUnit:   packageSize.unit,
+                } : {}),
                 state:         state || null,
                 attributes:    attributes || null,
                 // Source metadata so the stock step can trace the
@@ -6181,10 +6192,27 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // the search index and the row feels disconnected from its actual
   // identity. Per user spec: "update canonical update brand ...
   // update name."
-  const IDENTITY_KEYS = new Set(["canonicalId", "ingredientId", "ingredientIds", "brand"]);
+  const IDENTITY_KEYS = new Set(["canonicalId", "ingredientId", "ingredientIds", "components", "brand"]);
   const updatePantryItem = (id, patch) => setPantry(prev => prev.map(p => {
     if (p.id !== id) return p;
     const merged = { ...p, ...patch };
+    // Keep ingredientIds / components in sync. fromDb aliases
+    // components → ingredientIds when hydrating; toDb reads components
+    // FIRST when serializing. If a patch updates only ingredientIds,
+    // the old components array on `merged` would win in toDb and the
+    // new ids would silently drop on write. Mirror whichever the
+    // patch set into the other so both fields reflect the new state.
+    // User bug: picking Mozzarella Jack + Colby in LinkIngredient
+    // never persisted because toDb kept writing the prior components.
+    if ("ingredientIds" in patch && !("components" in patch)) {
+      merged.components = Array.isArray(patch.ingredientIds)
+        ? patch.ingredientIds
+        : [];
+    } else if ("components" in patch && !("ingredientIds" in patch)) {
+      merged.ingredientIds = Array.isArray(patch.components)
+        ? patch.components
+        : [];
+    }
     const touchesIdentity = Object.keys(patch).some(k => IDENTITY_KEYS.has(k));
     const userSetName = Object.prototype.hasOwnProperty.call(patch, "name");
     if (touchesIdentity && !userSetName) {

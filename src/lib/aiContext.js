@@ -110,13 +110,27 @@ export function buildAIContext({
   // three fields are what actually drive "what goes with what."
   const pantryOut = ranked.map(({ item, daysToExpiry, isStar }) => {
     const out = {
-      name:          safeStr(item.name),
+      // Display name intentionally NOT sent. The AI's job is to reason
+      // about identity (canonical + cut + state + brand), and the
+      // display name is a client-side derivation of those axes. Sending
+      // it creates a competing label the model has to reconcile ("is
+      // 'Mission Tortillas' the same as id:tortillas?") instead of
+      // acting on the canonical. Display is derived on the client for
+      // any human-facing output.
       canonicalId:   item.ingredientId || null,
       ingredientIds: Array.isArray(item.ingredientIds) ? item.ingredientIds : [],
       amount:        item.amount ?? null,
       unit:          item.unit ?? null,
       category:      item.category ?? null,
+      // Brand (migration 0061) — manufacturer label parsed off the raw
+      // name. Kept as its own axis so the AI can distinguish
+      // "Great Value Butter" from "Kerrygold Butter" when dietary
+      // claims differ, without polluting the canonical identity.
+      brand:         item.brand ?? null,
       state:         item.state ?? null,
+      // Cut axis (migration 0122). "breast" / "thigh" / "ribeye" /
+      // etc. Surfaced so the AI knows anatomy without subbing away.
+      cut:           item.cut ?? null,
       location:      item.location ?? null,
       daysToExpiry:  daysToExpiry,            // negative = already expired
       kind:          item.kind ?? null,       // "ingredient" | "leftovers" | "compound"

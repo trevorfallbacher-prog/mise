@@ -15,8 +15,12 @@
 
 import {
   findIngredient,
+  resolveSlug,
+  resolveCanonicalIdentity,
   INGREDIENTS,
   fuzzyMatchIngredient,
+  ALL_STATE_TOKENS,
+  cutLabel,
 } from "../data/ingredients";
 
 // ── dietary modifiers ────────────────────────────────────────────────
@@ -68,8 +72,26 @@ export function extractDietaryClaims(name) {
 }
 
 // ── name normalization ───────────────────────────────────────────────
-const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
-const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
+// State terms are a separate identity axis per CLAUDE.md (SET STATE
+// row, purple). "chicken breast, cubed" and "chicken breast" are the
+// same canonical ingredient — only the prep differs. Strip state
+// tokens in ANY position (prefix "sliced chicken", comma-suffix
+// "chicken breast, cubed", paren-suffix "chicken breast (cubed)",
+// inline "ground fresh pork") so the head noun survives for
+// identity matching.
+//
+// Token list is DERIVED from the registry's INGREDIENT_STATES +
+// STATE_LABELS via ALL_STATE_TOKENS, so adding a new state in one
+// place propagates here automatically — no parallel hardcoded list.
+// Regex is built once at module-init by escaping and joining every
+// known state token. Word-boundary anchoring catches any position.
+const STATE_TOKEN_RE = (() => {
+  const escaped = [...ALL_STATE_TOKENS]
+    .filter(t => t && /^[a-z]+$/i.test(t))
+    .sort((a, b) => b.length - a.length)
+    .join("|");
+  return escaped ? new RegExp(`\\b(?:${escaped})\\b`, "gi") : /(?!)/;
+})();
 const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
 const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
 
@@ -80,20 +102,79 @@ export function normalizeForMatch(name) {
     .toLowerCase()
     .replace(BRAND_TOKEN_RE, " ")
     .replace(SIZE_TOKEN_RE, " ")
-    .replace(STATE_PREFIX_RE, "")
-    .replace(STATE_SUFFIX_RE, "")
+    .replace(STATE_TOKEN_RE, " ")
     .replace(/[^a-z ]+/g, " ")
     .replace(/s\b/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
+// Token-level match. Naked `.includes()` was too loose: "tortilla"
+// substring-hits "tortilla chip" and "spice mix" overlaps with
+// "mexican spice mix", so the AI-sketch auto-pairer was happily
+// swapping four tortillas for tortilla chips and a Mexican spice
+// blend for a jar of jalapeños. English food names carry identity
+// in the HEAD NOUN (the last token) — "corn tortilla", "flour
+// tortilla", "whole wheat tortilla" all share head=tortilla and
+// are legitimate subs; "tortilla chip" has head=chip, a different
+// ingredient entirely. We require (a) heads match AND (b) the
+// shorter side's token set is fully contained in the longer's.
 export function namesMatch(a, b) {
   const na = normalizeForMatch(a);
   const nb = normalizeForMatch(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
-  return na.includes(nb) || nb.includes(na);
+  const ta = na.split(/\s+/).filter(Boolean);
+  const tb = nb.split(/\s+/).filter(Boolean);
+  if (!ta.length || !tb.length) return false;
+  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false;
+  const sa = new Set(ta);
+  const sb = new Set(tb);
+  const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+  for (const t of small) if (!big.has(t)) return false;
+  return true;
+}
+
+// True when two canonical slugs belong to the same ingredient family —
+// either the exact same slug, or both children of the same _hub parent.
+// "chicken" and "chicken_breast" both hang off chicken_hub, so a recipe
+// asking for generic Chicken should pair with the user's Chicken
+// Breast even though the leaf slugs differ. Hub-level equivalence is
+// the identity-stable way to match across cuts without falling back
+// to fragile name-string tricks (which tightened namesMatch no longer
+// allows — "chicken" and "chicken breast" have different head nouns).
+//
+// Use sameCanonicalFamily for PAIRING questions ("does the user have
+// something that can cover this recipe slot?"). Do NOT use it for
+// DEDUCTION questions ("which pantry rows come out when the user
+// cooks this?") — hub siblings like heavy_cream + milk are the same
+// family but different canonicals, and you don't drain milk to cook
+// with heavy cream. resolvesToSameCanonical below is the helper for
+// the deduction path.
+export function sameCanonicalFamily(slugA, slugB) {
+  if (!slugA || !slugB) return false;
+  if (slugA === slugB) return true;
+  const a = findIngredient(slugA);
+  const b = findIngredient(slugB);
+  const pa = a?.parentId || a?.id || null;
+  const pb = b?.parentId || b?.id || null;
+  if (!pa || !pb) return false;
+  return pa === pb;
+}
+
+// Narrow companion to sameCanonicalFamily: true iff two slugs resolve
+// to the SAME canonical after alias redirect. Catches the legacy-
+// compound-slug case (chicken_breast alias → chicken matches a
+// pantry row tagged chicken + cut=breast) without widening to hub
+// siblings. Use this for deduction paths where spending one
+// ingredient on another's row would be wrong (heavy_cream recipe
+// must NOT drain milk rows, even though they share milk_hub).
+export function resolvesToSameCanonical(slugA, slugB) {
+  if (!slugA || !slugB) return false;
+  if (slugA === slugB) return true;
+  const a = resolveCanonicalIdentity(slugA);
+  const b = resolveCanonicalIdentity(slugB);
+  return !!a.canonical && !!b.canonical && a.canonical === b.canonical;
 }
 
 // Resolve a free-text name to a canonical slug via best-score fuzzy
@@ -113,28 +194,37 @@ export function resolveNameToCanonicalId(name) {
 }
 
 // ── row identity ─────────────────────────────────────────────────────
-// HEADER per CLAUDE.md: [Brand] [Canonical] → Canonical → item.name.
-// Hub-aware: a cut canonical (parentId set) shows the HUB name as
-// the header and the cut slug rides along via deriveRowCut.
+// HEADER per CLAUDE.md: [Brand] [Canonical] — the big italic title.
+// Cut rides along on a SEPARATE row (deriveRowCut) in the rust-
+// colored CUT axis below the canonical.
+//
+// Legacy compound slugs (chicken_breast, ribeye, ...) redirect
+// through CANONICAL_ALIASES to the base canonical + a cut hint, so
+// a row written before migration 0122 still renders "Chicken · Breast"
+// instead of fossilizing as "Chicken Breast" in the header.
 export function deriveRowHeader(row) {
   if (!row) return "";
   const canonId = row.ingredientId || row.canonicalId || null;
-  const canon = canonId ? findIngredient(canonId) : null;
-  if (canon) {
-    const hub = canon.parentId ? findIngredient(canon.parentId) : null;
-    const primary = (hub && hub.name) || canon.name;
+  const { ingredient } = resolveSlug(canonId);
+  if (ingredient) {
     const brand = row.brand ? String(row.brand).trim() : "";
-    return brand ? `${brand} ${primary}` : primary;
+    return brand ? `${brand} ${ingredient.name}` : ingredient.name;
   }
   return row.name || "";
 }
 
+// The CUT axis row. Sources in priority order:
+//   1. row.cut — new explicit column (migration 0122), authoritative
+//   2. alias.cut — legacy compound slug still in ingredient_id /
+//                  canonical_id, decoded via resolveSlug
+// Returns null when the row has no cut AND the canonical has no
+// CUTS_FOR entry (produce, pantry staples — no cut axis rendering).
 export function deriveRowCut(row) {
   if (!row) return null;
+  if (row.cut) return cutLabel(row.cut);
   const canonId = row.ingredientId || row.canonicalId || null;
-  const canon = canonId ? findIngredient(canonId) : null;
-  if (!canon || !canon.parentId) return null;
-  return canon.shortName || canon.name;
+  const { cut } = resolveSlug(canonId);
+  return cut ? cutLabel(cut) : null;
 }
 
 // ── claim diff ───────────────────────────────────────────────────────
@@ -187,48 +277,113 @@ export function pairRecipeIngredients(ingredients, pantry) {
     const ingCanonId = ing.ingredientId || resolveNameToCanonicalId(ingName) || null;
     const ingCanon = ingCanonId ? findIngredient(ingCanonId) : null;
 
-    // Tier 1 — exact canonical match (or hub/sibling equivalence).
-    // A recipe asking for `chicken_breast` pairs with a pantry row
-    // carrying chicken_breast directly. Hub equivalence (asking for
-    // `chicken_hub` but having `chicken_thigh`) also paired — same
-    // parent means same ingredient family.
+    // Tier 0 — explicit pantryItemId from an upstream swap/bind.
+    // When the user swaps "Mozzarella" for their Great Value string
+    // cheese on the AI draft, buildLockedIngredients writes
+    // pantryItemId onto the committed recipe row. That binding is
+    // authoritative — re-matching by name at cook time would throw
+    // it away and (as seen in practice) fall through to a category
+    // fallback that pairs the string cheese with powdered sugar.
+    // Honoring pantryItemId here means every downstream render
+    // (cook prep, preview, schedule) shows the exact row the user
+    // picked, not whatever a fresh name-matcher lands on.
     let paired = null;
-    if (ingCanonId) {
-      paired = (pantry || []).find(p => {
-        if (!p || used.has(p.id)) return false;
-        const pCanonId = p.ingredientId || p.canonicalId || null;
-        if (!pCanonId) return false;
-        if (pCanonId === ingCanonId) return true;
-        const pCanon = findIngredient(pCanonId);
-        // hub/sibling match: same hub parent counts as paired for
-        // identity purposes (user can pick the cut at cook time).
-        const pParent = pCanon?.parentId || pCanon?.id;
-        const iParent = ingCanon?.parentId || ingCanon?.id;
-        if (pParent && iParent && pParent === iParent) return true;
-        return false;
-      }) || null;
-    }
-
-    // Tier 2 — name-fuzzy match for pantry rows without canonical
-    // ids. Catches free-text rows the user typed in.
-    if (!paired && ingName) {
+    if (ing.pantryItemId) {
       paired = (pantry || []).find(p =>
-        p && !used.has(p.id) && namesMatch(p.name, ingName),
+        p && !used.has(p.id) && p.id === ing.pantryItemId,
       ) || null;
     }
 
-    // Tier 3 — closest-match: same category, different canonical.
-    // "Low-carb tortilla" with no low-carb variant on hand but
-    // regular flour tortillas in pantry → substitute path.
+    // Tier 1 — exact canonical match. resolvesToSameCanonical handles
+    // alias redirect so legacy compound slugs (chicken_breast alias
+    // → chicken) still pair with new-model base rows (chicken +
+    // cut=breast). Meat cuts under the same hub all resolve to the
+    // same base canonical through their aliases, so chicken_breast
+    // vs chicken_thigh both resolve to "chicken" and pair cleanly
+    // here — no need for broader hub-widening.
+    //
+    // IMPORTANT: hub-widening used to be in this tier and was too
+    // permissive for non-cut hubs. heavy_cream and milk_2pct both
+    // live under milk_hub but they're distinct ingredients, not
+    // interchangeable cuts of the same animal. Auto-pairing them
+    // made the cook prep show "We'll use your 2% Milk" for a heavy
+    // cream recipe call. That kind of sibling — different canonical
+    // in a flavor-hub — now drops to Tier 3 (closest match), where
+    // the UI labels it as a substitute rather than an exact pair.
+    // Shared predicate across all three match tiers: a row is a
+    // candidate for standalone recipe-ingredient pairing ONLY when
+    // it's kind="ingredient" (the raw pantry default). Compound
+    // dishes (kind="compound" — frozen pizzas, pre-made lasagnas)
+    // and leftovers (kind="leftovers" — last night's fried rice)
+    // carry ingredientIds[] for composition tracking but can't be
+    // cracked open to satisfy a standalone mozzarella call. Without
+    // this filter the pairer happily offered "use your Fresh
+    // Mozzarella from your fridge" when the mozzarella was actually
+    // a component of a frozen pizza the user had no intention of
+    // disassembling.
+    const rowIsRawIngredient = (p) =>
+      !!p && !used.has(p.id) && (p.kind || "ingredient") === "ingredient";
+
+    if (!paired && ingCanonId) {
+      paired = (pantry || []).find(p => {
+        if (!rowIsRawIngredient(p)) return false;
+        const pCanonId = p.ingredientId || p.canonicalId || null;
+        if (!pCanonId) return false;
+        return resolvesToSameCanonical(pCanonId, ingCanonId);
+      }) || null;
+    }
+
+    // Tier 2 — name-fuzzy match, scoped to genuinely-ambiguous rows.
+    // Fires only when AT LEAST ONE side lacks a resolvable canonical
+    // — e.g. a pre-canonical free-text pantry row, or a recipe
+    // ingredient the AI left untagged. When BOTH sides carry valid
+    // canonicals and Tier 1 didn't match, the canonicals are
+    // authoritative: they're saying "these are different ingredients"
+    // and a name-based match here is a false positive waiting to
+    // happen. (Historical source of the powdered-sugar-vs-string-
+    // cheese class of bug when display names collided on a token.)
+    if (!paired && ingName) {
+      const ingCanonValid = !!(ingCanonId && ingCanon);
+      paired = (pantry || []).find(p => {
+        if (!rowIsRawIngredient(p)) return false;
+        const pCanonId = p.ingredientId || p.canonicalId || null;
+        const pCanon   = pCanonId ? findIngredient(pCanonId) : null;
+        const pCanonValid = !!(pCanonId && pCanon);
+        if (ingCanonValid && pCanonValid) return false;
+        return namesMatch(p.name, ingName);
+      }) || null;
+    }
+
+    // Tier 3 — closest-match (substitute band). Substitute is a real
+    // thing: recipe wants cotija, user has feta, both cheese_hub —
+    // legit swap. But "same category" alone was too broad: "pantry"
+    // bucket holds flour + sugar + salt + crackers + cheese; the
+    // first one in that bucket would become the "closest match" for
+    // string cheese, yielding nonsense like "Closest match in pantry:
+    // Powdered Sugar." Require EITHER same hub (true sibling) OR
+    // same category WITH at least one shared token — kills the
+    // cross-category false positive while still catching dairy-↔-
+    // dairy subs like cream cheese ↔ sour cream via "cream".
     let closestMatch = null;
     if (!paired && ingCanon) {
+      const ingHub = ingCanon.parentId || ingCanon.id;
+      const ingTokens = new Set(
+        normalizeForMatch(ingName).split(/\s+/).filter(Boolean),
+      );
       closestMatch = (pantry || []).find(p => {
-        if (!p || used.has(p.id)) return false;
+        if (!rowIsRawIngredient(p)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
         if (!pCanonId) return false;
         const pCanon = findIngredient(pCanonId);
         if (!pCanon) return false;
-        return pCanon.category && pCanon.category === ingCanon.category;
+        const pHub = pCanon.parentId || pCanon.id;
+        if (pHub && ingHub && pHub === ingHub) return true;
+        if (!pCanon.category || pCanon.category !== ingCanon.category) return false;
+        const pTokens = new Set(
+          normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
+        );
+        for (const t of ingTokens) if (pTokens.has(t)) return true;
+        return false;
       }) || null;
     }
 

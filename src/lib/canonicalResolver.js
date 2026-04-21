@@ -428,9 +428,15 @@ export function resolveCanonicalFromScan({
 // confidently extract — the user fills in manually as they would
 // without the scan.
 //
-// Multipack handling: "12 × 50 g" → { amount: 600, unit: "g" }
-// (total pack weight). Users filling pantry usually care about total
-// amount in the container, not per-unit serving.
+// Multipack handling: "12 × 50 g" → { amount: 600, unit: "g",
+// counterpart: { amount: 12, unit: "count" } }. The counterpart
+// carries the SECOND dimension when both a count and a mass/volume
+// are present in the label, so the scan ingestion can populate
+// pantry_items.package_amount/unit (mass, for per-count weight
+// derivation) separately from pantry_items.amount/unit (the
+// consumable quantity the user tracks). Set-both cases include
+// "8 ct (16 oz)", "16 oz (8 ct)", and multipack "12 × 50 g". Single-
+// dimension strings ("500 g", "8 ct") return counterpart:null.
 
 const UNIT_ALIASES = {
   g: "g", gram: "g", grams: "g",
@@ -454,6 +460,9 @@ export function parsePackageSize(raw) {
   if (!text) return null;
 
   // Multipack pattern: "<N> × <amount><unit>" or "<N> x <amount> <unit>"
+  // Counterpart surfaces the multiplier as a count so downstream can
+  // derive grams-per-count (e.g. 12 × 50g has total 600g split across
+  // 12 items → 50g each via effectiveCountWeightG).
   const multipack = text.match(
     /^(\d+)\s*[×x]\s*(\d+(?:\.\d+)?)\s*([a-z]+)/,
   );
@@ -463,22 +472,51 @@ export function parsePackageSize(raw) {
     const unit  = canonicalizeUnit(multipack[3]);
     if (unit && Number.isFinite(count) && Number.isFinite(per) && count > 0 && per > 0) {
       const mult = UNIT_MULTIPLIERS[multipack[3]] || 1;
-      return { amount: round1(count * per * mult), unit };
+      return {
+        amount: round1(count * per * mult),
+        unit,
+        counterpart: { amount: count, unit: "count" },
+      };
     }
   }
 
-  // Single quantity: "<amount><unit>" or "<amount> <unit>"
-  const single = text.match(/(\d+(?:\.\d+)?)\s*([a-z]+)/);
-  if (single) {
-    const amount = Number(single[1]);
-    const unit   = canonicalizeUnit(single[2]);
+  // Scan ALL number-unit tokens and classify each as count or
+  // mass/volume. When both dimensions show up in the same label
+  // ("8 ct 16 oz", "16 oz (8 ct)"), return the mass/volume as the
+  // primary package size and the count as the counterpart. That
+  // matches what downstream wants: package_amount (mass) for the
+  // derivation, and amount (count) for the user's consumable
+  // tracking.
+  const tokens = [];
+  const tokenRe = /(\d+(?:\.\d+)?)\s*([a-z]+)/g;
+  let m;
+  while ((m = tokenRe.exec(text)) !== null) {
+    const amount = Number(m[1]);
+    const rawUnit = m[2];
+    const unit = canonicalizeUnit(rawUnit);
     if (unit && Number.isFinite(amount) && amount > 0) {
-      const mult = UNIT_MULTIPLIERS[single[2]] || 1;
-      return { amount: round1(amount * mult), unit };
+      const mult = UNIT_MULTIPLIERS[rawUnit] || 1;
+      tokens.push({ amount: round1(amount * mult), unit });
     }
   }
+  if (tokens.length === 0) return null;
 
-  return null;
+  const massTokens  = tokens.filter(t => t.unit !== "count");
+  const countTokens = tokens.filter(t => t.unit === "count");
+
+  if (massTokens.length > 0 && countTokens.length > 0) {
+    // Both dimensions present — primary is mass (what gets written
+    // to pantry_items.package_amount for derivation); counterpart is
+    // the count (what gets written to pantry_items.amount).
+    return {
+      amount: massTokens[0].amount,
+      unit:   massTokens[0].unit,
+      counterpart: { amount: countTokens[0].amount, unit: "count" },
+    };
+  }
+
+  // Single-dimension — first token wins, no counterpart.
+  return { amount: tokens[0].amount, unit: tokens[0].unit };
 }
 
 function canonicalizeUnit(raw) {

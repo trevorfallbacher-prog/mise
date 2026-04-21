@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
-import { convert, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
+import { convert, convertWithBridge, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
+import { parseAmountString } from "../lib/nutrition";
+import { sameCanonicalFamily, resolvesToSameCanonical, pairRecipeIngredients } from "../lib/recipePairing";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -59,30 +61,172 @@ function totalXpForRecipe(recipe) {
 //                  phase. Untracked rows have both null and a ✕-only card.
 //   skipped      — user tapped ✕. Final removal plan ignores skipped rows.
 // Pure function — no React, easy to unit test once we add a test harness.
-export function buildInitialUsedItems(recipe, pantry) {
+export function buildInitialUsedItems(recipe, pantry, session) {
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const list = Array.isArray(pantry) ? pantry : [];
+  // Run the SAME pairer CookMode uses so closest-match substitutes
+  // (recipe wants Mozzarella, user has Parmesan, Tier 3 category
+  // match picks Parmesan) carry through to the deduction screen.
+  // Previously this function filtered with resolvesToSameCanonical
+  // alone — exact canonical — so a substitute like Parmesan-for-
+  // Mozzarella was invisible here and the row rendered "NOT IN
+  // PANTRY" even after CookMode paired it live.
+  const pairings = pairRecipeIngredients(ingredients, list);
   return ingredients.map((ing, idx) => {
     const canonical = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
-    // Sort FIFO by expires_at ASC (tie-break: purchased_at ASC) so the
-    // auto-picked default is the oldest-expiring instance — consume
-    // before it spoils. Matches the stack-drilldown FIFO ordering so
-    // the user's mental model ("oldest first") holds across surfaces.
-    const matches = ing.ingredientId
+    // Match universe for this ingredient row — the cascade that
+    // deduction and the swap picker choose from. Three tiers:
+    //   1. Explicit canonical family (exact match after alias
+    //      redirect, no hub widening — heavy_cream and milk stay
+    //      distinct).
+    //   2. Pairer's paired row (same canonical / hub) and
+    //      closestMatch row (substitute band) — surfaces rows that
+    //      pairRecipeIngredients already decided were valid.
+    //   3. Deduped, sorted FIFO by expires_at so the oldest-
+    //      expiring instance is the default (consume before spoil).
+    const familyMatches = ing.ingredientId
       ? list.filter(p =>
-          p.ingredientId === ing.ingredientId &&
+          resolvesToSameCanonical(p.ingredientId, ing.ingredientId) &&
           (p.kind || "ingredient") === "ingredient" &&
           Number(p.amount) > 0
-        ).sort((a, b) => {
-          const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
-          const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
-          if (ea !== eb) return ea - eb;
-          const pa = a.purchasedAt ? new Date(a.purchasedAt).getTime() : 0;
-          const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
-          return pa - pb;
+        )
+      : [];
+    const pairing = pairings[idx] || null;
+    const suggested = [pairing?.paired, pairing?.closestMatch].filter(Boolean);
+    // Composition-match candidates: compound rows (kind !== "ingredient")
+    // whose ingredientIds[] genuinely contains the target canonical
+    // AND whose category is in the same family as the target. User's
+    // insight: "wouldn't it look Dairy → Cheese → what contains
+    // mozzarella, not Freezer → Frozen Meals → pizza?" Exactly —
+    // same-category gate uses the pantry-taxonomy lineage as a
+    // scoop-ability proxy:
+    //
+    //   mozzarella (dairy) + italian_cheese_dip (dairy)    → match ✓
+    //   mozzarella (dairy) + frozen_pizza (frozen/entree)  → reject ✗
+    //
+    // No per-canonical scoopable flag needed; the category hierarchy
+    // already tells us whether the compound lives in the "I can
+    // scoop this" aisle or the "I'm eating this as a meal" aisle.
+    const compositionMatches = ing.ingredientId
+      ? (list || []).filter(p => {
+          if (!p || Number(p.amount) <= 0) return false;
+          if ((p.kind || "ingredient") === "ingredient") return false;
+          const ids = Array.isArray(p.ingredientIds) ? p.ingredientIds : [];
+          if (!ids.some(id => resolvesToSameCanonical(id, ing.ingredientId))) return false;
+          // Category-lineage gate — scoop from the cheese aisle, not
+          // the frozen-meals aisle. When the target canonical has no
+          // category (rare — synthetic / unenriched), allow through;
+          // when the pantry row has no category, fall back to item
+          // category (set at add-time from tile).
+          const ingCanonCat = canonical?.category || null;
+          const pCanon = p.ingredientId ? findIngredient(p.ingredientId) : null;
+          const pCat = pCanon?.category || p.category || null;
+          if (ingCanonCat && pCat && ingCanonCat !== pCat) return false;
+          return true;
         })
       : [];
-    const defaultMatch = matches[0] || null;
+    const seen = new Set();
+    const matches = [...familyMatches, ...suggested, ...compositionMatches]
+      .filter(m => {
+        if (!m || !m.id || seen.has(m.id)) return false;
+        seen.add(m.id);
+        return Number(m.amount) > 0;
+      })
+      .sort((a, b) => {
+        const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+        const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+        if (ea !== eb) return ea - eb;
+        const pa = a.purchasedAt ? new Date(a.purchasedAt).getTime() : 0;
+        const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
+        return pa - pb;
+      });
+    // Priority order for the default selection:
+    //   1. Session override — user's explicit choice from cook-prep
+    //      or AIRecipe tweak, authoritative.
+    //   2. pairing.paired — Tier 1 primary canonical match (kind=ingredient).
+    //   3. Composition match — compound row whose ingredientIds[]
+    //      contains the target. Prefers "cheese dip that has mozz"
+    //      over "queso dip as a generic cheese substitute." Only
+    //      fires when no primary-canonical row exists.
+    //   4. pairing.closestMatch — Tier 3 substitute (hub / category).
+    //   5. FIFO first from the family universe.
+    const overrideRowId = session?.overrides?.[idx]?.pantryItemId || null;
+    const overrideRow = overrideRowId
+      ? list.find(p => p.id === overrideRowId) || null
+      : null;
+    const defaultMatch = overrideRow
+      || pairing?.paired
+      || compositionMatches[0]
+      || pairing?.closestMatch
+      || matches[0]
+      || null;
+    // Resolve the recipe's called-for quantity so the slider + amount
+    // field prefill instead of loading at 0 (seen in the wild: "What
+    // did you use?" screen with every slider pinned to 0 because
+    // AI-drafted recipes only carry the display string "2 tbsp" and
+    // not the structured qty {amount, unit}). Three-tier resolve:
+    //   1. ing.qty — explicit structured qty (bundled recipes, older
+    //      drafts that kept it)
+    //   2. parseAmountString(ing.amount, canonical) — parse "2 tbsp"
+    //      or "¼ cup" or "8" off the display string using the unit
+    //      ladder of the matched canonical
+    //   3. null — untracked / free-text, slider stays manual
+    const recipeQty = ing.qty || (canonical ? parseAmountString(ing.amount, canonical) : null);
+
+    // Display unit policy: RECIPE UNIT WINS.
+    //
+    // Recipe called for "¾ cup" → show everything in cups. Pantry
+    // row happens to be stored in quarts → convert quarts to cups
+    // for display, don't force the user to read the pantry's unit.
+    // Previous behavior (pantry unit wins) was the bug the user
+    // flagged: recipe in cups but meter showing quarts + pints,
+    // too many units on screen.
+    //
+    // Only fall back to the pantry row's unit when (a) the recipe
+    // had no parseable qty, or (b) the recipe's unit isn't in the
+    // canonical's ladder (e.g. garlic recipe says "2 tbsp" but
+    // garlic's ladder is [clove, head] — can't display "tbsp").
+    // That fallback path is handled by the coherence guard below.
+    let displayAmount = recipeQty?.amount ?? null;
+    let displayUnit   = recipeQty?.unit   ?? (defaultMatch?.unit ?? null);
+
+    // Coherence guard: usedUnit MUST be in the canonical's ladder,
+    // otherwise the dropdown shows the first option (browser fallback
+    // when <select value> isn't a valid option) while state stays on
+    // an invalid unit — labels render in the stale unit, conversions
+    // fail silently. Seen when a garlic pantry row was stored in oz
+    // (outside garlic's [clove, head] ladder) and a recipe asked for
+    // "2 tbsp" that didn't parse. If the current displayUnit isn't
+    // valid, fall back to the canonical's defaultUnit and re-convert
+    // the displayed amount into that unit so the number agrees with
+    // what the label will read.
+    const ladderHas = (u) => !!canonical?.units?.some(x => x.id === u);
+    if (canonical && displayUnit && !ladderHas(displayUnit)) {
+      const targetUnit = canonical.defaultUnit && ladderHas(canonical.defaultUnit)
+        ? canonical.defaultUnit
+        : (canonical.units?.[0]?.id || null);
+      if (targetUnit) {
+        // Try to carry the number across, if we can find any valid
+        // source qty to convert from.
+        const sourceQty = recipeQty && ladderHas(recipeQty.unit)
+          ? recipeQty
+          : (displayAmount != null && ladderHas(displayUnit)
+              ? { amount: displayAmount, unit: displayUnit }
+              : null);
+        if (sourceQty) {
+          const res = convertWithBridge(sourceQty, targetUnit, canonical, defaultMatch);
+          displayAmount = res.ok ? Number(res.value.toFixed(3)) : null;
+        } else {
+          // No convertible source (e.g. "2 tbsp" for garlic with only
+          // clove/head ladder). Clear the number — user types in the
+          // picker — but ensure the unit is valid so the dropdown and
+          // labels agree.
+          displayAmount = null;
+        }
+        displayUnit = targetUnit;
+      }
+    }
+
     return {
       idx,
       recipeIng: ing,
@@ -90,8 +234,8 @@ export function buildInitialUsedItems(recipe, pantry) {
       matches,
       skipped: false,
       selectedRowId: defaultMatch?.id || null,
-      usedAmount: ing.qty?.amount ?? null,
-      usedUnit:   ing.qty?.unit   ?? (defaultMatch?.unit ?? null),
+      usedAmount: displayAmount,
+      usedUnit:   displayUnit,
     };
   });
 }
@@ -135,8 +279,25 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
     const pantryRow = lookup(row.selectedRowId);
     if (!pantryRow) continue;
     const used = { amount: Number(row.usedAmount), unit: row.usedUnit };
-    const displayName = row.canonical?.name || row.recipeIng.item || "Ingredient";
-    const displayEmoji = row.canonical?.emoji || row.recipeIng.emoji || "🥣";
+    // Display prefers the matched pantry row's label so the user sees
+    // "Tostitos Queso" on the confirm-removal screen, not the recipe's
+    // "Fresh Mozzarella" — they're actually decrementing the queso.
+    // Same priority chain as the cook-prep screen uses.
+    const pantryCanon = pantryRow.ingredientId ? findIngredient(pantryRow.ingredientId) : null;
+    const recipeAsk = row.canonical?.name || row.recipeIng.item || null;
+    const isSubstitute = !!pantryRow.ingredientId
+      && !!row.canonical?.id
+      && !resolvesToSameCanonical(pantryRow.ingredientId, row.canonical.id);
+    const displayName = pantryRow.name
+      || pantryCanon?.name
+      || row.canonical?.name
+      || row.recipeIng.item
+      || "Ingredient";
+    const displayEmoji = pantryRow.emoji
+      || pantryCanon?.emoji
+      || row.canonical?.emoji
+      || row.recipeIng.emoji
+      || "🥣";
     // Cascade: consume the selected row first, then fall through to
     // sibling instances FIFO when demand exceeds the seed's stock.
     // Preserves the user's explicit "use this row" pick — we just
@@ -158,6 +319,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
         source: "recipe",
         displayName,
         displayEmoji,
+        subFor: isSubstitute ? recipeAsk : null,
       });
       continue;
     }
@@ -172,6 +334,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
         source: "recipe",
         displayName,
         displayEmoji,
+        subFor: isSubstitute ? recipeAsk : null,
       });
     }
   }
@@ -207,7 +370,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   return out;
 }
 
-export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish }) {
+export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish, cookSession = null }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
   const [rating, setRating] = useState(null);
@@ -232,7 +395,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // the ingredients-used → confirm-removal → save sequence. Seeded once from
   // the initial pantry snapshot; realtime pantry changes during the flow are
   // intentionally ignored so the user's edits don't flip out from under them.
-  const [usedItems, setUsedItems] = useState(() => buildInitialUsedItems(recipe, pantry));
+  const [usedItems, setUsedItems] = useState(() => buildInitialUsedItems(recipe, pantry, cookSession?.session));
   // pickerForIdx is the row whose multi-match picker is currently open (null
   // for closed). Sheet overlays the phase and lets the user choose which
   // pantry row to draw from when more than one matches the ingredient id.
@@ -719,6 +882,22 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
 
     return shell(
       <div style={{ flex:1, display:"flex", flexDirection:"column", padding:"40px 24px 32px", overflowY:"auto" }}>
+        {/* Keyframes for the delta segment's scrolling hatches.
+            Scoped to the component via a single inline <style> tag
+            so we don't pollute the global stylesheet. Honors
+            prefers-reduced-motion — pauses the animation entirely
+            for users who've opted out of motion. */}
+        <style>{`
+          @keyframes cookCompleteDelta {
+            from { background-position: 0 0; }
+            to   { background-position: 34px 0; }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            [style*="cookCompleteDelta"] {
+              animation: none !important;
+            }
+          }
+        `}</style>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>STEP {num} OF {denom}</div>
         <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:6 }}>
           What did you use?
@@ -735,8 +914,28 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               ? row.matches.find(m => m.id === row.selectedRowId) || null
               : null;
             const extraMatches = tracked ? Math.max(0, row.matches.length - 1) : 0;
-            const emoji = ing?.emoji || row.recipeIng.emoji || "🥣";
-            const displayName = ing?.name || row.recipeIng.item || "Ingredient";
+            // Display name / emoji prefer the MATCHED pantry row when
+            // one is selected — the user is pulling Tostitos Queso from
+            // the fridge, so the header should read "Tostitos Queso",
+            // not the recipe's original "Fresh Mozzarella." When the
+            // match is a substitute (different canonical than the
+            // recipe's), we also surface a "SUB FOR ..." subtitle so
+            // the user sees both: what they're actually using AND what
+            // the recipe asked for.
+            const matchCanon = match?.ingredientId ? findIngredient(match.ingredientId) : null;
+            const isSubstitute = !!match && !!ing?.id && !!matchCanon?.id
+              && !resolvesToSameCanonical(match.ingredientId, ing.id);
+            const emoji = match?.emoji
+              || matchCanon?.emoji
+              || ing?.emoji
+              || row.recipeIng.emoji
+              || "🥣";
+            const displayName = match?.name
+              || matchCanon?.name
+              || ing?.name
+              || row.recipeIng.item
+              || "Ingredient";
+            const recipeAsk = ing?.name || row.recipeIng.item || null;
             const unitOptions = ing?.units || [];
             const canEditAmount = tracked && row.usedUnit;
             // Card styling: active rows have the yellow underline, skipped
@@ -759,6 +958,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color: row.skipped ? "#555" : "#f0ece4", fontStyle:"italic", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {displayName}
                   </div>
+                  {isSubstitute && recipeAsk && (
+                    <div style={{
+                      fontFamily:"'DM Mono',monospace", fontSize:9,
+                      color:"#f59e0b", letterSpacing:"0.05em",
+                      marginTop:1, fontStyle:"italic",
+                    }}>
+                      SUB FOR {recipeAsk.toUpperCase()}
+                    </div>
+                  )}
                   <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", marginTop:2, letterSpacing:"0.05em", display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
                     {tracked && match && extraMatches > 0 ? (
                       <button
@@ -781,49 +989,350 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                     <span>· RECIPE: {row.recipeIng.amount || "—"}</span>
                   </div>
                 </div>
-                {canEditAmount && !row.skipped ? (
-                  <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0, minWidth:160 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-                      <input
-                        type="number" min="0" step="any"
-                        value={row.usedAmount ?? ""}
-                        onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
-                        style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
-                      />
-                      <select
-                        value={row.usedUnit || ""}
-                        onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
-                        style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
-                      >
-                        {unitOptions.map(u => (
-                          <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
-                        ))}
-                      </select>
-                    </div>
-                    {/* Estimate slider — drag to set how much of THIS
-                        ingredient you used. Range 0..source's current
-                        amount (or 0..1 if the recipe-hinted amount
-                        can't be converted; the caller then commits the
-                        amount directly). Nobody's weighing half a bag
-                        of chips; slide to what looks right. Live write
-                        to usedAmount so the confirm-removal screen's
-                        \"LEAVES x\" readout updates as you drag. */}
-                    {match && Number(match.amount) > 0 && (() => {
-                      const maxVal = Number(match.amount);
-                      const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
-                      return (
+                {canEditAmount && !row.skipped ? (() => {
+                  // Compute reference quantities in the user's CURRENT
+                  // unit so the slider range, the recipe tick, and the
+                  // amount display all live in one coordinate space.
+                  // When the user flips the unit dropdown, everything
+                  // re-renders against the new unit — slider range
+                  // expands/contracts, tick position updates, and the
+                  // number input gets live-converted (below).
+                  const recipeQty = row.recipeIng.qty
+                    || parseAmountString(row.recipeIng.amount, ing)
+                    || null;
+                  const toUsed = (qty) => {
+                    if (!qty || !row.usedUnit) return null;
+                    if (qty.unit === row.usedUnit) return Number(qty.amount);
+                    const res = convertWithBridge(qty, row.usedUnit, ing, match);
+                    return res.ok ? res.value : null;
+                  };
+                  const maxInUsed = match && Number(match.amount) > 0
+                    ? toUsed({ amount: Number(match.amount), unit: match.unit })
+                    : null;
+                  const recipeInUsed = recipeQty ? toUsed(recipeQty) : null;
+                  // Live-convert when the user flips the unit dropdown.
+                  // Without this the number stayed the same digit while
+                  // the unit changed beneath it — silently corrupting
+                  // the deduction. Now: 0.5 sticks → switch to tbsp →
+                  // number flips to 8 tbsp, slider range rescales, tick
+                  // marker slides to the equivalent recipe position.
+                  const onUnitChange = (nextUnit) => {
+                    if (!nextUnit || nextUnit === row.usedUnit) return;
+                    const curAmt = Number(row.usedAmount);
+                    if (!Number.isFinite(curAmt) || curAmt <= 0) {
+                      setRow(row.idx, { usedUnit: nextUnit });
+                      return;
+                    }
+                    const res = convertWithBridge(
+                      { amount: curAmt, unit: row.usedUnit },
+                      nextUnit, ing, match,
+                    );
+                    setRow(row.idx, res.ok
+                      ? { usedAmount: Number(res.value.toFixed(3)), usedUnit: nextUnit }
+                      : { usedUnit: nextUnit }
+                    );
+                  };
+                  const fmt = (n) => n == null
+                    ? "—"
+                    : Number(n.toFixed(n >= 10 ? 1 : 2));
+                  return (
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0, minWidth:200 }}>
+                      {/* "USE:" label inline with the amount+unit
+                          selectors so the input pair reads as one
+                          phrase: "USE: [5.7] [tortillas ▾]". Kills the
+                          redundant "USED: 5.7 tortillas" corner label
+                          below. Label color tracks leftColor to stay
+                          part of the same visual system. */}
+                      <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+                        <span style={{
+                          fontFamily:"'DM Mono',monospace", fontSize:10,
+                          color: "#888", letterSpacing:"0.08em",
+                        }}>
+                          USE:
+                        </span>
                         <input
-                          type="range"
-                          min="0" max={maxVal} step={step}
-                          value={Number.isFinite(Number(row.usedAmount)) ? Math.min(Number(row.usedAmount), maxVal) : 0}
-                          onChange={e => setRow(row.idx, { usedAmount: Number(e.target.value), usedUnit: row.usedUnit || match.unit })}
-                          aria-label={`Estimate ${displayName} used`}
-                          style={{ width:"100%", accentColor:"#f5c842" }}
+                          type="number" min="0" step="any"
+                          value={row.usedAmount ?? ""}
+                          onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
+                          style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
                         />
-                      );
-                    })()}
-                  </div>
-                ) : null}
+                        <select
+                          value={row.usedUnit || ""}
+                          onChange={e => onUnitChange(e.target.value)}
+                          style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
+                        >
+                          {unitOptions.map(u => (
+                            <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {/* Meter diagnostic — if the gate below fails
+                          we used to silently render nothing, making
+                          "chicken gives me no slider" a mystery.
+                          Short honest label tells why so we can
+                          debug without staring at the code. */}
+                      {!(match && maxInUsed != null && maxInUsed > 0) && (
+                        <div style={{
+                          fontFamily:"'DM Mono',monospace", fontSize:9,
+                          color:"#555", letterSpacing:"0.04em",
+                          fontStyle:"italic",
+                        }}>
+                          {!match
+                            ? "(no pantry row selected — meter hidden)"
+                            : maxInUsed == null
+                              ? `(can't convert pantry ${match.unit} → ${row.usedUnit} — meter hidden)`
+                              : maxInUsed <= 0
+                                ? "(pantry row shows 0 — meter hidden)"
+                                : "(meter unavailable)"}
+                        </div>
+                      )}
+                      {match && maxInUsed != null && maxInUsed > 0 && (() => {
+                        // Single horizontal bar with three colored
+                        // segments side-by-side:
+                        //
+                        //   |====left after (dynamic)====|==used==|==pack rem==|
+                        //                                ^ slider thumb
+                        //
+                        // The LEFT AFTER COOK fill color shifts live
+                        // with how much is left, acting as a status
+                        // light for the pantry row:
+                        //
+                        //   > 60% left → GREEN  (good condition)
+                        //   25–60%     → TAN    (getting low)
+                        //   < 25%      → RUST   (almost out)
+                        //
+                        // USED TODAY is always blue. The tail after
+                        // the current pantry total (gray) shows package
+                        // headroom / package reference so the user sees
+                        // how many packs their stock adds up to.
+                        const pkgQty = match.packageAmount && match.packageUnit
+                          ? { amount: Number(match.packageAmount), unit: match.packageUnit }
+                          : null;
+                        const pkgInUsed = pkgQty ? toUsed(pkgQty) : null;
+                        // Per-row "original stock" in user's unit.
+                        // Three signals, most-specific wins:
+                        //   1. packageAmount × 1 (explicit pack size)
+                        //   2. max (original amount when opened)
+                        //   3. amount (current — partial pack with no
+                        //      capacity info)
+                        // convertWithBridge handles cross-unit so a row
+                        // in lb with max=1.5 resolves correctly when
+                        // usedUnit is oz, etc.
+                        const rowOriginalInUsed = (m) => {
+                          const pack = m.packageAmount && m.packageUnit
+                            ? (m.packageUnit === row.usedUnit
+                                ? Number(m.packageAmount)
+                                : (convertWithBridge(
+                                    { amount: Number(m.packageAmount), unit: m.packageUnit },
+                                    row.usedUnit, ing, m,
+                                  ).value))
+                            : null;
+                          if (Number.isFinite(pack) && pack > 0) return pack;
+                          const max = Number(m.max);
+                          if (Number.isFinite(max) && max > 0) {
+                            if (m.unit === row.usedUnit) return max;
+                            const res = convertWithBridge(
+                              { amount: max, unit: m.unit },
+                              row.usedUnit, ing, m,
+                            );
+                            return res.ok ? res.value : null;
+                          }
+                          if (m.unit === row.usedUnit) return Number(m.amount);
+                          const res = convertWithBridge(
+                            { amount: Number(m.amount), unit: m.unit },
+                            row.usedUnit, ing, m,
+                          );
+                          return res.ok ? res.value : null;
+                        };
+                        const rowCurrentInUsed = (m) => {
+                          if (m.unit === row.usedUnit) return Number(m.amount);
+                          const res = convertWithBridge(
+                            { amount: Number(m.amount), unit: m.unit },
+                            row.usedUnit, ing, m,
+                          );
+                          return res.ok ? res.value : 0;
+                        };
+                        // Sum across every sibling row. Original stock =
+                        // the full-package ceiling (bar width); current
+                        // stock = what's physically in the kitchen now.
+                        // The gap between them is "already consumed from
+                        // packages" — rendered as the empty tail that
+                        // user asked for ("we start from less because
+                        // the package has been opened").
+                        const stockOriginal = (row.matches || []).reduce((sum, m) => {
+                          const v = rowOriginalInUsed(m);
+                          return sum + (Number.isFinite(v) && v > 0 ? v : 0);
+                        }, 0);
+                        const stockCurrent = (row.matches || []).reduce((sum, m) => {
+                          const v = rowCurrentInUsed(m);
+                          return sum + (Number.isFinite(v) && v > 0 ? v : 0);
+                        }, 0);
+                        const pantryNow = Math.max(maxInUsed, stockCurrent);
+                        const meterMax  = Math.max(pantryNow, stockOriginal);
+                        const packageCount = (pkgInUsed && pkgInUsed > 0)
+                          ? Math.max(1, Math.round(meterMax / pkgInUsed))
+                          : 0;
+                        const step = meterMax <= 10 ? 0.1 : meterMax <= 100 ? 1 : meterMax / 100;
+                        const cur = Number.isFinite(Number(row.usedAmount))
+                          ? Math.min(Number(row.usedAmount), pantryNow)
+                          : 0;
+                        const leftAfter = Math.max(0, pantryNow - cur);
+                        const pct = (v) => Math.max(0, Math.min(100, (v / meterMax) * 100));
+                        const unitTxt = unitLabel(ing, row.usedUnit);
+                        // Health color — shifts live as the user moves
+                        // the slider. Ratio is against pantryNow (not
+                        // meterMax) so a user with 4 full packs doesn't
+                        // read "bad condition" the moment they commit
+                        // one pack; badness is relative to what they
+                        // actually have on hand.
+                        const leftRatio = pantryNow > 0 ? leftAfter / pantryNow : 0;
+                        const leftColor = leftRatio >= 0.6 ? "#7ec87e"     // good
+                                        : leftRatio >= 0.25 ? "#c9a34e"   // medium
+                                        : "#c05a44";                       // bad
+                        const leftLabel = leftRatio >= 0.6 ? "GOOD"
+                                        : leftRatio >= 0.25 ? "LOW"
+                                        : "ALMOST OUT";
+                        const leftPct = pct(leftAfter);
+                        const usedPct = pct(cur);
+                        // pkg-tail covers the meter beyond pantryNow,
+                        // i.e. the package-count × packageSize headroom
+                        // that represents sealed packages the user isn't
+                        // drawing from this cook.
+                        return (
+                          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:6 }}>
+                            {/* Single-line "how much left" label. Drops
+                                the · LOW / · GOOD / · ALMOST OUT tag —
+                                color already telegraphs condition, the
+                                words were redundant noise. */}
+                            <div style={{
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              letterSpacing:"0.04em",
+                              color: leftColor,
+                            }}>
+                              {fmt(leftAfter)} {unitTxt} LEFT AFTER COOK
+                            </div>
+                            {/* The bar. 0 on the left, pantry-max on
+                                the right. LEFT AFTER COOK is the solid
+                                fill growing from 0; USED (animated
+                                delta) is the hatched tail on the right.
+                                Slider value maps to leftAfter (not
+                                used) — so dragging RIGHT increases
+                                leftAfter (= less used) and moves the
+                                thumb RIGHT. Reading and interaction
+                                both go the same direction now, no
+                                inversion. */}
+                            <div style={{ position:"relative", width:"100%", height:22 }}>
+                              <div style={{
+                                position:"absolute", top:5, left:0, right:0, height:12,
+                                background:"#2a2a2a", borderRadius:6,
+                              }} />
+                              {/* LEFT AFTER COOK — solid color, grows
+                                  from 0 to leftPct% */}
+                              <div style={{
+                                position:"absolute", top:5, left:0, height:12,
+                                width:`${leftPct}%`,
+                                background: leftColor,
+                                borderRadius: leftPct >= 99.5 ? 6 : "6px 0 0 6px",
+                                transition:"width 0.08s linear, background 0.15s linear",
+                              }} />
+                              {/* USED TODAY — animated delta tail,
+                                  from leftPct% to leftPct+usedPct% */}
+                              <div style={{
+                                position:"absolute", top:5, left:`${leftPct}%`, height:12,
+                                width:`${usedPct}%`,
+                                background: `repeating-linear-gradient(
+                                  -45deg,
+                                  ${leftColor}66 0px,
+                                  ${leftColor}66 6px,
+                                  ${leftColor}22 6px,
+                                  ${leftColor}22 12px
+                                )`,
+                                backgroundSize: "17px 17px",
+                                animation: "cookCompleteDelta 1.8s linear infinite",
+                                borderRadius:
+                                  (leftPct + usedPct) >= 99.5 && leftPct < 0.5 ? 6
+                                  : (leftPct + usedPct) >= 99.5 ? "0 6px 6px 0"
+                                  : 0,
+                                transition:"width 0.08s linear, left 0.08s linear, background 0.15s linear",
+                              }} />
+                              {/* Thumb — color-matched to leftColor.
+                                  Sits at the leftPct% boundary. Driven
+                                  by the invisible range input below. */}
+                              <div style={{
+                                position:"absolute",
+                                top:2, left:`calc(${leftPct}% - 9px)`,
+                                width:18, height:18,
+                                background: leftColor,
+                                border:"3px solid #0a0a0a",
+                                borderRadius:"50%",
+                                pointerEvents:"none",
+                                boxShadow:`0 0 6px ${leftColor}66`,
+                                transition:"background 0.15s linear, box-shadow 0.15s linear, left 0.08s linear",
+                              }} />
+                              {/* Range input drives LEFT AFTER directly:
+                                  value = pantryNow − usedAmount. Drag
+                                  right → leftAfter up → used down →
+                                  thumb tracks right. Drag left → used
+                                  up → thumb tracks left. Visual and
+                                  interaction aligned. */}
+                              <input
+                                type="range"
+                                min="0" max={pantryNow} step={step}
+                                value={leftAfter}
+                                onChange={e => {
+                                  const nextLeft = Number(e.target.value);
+                                  const nextUsed = Math.max(0, pantryNow - nextLeft);
+                                  setRow(row.idx, {
+                                    usedAmount: nextUsed,
+                                    usedUnit: row.usedUnit,
+                                  });
+                                }}
+                                aria-label={`Estimate ${displayName} used`}
+                                style={{
+                                  position:"absolute", inset:0,
+                                  width: meterMax > 0
+                                    ? `${(pantryNow / meterMax) * 100}%`
+                                    : "100%",
+                                  margin:0,
+                                  opacity:0.01,
+                                  cursor:"pointer",
+                                }}
+                              />
+                            </div>
+                            {/* Bottom labels — pantry stock composition
+                                (package count × size) on the left, recipe
+                                ask on the right. */}
+                            <div style={{
+                              display:"flex", justifyContent:"space-between",
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              letterSpacing:"0.04em", color:"#666",
+                            }}>
+                              <span style={{ color:"#7ec87e" }}>
+                                IN PANTRY: {(pkgInUsed && pkgInUsed > 0 && packageCount > 1)
+                                  ? `${fmt(pkgInUsed)} × ${packageCount} PACKS`
+                                  : `${fmt(pantryNow)} ${unitTxt}`}
+                              </span>
+                              {recipeInUsed != null && (
+                                <span style={{ color:"#b8a878" }}>
+                                  RECIPE: {fmt(recipeInUsed)} {unitTxt}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {/* Conversion shadow intentionally removed.
+                          The prefill now defaults to the recipe's unit
+                          and the meter/labels all use ONE unit, so the
+                          shadow readout was just noise ("0.86 pints"
+                          popping up when the user is already reading
+                          cups everywhere else). If the user flips the
+                          dropdown to a different unit, the number
+                          live-converts and the whole row re-renders in
+                          that unit — no second unit needed on screen. */}
+                    </div>
+                  );
+                })() : null}
                 <button
                   onClick={() => setRow(row.idx, { skipped: !row.skipped })}
                   aria-label={row.skipped ? "Re-include" : "Skip this ingredient"}
@@ -1180,6 +1689,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                     <div style={{ fontFamily:"'Fraunces',serif", fontSize:15, color:"#f0ece4", fontStyle:"italic" }}>
                       {entry.displayName}
                     </div>
+                    {entry.subFor && (
+                      <div style={{
+                        fontFamily:"'DM Mono',monospace", fontSize:9,
+                        color:"#f59e0b", letterSpacing:"0.05em",
+                        marginTop:1, fontStyle:"italic",
+                      }}>
+                        SUB FOR {entry.subFor.toUpperCase()}
+                      </div>
+                    )}
                     <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color: entry.convertible ? "#888" : "#ef4444", marginTop:2, letterSpacing:"0.05em" }}>
                       {entry.source === "added" ? "+ ADDED · " : ""}
                       {(entry.pantryRow.location || "pantry").toUpperCase()} · {leaves}

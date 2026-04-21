@@ -21,14 +21,30 @@ surface a pantry item's identity.
      displays as "Prosciutto".
 2. **CANONICAL** — tan (`#b8a878`). Internal approved naming system,
    commonly-accepted identity.
-3. **CATEGORIES** — orange (`#e07a3a`). Food-category dropdown
+3. **CUT** — rust (`#a8553a`). Anatomical / butchery slot. Orthogonal
+   to STATE: chicken breast, cubed is chicken + cut=breast +
+   state=cubed; ground chicken thigh is chicken + cut=thigh +
+   state=ground. Grocery-shelf scope only (not full-animal butchery
+   yield trees — out of scope for launch). `pantry_items.cut`
+   (migration 0122) is the storage. Only renders when the canonical
+   has entries in `CUTS_FOR` (meats today — chicken/beef/pork/turkey).
+4. **CATEGORIES** — orange (`#e07a3a`). Food-category dropdown
    drilldown.
-4. **STORED IN** — blue (`#7eb8d4`). Wrap-up tiles (fridge / pantry /
+5. **STORED IN** — blue (`#7eb8d4`). Wrap-up tiles (fridge / pantry /
    freezer placement).
-5. **SET STATE** — muted purple (`#c7a8d4`). Physical state (loaf /
-   slices / crumbs, etc.).
-6. **INGREDIENTS** — yellow (`#f5c842`). Composition tags for
+6. **SET STATE** — muted purple (`#c7a8d4`). Physical state (loaf /
+   slices / crumbs, cubed, ground, minced, etc.). Crucially distinct
+   from CUT: state is what you DID to the cut, cut is where on the
+   animal it came from.
+7. **INGREDIENTS** — yellow (`#f5c842`). Composition tags for
    multi-tag items (burritos, pizzas, blends).
+
+**Canonical-per-animal rule (meat):** one canonical per species —
+`chicken`, `beef`, `pork`, `turkey`. NEVER create `chicken_breast` /
+`ribeye` / `brisket` style compound slugs; those are the base
+canonical with `cut` set. Legacy compound slugs exist in
+`CANONICAL_ALIASES` only as a read-compat redirect for rows written
+before migration 0122; new writes always split on the axis.
 
 **Brand axis note:** Brand is orthogonal to the six colored axes —
 it's NOT a new reserved color, just metadata that rides with the
@@ -42,6 +58,7 @@ the storage.
 | Axis          | Color     | Hex       |
 | ------------- | --------- | --------- |
 | CANONICAL     | Tan       | `#b8a878` |
+| CUT           | Rust      | `#a8553a` |
 | FOOD CATEGORY | Orange    | `#e07a3a` |
 | STORED IN     | Blue      | `#7eb8d4` |
 | STATE         | Purple    | `#c7a8d4` |

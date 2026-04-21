@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { findIngredient, getIngredientInfo, isInSeason, unitLabel } from "../data/ingredients";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
+import { sameCanonicalFamily } from "../lib/recipePairing";
 import { SKILL_TREE } from "../data";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import EnrichmentButton from "./EnrichmentButton";
@@ -212,11 +213,19 @@ export default function IngredientCard({
     // else (Hot Dog = canonical hot_dog, made-of [ground_pork,
     // sandwich_bread]). Without this branch the card says "Not in
     // kitchen" on a row literally open in front of the user.
+    //
+    // sameCanonicalFamily on both scalar axes so a legacy compound
+    // slug (chicken_breast) hits a new-model base row (chicken +
+    // cut=breast). Same shared helper the pairing + cook-complete
+    // paths use — "when we fix pairing for one page we're missing
+    // out on canonical pairing on another" is the failure mode this
+    // prevents.
     () => viewingId
       ? pantry.filter(p =>
-          p.ingredientId === viewingId ||
-          p.canonicalId === viewingId ||
-          (Array.isArray(p.ingredientIds) && p.ingredientIds.includes(viewingId))
+          sameCanonicalFamily(p.ingredientId, viewingId) ||
+          sameCanonicalFamily(p.canonicalId, viewingId) ||
+          (Array.isArray(p.ingredientIds) &&
+            p.ingredientIds.some(id => sameCanonicalFamily(id, viewingId)))
         )
       : [],
     [pantry, viewingId]

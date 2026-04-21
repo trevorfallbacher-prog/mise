@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, findHub, membersOfHub, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, findHub, membersOfHub, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub, cutsForIngredient, cutLabel, resolveCanonicalIdentity } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -185,9 +185,40 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
     const ids = Array.isArray(item?.ingredientIds) && item.ingredientIds.length
       ? item.ingredientIds
       : (item?.ingredientId ? [item.ingredientId] : []);
-    return ids
-      .map(id => ({ id, canonical: findIngredient(id) }))
-      .filter(t => t.canonical);
+    // Keep every tag id — don't filter unresolvable slugs. LinkIngredient
+    // can commit slugs that aren't in the bundled registry (admin-minted
+    // dbCanonicals that haven't loaded yet, user-typed freeform, or
+    // cheeses like "colby_jack" the seeds don't cover). Previously we
+    // did `.filter(t => t.canonical)` and those ids vanished from the
+    // UI — user reported "I pick Mozzarella Jack and it goes back to
+    // nothing." The save WAS persisting; the UI was hiding them.
+    // Now every id renders: canonical name when resolvable, pretty-
+    // cased slug fallback otherwise ("mozzarella_jack" → "Mozzarella
+    // Jack").
+    return ids.map(id => {
+      const canonical = findIngredient(id);
+      if (canonical) return { id, canonical };
+      const prettyName = String(id || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, c => c.toUpperCase());
+      // Synthetic canonical fallback for unresolvable slugs. Needs to
+      // match the shape downstream code expects — at minimum a
+      // units[] array because tags[0]?.canonical feeds a
+      // `const canonical = tags[0]?.canonical || null` elsewhere in
+      // ItemCard, and subsequent blocks do `canonical.units.some(...)`.
+      // Leaving units undefined crashed the whole card.
+      return {
+        id,
+        canonical: {
+          id,
+          name: prettyName,
+          shortName: null,
+          emoji: "🥫",
+          category: null,
+          units: [],
+        },
+      };
+    });
   }, [item?.ingredientIds, item?.ingredientId]);
 
   // Which tag's deep-dive is currently open. Resets when the item or
@@ -860,50 +891,43 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   itself is user-created (no parent hub link) — that's
                   how "pepperoni" with food category=pork still shows
                   the pork cut/form state picker. */}
-              {/* CUT — anatomy axis paired with STATE (preparation).
-                  Same muted purple as STATE because they describe the
-                  same physical item together. Rendered in two modes:
-                    1. Canonical IS a hub (chicken_hub) → "+ SET CUT"
-                       opens a picker of the hub's children. The
-                       calorie-logging refactor moved identity to
-                       canonicalId, so a "chicken" item on the
-                       pantry now sits on the hub and needs this
-                       affordance to promote to a specific cut.
-                    2. Canonical is a hub child (chicken_breast) with
-                       ≥2 siblings → "CUT: BREAST" opens a picker of
-                       hub siblings to swap between.
-                  Reads identity from canonicalId first, then
-                  ingredientId (legacy). Hidden on standalone
-                  ingredients (no hub) and on hubs whose membership is
-                  < 2 (nothing to pick). */}
+              {/* CUT — anatomy axis per CLAUDE.md, RUST (#a8553a).
+                  Orthogonal to STATE: cubed chicken breast is
+                  chicken + cut=breast + state=cubed.
+                  Renders only when the resolved base canonical has
+                  entries in CUTS_FOR (meats today). Reads cut from
+                  pantry_items.cut first — the new column from
+                  migration 0122 — falling back to the alias.cut
+                  hint for pre-migration rows whose canonical_id
+                  still carries a compound slug like chicken_breast.
+                  The tap opens the CUT picker; options come from
+                  CUTS_FOR[base], not sibling canonicals (the old
+                  model treated each cut as its own canonical, which
+                  made "chicken" itself show up in the list — the
+                  exact bug this rewire fixes). */}
               {(() => {
-                const cutId = item.canonicalId || item.ingredientId || null;
-                if (!cutId) return null;
-                const selfHub   = findHub(cutId);
-                const selfCanon = selfHub ? null : findIngredient(cutId);
-                const options   = selfHub
-                  ? membersOfHub(selfHub.id)
-                  : (selfCanon ? siblingsInHub(cutId) : []);
-                if (options.length < 2) return null;
-                const hasPick = !selfHub && !!selfCanon;
-                const cutLabel = hasPick
-                  ? (selfCanon.shortName || selfCanon.name).toUpperCase()
-                  : "+ SET CUT";
+                const rawId = item.canonicalId || item.ingredientId || null;
+                if (!rawId) return null;
+                const { canonical: baseSlug, cut: aliasCut } = resolveCanonicalIdentity(rawId);
+                const cuts = cutsForIngredient(baseSlug);
+                if (!cuts || cuts.length === 0) return null;
+                const activeCut = item.cut || aliasCut || null;
+                const chipText  = activeCut ? cutLabel(activeCut).toUpperCase() : "+ SET CUT";
                 return (
                   <div
                     onClick={e => { e.stopPropagation(); if (!readOnly) startEdit("cut"); }}
                     style={{
                       fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: hasPick ? "#c7a8d4" : "#8a7a9a",
+                      color: activeCut ? "#a8553a" : "#6a3a2a",
                       letterSpacing: "0.08em", marginTop: 3,
                       textTransform: "uppercase",
                       cursor: readOnly ? "default" : "pointer",
                     }}
                   >
                     CUT: <span style={{
-                      color: hasPick ? "#c7a8d4" : "#8a7a9a",
-                      borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
-                    }}>{cutLabel}</span>
+                      color: activeCut ? "#a8553a" : "#6a3a2a",
+                      borderBottom: readOnly ? "none" : "1px dashed #a8553a44",
+                    }}>{chipText}</span>
                   </div>
                 );
               })()}
@@ -2297,17 +2321,33 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             - Item on a hub child (chicken_breast) → options = siblings
               + a CLEAR CUT row that drops back to the hub. */}
       {editingField === "cut" && (() => {
-        const cutId = item.canonicalId || item.ingredientId || null;
-        if (!cutId) return null;
-        const selfHub   = findHub(cutId);
-        const selfCanon = selfHub ? null : findIngredient(cutId);
-        const options   = selfHub
-          ? membersOfHub(selfHub.id)
-          : (selfCanon ? siblingsInHub(cutId) : []);
-        if (options.length < 2) return null;
-        const activeId = selfCanon?.id || null;
-        const hubId    = selfHub?.id || selfCanon?.parentId || null;
+        // CUT picker rewired for the cut-as-axis model (migration
+        // 0122). Options come from CUTS_FOR[base] — i.e. real cut
+        // values like "breast" / "thigh" — NOT sibling canonicals.
+        // The old picker treated each cut as its own canonical, which
+        // made the base "chicken" slug show up as an option alongside
+        // the cuts and defaulting selections back to root.
+        //
+        // Commit normalizes identity to the base canonical in one
+        // shot: canonicalId → base, ingredientId → base (if set),
+        // cut → chosen value. A row carrying the legacy compound
+        // slug chicken_breast gets rewritten to chicken + cut=breast
+        // the first time the user touches this picker — the eventual
+        // cleanup of migration 0122's backfill for rows the user
+        // hadn't written to yet.
+        const rawId = item.canonicalId || item.ingredientId || null;
+        if (!rawId) return null;
+        const { canonical: baseSlug, cut: aliasCut } = resolveCanonicalIdentity(rawId);
+        const cuts = cutsForIngredient(baseSlug);
+        if (!cuts || cuts.length === 0) return null;
+        const activeCut = item.cut || aliasCut || null;
         const itemHadIngredientId = !!item.ingredientId;
+        const commitCut = (nextCut) => {
+          const patch = { cut: nextCut };
+          if (baseSlug && item.canonicalId !== baseSlug) patch.canonicalId = baseSlug;
+          if (itemHadIngredientId && item.ingredientId !== baseSlug) patch.ingredientId = baseSlug;
+          commit(patch);
+        };
         return (
           <ModalSheet
             onClose={() => setEditingField(null)}
@@ -2326,30 +2366,25 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               fontFamily: "'DM Sans',sans-serif", fontSize: 12,
               color: "#888", lineHeight: 1.5, margin: "0 0 14px",
             }}>
-              Picking a cut refines this item to a specific canonical
-              in the same family. Your state (ground, sliced, etc.)
-              carries over.
+              CUT is anatomy — where on the animal it came from.
+              Orthogonal to STATE (cubed, ground, sliced) which
+              describes what you did to it.
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-              {options.map(s => {
-                const active = s.id === activeId;
+              {cuts.map(cut => {
+                const active = cut === activeCut;
                 return (
                   <button
-                    key={s.id}
+                    key={cut}
                     onClick={() => {
-                      if (!active) {
-                        const patch = { canonicalId: s.id };
-                        if (itemHadIngredientId) patch.ingredientId = s.id;
-                        commit(patch);
-                      } else {
-                        setEditingField(null);
-                      }
+                      if (active) setEditingField(null);
+                      else commitCut(cut);
                     }}
                     style={{
                       padding: "14px 10px",
-                      background: active ? "#0f1620" : "#141414",
-                      color: active ? "#7eb8d4" : "#ccc",
-                      border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                      background: active ? "#1a1008" : "#141414",
+                      color: active ? "#a8553a" : "#ccc",
+                      border: `1px solid ${active ? "#a8553a" : "#2a2a2a"}`,
                       borderRadius: 10,
                       fontFamily: "'DM Mono',monospace", fontSize: 11,
                       letterSpacing: "0.05em", cursor: "pointer",
@@ -2358,22 +2393,17 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                       display: "flex", alignItems: "center", gap: 8,
                     }}
                   >
-                    <span style={{ fontSize: 18 }}>{s.emoji || "🍗"}</span>
                     <span style={{ flex: 1, minWidth: 0 }}>
-                      {(s.shortName || s.name || s.id).toUpperCase()}
+                      {cutLabel(cut).toUpperCase()}
                     </span>
-                    {active && <span style={{ color: "#7eb8d4", fontSize: 14 }}>✓</span>}
+                    {active && <span style={{ color: "#a8553a", fontSize: 14 }}>✓</span>}
                   </button>
                 );
               })}
             </div>
-            {activeId && hubId && (
+            {activeCut && (
               <button
-                onClick={() => {
-                  const patch = { canonicalId: hubId };
-                  if (itemHadIngredientId) patch.ingredientId = hubId;
-                  commit(patch);
-                }}
+                onClick={() => commitCut(null)}
                 style={{
                   width: "100%", padding: "12px", marginTop: 14,
                   background: "transparent", border: "1px solid #2a2a2a",

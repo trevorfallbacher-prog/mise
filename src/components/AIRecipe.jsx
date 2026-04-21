@@ -9,7 +9,9 @@ import {
 import {
   extractDietaryClaims,
   namesMatch,
+  normalizeForMatch,
   resolveNameToCanonicalId,
+  sameCanonicalFamily,
   deriveRowHeader,
   deriveRowCut,
   pairRecipeIngredients,
@@ -181,10 +183,16 @@ function autoPairShoppingRows(sketch, pantry) {
     const canonId = row.ingredientId || resolveNameToCanonicalId(row.name) || null;
     let found = null;
     if (canonId) {
-      found = pantry.find(p =>
-        p && !used.has(p.id) &&
-        (p.ingredientId === canonId || p.canonicalId === canonId),
-      );
+      // Exact canonical OR same-hub family ("chicken" hub ↔ "chicken_breast"
+      // cut). Without the family check, a recipe asking for generic Chicken
+      // fails to auto-pair with the user's Chicken Breast and the row
+      // misrenders as NOT IN PANTRY — SHOPPING.
+      found = pantry.find(p => {
+        if (!p || used.has(p.id)) return false;
+        const pSlug = p.ingredientId || p.canonicalId || null;
+        if (!pSlug) return false;
+        return sameCanonicalFamily(pSlug, canonId);
+      });
     }
     if (!found && row.name) {
       found = pantry.find(p =>
@@ -195,6 +203,34 @@ function autoPairShoppingRows(sketch, pantry) {
       used.add(found.id);
       swaps[j] = found.id;
     }
+  });
+
+  // Spurious-sub auto-correct. The AI occasionally substitutes when
+  // the pantry HAS the exact ideal — "classic calls for flour
+  // tortillas, we subbed Croissant Rolls" while Mission Tortillas
+  // sits right there. Prompt rules push against this but belt-and-
+  // suspenders: for every sketch.pantry row with a subbedFrom, try
+  // resolving the original to a canonical and check if the user's
+  // real pantry has a direct family match. If yes, override the
+  // sketch's chosen row with the canonical match — user still sees
+  // the swap affordance and can re-substitute if they actually
+  // wanted the AI's sub.
+  sketch.pantry.forEach((row, j) => {
+    if (!row || !row.subbedFrom) return;
+    const origSlug = resolveNameToCanonicalId(row.subbedFrom);
+    if (!origSlug) return;
+    const directMatch = pantry.find(p => {
+      if (!p || used.has(p.id)) return false;
+      const pSlug = p.ingredientId || p.canonicalId || null;
+      if (!pSlug) return false;
+      return sameCanonicalFamily(pSlug, origSlug);
+    });
+    if (!directMatch) return;
+    // If the AI already pointed this row at directMatch, leave it
+    // alone — nothing to correct.
+    if (row.pantryItemId === directMatch.id) return;
+    used.add(directMatch.id);
+    swaps[j] = directMatch.id;
   });
   return swaps;
 }
@@ -287,7 +323,14 @@ export default function AIRecipe({
   });
   // Inline picker open state. swapOpenIdx = which pantry-row's swap
   // popover is open (null = none). addOpen = "+ ADD" picker visible.
+  // swapSearch is the live filter query inside the open swap popover
+  // — resets every time a different row's picker opens.
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
+  const [swapSearch,  setSwapSearch]  = useState("");
+  const openSwapPicker = (idx) => {
+    setSwapOpenIdx(idx);
+    setSwapSearch("");
+  };
   const [addOpen, setAddOpen]         = useState(false);
   // Revision instruction for the FINAL cook — the user's "make it
   // spicier, skip the garlic in the steps" note. Sent as
@@ -485,6 +528,7 @@ export default function AIRecipe({
       setPantryEdits({ swaps: autoSwaps, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
+      setSwapSearch("");
       setAddOpen(false);
       if (drafted?.title) {
         setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
@@ -584,6 +628,39 @@ export default function AIRecipe({
       // and guarantees the pantry-match loop downstream is operating
       // on real registry slugs.
       const normalized = coerceRecipeCanonicalIds(drafted);
+      // Re-stamp pantryItemId from the locked set. The AI response
+      // only carries { item, amount, ingredientId, state? } — it
+      // drops the pantryItemId that buildLockedIngredients wrote
+      // for swapped/bound rows. Without this merge the cook-prep
+      // pairing re-matches from scratch and lands on the wrong row
+      // (in practice: swapping Mozzarella for Great Value string
+      // cheese got re-paired with Powdered Sugar by the category
+      // fallback). We key by ingredientId first (tightest signal)
+      // then by normalized name so brand-prefixed reformulations
+      // like "Great Value String Cheese" still find their locked
+      // pantry binding.
+      const pairedNorm = (s) => String(s || "").toLowerCase().trim();
+      const byCanon = new Map();
+      const byName  = new Map();
+      for (const l of locked) {
+        if (!l || !l.pantryItemId) continue;
+        if (l.ingredientId && !byCanon.has(l.ingredientId)) byCanon.set(l.ingredientId, l.pantryItemId);
+        const n = pairedNorm(l.name);
+        if (n && !byName.has(n)) byName.set(n, l.pantryItemId);
+      }
+      const withPantry = normalized && Array.isArray(normalized.ingredients)
+        ? {
+            ...normalized,
+            ingredients: normalized.ingredients.map(ing => {
+              if (!ing || typeof ing !== "object") return ing;
+              if (ing.pantryItemId) return ing;
+              const canonHit = ing.ingredientId ? byCanon.get(ing.ingredientId) : null;
+              const nameHit  = canonHit ? null : byName.get(pairedNorm(ing.item || ing.name));
+              const pantryItemId = canonHit || nameHit || null;
+              return pantryItemId ? { ...ing, pantryItemId } : ing;
+            }),
+          }
+        : normalized;
       // Stamp dietaryClaims onto every persisted ingredient row.
       // Claims are recipe INTENT (the AI asked for "low-carb
       // tortilla"), not transient pairing — they must survive into
@@ -592,10 +669,10 @@ export default function AIRecipe({
       // Pairing itself is still re-derived live every render via
       // pairRecipeIngredients, so brands/availability drift doesn't
       // fossilize; only the claim labels on each ingredient persist.
-      const claimed = normalized && Array.isArray(normalized.ingredients)
+      const claimed = withPantry && Array.isArray(withPantry.ingredients)
         ? {
-            ...normalized,
-            ingredients: normalized.ingredients.map(ing => {
+            ...withPantry,
+            ingredients: withPantry.ingredients.map(ing => {
               if (!ing || typeof ing !== "object") return ing;
               if (Array.isArray(ing.dietaryClaims) && ing.dietaryClaims.length > 0) {
                 return ing;
@@ -605,7 +682,7 @@ export default function AIRecipe({
               return { ...ing, dietaryClaims: claims };
             }),
           }
-        : normalized;
+        : withPantry;
       setRecipe(claimed);
       if (claimed?.title) {
         setPreviousTitles(prev => (prev.includes(claimed.title) ? prev : [...prev, claimed.title]));
@@ -723,6 +800,7 @@ export default function AIRecipe({
       setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
       setRecipeFeedback("");
       setSwapOpenIdx(null);
+      setSwapSearch("");
       setAddOpen(false);
       setStarIngredientIds([]);
       setCourse(courseType);
@@ -958,33 +1036,87 @@ export default function AIRecipe({
     const pantryById = new Map(pantry.map(p => [p.id, p]));
     const lookupPantryRow = (id) => (id ? pantryById.get(id) : null);
 
-    // Same-category alternates for the swap picker. Falls back to
-    // an empty list when the canonical isn't in the registry.
-    const swapCandidatesFor = (sketchPantryRow) => {
-      const targetCanon = sketchPantryRow.ingredientId
+    // Rank all pantry rows by closeness to a sketch pantry row.
+    // Replaces the old same-category dump (which scrolled past the
+    // screen the moment the user had >10 pantry items in that
+    // bucket). Returns [{ row, score }] sorted highest first.
+    //
+    // Ranking signals (additive), highest of the two targets wins:
+    //   +1000  same canonical id as the target
+    //   +500   same parentId / hub as the target
+    //   +100   same food category
+    //   +10    per token shared with the target's normalized name
+    //
+    // TWO TARGETS. When the sketch row is an AI sub ("Croissant
+    // Rolls as wrapper substitute for flour tortillas"), both the
+    // current row AND the `subbedFrom` original count as targets.
+    // Without this the ranker scored only against "croissant roll"
+    // and the user's search for "torti" returned Tortilla Chips
+    // ahead of Mission Tortillas because neither scored against
+    // croissant. Scoring against subbedFrom ("flour tortillas")
+    // pulls Mission Tortillas to +1000 (exact canonical) while
+    // Tortilla Chips stays near zero — the match the user clearly
+    // wants rises to the top.
+    //
+    // When `query` is non-empty we additionally require the row's
+    // name to contain the query as a substring (user is explicitly
+    // typing, so loose substring is fine — we're filtering a list
+    // in front of their eyes, not auto-pairing).
+    const rankSwapCandidates = (sketchPantryRow, query) => {
+      const primaryCanon = sketchPantryRow.ingredientId
         ? findIngredient(sketchPantryRow.ingredientId)
         : null;
-      const targetCat = targetCanon?.category;
-      const targetId  = targetCanon?.id;
+      const subFromName = sketchPantryRow.subbedFrom || null;
+      const subFromSlug = subFromName ? resolveNameToCanonicalId(subFromName) : null;
+      const subFromCanon = subFromSlug ? findIngredient(subFromSlug) : null;
+
+      const targetSlugs = new Set(
+        [primaryCanon?.id, subFromCanon?.id].filter(Boolean),
+      );
+      const targetHubs = new Set(
+        [
+          primaryCanon?.parentId || primaryCanon?.id,
+          subFromCanon?.parentId || subFromCanon?.id,
+        ].filter(Boolean),
+      );
+      const targetCats = new Set(
+        [primaryCanon?.category, subFromCanon?.category].filter(Boolean),
+      );
+      const targetTokens = new Set([
+        ...normalizeForMatch(
+          sketchPantryRow.name || primaryCanon?.name || "",
+        ).split(/\s+/).filter(Boolean),
+        ...normalizeForMatch(subFromName || "").split(/\s+/).filter(Boolean),
+      ]);
+
+      const q = (query || "").trim().toLowerCase();
       const seen = new Set();
-      const out = [];
-      for (const row of pantry) {
-        const canon = row.ingredientId ? findIngredient(row.ingredientId) : null;
-        // Skip the row that's already the current pick.
-        if (row.id === sketchPantryRow.pantryItemId) continue;
-        // Skip already-listed rows of the same canonical to keep
-        // the picker compact (one chip per canonical, not per
-        // physical instance).
-        const key = canon?.id || row.name?.toLowerCase() || row.id;
+      const scored = [];
+      for (const p of pantry) {
+        if (!p) continue;
+        if (p.id === sketchPantryRow.pantryItemId) continue;
+        const canon = p.ingredientId ? findIngredient(p.ingredientId) : null;
+        const key = canon?.id || (p.name || "").toLowerCase() || p.id;
         if (seen.has(key)) continue;
         seen.add(key);
-        // Same category wins; if no canonical match was available
-        // we just show every other pantry row (rare fallback).
-        if (!targetCat || (canon && canon.category === targetCat) || canon?.id === targetId) {
-          out.push(row);
-        }
+
+        if (q && !(p.name || "").toLowerCase().includes(q)) continue;
+
+        let score = 0;
+        if (canon?.id && targetSlugs.has(canon.id)) score += 1000;
+        const pHub = canon?.parentId || canon?.id;
+        if (pHub && targetHubs.has(pHub)) score += 500;
+        if (canon?.category && targetCats.has(canon.category)) score += 100;
+        const pTokens = new Set(
+          normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
+        );
+        let overlap = 0;
+        for (const t of targetTokens) if (pTokens.has(t)) overlap++;
+        score += overlap * 10;
+        scored.push({ row: p, score });
       }
-      return out;
+      scored.sort((a, b) => b.score - a.score);
+      return scored;
     };
 
     const toggleRemove = (i) => setPantryEdits(prev => {
@@ -1084,12 +1216,19 @@ export default function AIRecipe({
         }
         // (2) canonical-id match — same slug on EITHER side (primary
         // OR any alt from the split) means same ingredient regardless
-        // of brand / size / casing in the display names.
+        // of brand / size / casing in the display names. Hub-family
+        // equivalence also counts here: the ideal's `chicken` hub
+        // pairs with the sketch.pantry row's `chicken_breast` cut
+        // because both resolve to the same chicken_hub parent.
         if (pantryIdx === null && idealCanonIds.size > 0) {
           for (let j = 0; j < sketch.pantry.length; j++) {
             if (matchedPantryIdx.has(j)) continue;
             const p = sketch.pantry[j];
-            if (p.ingredientId && idealCanonIds.has(p.ingredientId)) {
+            if (!p.ingredientId) continue;
+            const familyHit = [...idealCanonIds].some(slug =>
+              sameCanonicalFamily(p.ingredientId, slug),
+            );
+            if (familyHit) {
               pantryIdx = j;
               isSub = false;
               break;
@@ -1195,13 +1334,17 @@ export default function AIRecipe({
         const rowCanon = row.ingredientId ? findIngredient(row.ingredientId) : null;
         const rowCategory = rowCanon?.category || null;
 
-        // Tier 1 — exact canonical match against ANY target slug.
-        // "Ciabatta Roll" (ingredientId: "ciabatta") lines up with
-        // target {slug: "ciabatta"} from the split, even when the
-        // compound ideal name wouldn't substring-match.
+        // Tier 1 — canonical match against ANY target slug. Exact
+        // match OR hub-family equivalence (a `chicken` target pairs
+        // with a pantry row tagged `chicken_breast` because both
+        // hang off chicken_hub). Hub-family is how the user's actual
+        // cuts surface under a generic recipe call like "Chicken".
         let matched = null;
         for (const t of targets) {
-          if (t.slug && row.ingredientId === t.slug) { matched = "exact"; break; }
+          if (!t.slug) continue;
+          if (row.ingredientId && sameCanonicalFamily(row.ingredientId, t.slug)) {
+            matched = "exact"; break;
+          }
         }
 
         // Tier 2 — category match, BUT only when the row's name also
@@ -1318,6 +1461,8 @@ export default function AIRecipe({
                   const ideal = sketch.ideal[entry.idealIdx];
                   const promoted = pantryEdits.shopping.has(entry.idealIdx);
                   const rawCandidates = findRawPantryCandidates(ideal);
+                  const missSwapKey = `miss-${entry.idealIdx}`;
+                  const missSwapOpen = swapOpenIdx === missSwapKey;
                   return (
                     <div key={`miss-${idx}`} style={{
                       padding: "10px 12px",
@@ -1339,10 +1484,81 @@ export default function AIRecipe({
                             {ideal.role && !promoted ? ` · ${String(ideal.role).toUpperCase()}` : ""}
                           </div>
                         </div>
-                        <button onClick={() => togglePromoteToShopping(entry.idealIdx)} style={promoted ? shopActiveBtn : shopBtn}>
-                          {promoted ? "✓ ON LIST" : "+ SHOP"}
-                        </button>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button
+                            onClick={() => missSwapOpen ? openSwapPicker(null) : openSwapPicker(missSwapKey)}
+                            style={missSwapOpen ? swapBtnActive : swapBtn}
+                          >
+                            ⇌ SWAP
+                          </button>
+                          <button onClick={() => togglePromoteToShopping(entry.idealIdx)} style={promoted ? shopActiveBtn : shopBtn}>
+                            {promoted ? "✓ ON LIST" : "+ SHOP"}
+                          </button>
+                        </div>
                       </div>
+                      {missSwapOpen && (() => {
+                        // Search picker for missing rows. The target is
+                        // the ideal itself (not a sketch.pantry row) so
+                        // rankSwapCandidates scores the user's pantry
+                        // against what the recipe asked for. Picking
+                        // something binds it via addPantryRow → userAdd
+                        // path, which is the same shape + ADD FROM
+                        // PANTRY uses.
+                        const q = swapSearch.trim();
+                        const target = {
+                          name: ideal.name,
+                          ingredientId: ideal.ingredientId || resolveNameToCanonicalId(ideal.name) || null,
+                          pantryItemId: null,
+                        };
+                        const ranked = rankSwapCandidates(target, swapSearch);
+                        const shown = q
+                          ? ranked.slice(0, 8).map(r => r.row)
+                          : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                        return (
+                          <div style={{
+                            marginTop: 10, paddingTop: 10,
+                            borderTop: "1px dashed #2a2a2a",
+                            display: "flex", flexDirection: "column", gap: 6,
+                          }}>
+                            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.08em" }}>
+                              USE SOMETHING FROM PANTRY FOR {ideal.name.toUpperCase()}:
+                            </div>
+                            <input
+                              type="text"
+                              value={swapSearch}
+                              onChange={e => setSwapSearch(e.target.value)}
+                              placeholder="Search your pantry…"
+                              style={swapSearchInput}
+                              autoFocus
+                            />
+                            {!q && (
+                              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
+                                TOP 3 CLOSEST · TYPE TO SEARCH
+                              </div>
+                            )}
+                            {shown.length === 0 && (
+                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                                {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                              </div>
+                            )}
+                            {shown.map(c => (
+                              <button
+                                key={c.id}
+                                onClick={() => { addPantryRow(c); openSwapPicker(null); }}
+                                style={swapOptionBtn}
+                              >
+                                <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                                <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                                  {c.name}
+                                </span>
+                                <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                                  {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        );
+                      })()}
                       {rawCandidates.length > 0 && !promoted && (
                         <div style={{
                           marginTop: 10, paddingTop: 10,
@@ -1516,7 +1732,7 @@ export default function AIRecipe({
                       </div>
                       <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
                         <button
-                          onClick={() => setSwapOpenIdx(swapOpen ? null : pantryIdx)}
+                          onClick={() => swapOpen ? openSwapPicker(null) : openSwapPicker(pantryIdx)}
                           style={swapOpen ? swapBtnActive : swapBtn}
                         >
                           ⇌ SWAP
@@ -1525,7 +1741,15 @@ export default function AIRecipe({
                       </div>
                     </div>
                     {swapOpen && (() => {
-                      const candidates = swapCandidatesFor(row);
+                      // Pin the 3 closest matches at the top and let
+                      // the user type to filter the rest of pantry.
+                      // Replaces the old full-category dump that made
+                      // the user scroll past 20+ items every swap.
+                      const q = swapSearch.trim();
+                      const ranked = rankSwapCandidates(row, swapSearch);
+                      const shown = q
+                        ? ranked.slice(0, 8).map(r => r.row)
+                        : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
                       return (
                         <div style={{
                           marginTop: 10, paddingTop: 10,
@@ -1533,17 +1757,30 @@ export default function AIRecipe({
                           display: "flex", flexDirection: "column", gap: 6,
                         }}>
                           <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#888", letterSpacing: "0.08em" }}>
-                            SWAP TO ANOTHER {((findIngredient(row.ingredientId)?.category) || "ingredient").toUpperCase()}:
+                            SWAP {row.name.toUpperCase()} FOR:
                           </div>
-                          {candidates.length === 0 && (
-                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                              Nothing else in that category — try Recipe Feedback below.
+                          <input
+                            type="text"
+                            value={swapSearch}
+                            onChange={e => setSwapSearch(e.target.value)}
+                            placeholder="Search your pantry…"
+                            style={swapSearchInput}
+                            autoFocus
+                          />
+                          {!q && (
+                            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
+                              TOP 3 CLOSEST · TYPE TO SEARCH
                             </div>
                           )}
-                          {candidates.map(c => (
+                          {shown.length === 0 && (
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                              {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                            </div>
+                          )}
+                          {shown.map(c => (
                             <button
                               key={c.id}
-                              onClick={() => { applySwap(pantryIdx, c.id); setSwapOpenIdx(null); }}
+                              onClick={() => { applySwap(pantryIdx, c.id); openSwapPicker(null); }}
                               style={swapOptionBtn}
                             >
                               <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
@@ -1556,7 +1793,7 @@ export default function AIRecipe({
                             </button>
                           ))}
                           {swappedRow && (
-                            <button onClick={() => { clearSwap(pantryIdx); setSwapOpenIdx(null); }} style={swapClearBtn}>
+                            <button onClick={() => { clearSwap(pantryIdx); openSwapPicker(null); }} style={swapClearBtn}>
                               ↺ REVERT TO ORIGINAL ({row.name})
                             </button>
                           )}
@@ -1746,7 +1983,11 @@ export default function AIRecipe({
           )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
-            <IngredientsWithPairing ingredients={recipe.ingredients || []} pantry={pantry} />
+            <IngredientsWithPairing
+              ingredients={recipe.ingredients || []}
+              pantry={pantry}
+              onShoppingAdd={onShoppingAdd}
+            />
           </Section>
 
           <Section label={`STEPS · ${recipe.steps?.length || 0}`}>
@@ -2064,12 +2305,37 @@ export default function AIRecipe({
 //   gray  (#7ec87e) — clean pair, in-kitchen
 //   amber (#f59e0b) — substitute or missing, no dietary conflict
 //   red   (#e8908a) — dietary conflict on the chosen pair/sub
-function IngredientsWithPairing({ ingredients, pantry }) {
+function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
   const pairings = pairRecipeIngredients(ingredients, pantry || []);
+  // Track per-row shopping adds locally so the button flips to
+  // ✓ ON LIST after commit without waiting for the parent to
+  // round-trip state back down.
+  const [shoppedIdx, setShoppedIdx] = useState(new Set());
+  const addOneToShopping = (ing, idx) => {
+    if (!onShoppingAdd) return;
+    if (shoppedIdx.has(idx)) return;
+    const canon = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
+    onShoppingAdd([{
+      name:         canon?.name || ing.item || "item",
+      amount:       typeof ing.amount === "string"
+        ? parseFloat(ing.amount) || 1
+        : (Number(ing.amount) || 1),
+      unit:         typeof ing.amount === "string"
+        ? (String(ing.amount).replace(/[\d.\s]+/, "").trim() || "count")
+        : "count",
+      ingredientId: ing.ingredientId || null,
+      source:       "ai-recipe",
+    }]);
+    setShoppedIdx(prev => {
+      const next = new Set(prev);
+      next.add(idx);
+      return next;
+    });
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {pairings.map((p, i) => {
-        const { ingredient: ing, paired, closestMatch, lostClaims } = p;
+        const { ingredient: ing, paired, closestMatch, lostClaims, status } = p;
         const describe = describePairing(p);
         const showRow = paired || closestMatch;
         const cut = showRow ? deriveRowCut(showRow) : null;
@@ -2080,6 +2346,8 @@ function IngredientsWithPairing({ ingredients, pantry }) {
         const borderColor = describe?.tone === "red" ? "#3a1f1f"
                           : describe?.tone === "amber" ? "#3a2a1a"
                           : "#222";
+        const showShop = status === "missing" && !!onShoppingAdd;
+        const shopDone = shoppedIdx.has(i);
         return (
           <div key={i} style={{
             background: "#141414", border: `1px solid ${borderColor}`, borderRadius: 10,
@@ -2125,12 +2393,32 @@ function IngredientsWithPairing({ ingredients, pantry }) {
                 )}
               </div>
             )}
+            {showShop && (
+              <div style={{ paddingLeft: 70, marginTop: 4 }}>
+                <button
+                  onClick={() => addOneToShopping(ing, i)}
+                  disabled={shopDone}
+                  style={shopDone ? previewShopBtnDone : previewShopBtn}
+                >
+                  {shopDone ? "✓ ON LIST" : "+ SHOP"}
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
     </div>
   );
 }
+
+const previewShopBtn = {
+  padding: "5px 10px",
+  background: "#1a1608", border: "1px solid #3a2f10",
+  color: "#f5c842", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+  letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
+};
+const previewShopBtnDone = { ...previewShopBtn, background: "#0f1a0f", borderColor: "#22c55e44", color: "#4ade80", cursor: "default" };
 
 function Section({ label, children }) {
   return (
@@ -2266,6 +2554,13 @@ const swapClearBtn = {
   color: "#888", borderRadius: 8,
   fontFamily: "'DM Mono',monospace", fontSize: 10,
   letterSpacing: "0.06em", cursor: "pointer",
+};
+const swapSearchInput = {
+  width: "100%", padding: "8px 10px",
+  background: "#0a0a0a", border: "1px solid #2a2a2a",
+  borderRadius: 8, color: "#f0ece4",
+  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+  outline: "none", boxSizing: "border-box",
 };
 const addBtn = {
   width: "100%", padding: "10px",
