@@ -1983,7 +1983,11 @@ export default function AIRecipe({
           )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
-            <IngredientsWithPairing ingredients={recipe.ingredients || []} pantry={pantry} />
+            <IngredientsWithPairing
+              ingredients={recipe.ingredients || []}
+              pantry={pantry}
+              onShoppingAdd={onShoppingAdd}
+            />
           </Section>
 
           <Section label={`STEPS · ${recipe.steps?.length || 0}`}>
@@ -2301,12 +2305,37 @@ export default function AIRecipe({
 //   gray  (#7ec87e) — clean pair, in-kitchen
 //   amber (#f59e0b) — substitute or missing, no dietary conflict
 //   red   (#e8908a) — dietary conflict on the chosen pair/sub
-function IngredientsWithPairing({ ingredients, pantry }) {
+function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
   const pairings = pairRecipeIngredients(ingredients, pantry || []);
+  // Track per-row shopping adds locally so the button flips to
+  // ✓ ON LIST after commit without waiting for the parent to
+  // round-trip state back down.
+  const [shoppedIdx, setShoppedIdx] = useState(new Set());
+  const addOneToShopping = (ing, idx) => {
+    if (!onShoppingAdd) return;
+    if (shoppedIdx.has(idx)) return;
+    const canon = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
+    onShoppingAdd([{
+      name:         canon?.name || ing.item || "item",
+      amount:       typeof ing.amount === "string"
+        ? parseFloat(ing.amount) || 1
+        : (Number(ing.amount) || 1),
+      unit:         typeof ing.amount === "string"
+        ? (String(ing.amount).replace(/[\d.\s]+/, "").trim() || "count")
+        : "count",
+      ingredientId: ing.ingredientId || null,
+      source:       "ai-recipe",
+    }]);
+    setShoppedIdx(prev => {
+      const next = new Set(prev);
+      next.add(idx);
+      return next;
+    });
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {pairings.map((p, i) => {
-        const { ingredient: ing, paired, closestMatch, lostClaims } = p;
+        const { ingredient: ing, paired, closestMatch, lostClaims, status } = p;
         const describe = describePairing(p);
         const showRow = paired || closestMatch;
         const cut = showRow ? deriveRowCut(showRow) : null;
@@ -2317,6 +2346,8 @@ function IngredientsWithPairing({ ingredients, pantry }) {
         const borderColor = describe?.tone === "red" ? "#3a1f1f"
                           : describe?.tone === "amber" ? "#3a2a1a"
                           : "#222";
+        const showShop = status === "missing" && !!onShoppingAdd;
+        const shopDone = shoppedIdx.has(i);
         return (
           <div key={i} style={{
             background: "#141414", border: `1px solid ${borderColor}`, borderRadius: 10,
@@ -2362,12 +2393,32 @@ function IngredientsWithPairing({ ingredients, pantry }) {
                 )}
               </div>
             )}
+            {showShop && (
+              <div style={{ paddingLeft: 70, marginTop: 4 }}>
+                <button
+                  onClick={() => addOneToShopping(ing, i)}
+                  disabled={shopDone}
+                  style={shopDone ? previewShopBtnDone : previewShopBtn}
+                >
+                  {shopDone ? "✓ ON LIST" : "+ SHOP"}
+                </button>
+              </div>
+            )}
           </div>
         );
       })}
     </div>
   );
 }
+
+const previewShopBtn = {
+  padding: "5px 10px",
+  background: "#1a1608", border: "1px solid #3a2f10",
+  color: "#f5c842", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+  letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
+};
+const previewShopBtnDone = { ...previewShopBtn, background: "#0f1a0f", borderColor: "#22c55e44", color: "#4ade80", cursor: "default" };
 
 function Section({ label, children }) {
   return (
