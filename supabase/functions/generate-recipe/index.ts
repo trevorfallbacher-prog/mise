@@ -810,12 +810,15 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        // Both modes get the full 2500-token budget. Earlier attempts
-        // to trim sketch to 1000 / 1600 kept truncating mid-JSON on
-        // larger pantries (10+ ingredients × IDEAL+PANTRY arrays).
-        // Token cost is secondary to not failing; a truncated draft
-        // is worse than an expensive one.
-        max_tokens: 2500,
+        // Both modes get the full 4000-token budget. Earlier attempts
+        // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
+        // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps
+        // with uses[] arrays). Token cost is secondary to not
+        // failing; a truncated draft is worse than an expensive one.
+        // If this still truncates, the repairTruncatedJson fallback
+        // below attempts to close dangling structures so the user
+        // still gets a usable draft.
+        max_tokens: 4000,
         // temperature=1 is the API default but we set it explicitly so
         // nobody accidentally pins it to 0 during debugging and wipes
         // out regen variety without realizing why.
@@ -867,13 +870,18 @@ Deno.serve(async (req) => {
   const rawBody = data?.content?.[0]?.text ?? "";
   const raw = rawBody ? `{${rawBody}` : "{}";
 
-  // Tolerant JSON extraction as a safety net. Even with prefill,
-  // Claude may still wrap output in fences or produce a truncated
-  // response on a complex pantry. Strip fences first; if a direct
-  // parse fails, carve out between the first { and last } and try
-  // that. Catches both chatty-model and mid-JSON-truncation cases.
+  // Tolerant JSON extraction as a safety net. Three fallbacks in
+  // order of aggressiveness:
+  //   1. direct parse of the response (fences stripped first)
+  //   2. brace-slice — carve out between first { and last } to
+  //      handle a chatty model wrapping JSON in prose
+  //   3. truncation-repair — if Claude hit max_tokens mid-output,
+  //      close any dangling strings / arrays / objects and try
+  //      again. User gets a partial-but-structured draft instead
+  //      of a 502.
   const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-  let recipe: Record<string, unknown>;
+  const truncated = data?.stop_reason === "max_tokens";
+  let recipe: Record<string, unknown> | null = null;
   try {
     recipe = JSON.parse(cleaned);
   } catch {
@@ -884,24 +892,26 @@ Deno.serve(async (req) => {
       try {
         recipe = JSON.parse(sliced);
       } catch {
+        // Fall through to repair below.
+      }
+    }
+    if (!recipe) {
+      const repaired = repairTruncatedJson(cleaned);
+      try {
+        recipe = JSON.parse(repaired);
+      } catch {
         return new Response(
           JSON.stringify({
             error: "couldn't parse model output as JSON",
-            detail: "model returned non-JSON content; tried both direct and brace-slice parse",
+            detail: truncated
+              ? "model output was truncated (hit max_tokens) and couldn't be repaired"
+              : "model returned non-JSON content; tried direct, brace-slice, and truncation-repair",
+            truncated,
             raw,
           }),
           { status: 502, headers: JSON_HEADERS },
         );
       }
-    } else {
-      return new Response(
-        JSON.stringify({
-          error: "couldn't parse model output as JSON",
-          detail: "no JSON object found in model response",
-          raw,
-        }),
-        { status: 502, headers: JSON_HEADERS },
-      );
     }
   }
 
@@ -988,6 +998,50 @@ Deno.serve(async (req) => {
 
   return new Response(JSON.stringify({ recipe: finalRecipe }), { headers: JSON_HEADERS });
 });
+
+// Repair a JSON string that was truncated mid-output. Walks the
+// text closing any open string / array / object, discards a trailing
+// comma that would otherwise dangle after the last closed member,
+// and drops trailing partial key/value pairs where a value is
+// missing entirely. Not a general JSON rescuer — tuned to the
+// specific shape of Claude's recipe output under max_tokens pressure.
+// Returns a best-effort string; JSON.parse still decides if it flies.
+function repairTruncatedJson(input: string): string {
+  let s = String(input || "").trimEnd();
+  if (!s) return s;
+  // Walk the string to track structural depth and whether we're inside
+  // a string literal. Count open braces/brackets. Escape handling
+  // matches the JSON spec (only \" \\ and control escapes count).
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (esc) { esc = false; continue; }
+    if (c === "\\") { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === "{" || c === "[") stack.push(c);
+    else if (c === "}" || c === "]") stack.pop();
+  }
+  // Truncated mid-string — close it.
+  if (inStr) s += '"';
+  // Drop a trailing comma (would make JSON.parse throw even after
+  // we close remaining structures).
+  s = s.replace(/,\s*$/, "");
+  // If the tail looks like a partial key ("foo": ) with no value,
+  // strip it off back to the previous comma or opening brace — the
+  // partially-emitted field would otherwise make the object invalid
+  // after we try to close braces.
+  s = s.replace(/,\s*"[^"]*"\s*:\s*$/, "");
+  s = s.replace(/\{\s*"[^"]*"\s*:\s*$/, "{");
+  // Close remaining open structures in reverse.
+  while (stack.length > 0) {
+    const open = stack.pop();
+    s += open === "{" ? "}" : "]";
+  }
+  return s;
+}
 
 function slugify(s: string): string {
   return String(s || "recipe")
