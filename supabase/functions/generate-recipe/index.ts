@@ -455,7 +455,7 @@ exact shape:
       "name":             "<display name as shown in the user's pantry>",
       "amount":           "<display, e.g. '1 lb'>",
       "pantryItemId":     "<the pantry row id you grabbed, or null when shopping>",
-      "ingredientId":     "<canonical id from pantry if matched, else null>",
+      "ingredientId":     "<verbatim pantry canonical id (e.g. 'tortillas', 'ground_cinnamon') or null — do NOT invent slugs>",
       "subbedFrom":       "<name of the IDEAL item this replaced, or null>",
       "missingFromIdeal": <true | false>
     },
@@ -543,7 +543,7 @@ exact shape. Every field is REQUIRED unless marked optional.
     {
       "amount":       "<display string, e.g. '2 tbsp' or '½ cup'>",
       "item":         "<display text, e.g. 'olive oil'>",
-      "ingredientId": "<canonical id from pantry if matched, else null>"
+      "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>"
     },
     ...
   ],
@@ -559,7 +559,7 @@ exact shape. Every field is REQUIRED unless marked optional.
         {
           "amount":       "<display string matching the amount used AT THIS STEP>",
           "item":         "<display text, e.g. 'butter'>",
-          "ingredientId": "<canonical id from pantry if applicable, else null>",
+          "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
           "state":        "<optional physical form: 'minced', 'sliced', 'grated'>"
         },
         ...
@@ -643,11 +643,27 @@ Rules (in priority order — higher rules beat lower ones on conflict):
      recipes that use pantry items marked "EXPIRED" or "expires in Nd"
      where N is small. Reducing waste is the default goal.
 
-  6. EVERY pantry item you use must appear as an ingredient with
-     the matching "ingredientId" when the pantry item carried a
-     canonicalId. Leave "ingredientId" null for staples you assumed
-     (salt, pepper, oil) and for any non-pantry ingredients you
-     added because the user asked for them.
+  6. CANONICAL_ID BINDING — strict rules, no improvisation:
+
+     - The PANTRY block above shows each item's canonical id as
+       "id:<slug>". When you use that item, echo the slug VERBATIM
+       into the ingredient's "ingredientId" field.
+         pantry shows "id:tortillas" → you write "ingredientId": "tortillas"
+         pantry shows "id:ground_cinnamon" → "ingredientId": "ground_cinnamon"
+     - Do NOT modify pantry ids. NO adding prefixes like "fresh_" or
+       "corn_" or "organic_". NO pluralizing or de-pluralizing. NO
+       changing case. NO replacing underscores with spaces or hyphens.
+       The slug is a key, not a label — treat it as opaque.
+     - If your recipe needs an ingredient the pantry DOES NOT have
+       (staple salt/pepper/oil, or a user-requested ingredient not in
+       stock), set "ingredientId": null. Do NOT invent a slug. Do NOT
+       guess. null is the correct value when you don't have a pantry
+       match — the client resolver will either infer one server-side
+       or flag it as off-pantry.
+     - The recipe's "ingredients" array, every step's "uses" array,
+       and (in sketch mode) the "ideal" + "pantry" arrays all follow
+       the same rule. A canonicalId string in any of them must exist
+       as a verbatim id in the PANTRY block, or the field must be null.
 
   7. ALWAYS produce at least 4 steps and 4 ingredients.
 

@@ -2905,6 +2905,143 @@ export function inferCanonicalFromName(name) {
   return bestId;
 }
 
+// Common freshness / prep / form modifiers the AI tends to prepend
+// to canonical-looking slugs ("fresh_tortillas", "canned_tomatoes",
+// "ground_cinnamon" when it means "cinnamon"). Stripped one at a
+// time from the leading position when a direct lookup misses, so
+// the coercer falls back to the underlying canonical rather than
+// silently dropping the reference. Order doesn't matter — the
+// coerce pass tries each prefix independently.
+const AI_MODIFIER_PREFIXES = [
+  "fresh", "dried", "dry", "canned", "jarred", "pickled",
+  "raw", "frozen", "cooked", "leftover",
+  "grilled", "roasted", "boiled", "steamed", "sauteed", "seared",
+  "pan_fried", "deep_fried", "baked",
+  "whole", "halved", "quartered",
+  "diced", "minced", "chopped", "sliced", "julienned",
+  "grated", "shredded", "crumbled",
+  "powdered", "ground",
+  "organic", "local",
+];
+
+/**
+ * Coerce a free-text or slug-ish ingredient reference into a known
+ * canonical id. Built to be robust against the ways AI-generated
+ * recipes drift from our registry:
+ *
+ *   "Tortillas"            → "tortillas"  (case)
+ *   "tortilla-wraps"       → null         (unless registered)
+ *   "fresh_tortillas"      → "tortillas"  (modifier strip)
+ *   "fresh tortillas"      → "tortillas"  (space→underscore, modifier strip)
+ *   "corn_tortillas"       → "tortillas"  (plural + lead-word strip)
+ *   "Ground Cinnamon"      → "ground_cinnamon" (direct hit — we have that slug)
+ *   "heirloom tomatoes"    → "tomato"     (infer-by-name on stripped form)
+ *   "pepperoni"            → db-canonical if admin-minted, else null
+ *
+ * Returns the canonical id when resolvable, or null when the input
+ * truly doesn't match. Never persists a non-canonical string as if
+ * it were a canonical — callers should drop the field on null
+ * rather than storing the raw AI guess.
+ */
+export function coerceToCanonicalId(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  // Strip surrounding noise → lowercase → spaces/hyphens become
+  // underscores → drop anything outside [a-z0-9_] → trim underscores.
+  const norm = raw.toLowerCase().trim()
+    .replace(/[\s\-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/^_+|_+$/g, "");
+  if (!norm) return null;
+
+  const direct = (id) => (byId.has(id) || dbCanonicals.has(id)) ? id : null;
+  const viaAlias = (id) => {
+    const alias = CANONICAL_ALIASES[id];
+    return (alias?.base && byId.has(alias.base)) ? alias.base : null;
+  };
+
+  // 1. Direct hit — most AI outputs land here when the prompt is
+  //    well-behaved and the model echoes pantry ids verbatim.
+  if (direct(norm)) return norm;
+  if (viaAlias(norm)) return viaAlias(norm);
+
+  // 2. Plural nudge. "tortilla" → "tortillas" and vice versa.
+  if (norm.endsWith("s")) {
+    const sing = norm.slice(0, -1);
+    if (direct(sing)) return sing;
+    if (viaAlias(sing)) return viaAlias(sing);
+  } else {
+    const plur = norm + "s";
+    if (direct(plur)) return plur;
+    if (viaAlias(plur)) return viaAlias(plur);
+  }
+
+  // 3. Strip lead modifier and retry (direct + plural nudge + alias).
+  //    "fresh_tortillas" → "tortillas" (plural direct hit).
+  //    "canned_tomato"   → "tomatoes" → "tomato" (plural nudge lands).
+  for (const mod of AI_MODIFIER_PREFIXES) {
+    const prefix = mod + "_";
+    if (!norm.startsWith(prefix)) continue;
+    const stripped = norm.slice(prefix.length);
+    if (!stripped) continue;
+    if (direct(stripped)) return stripped;
+    if (viaAlias(stripped)) return viaAlias(stripped);
+    if (stripped.endsWith("s")) {
+      const sing = stripped.slice(0, -1);
+      if (direct(sing)) return sing;
+      if (viaAlias(sing)) return viaAlias(sing);
+    } else {
+      const plur = stripped + "s";
+      if (direct(plur)) return plur;
+      if (viaAlias(plur)) return viaAlias(plur);
+    }
+  }
+
+  // 4. Last resort — treat the normalized string as prose and run the
+  //    full name-inference pass. Handles descriptors we haven't
+  //    enumerated as modifiers ("heirloom tomatoes" → tomato) via
+  //    longest-alias match across the whole registry.
+  const inferred = inferCanonicalFromName(norm.replace(/_/g, " "));
+  if (inferred) return inferred;
+
+  return null;
+}
+
+/**
+ * Walk every ingredient reference in a recipe object and rewrite
+ * `ingredientId` through `coerceToCanonicalId`. Unresolved ids get
+ * set to null — we never persist an AI hallucination as if it were
+ * a canonical. Returns a new recipe object; input is not mutated.
+ *
+ * Covers:
+ *   - recipe.ingredients[]  (canonical list)
+ *   - recipe.steps[].uses[] (per-step measurement subset)
+ *   - recipe.ideal[]        (sketch mode IDEAL column)
+ *   - recipe.pantry[]       (sketch mode PANTRY column)
+ */
+export function coerceRecipeCanonicalIds(recipe) {
+  if (!recipe || typeof recipe !== "object") return recipe;
+  const coerceRow = (row) => {
+    if (!row || typeof row !== "object") return row;
+    if (row.ingredientId === undefined && row.id === undefined) return row;
+    // Prefer ingredientId; some sketch shapes use `id` instead.
+    const raw = row.ingredientId ?? row.id ?? null;
+    const coerced = coerceToCanonicalId(raw);
+    return { ...row, ingredientId: coerced };
+  };
+  const next = { ...recipe };
+  if (Array.isArray(recipe.ingredients)) next.ingredients = recipe.ingredients.map(coerceRow);
+  if (Array.isArray(recipe.ideal))       next.ideal       = recipe.ideal.map(coerceRow);
+  if (Array.isArray(recipe.pantry))      next.pantry      = recipe.pantry.map(coerceRow);
+  if (Array.isArray(recipe.steps)) {
+    next.steps = recipe.steps.map(step => {
+      if (!step || typeof step !== "object") return step;
+      if (!Array.isArray(step.uses)) return step;
+      return { ...step, uses: step.uses.map(coerceRow) };
+    });
+  }
+  return next;
+}
+
 export function unitLabel(ingredient, unitId) {
   if (!ingredient) return unitId || "";
   return ingredient.units.find(u => u.id === unitId)?.label || unitId;
