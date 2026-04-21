@@ -828,86 +828,204 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                     <span>· RECIPE: {row.recipeIng.amount || "—"}</span>
                   </div>
                 </div>
-                {canEditAmount && !row.skipped ? (
-                  <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0, minWidth:160 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:4 }}>
-                      <input
-                        type="number" min="0" step="any"
-                        value={row.usedAmount ?? ""}
-                        onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
-                        style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
-                      />
-                      <select
-                        value={row.usedUnit || ""}
-                        onChange={e => setRow(row.idx, { usedUnit: e.target.value })}
-                        style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
-                      >
-                        {unitOptions.map(u => (
-                          <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
-                        ))}
-                      </select>
-                    </div>
-                    {/* Estimate slider — drag to set how much of THIS
-                        ingredient you used. Range 0..source's current
-                        amount (or 0..1 if the recipe-hinted amount
-                        can't be converted; the caller then commits the
-                        amount directly). Nobody's weighing half a bag
-                        of chips; slide to what looks right. Live write
-                        to usedAmount so the confirm-removal screen's
-                        \"LEAVES x\" readout updates as you drag. */}
-                    {match && Number(match.amount) > 0 && (() => {
-                      const maxVal = Number(match.amount);
-                      const step = maxVal <= 10 ? 0.1 : maxVal <= 100 ? 1 : maxVal / 100;
-                      return (
+                {canEditAmount && !row.skipped ? (() => {
+                  // Compute reference quantities in the user's CURRENT
+                  // unit so the slider range, the recipe tick, and the
+                  // amount display all live in one coordinate space.
+                  // When the user flips the unit dropdown, everything
+                  // re-renders against the new unit — slider range
+                  // expands/contracts, tick position updates, and the
+                  // number input gets live-converted (below).
+                  const recipeQty = row.recipeIng.qty
+                    || parseAmountString(row.recipeIng.amount, ing)
+                    || null;
+                  const toUsed = (qty) => {
+                    if (!qty || !row.usedUnit) return null;
+                    if (qty.unit === row.usedUnit) return Number(qty.amount);
+                    const res = convertWithBridge(qty, row.usedUnit, ing, match);
+                    return res.ok ? res.value : null;
+                  };
+                  const maxInUsed = match && Number(match.amount) > 0
+                    ? toUsed({ amount: Number(match.amount), unit: match.unit })
+                    : null;
+                  const recipeInUsed = recipeQty ? toUsed(recipeQty) : null;
+                  // Live-convert when the user flips the unit dropdown.
+                  // Without this the number stayed the same digit while
+                  // the unit changed beneath it — silently corrupting
+                  // the deduction. Now: 0.5 sticks → switch to tbsp →
+                  // number flips to 8 tbsp, slider range rescales, tick
+                  // marker slides to the equivalent recipe position.
+                  const onUnitChange = (nextUnit) => {
+                    if (!nextUnit || nextUnit === row.usedUnit) return;
+                    const curAmt = Number(row.usedAmount);
+                    if (!Number.isFinite(curAmt) || curAmt <= 0) {
+                      setRow(row.idx, { usedUnit: nextUnit });
+                      return;
+                    }
+                    const res = convertWithBridge(
+                      { amount: curAmt, unit: row.usedUnit },
+                      nextUnit, ing, match,
+                    );
+                    setRow(row.idx, res.ok
+                      ? { usedAmount: Number(res.value.toFixed(3)), usedUnit: nextUnit }
+                      : { usedUnit: nextUnit }
+                    );
+                  };
+                  const fmt = (n) => n == null
+                    ? "—"
+                    : Number(n.toFixed(n >= 10 ? 1 : 2));
+                  return (
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end", flexShrink:0, minWidth:200 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
                         <input
-                          type="range"
-                          min="0" max={maxVal} step={step}
-                          value={Number.isFinite(Number(row.usedAmount)) ? Math.min(Number(row.usedAmount), maxVal) : 0}
-                          onChange={e => setRow(row.idx, { usedAmount: Number(e.target.value), usedUnit: row.usedUnit || match.unit })}
-                          aria-label={`Estimate ${displayName} used`}
-                          style={{ width:"100%", accentColor:"#f5c842" }}
+                          type="number" min="0" step="any"
+                          value={row.usedAmount ?? ""}
+                          onChange={e => setRow(row.idx, { usedAmount: e.target.value === "" ? null : Number(e.target.value) })}
+                          style={{ width:56, padding:"6px 8px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:13, color:"#f0ece4", textAlign:"right", outline:"none" }}
                         />
-                      );
-                    })()}
-                    {/* Conversion shadow — live readout of the current
-                        used-amount translated into the OTHER meaningful
-                        unit on the canonical's ladder. "Package size is
-                        bible" works both ways: if the user types 0.28 lb
-                        we also show "≈ 1.4 breasts" so they know exactly
-                        what chunk of the package they just committed.
-                        Picks a shadow unit that differs from usedUnit —
-                        the recipe's original unit when present, else the
-                        canonical's defaultUnit, else the first non-match
-                        in the ladder. Hidden when there's no meaningful
-                        alternate unit to show. */}
-                    {(() => {
-                      if (!ing || !row.usedAmount || !row.usedUnit) return null;
-                      const curQty = { amount: Number(row.usedAmount), unit: row.usedUnit };
-                      if (!Number.isFinite(curQty.amount) || curQty.amount <= 0) return null;
-                      const recipeUnit = row.recipeIng.qty?.unit
-                        || parseAmountString(row.recipeIng.amount, ing)?.unit
-                        || null;
-                      const ladder = Array.isArray(ing.units) ? ing.units.map(u => u.id) : [];
-                      const candidates = [recipeUnit, ing.defaultUnit, ...ladder]
-                        .filter(Boolean)
-                        .filter(u => u !== row.usedUnit);
-                      if (candidates.length === 0) return null;
-                      const shadowUnit = candidates[0];
-                      const res = convertWithBridge(curQty, shadowUnit, ing, match);
-                      if (!res.ok) return null;
-                      const pretty = Number(res.value.toFixed(res.value >= 10 ? 1 : 2));
-                      const label = unitLabel(ing, shadowUnit);
-                      return (
-                        <div style={{
-                          fontFamily:"'DM Mono',monospace", fontSize:10,
-                          color:"#888", letterSpacing:"0.04em",
-                        }}>
-                          {res.bridged ? "≈ " : "= "}{pretty} {label}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ) : null}
+                        <select
+                          value={row.usedUnit || ""}
+                          onChange={e => onUnitChange(e.target.value)}
+                          style={{ padding:"6px 4px", background:"#0a0a0a", border:"1px solid #2a2a2a", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#ccc", outline:"none" }}
+                        >
+                          {unitOptions.map(u => (
+                            <option key={u.id} value={u.id}>{unitLabel(ing, u.id)}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {match && maxInUsed != null && maxInUsed > 0 && (() => {
+                        // Three nested bars telling the full story
+                        // of what happens to the package as the user
+                        // commits their deduction:
+                        //
+                        //   |--|            2 oz LEFT AFTER COOK
+                        //   |------|        4 oz PANTRY NOW
+                        //   |----------|    8 oz PACKAGE SIZE
+                        //
+                        // Each bar's width is proportional to its value
+                        // on a shared scale (package size when known,
+                        // else pantry amount). The slider beneath sets
+                        // USED — the top bar is derived as pantry−used
+                        // so it shrinks live as the user drags.
+                        const pkgQty = match.packageAmount && match.packageUnit
+                          ? { amount: Number(match.packageAmount), unit: match.packageUnit }
+                          : null;
+                        const pkgInUsed = pkgQty ? toUsed(pkgQty) : null;
+                        const meterMax = (pkgInUsed && pkgInUsed >= maxInUsed)
+                          ? pkgInUsed
+                          : maxInUsed;
+                        const step = maxInUsed <= 10 ? 0.1 : maxInUsed <= 100 ? 1 : maxInUsed / 100;
+                        const cur = Number.isFinite(Number(row.usedAmount))
+                          ? Math.min(Number(row.usedAmount), maxInUsed)
+                          : 0;
+                        const leftAfter = Math.max(0, maxInUsed - cur);
+                        const pct = (v) => Math.max(0, Math.min(100, (v / meterMax) * 100));
+                        const unitTxt = unitLabel(ing, row.usedUnit);
+                        const Bar = ({ value, color, label, muted }) => (
+                          <div style={{
+                            display:"flex", alignItems:"center", gap:8,
+                            width:"100%",
+                          }}>
+                            <div style={{ flex:1, minWidth:0, height:6, position:"relative" }}>
+                              <div style={{
+                                position:"absolute", inset:0,
+                                background:"#1a1a1a", borderRadius:3,
+                              }} />
+                              <div style={{
+                                position:"absolute", top:0, bottom:0, left:0,
+                                width:`${pct(value)}%`,
+                                background:color,
+                                borderRadius:3,
+                                opacity: muted ? 0.5 : 1,
+                                transition:"width 0.08s linear",
+                              }} />
+                            </div>
+                            <span style={{
+                              flexShrink:0,
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              color: muted ? "#666" : color,
+                              letterSpacing:"0.04em",
+                              minWidth:140, textAlign:"left",
+                            }}>
+                              {fmt(value)} {unitTxt} {label}
+                            </span>
+                          </div>
+                        );
+                        return (
+                          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:2 }}>
+                            <Bar value={leftAfter} color="#7ec87e" label="LEFT AFTER COOK" />
+                            <Bar value={maxInUsed} color="#b8a878" label="PANTRY NOW" muted />
+                            {pkgInUsed != null && pkgInUsed > maxInUsed && (
+                              <Bar value={pkgInUsed} color="#555" label="PACKAGE SIZE" muted />
+                            )}
+                            {/* Slider — controls USED. Sliding right
+                                reduces "left after cook"; sliding left
+                                leaves more. Range is 0..pantry amount
+                                (can't use more than you have). */}
+                            <div style={{ width:"100%", marginTop:4 }}>
+                              <input
+                                type="range"
+                                min="0" max={maxInUsed} step={step}
+                                value={cur}
+                                onChange={e => setRow(row.idx, {
+                                  usedAmount: Number(e.target.value),
+                                  usedUnit: row.usedUnit,
+                                })}
+                                aria-label={`Estimate ${displayName} used`}
+                                style={{ width:"100%", accentColor:"#f5c842" }}
+                              />
+                              <div style={{
+                                display:"flex", justifyContent:"space-between",
+                                fontFamily:"'DM Mono',monospace", fontSize:9,
+                                letterSpacing:"0.04em", color:"#666",
+                              }}>
+                                <span style={{ color:"#f5c842" }}>
+                                  {fmt(cur)} {unitTxt} USED
+                                </span>
+                                {recipeInUsed != null && (
+                                  <span style={{ color:"#7eb8d4" }}>
+                                    RECIPE: {fmt(recipeInUsed)} {unitTxt}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {/* Conversion shadow — live readout of the current
+                          used-amount translated into the NEXT meaningful
+                          unit. Picks the recipe's original unit when
+                          present (so the user sees their commitment
+                          back-translated to the AI's ask), else the
+                          canonical's default, else the first ladder
+                          entry. "=" for exact ladder conversions, "≈"
+                          when the countWeightG bridge was used. */}
+                      {(() => {
+                        if (!ing || !row.usedAmount || !row.usedUnit) return null;
+                        const curQty = { amount: Number(row.usedAmount), unit: row.usedUnit };
+                        if (!Number.isFinite(curQty.amount) || curQty.amount <= 0) return null;
+                        const recipeUnit = recipeQty?.unit || null;
+                        const ladder = Array.isArray(ing.units) ? ing.units.map(u => u.id) : [];
+                        const candidates = [recipeUnit, ing.defaultUnit, ...ladder]
+                          .filter(Boolean)
+                          .filter(u => u !== row.usedUnit);
+                        if (candidates.length === 0) return null;
+                        const shadowUnit = candidates[0];
+                        const res = convertWithBridge(curQty, shadowUnit, ing, match);
+                        if (!res.ok) return null;
+                        const pretty = Number(res.value.toFixed(res.value >= 10 ? 1 : 2));
+                        return (
+                          <div style={{
+                            fontFamily:"'DM Mono',monospace", fontSize:10,
+                            color:"#888", letterSpacing:"0.04em",
+                          }}>
+                            {res.bridged ? "≈ " : "= "}{pretty} {unitLabel(ing, shadowUnit)}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  );
+                })() : null}
                 <button
                   onClick={() => setRow(row.idx, { skipped: !row.skipped })}
                   aria-label={row.skipped ? "Re-include" : "Skip this ingredient"}
