@@ -16,6 +16,7 @@
 import {
   findIngredient,
   resolveSlug,
+  resolveCanonicalIdentity,
   INGREDIENTS,
   fuzzyMatchIngredient,
   ALL_STATE_TOKENS,
