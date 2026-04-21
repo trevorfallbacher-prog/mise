@@ -27,6 +27,7 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
 import IAteThisSheet from "./IAteThisSheet";
+import NutritionOverrideSheet from "./NutritionOverrideSheet";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
@@ -3188,6 +3189,7 @@ const brandChooserBlurbStyle = {
 // one discoverable entry point for data enrichment).
 function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
@@ -3199,7 +3201,54 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
     },
     { getInfo, brandNutrition: brandNutritionMap },
   );
-  if (!nutrition) return null;
+
+  // Persist a user-typed override via the standard commit path. `block`
+  // is a validated nutrition object OR null (clear). onUpdate routes
+  // through ItemCard → setPendingChanges → apply, same as every other
+  // field edit, so the pantry realtime subscription reconciles and
+  // the chip re-renders from the new `source: "pantry"` tier.
+  const saveOverride = async (block) => {
+    onUpdate?.({ nutritionOverride: block });
+  };
+
+  // When no resolver tier fires, render a "TAP TO ADD" affordance
+  // instead of hiding. Pre-Phase-4 we bailed with `return null` which
+  // stranded users on items like store-brand scans that no tier
+  // covered — they had no way to type the number in themselves.
+  if (!nutrition) {
+    return (
+      <>
+        <button
+          onClick={() => setOverrideOpen(true)}
+          style={{
+            width: "100%", padding: "10px 12px", marginBottom: 14,
+            background: "#141414", border: "1px dashed #2a2a2a",
+            borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 16, opacity: 0.6 }}>🔥</span>
+          <span style={{
+            flex: 1,
+            fontFamily: "'DM Mono',monospace", fontSize: 11,
+            color: "#888", letterSpacing: "0.08em",
+          }}>
+            TAP TO ADD NUTRITION
+          </span>
+          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>✎</span>
+        </button>
+        {overrideOpen && (
+          <NutritionOverrideSheet
+            item={item}
+            onClose={() => setOverrideOpen(false)}
+            onSave={saveOverride}
+          />
+        )}
+      </>
+    );
+  }
+
   const badge = sourceBadge(source);
   const per = nutrition.per === "100g" ? "per 100g"
             : nutrition.per === "count" ? "per item"
@@ -3207,48 +3256,70 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
             : "";
   return (
     <div style={{ marginBottom: 14 }}>
-      <button
-        onClick={() => setExpanded(x => !x)}
-        style={{
-          width: "100%", padding: "10px 12px",
-          background: "#141414",
-          border: "1px solid #242424",
-          borderRadius: 10,
-          display: "flex", alignItems: "center", gap: 10,
-          cursor: "pointer", textAlign: "left",
-        }}
-      >
-        <span style={{ fontSize: 16 }}>🔥</span>
-        <span style={{
-          flex: 1,
-          fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
-        }}>
-          {formatMacros(nutrition)}
-        </span>
-        {per && (
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          onClick={() => setExpanded(x => !x)}
+          style={{
+            flex: 1, padding: "10px 12px",
+            background: "#141414",
+            border: "1px solid #242424",
+            borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 16 }}>🔥</span>
           <span style={{
-            fontFamily: "'DM Mono',monospace", fontSize: 9,
-            color: "#777", letterSpacing: "0.08em",
+            flex: 1,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
           }}>
-            {per.toUpperCase()}
+            {formatMacros(nutrition)}
           </span>
-        )}
-        {badge.label && (
-          <span style={{
-            fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
-            color: badge.color, background: `${badge.color}15`,
-            border: `1px solid ${badge.color}55`,
-            padding: "2px 6px", borderRadius: 6,
-            letterSpacing: "0.1em",
-          }}>
-            {badge.label}
-            {brand ? ` · ${brand}` : ""}
+          {per && (
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#777", letterSpacing: "0.08em",
+            }}>
+              {per.toUpperCase()}
+            </span>
+          )}
+          {badge.label && (
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+              color: badge.color, background: `${badge.color}15`,
+              border: `1px solid ${badge.color}55`,
+              padding: "2px 6px", borderRadius: 6,
+              letterSpacing: "0.1em",
+            }}>
+              {badge.label}
+              {brand ? ` · ${brand}` : ""}
+            </span>
+          )}
+          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
+            {expanded ? "▾" : "▸"}
           </span>
-        )}
-        <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
-          {expanded ? "▾" : "▸"}
-        </span>
-      </button>
+        </button>
+        {/* Override affordance — separate button so tapping it doesn't
+            toggle the expand. Uses a pencil glyph to read as "edit"
+            rather than "add", since nutrition is already present.
+            Source="pantry" means the override itself is what's
+            rendering; the button still opens the sheet so the user can
+            edit or clear their own override. */}
+        <button
+          onClick={() => setOverrideOpen(true)}
+          title={source === "pantry" ? "Edit override" : "Override with your numbers"}
+          style={{
+            padding: "0 12px",
+            background: "#141414", border: "1px solid #242424",
+            color: source === "pantry" ? "#7ec87e" : "#888",
+            borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          ✎
+        </button>
+      </div>
       {expanded && (
         <div style={{
           marginTop: 6, padding: "10px 12px",
@@ -3264,6 +3335,13 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
           {typeof nutrition.sugar_g   === "number" && <MacroCell label="SUGAR"  value={nutrition.sugar_g}   unit="g"  />}
           {typeof nutrition.sodium_mg === "number" && <MacroCell label="SODIUM" value={nutrition.sodium_mg} unit="mg" />}
         </div>
+      )}
+      {overrideOpen && (
+        <NutritionOverrideSheet
+          item={item}
+          onClose={() => setOverrideOpen(false)}
+          onSave={saveOverride}
+        />
       )}
     </div>
   );
