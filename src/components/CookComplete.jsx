@@ -130,6 +130,43 @@ export function buildInitialUsedItems(recipe, pantry) {
       }
     }
 
+    // Coherence guard: usedUnit MUST be in the canonical's ladder,
+    // otherwise the dropdown shows the first option (browser fallback
+    // when <select value> isn't a valid option) while state stays on
+    // an invalid unit — labels render in the stale unit, conversions
+    // fail silently. Seen when a garlic pantry row was stored in oz
+    // (outside garlic's [clove, head] ladder) and a recipe asked for
+    // "2 tbsp" that didn't parse. If the current displayUnit isn't
+    // valid, fall back to the canonical's defaultUnit and re-convert
+    // the displayed amount into that unit so the number agrees with
+    // what the label will read.
+    const ladderHas = (u) => !!canonical?.units?.some(x => x.id === u);
+    if (canonical && displayUnit && !ladderHas(displayUnit)) {
+      const targetUnit = canonical.defaultUnit && ladderHas(canonical.defaultUnit)
+        ? canonical.defaultUnit
+        : (canonical.units?.[0]?.id || null);
+      if (targetUnit) {
+        // Try to carry the number across, if we can find any valid
+        // source qty to convert from.
+        const sourceQty = recipeQty && ladderHas(recipeQty.unit)
+          ? recipeQty
+          : (displayAmount != null && ladderHas(displayUnit)
+              ? { amount: displayAmount, unit: displayUnit }
+              : null);
+        if (sourceQty) {
+          const res = convertWithBridge(sourceQty, targetUnit, canonical, defaultMatch);
+          displayAmount = res.ok ? Number(res.value.toFixed(3)) : null;
+        } else {
+          // No convertible source (e.g. "2 tbsp" for garlic with only
+          // clove/head ladder). Clear the number — user types in the
+          // picker — but ensure the unit is valid so the dropdown and
+          // labels agree.
+          displayAmount = null;
+        }
+        displayUnit = targetUnit;
+      }
+    }
+
     return {
       idx,
       recipeIng: ing,
