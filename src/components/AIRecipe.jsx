@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { generateRecipe } from "../lib/generateRecipe";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
-import { findIngredient, INGREDIENTS, coerceRecipeCanonicalIds } from "../data/ingredients";
+import {
+  findIngredient,
+  INGREDIENTS,
+  coerceRecipeCanonicalIds,
+  fuzzyMatchIngredient,
+} from "../data/ingredients";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 
@@ -121,16 +126,79 @@ function isProteinRow(row) {
 const STATE_PREFIX_RE = /^(ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\s+/i;
 const STATE_SUFFIX_RE = /\s*\((ground|sliced|shredded|minced|crumbled|chopped|diced|cubed|whole|boneless|skinless)\)\s*$/i;
 
+// Dietary / macro modifiers that ride on top of a canonical identity.
+// "low-carb tortilla" is STILL a tortilla — the modifier is a claim
+// the user cares about (keto, gluten-free, vegan), not a different
+// ingredient. We strip these before fuzz-matching so the canonical
+// resolves cleanly, AND we capture the display label so the recipe's
+// ideal slot remembers what the AI asked for. If a paired pantry row
+// doesn't carry the same claim, the UI flags the diet loss inline
+// (swap "vegan sausage" → "sausage" and you see "⚠ NO LONGER VEGAN").
+//
+// Each entry is a regex + display label. Order matters only for
+// overlapping phrases: longer/more-specific first so "low-sugar"
+// wins over "sugar".
+const DIET_MODIFIERS = [
+  { re: /\blow[\s\-]?carb\b/gi,        label: "Low-Carb" },
+  { re: /\blow[\s\-]?fat\b/gi,         label: "Low-Fat" },
+  { re: /\blow[\s\-]?sugar\b/gi,       label: "Low-Sugar" },
+  { re: /\blow[\s\-]?sodium\b/gi,      label: "Low-Sodium" },
+  { re: /\bzero[\s\-]?carb\b/gi,       label: "Zero-Carb" },
+  { re: /\b(?:zero|no)[\s\-]?sugar\b/gi, label: "Sugar-Free" },
+  { re: /\bsugar[\s\-]?free\b/gi,      label: "Sugar-Free" },
+  { re: /\bgluten[\s\-]?free\b/gi,     label: "Gluten-Free" },
+  { re: /\bdairy[\s\-]?free\b/gi,      label: "Dairy-Free" },
+  { re: /\bgrain[\s\-]?free\b/gi,      label: "Grain-Free" },
+  { re: /\bfat[\s\-]?free\b/gi,        label: "Fat-Free" },
+  { re: /\bhigh[\s\-]?protein\b/gi,    label: "High-Protein" },
+  { re: /\bwhole[\s\-]?wheat\b/gi,     label: "Whole-Wheat" },
+  { re: /\bwhole[\s\-]?grain\b/gi,     label: "Whole-Grain" },
+  { re: /\bmulti[\s\-]?grain\b/gi,     label: "Multigrain" },
+  { re: /\bketo\b/gi,                  label: "Keto" },
+  { re: /\bpaleo\b/gi,                 label: "Paleo" },
+  { re: /\bwhole30\b/gi,               label: "Whole30" },
+  { re: /\bvegan\b/gi,                 label: "Vegan" },
+  { re: /\bvegetarian\b/gi,            label: "Vegetarian" },
+  { re: /\borganic\b/gi,               label: "Organic" },
+];
+
+// Pull dietary/macro claims out of a free-text ingredient name.
+// Returns both the claim labels and a stripped version of the name
+// with those phrases removed. The stripped form feeds the canonical
+// resolver; the claims are preserved so the UI can detect diet-loss
+// on substitution.
+export function extractDietaryClaims(name) {
+  if (!name) return { claims: [], stripped: "" };
+  let stripped = String(name);
+  const found = new Set();
+  for (const { re, label } of DIET_MODIFIERS) {
+    // Reset the stateful lastIndex between calls (g-flagged regexes
+    // would otherwise skip alternating matches).
+    re.lastIndex = 0;
+    if (re.test(stripped)) {
+      found.add(label);
+      re.lastIndex = 0;
+      stripped = stripped.replace(re, " ");
+    }
+  }
+  return {
+    claims: [...found],
+    stripped: stripped.replace(/\s+/g, " ").trim(),
+  };
+}
+
 // Normalize an ingredient name for fuzzy matching. Strips known
-// brand prefixes, size labels, state prefixes, special characters,
-// and collapses whitespace. "GV Ricotta 32oz" → "ricotta". Used to
-// pair an ideal (classical) ingredient with a pantry row even when
-// the display strings drift.
+// brand prefixes, size labels, state prefixes, dietary modifiers,
+// special characters, and collapses whitespace. "GV Ricotta 32oz"
+// → "ricotta"; "Low-Carb Tortilla" → "tortilla". Used to pair an
+// ideal (classical) ingredient with a pantry row even when the
+// display strings drift.
 const BRAND_TOKEN_RE = /\b(gv|great\s*value|kroger|kro|organic|simple\s*truth|365|trader\s*joe'?s?|tj)\b/gi;
 const SIZE_TOKEN_RE  = /\b\d+(\.\d+)?\s*(oz|lb|lbs|g|kg|ml|l|ct|count|pack|pk|bag|jar|can|box|tub)\b/gi;
 function normalizeForMatch(name) {
   if (!name) return "";
-  return String(name)
+  const { stripped } = extractDietaryClaims(name);
+  return String(stripped)
     .toLowerCase()
     .replace(BRAND_TOKEN_RE, " ")
     .replace(SIZE_TOKEN_RE, " ")
@@ -174,27 +242,49 @@ function namesMatch(a, b) {
   return na.includes(nb) || nb.includes(na);
 }
 
+// Walk a sketch and stamp each ideal slot with the dietary claims
+// extracted from its name. Non-destructive copy. The claims travel
+// with the slot from ingestion through render so the swap/pair UI
+// can diff them against the paired pantry row's attributes.claims
+// and flag "⚠ NO LONGER VEGAN" when the user takes a non-compliant
+// substitution.
+function stampDietaryClaims(sketch) {
+  if (!sketch || !Array.isArray(sketch.ideal)) return sketch;
+  return {
+    ...sketch,
+    ideal: sketch.ideal.map(row => {
+      if (!row || typeof row !== "object") return row;
+      const { claims } = extractDietaryClaims(row.name);
+      if (claims.length === 0) return row;
+      return { ...row, dietaryClaims: claims };
+    }),
+  };
+}
+
 // Resolve a classical ingredient display name ("Ricotta",
 // "Mozzarella", "Ground beef") to the canonical registry slug.
 // Pairing pantry rows to ideal slots via this is strictly better
 // than string matching: "GV Ricotta 32oz" (canonical: ricotta)
 // correctly pairs with ideal "Ricotta" because both resolve to the
 // slug `ricotta`, even though the display names share no tokens.
-// Falls back to name-based match when no canonical is found (the
-// free-text tail of the registry).
+//
+// Uses fuzzyMatchIngredient (best-score, not first-wins). The old
+// two-pass substring loop was order-dependent: "flour tortilla"
+// resolved to `flour` (listed before `tortillas` in the registry)
+// even though `tortillas` is the better hit. Score-based picks the
+// highest-scoring canonical, which lets "low-carb tortilla",
+// "flour tortilla", "corn tortilla" all land on tortillas. The 60
+// floor matches the "likely match" threshold the fuzzy scorer's
+// comment documents.
 function resolveNameToCanonicalId(name) {
   if (!name) return null;
-  const norm = normalizeForMatch(name);
-  if (!norm) return null;
-  for (const canon of INGREDIENTS) {
-    if (normalizeForMatch(canon.name) === norm) return canon.id;
-    if (canon.shortName && normalizeForMatch(canon.shortName) === norm) return canon.id;
-  }
-  // Second pass: substring match on the registry names. Handles
-  // cases like "fresh mozzarella" ideal → mozzarella canonical.
-  for (const canon of INGREDIENTS) {
-    const cname = normalizeForMatch(canon.name);
-    if (cname && (cname.includes(norm) || norm.includes(cname))) return canon.id;
+  const { stripped } = extractDietaryClaims(name);
+  const needle = (stripped || name).trim();
+  if (!needle) return null;
+  const hits = fuzzyMatchIngredient(needle, 1);
+  const top = Array.isArray(hits) && hits.length > 0 ? hits[0] : null;
+  if (top && top.ingredient && typeof top.score === "number" && top.score >= 60) {
+    return top.ingredient.id;
   }
   return null;
 }
@@ -447,8 +537,10 @@ export default function AIRecipe({
       }
       // Same normalization on the sketch so pantry-coverage + swap
       // matching downstream work against real canonicals, not the
-      // raw strings Claude handed back.
-      const drafted = coerceRecipeCanonicalIds(result.sketch);
+      // raw strings Claude handed back. Stamp dietaryClaims onto
+      // each ideal slot so diet-loss detection has the signal when
+      // a paired pantry row doesn't carry the same claim.
+      const drafted = stampDietaryClaims(coerceRecipeCanonicalIds(result.sketch));
       setSketch(drafted);
       // Reset the tweak diff every fresh sketch — old swaps from a
       // previous draft don't apply to the new ingredient list.
@@ -1365,6 +1457,28 @@ export default function AIRecipe({
                   : row.subbedFrom && !isSub
                     ? `subbed from ${row.subbedFrom}`
                     : null;
+                // Diet-loss check. When the AI asked for a claimed
+                // variant ("low-carb tortilla", "vegan sausage") and
+                // we paired a pantry row that doesn't carry that
+                // claim, the substitution silently breaks the dietary
+                // intent. Surface it inline so the user sees the
+                // tradeoff before cooking. Claims are compared
+                // case-insensitively; pantry claims come from scan
+                // attributes (buildAttributesFromScan) or manual
+                // ItemCard edits.
+                const idealClaims = Array.isArray(idealRef?.dietaryClaims)
+                  ? idealRef.dietaryClaims
+                  : (idealRef ? extractDietaryClaims(idealRef.name).claims : []);
+                const rowClaimsRaw = [
+                  ...(Array.isArray(showRow?.attributes?.claims) ? showRow.attributes.claims : []),
+                  ...(Array.isArray(showRow?.attributes?.certifications)
+                    ? showRow.attributes.certifications.map(c => c?.label).filter(Boolean)
+                    : []),
+                ];
+                const rowClaimSet = new Set(rowClaimsRaw.map(c => String(c).toLowerCase()));
+                const lostClaims = idealClaims.filter(
+                  c => !rowClaimSet.has(String(c).toLowerCase()),
+                );
                 return (
                   <div key={`p-${idx}`} style={{
                     padding: "10px 12px",
@@ -1395,6 +1509,19 @@ export default function AIRecipe({
                             color: "#d4a878", letterSpacing: "0.04em",
                           }}>
                             ⇌ {subHint}
+                          </div>
+                        )}
+                        {lostClaims.length > 0 && (
+                          <div style={{
+                            marginTop: 4, marginLeft: subHint ? 6 : 0,
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            padding: "2px 8px",
+                            background: "#2a1210", border: "1px solid #5a2a22",
+                            borderRadius: 10,
+                            fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#e8908a", letterSpacing: "0.04em",
+                          }}>
+                            ⚠ NO LONGER {lostClaims.map(c => c.toUpperCase()).join(" / ")}
                           </div>
                         )}
                         {isExtra && (
