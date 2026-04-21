@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -26,6 +26,8 @@ import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
+import IAteThisSheet from "./IAteThisSheet";
+import NutritionOverrideSheet from "./NutritionOverrideSheet";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
@@ -163,6 +165,12 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // hook in this component can close over the merged `item` without
   // a TDZ error.
   const [pendingChanges, setPendingChanges] = useState({});
+  // "I ate this" sheet state. Toggled from the pill below the nutrition
+  // chip; closes itself on confirm or dismiss. Kept here (not deeper
+  // in the render tree) so the sheet renders at the ItemCard's top
+  // level and doesn't inherit layout constraints from the nutrition
+  // band.
+  const [iAteOpen, setIAteOpen] = useState(false);
   const item = useMemo(
     () => ({ ...(itemProp || {}), ...pendingChanges }),
     [itemProp, pendingChanges],
@@ -852,6 +860,40 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   itself is user-created (no parent hub link) — that's
                   how "pepperoni" with food category=pork still shows
                   the pork cut/form state picker. */}
+              {/* CUT — shown when this item's canonical has ≥2 hub
+                  siblings (chicken_breast / chicken_thigh /
+                  chicken_tenderloin / etc.). Changing cut = changing
+                  canonicalId to a sibling under the same parentId.
+                  Uses the same purple tint as STATE because
+                  cut+state are paired axes in the user's mental
+                  model, both describing the physical item; the
+                  distinction is anatomy (cut) vs preparation (state).
+                  Hidden on hubs and standalone ingredients where
+                  there's nothing to switch between. */}
+              {(() => {
+                const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
+                if (siblings.length < 2) return null;
+                const selfCanon = findIngredient(item.ingredientId);
+                const cutLabel = selfCanon?.shortName || selfCanon?.name || "SET CUT";
+                return (
+                  <div
+                    onClick={e => { e.stopPropagation(); startEdit("cut"); }}
+                    style={{
+                      fontFamily: "'DM Mono',monospace", fontSize: 10,
+                      color: selfCanon ? "#c7a8d4" : "#555",
+                      letterSpacing: "0.08em", marginTop: 3,
+                      textTransform: "uppercase",
+                      cursor: readOnly ? "default" : "pointer",
+                    }}
+                  >
+                    CUT: <span style={{
+                      color: selfCanon ? "#c7a8d4" : "#888",
+                      borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
+                    }}>{cutLabel}</span>
+                  </div>
+                );
+              })()}
+
               {(() => {
                 const states = statesForItem(item);
                 if (!states || states.length === 0) return null;
@@ -1124,6 +1166,30 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             getBrandNutrition={getBrandNutrition}
             onUpdate={onUpdate}
           />
+
+          {/* "I ate this" — one-tap consumption log. Hidden on draft
+              rows (nothing's in the pantry yet to eat) and on rows
+              with zero amount (the button would decrement below zero
+              which we clamp, but the UX of tapping an empty row to
+              "eat it" is just confusing). Writes a consumption_logs
+              row + decrements pantry_items.amount; the nutrition
+              dashboard picks up the event via realtime. */}
+          {!isDraft && Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId) && (
+            <button
+              type="button"
+              onClick={() => setIAteOpen(true)}
+              style={{
+                width: "100%", padding: "12px 14px", marginBottom: 14,
+                background: "#0f1a0f", border: "1px solid #1e3a1e",
+                color: "#7ec87e", borderRadius: 10,
+                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                letterSpacing: "0.08em", cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+              }}
+            >
+              <span style={{ fontSize: 16 }}>🍽️</span> I ATE THIS
+            </button>
+          )}
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
               One editor is open at a time — opening a second closes the
@@ -2153,6 +2219,73 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           row down every time the user tapped STATE. Stacked sheet now;
           same write path (commit({state})) so clearing + re-picking
           stays atomic. */}
+      {/* CUT picker — hub sibling swap. Pantry identity is bound to
+          canonicalId, so changing the cut rewrites ingredientId. The
+          state axis is preserved through the swap — a pantry row of
+          ground chicken_breast becoming ground chicken_thigh stays
+          "ground". Closing via tap on the active cut is a no-op;
+          the user already has that cut. */}
+      {editingField === "cut" && (() => {
+        const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
+        if (siblings.length < 2) return null;
+        return (
+          <ModalSheet
+            onClose={() => setEditingField(null)}
+            zIndex={Z.picker}
+            label="CUT"
+            maxHeight="60vh"
+          >
+            <h2 style={{
+              fontFamily: "'Fraunces',serif", fontSize: 22,
+              fontStyle: "italic", color: "#f0ece4",
+              fontWeight: 400, margin: "2px 0 10px",
+            }}>
+              Which cut is it?
+            </h2>
+            <p style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+              color: "#888", lineHeight: 1.5, margin: "0 0 14px",
+            }}>
+              Switching cut moves the item to a different canonical in
+              the same family. Your state (ground, sliced, etc.)
+              carries over.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+              {siblings.map(s => {
+                const active = s.id === item.ingredientId;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      if (!active) commit({ ingredientId: s.id });
+                      setEditingField(null);
+                    }}
+                    style={{
+                      padding: "14px 10px",
+                      background: active ? "#0f1620" : "#141414",
+                      color: active ? "#7eb8d4" : "#ccc",
+                      border: `1px solid ${active ? "#7eb8d4" : "#2a2a2a"}`,
+                      borderRadius: 10,
+                      fontFamily: "'DM Mono',monospace", fontSize: 11,
+                      letterSpacing: "0.05em", cursor: "pointer",
+                      textTransform: "uppercase",
+                      textAlign: "left",
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    <span style={{ fontSize: 18 }}>{s.emoji || "🍗"}</span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      {(s.shortName || s.name || s.id).toUpperCase()}
+                    </span>
+                    {active && <span style={{ color: "#7eb8d4", fontSize: 14 }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </ModalSheet>
+        );
+      })()}
+
       {editingField === "state" && (() => {
         const states = statesForItem(item) || [];
         if (states.length === 0) return null;
@@ -2552,6 +2685,18 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             UPDATE · {Object.keys(pendingChanges).length} CHANGE{Object.keys(pendingChanges).length === 1 ? "" : "S"}
           </button>
         </div>
+      )}
+
+      {/* "I ate this" overlay. Stacks above the ItemCard (Z.picker) so
+          it reads like a modal, not an inline expander. Closes itself
+          on confirm or backdrop/Escape dismissal. */}
+      {iAteOpen && (
+        <IAteThisSheet
+          pantryRow={item}
+          userId={userId}
+          onClose={() => setIAteOpen(false)}
+          onDone={() => setIAteOpen(false)}
+        />
       )}
 
       {/* Full-screen success after UPDATE commits. Lists every field
@@ -3044,6 +3189,7 @@ const brandChooserBlurbStyle = {
 // one discoverable entry point for data enrichment).
 function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
+  const [overrideOpen, setOverrideOpen] = useState(false);
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
@@ -3055,7 +3201,54 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
     },
     { getInfo, brandNutrition: brandNutritionMap },
   );
-  if (!nutrition) return null;
+
+  // Persist a user-typed override via the standard commit path. `block`
+  // is a validated nutrition object OR null (clear). onUpdate routes
+  // through ItemCard → setPendingChanges → apply, same as every other
+  // field edit, so the pantry realtime subscription reconciles and
+  // the chip re-renders from the new `source: "pantry"` tier.
+  const saveOverride = async (block) => {
+    onUpdate?.({ nutritionOverride: block });
+  };
+
+  // When no resolver tier fires, render a "TAP TO ADD" affordance
+  // instead of hiding. Pre-Phase-4 we bailed with `return null` which
+  // stranded users on items like store-brand scans that no tier
+  // covered — they had no way to type the number in themselves.
+  if (!nutrition) {
+    return (
+      <>
+        <button
+          onClick={() => setOverrideOpen(true)}
+          style={{
+            width: "100%", padding: "10px 12px", marginBottom: 14,
+            background: "#141414", border: "1px dashed #2a2a2a",
+            borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 16, opacity: 0.6 }}>🔥</span>
+          <span style={{
+            flex: 1,
+            fontFamily: "'DM Mono',monospace", fontSize: 11,
+            color: "#888", letterSpacing: "0.08em",
+          }}>
+            TAP TO ADD NUTRITION
+          </span>
+          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>✎</span>
+        </button>
+        {overrideOpen && (
+          <NutritionOverrideSheet
+            item={item}
+            onClose={() => setOverrideOpen(false)}
+            onSave={saveOverride}
+          />
+        )}
+      </>
+    );
+  }
+
   const badge = sourceBadge(source);
   const per = nutrition.per === "100g" ? "per 100g"
             : nutrition.per === "count" ? "per item"
@@ -3063,48 +3256,70 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
             : "";
   return (
     <div style={{ marginBottom: 14 }}>
-      <button
-        onClick={() => setExpanded(x => !x)}
-        style={{
-          width: "100%", padding: "10px 12px",
-          background: "#141414",
-          border: "1px solid #242424",
-          borderRadius: 10,
-          display: "flex", alignItems: "center", gap: 10,
-          cursor: "pointer", textAlign: "left",
-        }}
-      >
-        <span style={{ fontSize: 16 }}>🔥</span>
-        <span style={{
-          flex: 1,
-          fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
-        }}>
-          {formatMacros(nutrition)}
-        </span>
-        {per && (
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          onClick={() => setExpanded(x => !x)}
+          style={{
+            flex: 1, padding: "10px 12px",
+            background: "#141414",
+            border: "1px solid #242424",
+            borderRadius: 10,
+            display: "flex", alignItems: "center", gap: 10,
+            cursor: "pointer", textAlign: "left",
+          }}
+        >
+          <span style={{ fontSize: 16 }}>🔥</span>
           <span style={{
-            fontFamily: "'DM Mono',monospace", fontSize: 9,
-            color: "#777", letterSpacing: "0.08em",
+            flex: 1,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
           }}>
-            {per.toUpperCase()}
+            {formatMacros(nutrition)}
           </span>
-        )}
-        {badge.label && (
-          <span style={{
-            fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
-            color: badge.color, background: `${badge.color}15`,
-            border: `1px solid ${badge.color}55`,
-            padding: "2px 6px", borderRadius: 6,
-            letterSpacing: "0.1em",
-          }}>
-            {badge.label}
-            {brand ? ` · ${brand}` : ""}
+          {per && (
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#777", letterSpacing: "0.08em",
+            }}>
+              {per.toUpperCase()}
+            </span>
+          )}
+          {badge.label && (
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+              color: badge.color, background: `${badge.color}15`,
+              border: `1px solid ${badge.color}55`,
+              padding: "2px 6px", borderRadius: 6,
+              letterSpacing: "0.1em",
+            }}>
+              {badge.label}
+              {brand ? ` · ${brand}` : ""}
+            </span>
+          )}
+          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
+            {expanded ? "▾" : "▸"}
           </span>
-        )}
-        <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
-          {expanded ? "▾" : "▸"}
-        </span>
-      </button>
+        </button>
+        {/* Override affordance — separate button so tapping it doesn't
+            toggle the expand. Uses a pencil glyph to read as "edit"
+            rather than "add", since nutrition is already present.
+            Source="pantry" means the override itself is what's
+            rendering; the button still opens the sheet so the user can
+            edit or clear their own override. */}
+        <button
+          onClick={() => setOverrideOpen(true)}
+          title={source === "pantry" ? "Edit override" : "Override with your numbers"}
+          style={{
+            padding: "0 12px",
+            background: "#141414", border: "1px solid #242424",
+            color: source === "pantry" ? "#7ec87e" : "#888",
+            borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          ✎
+        </button>
+      </div>
       {expanded && (
         <div style={{
           marginTop: 6, padding: "10px 12px",
@@ -3120,6 +3335,13 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
           {typeof nutrition.sugar_g   === "number" && <MacroCell label="SUGAR"  value={nutrition.sugar_g}   unit="g"  />}
           {typeof nutrition.sodium_mg === "number" && <MacroCell label="SODIUM" value={nutrition.sodium_mg} unit="mg" />}
         </div>
+      )}
+      {overrideOpen && (
+        <NutritionOverrideSheet
+          item={item}
+          onClose={() => setOverrideOpen(false)}
+          onSave={saveOverride}
+        />
       )}
     </div>
   );

@@ -455,7 +455,7 @@ exact shape:
       "name":             "<display name as shown in the user's pantry>",
       "amount":           "<display, e.g. '1 lb'>",
       "pantryItemId":     "<the pantry row id you grabbed, or null when shopping>",
-      "ingredientId":     "<canonical id from pantry if matched, else null>",
+      "ingredientId":     "<verbatim pantry canonical id (e.g. 'tortillas', 'ground_cinnamon') or null — do NOT invent slugs>",
       "subbedFrom":       "<name of the IDEAL item this replaced, or null>",
       "missingFromIdeal": <true | false>
     },
@@ -543,7 +543,7 @@ exact shape. Every field is REQUIRED unless marked optional.
     {
       "amount":       "<display string, e.g. '2 tbsp' or '½ cup'>",
       "item":         "<display text, e.g. 'olive oil'>",
-      "ingredientId": "<canonical id from pantry if matched, else null>"
+      "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>"
     },
     ...
   ],
@@ -559,7 +559,7 @@ exact shape. Every field is REQUIRED unless marked optional.
         {
           "amount":       "<display string matching the amount used AT THIS STEP>",
           "item":         "<display text, e.g. 'butter'>",
-          "ingredientId": "<canonical id from pantry if applicable, else null>",
+          "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
           "state":        "<optional physical form: 'minced', 'sliced', 'grated'>"
         },
         ...
@@ -570,6 +570,38 @@ exact shape. Every field is REQUIRED unless marked optional.
     ...
   ],
   "tags": ["<short tag>", ...],                         // 2-5 useful tags
+  "reheat": {                                           // REQUIRED when the dish keeps as a leftover
+    "primary": {
+      // The BEST method for this specific dish — not a default.
+      //   Pizza: "stovetop" (cast iron pan, crisps the base).
+      //   Lasagna / casseroles: "oven" (even heat, no sog).
+      //   Soup / braise: "stovetop" (avoid the microwave rubber).
+      //   Fried food / wings: "air_fryer" or "oven" (re-crisp).
+      //   Egg dishes / frittata: "cold" or "toaster_oven" (gentle).
+      "method":   "oven" | "microwave" | "stovetop" | "air_fryer" | "toaster_oven" | "cold",
+      "tempF":    <number or null for microwave/cold>,
+      "timeMin":  <number of minutes — single number, not a range>,
+      "covered":  <true | false | null when N/A>,
+      "tips":     "<1-2 sentence specifics — 'splash of water', 'cover with foil until last 5 min', 'medium-low or the sauce breaks'>"
+    },
+    "alt": [                                            // 0-2 alternatives — OFFER WHEN VIABLE
+      // Many dishes genuinely have multiple good paths. Pizza is
+      // great stovetop BUT oven also works and microwave works in a
+      // pinch (with honest quality caveats in each tips field).
+      // Lasagna is best oven BUT microwave is a real fallback for a
+      // single serving. DO include the alternatives the user would
+      // plausibly reach for when the primary isn't convenient.
+      // Skip alts only when the dish truly has one path (mandatory
+      // stovetop for egg sauces like carbonara — microwaving them
+      // scrambles; that's a note, not an alt).
+      { "method": "...", "tempF": ..., "timeMin": ..., "covered": ..., "tips": "<what changes vs primary: 'loses crust crispness', 'faster but uneven'>" }
+    ],
+    "note": "<OPTIONAL quality caveat — 'eggs scramble if rushed', 'pasta gets gummy past 2 days', null if none>"
+  },
+                                                         // OMIT reheat entirely for dishes that MUST be eaten fresh:
+                                                         //   vinaigrettes, aiolis, tartares, carpaccios, anything raw,
+                                                         //   delicate foams / whipped creams, blended smoothies.
+                                                         //   For these the leftover pantry flow simply shows no reheat tip.
   "aiRationale": "<1-3 sentences in plain language, written TO the user in second person,
                  explaining WHY you picked this dish. Cite specific signals you used — items
                  about to expire, user's dietary constraints, recent cuisines they've leaned
@@ -611,11 +643,27 @@ Rules (in priority order — higher rules beat lower ones on conflict):
      recipes that use pantry items marked "EXPIRED" or "expires in Nd"
      where N is small. Reducing waste is the default goal.
 
-  6. EVERY pantry item you use must appear as an ingredient with
-     the matching "ingredientId" when the pantry item carried a
-     canonicalId. Leave "ingredientId" null for staples you assumed
-     (salt, pepper, oil) and for any non-pantry ingredients you
-     added because the user asked for them.
+  6. CANONICAL_ID BINDING — strict rules, no improvisation:
+
+     - The PANTRY block above shows each item's canonical id as
+       "id:<slug>". When you use that item, echo the slug VERBATIM
+       into the ingredient's "ingredientId" field.
+         pantry shows "id:tortillas" → you write "ingredientId": "tortillas"
+         pantry shows "id:ground_cinnamon" → "ingredientId": "ground_cinnamon"
+     - Do NOT modify pantry ids. NO adding prefixes like "fresh_" or
+       "corn_" or "organic_". NO pluralizing or de-pluralizing. NO
+       changing case. NO replacing underscores with spaces or hyphens.
+       The slug is a key, not a label — treat it as opaque.
+     - If your recipe needs an ingredient the pantry DOES NOT have
+       (staple salt/pepper/oil, or a user-requested ingredient not in
+       stock), set "ingredientId": null. Do NOT invent a slug. Do NOT
+       guess. null is the correct value when you don't have a pantry
+       match — the client resolver will either infer one server-side
+       or flag it as off-pantry.
+     - The recipe's "ingredients" array, every step's "uses" array,
+       and (in sketch mode) the "ideal" + "pantry" arrays all follow
+       the same rule. A canonicalId string in any of them must exist
+       as a verbatim id in the PANTRY block, or the field must be null.
 
   7. ALWAYS produce at least 4 steps and 4 ingredients.
 

@@ -30,22 +30,45 @@ import { findIngredient } from "../data/ingredients";
 export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
   if (!pantryRow) return { nutrition: null, source: null };
   // 1. Pantry-row override (Phase 4).
-  if (pantryRow.nutritionOverride && hasNumbers(pantryRow.nutritionOverride)) {
+  if (pantryRow.nutritionOverride && acceptableForResolve(pantryRow.nutritionOverride)) {
     return { nutrition: pantryRow.nutritionOverride, source: "pantry" };
   }
   const canonId = pantryRow.ingredientId || pantryRow.canonicalId || null;
   // 2. brand_nutrition row (Phase 2). Key format mirrors useBrandNutrition.
+  // Exact match first (O(1) Map lookup). On a miss, fall through to a
+  // word-boundary prefix match so a pantry row branded "Philadelphia"
+  // still resolves against a brand_nutrition row written as
+  // "Philadelphia Original". Word-boundary discipline (next char must
+  // be whitespace or end-of-string) prevents misfires like "Joe's" →
+  // "Trader Joe's" (fails because "Joe's" is not a prefix of "Trader
+  // Joe's" from char 0). The prefix branch walks `rows` once per miss;
+  // the table is small (one row per popular (canonical, brand) pair).
   if (canonId && pantryRow.brand && brandNutrition) {
     const brandKey = String(pantryRow.brand).trim().toLowerCase();
-    const hit = brandNutrition.get?.(`${canonId}::${brandKey}`);
-    if (hit?.nutrition && hasNumbers(hit.nutrition)) {
+    let hit = brandNutrition.get?.(`${canonId}::${brandKey}`);
+    if (!hit?.nutrition && Array.isArray(brandNutrition.rows)) {
+      const candidates = brandNutrition.rows.filter(
+        r => r?.canonicalId === canonId
+          && r?.nutrition
+          && isBrandPrefixMatch(brandKey, r.brand),
+      );
+      if (candidates.length) {
+        // When multiple fuzzy candidates qualify, prefer the shortest
+        // stored brand — a generic "Philadelphia" row beats a
+        // hyper-specific "Philadelphia Original Limited Edition"
+        // because the shorter string is closer to the user's input.
+        candidates.sort((a, b) => (a.brand || "").length - (b.brand || "").length);
+        hit = candidates[0];
+      }
+    }
+    if (hit?.nutrition && acceptableForResolve(hit.nutrition)) {
       return { nutrition: hit.nutrition, source: "brand", brand: hit.displayBrand || pantryRow.brand };
     }
   }
   // 3. ingredient_info.nutrition — the admin-approved canonical average.
   if (canonId && typeof getInfo === "function") {
     const info = getInfo(canonId);
-    if (info?.nutrition && hasNumbers(info.nutrition)) {
+    if (info?.nutrition && acceptableForResolve(info.nutrition)) {
       return { nutrition: info.nutrition, source: "canonical" };
     }
   }
@@ -53,11 +76,48 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
   //    been seeded for this canonical yet.
   if (canonId) {
     const canon = findIngredient(canonId);
-    if (canon?.nutrition && hasNumbers(canon.nutrition)) {
+    if (canon?.nutrition && acceptableForResolve(canon.nutrition)) {
       return { nutrition: canon.nutrition, source: "default" };
     }
   }
   return { nutrition: null, source: null };
+}
+
+// Read-side gate. Stricter than hasNumbers — even if a row slipped
+// past the write-side `validateNutrition` (old data, a direct SQL edit,
+// a future OFF ingestion path we haven't gated yet), the resolver
+// pretends the tier is empty and falls through to the next one. The
+// tolerant fallback in `scaleFactor` still handles the legacy
+// `per="1 tsp (5g)"` shape separately, so we deliberately DON'T bounce
+// those here — bouncing legacy rows would strand existing DB data the
+// user hasn't had a chance to re-enrich yet. We only refuse shapes
+// that the scaleFactor can't interpret under any branch.
+function acceptableForResolve(n) {
+  if (!hasNumbers(n)) return false;
+  // Modern enum is always fine.
+  if (n.per === "100g" || n.per === "count") return true;
+  if (n.per === "serving") {
+    const sg = Number(n.serving_g);
+    return Number.isFinite(sg) && sg > 0;
+  }
+  // Legacy free-text "(Ng)" shape — scaleFactor salvages it.
+  if (typeof n.per === "string" && /\(\s*[\d.]+\s*g\s*\)/i.test(n.per)) return true;
+  // Anything else is garbage — skip the tier.
+  return false;
+}
+
+// Word-boundary prefix match on two already-lowercased brand strings.
+// One must be a prefix of the other, with the break point at a word
+// boundary so we never match mid-word (e.g. "Phil" → "Philadelphia").
+// Intentionally symmetric: both "stored shorter than input" and "input
+// shorter than stored" match, since either ordering can be the
+// generic-vs-specific case depending on which end has more data.
+function isBrandPrefixMatch(a, b) {
+  if (!a || !b) return false;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (!longer.startsWith(shorter)) return false;
+  if (longer.length === shorter.length) return true; // exact (Map.get handles; safety net here)
+  return /\s/.test(longer[shorter.length]);
 }
 
 function hasNumbers(n) {
@@ -67,42 +127,131 @@ function hasNumbers(n) {
   return ["kcal", "protein_g", "fat_g", "carb_g"].some(k => typeof n[k] === "number");
 }
 
+// Strict sanity check on a nutrition block before it's written to the
+// DB (or trusted at read time). Rejects lazy / malformed entries that
+// would otherwise silently inflate the dashboard:
+//   - wrong `per` value (not in the enum)
+//   - per="serving" without a positive numeric serving_g
+//   - kcal missing, non-finite, negative, or absurdly large (>10000 per
+//     base unit — a stick of butter is 813 kcal, dense fat is 900; 10k
+//     is unreachable by real food, so it's a safe ceiling)
+//   - any macro that's present but not a finite non-negative number
+// Returns { ok: true } on pass or { ok: false, reason } on failure. Used
+// by useBrandNutrition.upsert and the pantry-override write path to
+// reject bad data at the boundary rather than propagating it.
+export function validateNutrition(n) {
+  if (!n || typeof n !== "object") return { ok: false, reason: "not an object" };
+  const per = n.per;
+  if (per !== "100g" && per !== "count" && per !== "serving") {
+    return { ok: false, reason: `per must be "100g"|"count"|"serving", got ${JSON.stringify(per)}` };
+  }
+  if (per === "serving") {
+    const sg = Number(n.serving_g);
+    if (!Number.isFinite(sg) || sg <= 0 || sg > 5000) {
+      return { ok: false, reason: `serving_g required and must be 0-5000g when per="serving", got ${JSON.stringify(n.serving_g)}` };
+    }
+  }
+  const kcal = Number(n.kcal);
+  if (!Number.isFinite(kcal) || kcal < 0 || kcal > 10000) {
+    return { ok: false, reason: `kcal must be 0-10000, got ${JSON.stringify(n.kcal)}` };
+  }
+  const MACRO_CEILINGS = { protein_g: 100, fat_g: 100, carb_g: 100, fiber_g: 100, sugar_g: 100, sodium_mg: 50000 };
+  for (const [key, ceiling] of Object.entries(MACRO_CEILINGS)) {
+    if (n[key] == null) continue;
+    const v = Number(n[key]);
+    if (!Number.isFinite(v) || v < 0 || v > ceiling) {
+      return { ok: false, reason: `${key} must be 0-${ceiling}, got ${JSON.stringify(n[key])}` };
+    }
+  }
+  return { ok: true };
+}
+
 // Scale factor for applying a nutrition block to a quantity. Returns
 // null when the conversion isn't possible (unknown unit, missing
 // serving_g on a per-serving nutrition, etc.) — callers should
 // treat that as a coverage gap rather than a zero.
+//
+// Every mass-based canonical's ladder declares `toBase` in GRAMS (butter,
+// flour, spices — see the spice factory in src/data/ingredients.js for the
+// gram-base convention). Count-based canonicals (eggs, apples, bananas)
+// declare `toBase=1` per count. The nutrition.per value picks which axis
+// we're scaling along.
 export function scaleFactor(qty, canonical, nutrition) {
-  if (!qty || !canonical || !nutrition?.per) return null;
+  if (!qty || !canonical || !nutrition) return null;
   const fromEntry = canonical.units?.find(u => u.id === qty.unit);
   if (!fromEntry) return null;
   const baseAmount = Number(qty.amount) * Number(fromEntry.toBase);
   if (!Number.isFinite(baseAmount)) return null;
-  switch (nutrition.per) {
+
+  // Tolerant fallback — pre-v3 AI enrichment wrote free-text into
+  // `per` ("1 tsp (5g)", "1 medium apple (182g)"). The gram weight is
+  // right there in parentheses; salvage it so rows already persisted
+  // in production still resolve instead of silently scoring zero.
+  // Forward-going, the edge function strips malformed blocks before
+  // they land — this branch only matters for the migration window.
+  const per = coercePer(nutrition);
+  if (!per) return null;
+
+  switch (per.kind) {
     case "100g":
-      // Mass ladders have toBase in grams. A canonical with a "count"
-      // default but nutrition.per === "100g" (seeded that way) would
-      // resolve correctly only when the row's unit is a mass unit —
-      // we bail when it isn't, which is the right answer.
       if (!isMassLadder(canonical)) return null;
       return baseAmount / 100;
     case "count":
-      // Count ladders: toBase=1 per item. baseAmount is the count.
+      // Count ladders have toBase=1 per item. baseAmount is the count.
       return baseAmount;
-    case "serving":
-      if (!Number.isFinite(Number(nutrition.serving_g))) return null;
+    case "serving": {
+      const g = per.serving_g;
+      if (!Number.isFinite(g) || g <= 0) return null;
       if (!isMassLadder(canonical)) return null;
-      return baseAmount / Number(nutrition.serving_g);
+      return baseAmount / g;
+    }
     default:
       return null;
   }
 }
 
-// Heuristic: if the canonical's ladder includes any unit id in
-// MASS_UNIT_IDS, we treat it as mass-based. Otherwise it's count.
-// Hand-curated set; expand if the registry gains new mass units.
-const MASS_UNIT_IDS = new Set(["g", "kg", "oz", "lb", "lbs", "stick", "cup", "tbsp", "tsp", "ml", "l"]);
+// Normalize nutrition.per into a structured shape the switch above can
+// consume. Handles the modern enum {"100g","count","serving"} and the
+// legacy free-text format ("1 tsp (5g)", "1 medium apple (182g)")
+// written by pre-v3 AI enrichments. The free-text fallback reads as
+// "per=serving with serving_g=N" — the gram weight is the canonical
+// reference; the leading "1 tsp" / "1 medium apple" is flavor text for
+// humans, not a conversion instruction.
+function coercePer(nutrition) {
+  const raw = nutrition?.per;
+  if (raw === "100g")    return { kind: "100g" };
+  if (raw === "count")   return { kind: "count" };
+  if (raw === "serving") return { kind: "serving", serving_g: Number(nutrition.serving_g) };
+  if (typeof raw === "string") {
+    // Match a trailing "(<number><optional space>g)" group.
+    const m = raw.match(/\(\s*([\d.]+)\s*g\s*\)/i);
+    if (m) {
+      const g = Number(m[1]);
+      if (Number.isFinite(g) && g > 0) return { kind: "serving", serving_g: g };
+    }
+    if (/^\s*100\s*g\s*$/i.test(raw)) return { kind: "100g" };
+  }
+  return null;
+}
+
+// A canonical is "mass-based" iff its ladder includes `{g:1}` or
+// `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
+// ladder declares how many grams (or millilitres, treated as grams for
+// nutrition purposes) it equals. Count-based canonicals (eggs, apple)
+// intentionally lack this anchor, which is how `scaleFactor`'s "100g"
+// and "serving" branches know to bail for count ladders and fall
+// through to `per="count"` alone.
+//
+// Why accept `ml:1`: liquid canonicals (milk, oil, maple syrup) use a
+// millilitre base. For nutrition purposes we approximate 1 ml ≈ 1 g,
+// which is exact for water-based liquids and within ~10% for oils
+// (~0.92 g/ml) and ~30% for dense syrups (honey ~1.42 g/ml).
+// Per-liquid density correction is a future refinement — this keeps
+// the 0→nonzero pipeline working today.
 function isMassLadder(canonical) {
-  return (canonical?.units || []).some(u => MASS_UNIT_IDS.has(u.id));
+  return (canonical?.units || []).some(
+    u => (u.id === "g" || u.id === "ml") && Number(u.toBase) === 1,
+  );
 }
 
 // Parse a free-text amount string into { amount, unit } against a
@@ -205,6 +354,80 @@ export function recipeNutrition(recipe, { pantry = [], brandNutrition, getInfo }
   return {
     total: round(totals),
     perServing: round(perServing),
+    coverage: { resolved, total: ingredients.length },
+  };
+}
+
+// DEBUG: Per-ingredient breakdown of recipeNutrition. Same resolver
+// chain, but returns one row per recipe ingredient annotated with what
+// happened — canonical match, parsed qty, nutrition source, scale
+// factor, macro contribution, and a `reason` when a row didn't
+// contribute. Used by the CookComplete debug screen to expose where
+// calories are being silently dropped. Safe to delete once the
+// dashboard is trusted.
+export function recipeNutritionBreakdown(recipe, { pantry = [], brandNutrition, getInfo } = {}) {
+  const ingredients = recipe?.ingredients || [];
+  const items = [];
+  const totals = { kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, fiber_g: 0, sodium_mg: 0, sugar_g: 0 };
+  let resolved = 0;
+  for (const ing of ingredients) {
+    const row = {
+      name: ing.item || ing.ingredientId || "(unnamed)",
+      canonicalId: ing.ingredientId || null,
+      amount: ing.amount || null,
+      qty: ing.qty || null,
+      parsedQty: null,
+      source: null,
+      brand: null,
+      factor: null,
+      nutrition: null,
+      macros: null,
+      kcal: 0,
+      reason: null,
+    };
+    if (!ing.ingredientId) { row.reason = "no canonical id on recipe ingredient"; items.push(row); continue; }
+    const canon = findIngredient(ing.ingredientId);
+    if (!canon) { row.reason = `canonical "${ing.ingredientId}" not found in registry`; items.push(row); continue; }
+    row.canonical = canon.name;
+    const pantryRow = pantry.find(p => (p.ingredientId || p.canonicalId) === ing.ingredientId)
+      || { ingredientId: ing.ingredientId, brand: null, nutritionOverride: null };
+    const { nutrition, source, brand } = resolveNutrition(pantryRow, { brandNutrition, getInfo });
+    row.source = source;
+    row.brand = brand || null;
+    row.nutrition = nutrition;
+    if (!nutrition) { row.reason = "no nutrition from any resolver tier"; items.push(row); continue; }
+    const parsed = ing.qty || parseAmountString(ing.amount, canon);
+    row.parsedQty = parsed;
+    if (!parsed) { row.reason = `could not parse amount "${ing.amount}"`; items.push(row); continue; }
+    const factor = scaleFactor(parsed, canon, nutrition);
+    row.factor = factor;
+    if (factor == null) {
+      row.reason = `scaleFactor returned null (per="${nutrition.per}", unit="${parsed.unit}")`;
+      items.push(row);
+      continue;
+    }
+    const macros = {};
+    for (const key of Object.keys(totals)) {
+      if (typeof nutrition[key] === "number") {
+        const v = nutrition[key] * factor;
+        macros[key] = v;
+        totals[key] += v;
+      }
+    }
+    row.macros = macros;
+    row.kcal = macros.kcal || 0;
+    resolved++;
+    items.push(row);
+  }
+  const serves = Math.max(1, Number(recipe?.serves) || 1);
+  const perServing = Object.fromEntries(
+    Object.entries(totals).map(([k, v]) => [k, v / serves])
+  );
+  return {
+    items,
+    total: totals,
+    perServing,
+    serves,
     coverage: { resolved, total: ingredients.length },
   };
 }

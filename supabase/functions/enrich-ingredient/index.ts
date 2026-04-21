@@ -53,7 +53,10 @@ const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
 // Haiku 4.5 — fast (~2-5s), cheap, plenty smart for structured JSON synthesis.
 const MODEL = "claude-haiku-4-5-20251001";
-const PROMPT_VERSION = "v2";
+// v3 — nutrition.per is enum-constrained, density moved to per-unit
+// gram fields so the client-side resolver can build a proper unit
+// ladder. See buildPrompt() for the shape contract.
+const PROMPT_VERSION = "v3";
 
 // Slugify a free-text name into a stable per-user key. "Nori from the
 // Japanese store" → "nori_from_the_japanese_store". Collisions within
@@ -113,8 +116,18 @@ omitted when not applicable. Every other field is REQUIRED.
   "aliases": ["common", "alt", "names"], // e.g. ["coriander","chinese parsley"] for cilantro
 
   "nutrition": {
-    "per": "serving size, e.g. '1 oz' or '100g'",
-    "kcal": number,
+    // REQUIRED — "per" must be EXACTLY one of these three literal
+    // strings. The client-side resolver uses this as an enum key; any
+    // other value (including "1 oz", "1 tsp (5g)", "per serving") is
+    // rejected and the nutrition block is dropped on write.
+    //   "100g"    — kcal/protein/etc. are per 100 grams of the ingredient.
+    //   "count"   — nutrition is per one countable unit (1 egg, 1 apple).
+    //   "serving" — per one manufacturer-defined serving. When you pick
+    //               this, you MUST also populate "serving_g" below with
+    //               the gram weight of that serving.
+    "per": "100g" | "count" | "serving",
+    "serving_g": number,                 // REQUIRED when per="serving", otherwise omit
+    "kcal": number,                      // REQUIRED
     "protein_g": number,                 // OPTIONAL
     "fat_g": number,                     // OPTIONAL
     "carb_g": number,                    // OPTIONAL
@@ -122,9 +135,16 @@ omitted when not applicable. Every other field is REQUIRED.
     "sodium_mg": number                  // OPTIONAL
   },
 
-  "density": {                           // OPTIONAL — volume↔weight for pantry math
-    "volume": "1 cup" | "1 tbsp" | etc.,
-    "weight_g": number
+  "density": {                           // REQUIRED for anything measured in tsp/tbsp/cup
+    // Grams per volume unit. Provide whichever of these make sense
+    // (spices/leaveners/extracts need g_per_tsp; flours/oats need
+    // g_per_cup; liquid ingredients can use g_per_tbsp or g_per_cup).
+    // A single key is enough — the client derives the rest (1 tbsp = 3
+    // tsp, 1 cup = 48 tsp). Omit the whole block entirely for count-only
+    // ingredients (eggs, apples) or pre-packaged items (boxes, cans).
+    "g_per_tsp": number,                 // OPTIONAL — e.g. 2.6 for ground cinnamon
+    "g_per_tbsp": number,                // OPTIONAL — e.g. 15 for oils, 20 for honey
+    "g_per_cup": number                  // OPTIONAL — e.g. 120 for flour, 240 for milk
   },
 
   "package": {                           // OPTIONAL — typical grocery packaging
@@ -399,6 +419,29 @@ Deno.serve(async (req) => {
   }
 
   const slug = canonical_id ?? slugify(source_name!);
+
+  // ── Nutrition sanity check (v3) ──
+  // The client-side resolver (src/lib/nutrition.js#scaleFactor) treats
+  // `nutrition.per` as a strict enum: "100g" | "count" | "serving".
+  // Anything else silently returns a null scale factor, which is why
+  // every AI-enriched canonical we shipped before v3 contributed zero
+  // calories to the dashboard. Strip the nutrition block outright
+  // when the shape is wrong — a missing block degrades to "tap to
+  // add" in the UI, which is honest. A malformed block would persist
+  // as usable-looking data that the resolver silently ignored.
+  if (parsed && typeof parsed === "object" && parsed.nutrition && typeof parsed.nutrition === "object") {
+    const n = parsed.nutrition as Record<string, unknown>;
+    const per = n.per;
+    const allowed = per === "100g" || per === "count" || per === "serving";
+    const servingOk = per !== "serving" || typeof n.serving_g === "number";
+    if (!allowed || !servingOk) {
+      console.warn(
+        `[enrich-ingredient] dropping malformed nutrition for ${slug}: ` +
+          `per=${JSON.stringify(per)} serving_g=${JSON.stringify(n.serving_g)}`,
+      );
+      delete parsed.nutrition;
+    }
+  }
 
   // Stamp provenance server-side so the model can't forge `_meta`.
   // `reviewed: true` because enrichments now auto-approve — the

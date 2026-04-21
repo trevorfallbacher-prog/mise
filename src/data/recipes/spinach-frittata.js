@@ -63,6 +63,21 @@ const recipe = {
   ],
 
   tags: ["brunch", "make-ahead", "meatless"],
+
+  reheat: {
+    primary: {
+      method: "cold",
+      tempF: null,
+      timeMin: 0,
+      covered: null,
+      tips: "Room-temp is the move for frittata. Pull it out of the fridge 15 min before eating, slice, done.",
+    },
+    alt: [
+      { method: "oven", tempF: 300, timeMin: 10, covered: true, tips: "Covered with foil, gentle. Anything hotter scrambles the eggs further and toughens them." },
+      { method: "microwave", tempF: null, timeMin: 1, covered: null, tips: "30 sec at 70% power, rest, repeat. Short bursts — sustained microwave ruins eggs." },
+    ],
+    note: null,
+  },
 };
 
 export default recipe;

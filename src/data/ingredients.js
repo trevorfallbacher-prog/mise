@@ -162,6 +162,9 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "count",
     estCentsPerBase: 45, // ~$5.40/dozen
+    // Per one large egg (~50g). Count-based: scaleFactor multiplies by
+    // the number of eggs, which is the natural recipe unit.
+    nutrition: { per: "count", kcal: 72, protein_g: 6, fat_g: 5, carb_g: 0.4, sodium_mg: 71 },
   },
   {
     id: "butter", name: "Unsalted Butter", emoji: "🧈", category: "dairy",
@@ -174,6 +177,7 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "stick",
     estCentsPerBase: 1.5, // ~$6.80/lb
+    nutrition: { per: "100g", kcal: 717, protein_g: 0.9, fat_g: 81, carb_g: 0.1, sodium_mg: 11 },
   },
   {
     id: "milk", name: "Whole Milk", shortName: "Whole",
@@ -295,8 +299,10 @@ export const INGREDIENTS = [
       { id: "cup",   label: "cups grated", toBase: 113 },
       { id: "slice", label: "slices",      toBase: 21 },
       { id: "lb",    label: "lb",          toBase: 453.6 },
+      { id: "g",     label: "g",           toBase: 1 },
     ],
     defaultUnit: "oz",
+    nutrition: { per: "100g", kcal: 404, protein_g: 23, fat_g: 33, carb_g: 1.3, sodium_mg: 621 },
   },
   {
     id: "feta", name: "Feta", shortName: "Feta",
@@ -326,8 +332,10 @@ export const INGREDIENTS = [
       { id: "block", label: "blocks", toBase: 226 }, // 8oz brick
       { id: "tub",   label: "tubs",  toBase: 226 },
       { id: "tbsp",  label: "tbsp",  toBase: 14.5 },
+      { id: "g",     label: "g",     toBase: 1 },
     ],
     defaultUnit: "oz",
+    nutrition: { per: "100g", kcal: 342, protein_g: 6, fat_g: 34, carb_g: 4.1, sodium_mg: 321 },
   },
   {
     id: "brie", name: "Brie", shortName: "Brie",
@@ -450,8 +458,10 @@ export const INGREDIENTS = [
       { id: "cup",   label: "cups",    toBase: 245 },
       { id: "tub",   label: "tubs",    toBase: 907 }, // 32oz tub
       { id: "cup_pk",label: "cups (6oz)", toBase: 170 },
+      { id: "g",     label: "g",       toBase: 1 },
     ],
     defaultUnit: "oz",
+    nutrition: { per: "100g", kcal: 59, protein_g: 3.5, fat_g: 3.3, carb_g: 4.7, sodium_mg: 46 },
   },
   {
     id: "greek_yogurt", name: "Greek Yogurt", shortName: "Greek",
@@ -546,8 +556,11 @@ export const INGREDIENTS = [
       { id: "lb",    label: "lb",      toBase: 453.6 },
       { id: "oz",    label: "oz",      toBase: 28.35 },
       { id: "kg",    label: "kg",      toBase: 1000 },
+      { id: "g",     label: "g",       toBase: 1 },
     ],
     defaultUnit: "count",
+    // Per 100g raw boneless/skinless breast.
+    nutrition: { per: "100g", kcal: 165, protein_g: 31, fat_g: 3.6, carb_g: 0, sodium_mg: 74 },
   },
   {
     id: "chicken_thigh", name: "Chicken Thighs", shortName: "Thighs",
@@ -578,6 +591,43 @@ export const INGREDIENTS = [
       { id: "oz",    label: "oz",    toBase: 28.35 },
     ],
     defaultUnit: "count",
+  },
+  {
+    // Tenderloin is the strip of muscle attached to the underside of
+    // the breast. Sold separately (and named differently — "chicken
+    // tenders") often enough that it earns its own canonical rather
+    // than riding on chicken_breast with a state modifier. Pre-fix,
+    // "tenderloin" lived in MEAT_STATES which conflated cut (anatomy)
+    // with state (preparation); this is the cut half of that split.
+    id: "chicken_tenderloin", name: "Chicken Tenderloins", shortName: "Tenderloins",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    units: [
+      { id: "count", label: "tenders", toBase: 50 }, // typical strip ~50g
+      { id: "lb",    label: "lb",      toBase: 453.6 },
+      { id: "oz",    label: "oz",      toBase: 28.35 },
+      { id: "g",     label: "g",       toBase: 1 },
+    ],
+    defaultUnit: "lb",
+    // Tenderloin has the same macro profile as breast — same muscle
+    // group, just a different cut. USDA figures for raw
+    // boneless/skinless chicken tenderloin.
+    nutrition: { per: "100g", kcal: 119, protein_g: 25, fat_g: 1.3, carb_g: 0, sodium_mg: 58 },
+  },
+  {
+    // Ground chicken — separate canonical because it's a distinct
+    // grocery SKU (ground chicken breast packs vs ground thigh packs
+    // exist, but the generic "ground chicken" is its own product).
+    // Recipes routinely call for it specifically (chicken meatballs,
+    // Thai larb, weeknight skillet dishes).
+    id: "ground_chicken", name: "Ground Chicken", shortName: "Ground",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    units: [
+      { id: "lb", label: "lb", toBase: 453.6 },
+      { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "g",  label: "g",  toBase: 1 },
+    ],
+    defaultUnit: "lb",
+    nutrition: { per: "100g", kcal: 143, protein_g: 17, fat_g: 8, carb_g: 0, sodium_mg: 60 },
   },
   // Beef ───────────────────
   {
@@ -664,8 +714,11 @@ export const INGREDIENTS = [
     units: [
       { id: "lb", label: "lb", toBase: 453.6 },
       { id: "oz", label: "oz", toBase: 28.35 },
+      { id: "g",  label: "g",  toBase: 1 },
     ],
     defaultUnit: "lb",
+    // 80/20 ground beef, raw. Leaner grinds drop kcal ~15% for 90/10.
+    nutrition: { per: "100g", kcal: 254, protein_g: 26, fat_g: 15, carb_g: 0, sodium_mg: 78 },
   },
 
   // Pork ───────────────────
@@ -901,11 +954,15 @@ export const INGREDIENTS = [
       { id: "head",  label: "heads",  toBase: 10 },
     ],
     defaultUnit: "clove",
+    // Per clove (~3g). Tiny amount per recipe but gets counted honestly.
+    nutrition: { per: "count", kcal: 4.5, protein_g: 0.2, fat_g: 0, carb_g: 1, sodium_mg: 0.5 },
   },
   {
     id: "yellow_onion", name: "Yellow Onion", emoji: "🧅", category: "produce",
     units: [{ id: "count", label: "onions", toBase: 1 }],
     defaultUnit: "count",
+    // Per medium onion (~110g).
+    nutrition: { per: "count", kcal: 44, protein_g: 1.2, fat_g: 0.1, carb_g: 10, fiber_g: 1.9, sodium_mg: 4 },
   },
   {
     id: "shallot", name: "Shallot", emoji: "🧅", category: "produce",
@@ -930,6 +987,8 @@ export const INGREDIENTS = [
     id: "carrot", name: "Carrot", emoji: "🥕", category: "produce",
     units: [{ id: "count", label: "carrots", toBase: 1 }],
     defaultUnit: "count",
+    // Per medium carrot (~61g).
+    nutrition: { per: "count", kcal: 25, protein_g: 0.6, fat_g: 0.1, carb_g: 6, fiber_g: 1.7, sodium_mg: 42 },
   },
   {
     id: "tomato", name: "Tomato", emoji: "🍅", category: "produce",
@@ -938,11 +997,15 @@ export const INGREDIENTS = [
       { id: "lb",    label: "lb",       toBase: 4 }, // roughly 4 tomatoes / lb
     ],
     defaultUnit: "count",
+    // Per medium tomato (~123g).
+    nutrition: { per: "count", kcal: 22, protein_g: 1.1, fat_g: 0.2, carb_g: 4.8, fiber_g: 1.5, sodium_mg: 6 },
   },
   {
     id: "lemon", name: "Lemon", emoji: "🍋", category: "produce",
     units: [{ id: "count", label: "lemons", toBase: 1 }],
     defaultUnit: "count",
+    // Per medium lemon (~58g).
+    nutrition: { per: "count", kcal: 17, protein_g: 0.6, fat_g: 0.2, carb_g: 5.4, fiber_g: 1.6, sodium_mg: 1 },
   },
   {
     id: "spinach", name: "Baby Spinach", emoji: "🥬", category: "produce",
@@ -952,6 +1015,7 @@ export const INGREDIENTS = [
       { id: "g",   label: "g",    toBase: 1 },
     ],
     defaultUnit: "cup",
+    nutrition: { per: "100g", kcal: 23, protein_g: 2.9, fat_g: 0.4, carb_g: 3.6, fiber_g: 2.2, sodium_mg: 79 },
   },
   {
     id: "basil", name: "Fresh Basil", emoji: "🌿", category: "produce",
@@ -1033,8 +1097,10 @@ export const INGREDIENTS = [
     units: [
       { id: "head", label: "heads", toBase: 500 },
       { id: "cup",  label: "cups",  toBase: 55 },
+      { id: "g",    label: "g",     toBase: 1 },
     ],
     defaultUnit: "head",
+    nutrition: { per: "100g", kcal: 15, protein_g: 1.4, fat_g: 0.2, carb_g: 2.9, fiber_g: 1.3, sodium_mg: 28 },
   },
   {
     id: "arugula", name: "Arugula", emoji: "🥬", category: "produce",
@@ -1066,6 +1132,10 @@ export const INGREDIENTS = [
       { id: "bag",   label: "bags",   toBase: 9 }, // 3lb bag
     ],
     defaultUnit: "count",
+    // Per one medium apple (~182g). Recipes that say "1 cup chopped
+    // apple" can't convert against a count ladder; recipes keep using
+    // "count" for honest resolution. cup↔count would need density.
+    nutrition: { per: "count", kcal: 95, protein_g: 0.5, fat_g: 0.3, carb_g: 25, fiber_g: 4.4, sodium_mg: 2 },
   },
   {
     id: "banana", name: "Banana", emoji: "🍌", category: "produce",
@@ -1075,6 +1145,7 @@ export const INGREDIENTS = [
       { id: "lb",    label: "lb",      toBase: 3 },
     ],
     defaultUnit: "count",
+    nutrition: { per: "count", kcal: 105, protein_g: 1.3, fat_g: 0.4, carb_g: 27, fiber_g: 3.1, sodium_mg: 1 },
   },
   {
     id: "orange", name: "Orange", emoji: "🍊", category: "produce",
@@ -1089,6 +1160,8 @@ export const INGREDIENTS = [
     id: "lime", name: "Lime", emoji: "🍋", category: "produce",
     units: [{ id: "count", label: "limes", toBase: 1 }],
     defaultUnit: "count",
+    // Per medium lime (~67g).
+    nutrition: { per: "count", kcal: 20, protein_g: 0.5, fat_g: 0.1, carb_g: 7.1, fiber_g: 1.9, sodium_mg: 1 },
   },
   {
     id: "strawberry", name: "Strawberries", emoji: "🍓", category: "produce",
@@ -1140,6 +1213,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    nutrition: { per: "100g", kcal: 364, protein_g: 10, fat_g: 1, carb_g: 76, fiber_g: 2.7, sodium_mg: 2 },
   },
   {
     id: "bread_flour", name: "Bread Flour", shortName: "Bread",
@@ -1151,6 +1225,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    nutrition: { per: "100g", kcal: 361, protein_g: 12, fat_g: 1.7, carb_g: 72, fiber_g: 2.4, sodium_mg: 2 },
   },
   {
     id: "whole_wheat_flour", name: "Whole Wheat Flour", shortName: "Whole Wheat",
@@ -1279,6 +1354,11 @@ export const INGREDIENTS = [
       { id: "ml",   label: "ml",    toBase: 1 },
     ],
     defaultUnit: "tbsp",
+    // Per 100 ml (treated as 100g — olive oil density is ~0.92 g/ml,
+    // so real kcal/ml is slightly lower; the 8% gap is within the
+    // "close enough for home-cook tracking" band we accept for liquid
+    // ingredients that lack per-liquid density correction).
+    nutrition: { per: "100g", kcal: 884, protein_g: 0, fat_g: 100, carb_g: 0, sodium_mg: 2 },
   },
   // Pasta ───────────────────
   {
@@ -1358,6 +1438,9 @@ export const INGREDIENTS = [
       { id: "g",   label: "g",     toBase: 1 },
     ],
     defaultUnit: "box",
+    // Dry pasta (cooked is ~158 kcal/100g) — recipes reference the
+    // dry weight on the box.
+    nutrition: { per: "100g", kcal: 371, protein_g: 13, fat_g: 1.5, carb_g: 75, fiber_g: 3.2, sodium_mg: 6 },
   },
   {
     id: "cavatappi", name: "Cavatappi", shortName: "Cavatappi",
@@ -1500,6 +1583,9 @@ export const INGREDIENTS = [
       { id: "loaf",  label: "loaves", toBase: 20 },
     ],
     defaultUnit: "loaf",
+    // Per slice (~28 g). Count-based because the ladder's base unit
+    // is a slice, not grams — 1 count = 1 slice.
+    nutrition: { per: "count", kcal: 74, protein_g: 2.6, fat_g: 0.9, carb_g: 14, fiber_g: 0.8, sodium_mg: 137 },
   },
   {
     id: "sourdough", name: "Sourdough", shortName: "Sourdough",
@@ -1622,6 +1708,9 @@ export const INGREDIENTS = [
       { id: "g",   label: "g",    toBase: 1 },
     ],
     defaultUnit: "lb",
+    // Per 100g uncooked — cooked rice is ~130 kcal/100g but recipes
+    // universally call for the dry amount so that's our reference.
+    nutrition: { per: "100g", kcal: 365, protein_g: 7.1, fat_g: 0.7, carb_g: 80, fiber_g: 1.3, sodium_mg: 5 },
   },
   {
     id: "brown_rice", name: "Brown Rice", shortName: "Brown",
@@ -1678,8 +1767,10 @@ export const INGREDIENTS = [
       { id: "cup",       label: "cups",       toBase: 80 },
       { id: "container", label: "containers", toBase: 1134 }, // 40oz canister
       { id: "lb",        label: "lb",         toBase: 453.6 },
+      { id: "g",         label: "g",          toBase: 1 },
     ],
     defaultUnit: "container",
+    nutrition: { per: "100g", kcal: 379, protein_g: 13, fat_g: 7, carb_g: 68, fiber_g: 10, sodium_mg: 6 },
   },
   // Beans & legumes ───────────────────
   {
@@ -1767,8 +1858,10 @@ export const INGREDIENTS = [
       { id: "tbsp", label: "tbsp", toBase: 21 },
       { id: "cup",  label: "cups", toBase: 340 },
       { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "g",    label: "g",    toBase: 1 },
     ],
     defaultUnit: "jar",
+    nutrition: { per: "100g", kcal: 304, protein_g: 0.3, fat_g: 0, carb_g: 82, fiber_g: 0.2, sodium_mg: 4 },
   },
   {
     id: "maple_syrup", name: "Maple Syrup", emoji: "🍁", category: "pantry",
@@ -1777,8 +1870,10 @@ export const INGREDIENTS = [
       { id: "tbsp",   label: "tbsp",    toBase: 20 },
       { id: "cup",    label: "cups",    toBase: 322 },
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+      { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "bottle",
+    nutrition: { per: "100g", kcal: 260, protein_g: 0, fat_g: 0.1, carb_g: 67, sodium_mg: 12 },
   },
   {
     id: "coffee", name: "Coffee (whole bean)", emoji: "☕", category: "pantry",
@@ -2042,127 +2137,317 @@ export const INGREDIENTS = [
   // produce and route to the fridge's Fresh Herbs tile. Category is
   // "pantry" so the default-location heuristic doesn't try to stash
   // garlic powder in the fridge.
+  //
+  // ── Unit ladder convention (post-Phase-1 nutrition fix) ──
+  // Every spice ladder's `toBase` is in GRAMS, not teaspoons. That way
+  // `scaleFactor` in src/lib/nutrition.js can apply a `per=100g`
+  // nutrition block with just `baseAmount / 100` regardless of whether
+  // a recipe measured in tsp, tbsp, oz, or grams. The old tsp-as-base
+  // ladder silently returned nonsense for any nutrition calculation
+  // because "1 tsp cinnamon" is ~2.6g, not ~2.6g pretending to be 1g.
+  //
+  // Grams-per-tsp per spice is empirical (USDA + cooking refs). Unlisted
+  // spices fall back to SPICE_DEFAULT_GPT (2.5 g/tsp — the average for
+  // ground spices) so a new entry without a density still yields
+  // plausible numbers rather than zero.
 
-  // ── TIER 1: the absolute basics ──
-  // Every kitchen has these — the "salt pepper garlic" tier plus
-  // the half-dozen spices that power 80% of home cooking.
-  ...[
-    // Salts
-    ["kosher_salt",     "Kosher Salt",            "🧂"],
-    ["sea_salt",        "Sea Salt",               "🧂"],
-    ["table_salt",      "Table Salt",             "🧂"],
-    ["flaky_salt",      "Flaky Salt",             "🧂"],
-    // Peppers
-    ["black_pepper",    "Black Pepper",           "🫚"],
-    ["white_pepper",    "White Pepper",           "⚪"],
-    ["peppercorns",     "Peppercorns",            "⚫"],
-    // Core ground spices
-    ["paprika",         "Paprika",                "🟠"],
-    ["smoked_paprika",  "Smoked Paprika",         "🟠"],
-    ["sweet_paprika",   "Sweet Paprika",          "🟠"],
-    ["cayenne",         "Cayenne Pepper",         "🌶️"],
-    ["chili_powder",    "Chili Powder",           "🌶️"],
-    ["red_pepper_flakes","Red Pepper Flakes",     "🌶️"],
-    ["cumin",           "Cumin",                  "🟤"],
-    ["ground_cumin",    "Ground Cumin",           "🟤"],
-    ["cumin_seed",      "Cumin Seeds",            "🟤"],
-    ["coriander",       "Ground Coriander",       "🟤"],
-    ["ground_coriander","Ground Coriander Seeds", "🟤"],
-    ["cinnamon",        "Cinnamon",               "🟤"],
-    ["ground_cinnamon", "Ground Cinnamon",        "🟤"],
-    ["turmeric",        "Turmeric",               "🟡"],
-    ["oregano",         "Oregano",                "🌿"],
-    ["dried_oregano",   "Dried Oregano",          "🌿"],
-    ["bay_leaves",      "Bay Leaves",             "🍃"],
-  ].map(([id, name, emoji]) => ({
-    id, name, emoji, category: "pantry",
-    units: id === "bay_leaves"
-      ? [{ id: "count", label: "leaves", toBase: 1 }, { id: "pack", label: "packs", toBase: 14 }]
-      : [{ id: "tsp", label: "tsp", toBase: 1 }, { id: "tbsp", label: "tbsp", toBase: 3 }, { id: "oz", label: "oz", toBase: 6 }, { id: "jar", label: "jars", toBase: 12 }],
-    defaultUnit: id === "bay_leaves" ? "pack" : "jar",
-  })),
+  // Empirical density (grams per level teaspoon) for each spice. Drives
+  // the tsp + tbsp toBase values in the factory below. Salts are denser
+  // than ground spices; dried herbs are much lighter (lots of air).
+  // Whole seeds vs ground forms differ — we break those out where the
+  // registry has separate ids.
+  ...(() => {
+    const SPICE_DEFAULT_GPT = 2.5;
+    const SPICE_DENSITY = {
+      // salts (table/sea ~6; kosher is flakier, less dense)
+      kosher_salt: 4.0, sea_salt: 5.9, table_salt: 5.9, flaky_salt: 3.0,
+      smoked_salt: 5.0, truffle_salt: 5.0, celery_salt: 5.0,
+      garlic_salt: 5.5, onion_salt: 5.5, seasoned_salt: 5.8, msg: 5.4,
+      // peppers (whole peppercorns denser than ground)
+      black_pepper: 2.3, white_pepper: 2.4, peppercorns: 3.5,
+      // paprika family + chilis
+      paprika: 2.3, smoked_paprika: 2.3, sweet_paprika: 2.3,
+      cayenne: 1.8, chili_powder: 2.7, red_pepper_flakes: 1.0,
+      // cumin / coriander / cinnamon / turmeric
+      cumin: 2.1, ground_cumin: 2.1, cumin_seed: 2.4,
+      coriander: 1.8, ground_coriander: 1.8,
+      cinnamon: 2.6, ground_cinnamon: 2.6, turmeric: 3.0,
+      // dried herbs (very light — mostly air)
+      oregano: 1.0, dried_oregano: 1.0, dried_thyme: 1.0,
+      dried_rosemary: 1.2, dried_sage: 0.7, dried_basil: 1.4,
+      dried_parsley: 0.3, dried_dill: 1.0, dried_tarragon: 1.8,
+      dried_marjoram: 0.6, dried_chives: 0.7, dried_mint: 0.7,
+      // warm spices / seeds
+      cardamom: 2.0, cloves: 2.1, nutmeg: 2.2, allspice: 1.9,
+      fennel_seed: 2.0, mustard_seed: 3.3, ground_mustard: 2.0,
+      curry_powder: 2.0, garam_masala: 2.5,
+      // onion / garlic powders
+      garlic_powder: 2.8, onion_powder: 2.4, ginger_powder: 1.8,
+      // herb blends
+      italian_seasoning: 1.5, herbs_de_provence: 1.5,
+      // blends & specialty
+      saffron: 0.7, five_spice: 2.3, taco_seasoning: 2.5,
+      ranch_seasoning: 2.0, everything_bagel: 3.0, lemon_pepper: 2.5,
+      cajun_seasoning: 2.5, jerk_seasoning: 2.3, ras_el_hanout: 2.3,
+      berbere: 2.0, dukkah: 3.5, furikake: 2.8, togarashi: 2.3,
+      cream_of_tartar: 3.1, old_bay: 2.3, zaatar: 2.5, sumac: 2.5,
+      // seeds
+      poppy_seed: 2.8, caraway_seed: 2.1, celery_seed: 2.1,
+      white_sesame: 3.0, black_sesame: 3.0, mace: 1.7, fenugreek: 3.7,
+      juniper_berries: 2.0, annatto: 2.5,
+    };
 
-  // ── TIER 2: well-stocked home cook ──
-  ...[
-    ["cardamom",        "Cardamom",               "🟢"],
-    ["cloves",          "Cloves",                 "🟤"],
-    ["nutmeg",          "Nutmeg",                 "🟤"],
-    ["allspice",        "Allspice",               "🟤"],
-    ["star_anise",      "Star Anise",             "⭐"],
-    ["fennel_seed",     "Fennel Seeds",           "🟢"],
-    ["mustard_seed",    "Mustard Seeds",          "🟡"],
-    ["curry_powder",    "Curry Powder",           "🟡"],
-    ["garam_masala",    "Garam Masala",           "🟤"],
-  ].map(([id, name, emoji]) => ({
-    id, name, emoji, category: "pantry",
-    units: (id === "star_anise")
-      ? [{ id: "count", label: "pods", toBase: 1 }, { id: "tsp", label: "tsp", toBase: 2 }, { id: "jar", label: "jars", toBase: 20 }]
-      : [{ id: "tsp", label: "tsp", toBase: 1 }, { id: "tbsp", label: "tbsp", toBase: 3 }, { id: "oz", label: "oz", toBase: 6 }, { id: "jar", label: "jars", toBase: 12 }],
-    defaultUnit: id === "star_anise" ? "jar" : "jar",
-  })),
+    // Per-100g nutrition for each spice. Salts round to 0 kcal (sodium
+    // drives their signal); dried herbs are in the 250-320 range per
+    // 100g but recipes use ≤1 tsp so the contribution to a meal is
+    // negligible — we still seed them so coverage stays honest. USDA
+    // FoodData Central values where available. Spices without an
+    // entry pick up the SPICE_DEFAULT_NUTRITION block below.
+    const SPICE_NUTRITION = {
+      kosher_salt:   { per: "100g", kcal: 0,   sodium_mg: 38400 },
+      sea_salt:      { per: "100g", kcal: 0,   sodium_mg: 38400 },
+      table_salt:    { per: "100g", kcal: 0,   sodium_mg: 38700 },
+      flaky_salt:    { per: "100g", kcal: 0,   sodium_mg: 38400 },
+      smoked_salt:   { per: "100g", kcal: 0,   sodium_mg: 38000 },
+      truffle_salt:  { per: "100g", kcal: 0,   sodium_mg: 38000 },
+      celery_salt:   { per: "100g", kcal: 4,   sodium_mg: 35100 },
+      garlic_salt:   { per: "100g", kcal: 75,  sodium_mg: 27200 },
+      onion_salt:    { per: "100g", kcal: 50,  sodium_mg: 26800 },
+      seasoned_salt: { per: "100g", kcal: 4,   sodium_mg: 33000 },
+      msg:           { per: "100g", kcal: 0,   sodium_mg: 12300 },
+      black_pepper:  { per: "100g", kcal: 251, protein_g: 10, fat_g: 3.3, carb_g: 64, fiber_g: 26 },
+      white_pepper:  { per: "100g", kcal: 296, protein_g: 10, fat_g: 2,   carb_g: 69 },
+      peppercorns:   { per: "100g", kcal: 251, protein_g: 10, fat_g: 3.3, carb_g: 64 },
+      paprika:        { per: "100g", kcal: 282, protein_g: 14, fat_g: 13, carb_g: 54, fiber_g: 35 },
+      smoked_paprika: { per: "100g", kcal: 282, protein_g: 14, fat_g: 13, carb_g: 54, fiber_g: 35 },
+      sweet_paprika:  { per: "100g", kcal: 282, protein_g: 14, fat_g: 13, carb_g: 54, fiber_g: 35 },
+      cayenne:           { per: "100g", kcal: 318, protein_g: 12, fat_g: 17, carb_g: 57, fiber_g: 27 },
+      chili_powder:      { per: "100g", kcal: 282, protein_g: 13, fat_g: 14, carb_g: 50, fiber_g: 34 },
+      red_pepper_flakes: { per: "100g", kcal: 318, protein_g: 12, fat_g: 17, carb_g: 57, fiber_g: 27 },
+      cumin:           { per: "100g", kcal: 375, protein_g: 18, fat_g: 22, carb_g: 44, fiber_g: 11 },
+      ground_cumin:    { per: "100g", kcal: 375, protein_g: 18, fat_g: 22, carb_g: 44, fiber_g: 11 },
+      cumin_seed:      { per: "100g", kcal: 375, protein_g: 18, fat_g: 22, carb_g: 44, fiber_g: 11 },
+      coriander:       { per: "100g", kcal: 298, protein_g: 12, fat_g: 18, carb_g: 55, fiber_g: 42 },
+      ground_coriander:{ per: "100g", kcal: 298, protein_g: 12, fat_g: 18, carb_g: 55, fiber_g: 42 },
+      cinnamon:        { per: "100g", kcal: 247, protein_g: 4,  fat_g: 1.2, carb_g: 81, fiber_g: 53 },
+      ground_cinnamon: { per: "100g", kcal: 247, protein_g: 4,  fat_g: 1.2, carb_g: 81, fiber_g: 53 },
+      turmeric:        { per: "100g", kcal: 312, protein_g: 10, fat_g: 3,   carb_g: 67, fiber_g: 23 },
+      oregano:         { per: "100g", kcal: 265, protein_g: 9,  fat_g: 4,   carb_g: 69, fiber_g: 43 },
+      dried_oregano:   { per: "100g", kcal: 265, protein_g: 9,  fat_g: 4,   carb_g: 69, fiber_g: 43 },
+      bay_leaves:      { per: "100g", kcal: 313, protein_g: 8,  fat_g: 8,   carb_g: 75, fiber_g: 26 },
+      cardamom:     { per: "100g", kcal: 311, protein_g: 11, fat_g: 7,  carb_g: 68, fiber_g: 28 },
+      cloves:       { per: "100g", kcal: 274, protein_g: 6,  fat_g: 13, carb_g: 66, fiber_g: 33 },
+      nutmeg:       { per: "100g", kcal: 525, protein_g: 6,  fat_g: 36, carb_g: 49, fiber_g: 21 },
+      allspice:     { per: "100g", kcal: 263, protein_g: 6,  fat_g: 9,  carb_g: 72, fiber_g: 22 },
+      fennel_seed:  { per: "100g", kcal: 345, protein_g: 16, fat_g: 15, carb_g: 52, fiber_g: 40 },
+      mustard_seed: { per: "100g", kcal: 508, protein_g: 26, fat_g: 36, carb_g: 28, fiber_g: 12 },
+      ground_mustard:{ per: "100g", kcal: 508, protein_g: 26, fat_g: 36, carb_g: 28, fiber_g: 12 },
+      curry_powder: { per: "100g", kcal: 325, protein_g: 14, fat_g: 14, carb_g: 56, fiber_g: 53 },
+      garam_masala: { per: "100g", kcal: 379, protein_g: 13, fat_g: 15, carb_g: 48, fiber_g: 25 },
+      garlic_powder: { per: "100g", kcal: 331, protein_g: 17, fat_g: 0.7, carb_g: 73, fiber_g: 9 },
+      onion_powder:  { per: "100g", kcal: 341, protein_g: 10, fat_g: 1,   carb_g: 79, fiber_g: 15 },
+      ginger_powder: { per: "100g", kcal: 335, protein_g: 9,  fat_g: 4,   carb_g: 72, fiber_g: 14 },
+      italian_seasoning: { per: "100g", kcal: 259, protein_g: 10, fat_g: 10, carb_g: 43, fiber_g: 30 },
+      herbs_de_provence: { per: "100g", kcal: 271, protein_g: 10, fat_g: 8,  carb_g: 49, fiber_g: 31 },
+      dried_thyme:    { per: "100g", kcal: 276, protein_g: 9,  fat_g: 7, carb_g: 64, fiber_g: 37 },
+      dried_rosemary: { per: "100g", kcal: 331, protein_g: 5,  fat_g: 15,carb_g: 64, fiber_g: 43 },
+      dried_sage:     { per: "100g", kcal: 315, protein_g: 11, fat_g: 13,carb_g: 61, fiber_g: 40 },
+      dried_basil:    { per: "100g", kcal: 233, protein_g: 23, fat_g: 4, carb_g: 48, fiber_g: 37 },
+      dried_parsley:  { per: "100g", kcal: 292, protein_g: 26, fat_g: 5, carb_g: 51, fiber_g: 27 },
+      dried_dill:     { per: "100g", kcal: 253, protein_g: 20, fat_g: 4, carb_g: 56, fiber_g: 12 },
+      dried_tarragon: { per: "100g", kcal: 295, protein_g: 23, fat_g: 7, carb_g: 50, fiber_g: 7 },
+      dried_chives:   { per: "100g", kcal: 311, protein_g: 21, fat_g: 10,carb_g: 44, fiber_g: 27 },
+      dried_mint:     { per: "100g", kcal: 285, protein_g: 20, fat_g: 6, carb_g: 52, fiber_g: 30 },
+      white_sesame:  { per: "100g", kcal: 573, protein_g: 18, fat_g: 50, carb_g: 23, fiber_g: 12 },
+      black_sesame:  { per: "100g", kcal: 573, protein_g: 18, fat_g: 50, carb_g: 23, fiber_g: 12 },
+      poppy_seed:    { per: "100g", kcal: 525, protein_g: 18, fat_g: 42, carb_g: 28, fiber_g: 20 },
+      caraway_seed:  { per: "100g", kcal: 333, protein_g: 20, fat_g: 15, carb_g: 50, fiber_g: 38 },
+      celery_seed:   { per: "100g", kcal: 392, protein_g: 18, fat_g: 25, carb_g: 41, fiber_g: 12 },
+      fenugreek:     { per: "100g", kcal: 323, protein_g: 23, fat_g: 6,  carb_g: 58, fiber_g: 25 },
+      saffron:         { per: "100g", kcal: 310, protein_g: 11, fat_g: 6, carb_g: 65, fiber_g: 4 },
+      five_spice:      { per: "100g", kcal: 344, protein_g: 8,  fat_g: 11,carb_g: 61 },
+      taco_seasoning:  { per: "100g", kcal: 252, protein_g: 9,  fat_g: 3, carb_g: 52, sodium_mg: 14200 },
+      ranch_seasoning: { per: "100g", kcal: 440, protein_g: 7,  fat_g: 26,carb_g: 47, sodium_mg: 9800 },
+      everything_bagel:{ per: "100g", kcal: 360, protein_g: 14, fat_g: 19,carb_g: 34, sodium_mg: 8900 },
+      lemon_pepper:    { per: "100g", kcal: 190, protein_g: 7,  fat_g: 2, carb_g: 42, sodium_mg: 11600 },
+      cajun_seasoning: { per: "100g", kcal: 265, protein_g: 10, fat_g: 9, carb_g: 45, sodium_mg: 9000 },
+      jerk_seasoning:  { per: "100g", kcal: 265, protein_g: 9,  fat_g: 7, carb_g: 48, sodium_mg: 7500 },
+      ras_el_hanout:   { per: "100g", kcal: 292, protein_g: 13, fat_g: 11,carb_g: 46, fiber_g: 23 },
+      berbere:         { per: "100g", kcal: 310, protein_g: 13, fat_g: 13,carb_g: 50, fiber_g: 30 },
+      dukkah:          { per: "100g", kcal: 480, protein_g: 18, fat_g: 36,carb_g: 23, fiber_g: 12 },
+      furikake:        { per: "100g", kcal: 367, protein_g: 15, fat_g: 10,carb_g: 51, sodium_mg: 3800 },
+      togarashi:       { per: "100g", kcal: 342, protein_g: 12, fat_g: 13,carb_g: 48, sodium_mg: 850 },
+      cream_of_tartar: { per: "100g", kcal: 258, protein_g: 0,  fat_g: 0, carb_g: 62, sodium_mg: 52 },
+      old_bay:         { per: "100g", kcal: 194, protein_g: 7,  fat_g: 4, carb_g: 35, sodium_mg: 18500 },
+      zaatar:          { per: "100g", kcal: 315, protein_g: 9,  fat_g: 13,carb_g: 45, fiber_g: 22 },
+      sumac:           { per: "100g", kcal: 320, protein_g: 7,  fat_g: 11,carb_g: 65, fiber_g: 18 },
+      mace:            { per: "100g", kcal: 475, protein_g: 7,  fat_g: 33,carb_g: 50, fiber_g: 20 },
+      juniper_berries: { per: "100g", kcal: 314, protein_g: 2,  fat_g: 2, carb_g: 81, fiber_g: 10 },
+      annatto:         { per: "100g", kcal: 380, protein_g: 13, fat_g: 3, carb_g: 68, fiber_g: 44 },
+      dried_marjoram:  { per: "100g", kcal: 271, protein_g: 13, fat_g: 7, carb_g: 60, fiber_g: 40 },
+    };
+    // Fallback for spices not individually listed — a mid-range ground-
+    // spice profile. Close enough to keep the dashboard honest without
+    // claiming knowledge we don't have.
+    const SPICE_DEFAULT_NUTRITION = { per: "100g", kcal: 300, protein_g: 10, fat_g: 10, carb_g: 55, fiber_g: 25 };
 
-  // ── TIER 3: powders, dried herbs, seasoning salts, seeds, blends ──
-  // (garlic_powder, onion_powder, dried_thyme, italian_seasoning, etc.)
-  ...[
-    ["garlic_powder",       "Garlic Powder",          "🧄"],
-    ["onion_powder",        "Onion Powder",           "🧅"],
-    ["ginger_powder",       "Ground Ginger",          "🫚"],
-    ["italian_seasoning",   "Italian Seasoning",      "🌿"],
-    ["herbs_de_provence",   "Herbes de Provence",     "🌿"],
-    ["dried_thyme",         "Dried Thyme",            "🌿"],
-    ["dried_rosemary",      "Dried Rosemary",         "🌿"],
-    ["dried_sage",          "Dried Sage",             "🌿"],
-    ["dried_basil",         "Dried Basil",            "🌿"],
-    ["dried_parsley",       "Dried Parsley",          "🌿"],
-    ["dried_dill",          "Dried Dill",             "🌿"],
-    ["dried_tarragon",      "Dried Tarragon",         "🌿"],
-    ["dried_marjoram",      "Dried Marjoram",         "🌿"],
-    ["celery_salt",         "Celery Salt",            "🧂"],
-    ["garlic_salt",         "Garlic Salt",            "🧂"],
-    ["onion_salt",          "Onion Salt",             "🧂"],
-    ["seasoned_salt",       "Seasoned Salt",          "🧂"],
-    ["msg",                 "MSG",                    "🧂"],
-    ["saffron",             "Saffron",                "🌸"],
-    ["five_spice",          "Chinese Five Spice",     "🧂"],
-    ["taco_seasoning",      "Taco Seasoning",         "🌮"],
-    ["ranch_seasoning",     "Ranch Seasoning",        "🥗"],
-    ["everything_bagel",    "Everything Bagel Seasoning","🥯"],
-    ["lemon_pepper",        "Lemon Pepper",           "🍋"],
-    ["cajun_seasoning",     "Cajun Seasoning",        "🌶️"],
-    ["jerk_seasoning",      "Jerk Seasoning",         "🌶️"],
-    ["ras_el_hanout",       "Ras el Hanout",          "🧂"],
-    ["berbere",             "Berbere",                "🌶️"],
-    ["dukkah",              "Dukkah",                 "🥜"],
-    ["furikake",            "Furikake",               "🍚"],
-    ["togarashi",           "Shichimi Togarashi",     "🌶️"],
-    ["ground_mustard",      "Ground Mustard",         "🟡"],
-    ["cream_of_tartar",     "Cream of Tartar",        "🧂"],
-    ["poppy_seed",          "Poppy Seeds",            "🌸"],
-    ["caraway_seed",        "Caraway Seeds",          "🧂"],
-    ["celery_seed",         "Celery Seed",            "🧂"],
-    ["dried_chives",        "Dried Chives",           "🌿"],
-    ["dried_mint",          "Dried Mint",             "🌿"],
-    ["white_sesame",        "White Sesame Seeds",     "🫘"],
-    ["black_sesame",        "Black Sesame Seeds",     "🫘"],
-    ["mace",                "Mace",                   "🧂"],
-    ["fenugreek",           "Fenugreek",              "🧂"],
-    ["juniper_berries",     "Juniper Berries",        "🫐"],
-    ["annatto",             "Annatto Seeds",          "🟠"],
-    ["smoked_salt",         "Smoked Salt",            "🧂"],
-    ["truffle_salt",        "Truffle Salt",           "🧂"],
-    ["old_bay",             "Old Bay Seasoning",      "🦀"],
-    ["zaatar",              "Za'atar",                "🌿"],
-    ["sumac",               "Sumac",                  "🟣"],
-  ].map(([id, name, emoji]) => ({
-    id, name, emoji, category: "pantry",
-    units: [
-      { id: "tsp",  label: "tsp",  toBase: 1 },
-      { id: "tbsp", label: "tbsp", toBase: 3 },
-      { id: "oz",   label: "oz",   toBase: 6 },
-      { id: "jar",  label: "jars", toBase: 12 },
-    ],
-    defaultUnit: "jar",
-  })),
+    // Standard factory — all grams-based. Every spice gets the same
+    // five-unit ladder so pantry / recipe conversion is uniform. A
+    // typical spice jar is ~2 oz (57 g) across brands; we standardize
+    // to that rather than pretending saffron and paprika share a jar
+    // size (saffron is sold in 0.5g pinches; treat that as a manual
+    // override if it matters — for now "1 jar" ≈ 2 oz is close enough).
+    const standardSpice = (id, name, emoji) => {
+      const gpt = SPICE_DENSITY[id] ?? SPICE_DEFAULT_GPT;
+      return {
+        id, name, emoji, category: "pantry",
+        units: [
+          { id: "tsp",  label: "tsp",  toBase: gpt },
+          { id: "tbsp", label: "tbsp", toBase: gpt * 3 },
+          { id: "oz",   label: "oz",   toBase: 28.35 },
+          { id: "jar",  label: "jars", toBase: 57 },
+          { id: "g",    label: "g",    toBase: 1 },
+        ],
+        defaultUnit: "jar",
+        nutrition: SPICE_NUTRITION[id] ?? SPICE_DEFAULT_NUTRITION,
+      };
+    };
+
+    return [
+      // ── TIER 1: the absolute basics ──
+      // Every kitchen has these — the "salt pepper garlic" tier plus
+      // the half-dozen spices that power 80% of home cooking.
+      ...[
+        // Salts
+        ["kosher_salt",     "Kosher Salt",            "🧂"],
+        ["sea_salt",        "Sea Salt",               "🧂"],
+        ["table_salt",      "Table Salt",             "🧂"],
+        ["flaky_salt",      "Flaky Salt",             "🧂"],
+        // Peppers
+        ["black_pepper",    "Black Pepper",           "🫚"],
+        ["white_pepper",    "White Pepper",           "⚪"],
+        ["peppercorns",     "Peppercorns",            "⚫"],
+        // Core ground spices
+        ["paprika",         "Paprika",                "🟠"],
+        ["smoked_paprika",  "Smoked Paprika",         "🟠"],
+        ["sweet_paprika",   "Sweet Paprika",          "🟠"],
+        ["cayenne",         "Cayenne Pepper",         "🌶️"],
+        ["chili_powder",    "Chili Powder",           "🌶️"],
+        ["red_pepper_flakes","Red Pepper Flakes",     "🌶️"],
+        ["cumin",           "Cumin",                  "🟤"],
+        ["ground_cumin",    "Ground Cumin",           "🟤"],
+        ["cumin_seed",      "Cumin Seeds",            "🟤"],
+        ["coriander",       "Ground Coriander",       "🟤"],
+        ["ground_coriander","Ground Coriander Seeds", "🟤"],
+        ["cinnamon",        "Cinnamon",               "🟤"],
+        ["ground_cinnamon", "Ground Cinnamon",        "🟤"],
+        ["turmeric",        "Turmeric",               "🟡"],
+        ["oregano",         "Oregano",                "🌿"],
+        ["dried_oregano",   "Dried Oregano",          "🌿"],
+        ["bay_leaves",      "Bay Leaves",             "🍃"],
+      ].map(([id, name, emoji]) => {
+        if (id === "bay_leaves") {
+          // Count-based — each dried leaf ~0.06 g; a pack is ~14 g (½ oz).
+          return {
+            id, name, emoji, category: "pantry",
+            units: [
+              { id: "count", label: "leaves", toBase: 0.06 },
+              { id: "pack",  label: "packs",  toBase: 14 },
+              { id: "g",     label: "g",      toBase: 1 },
+            ],
+            defaultUnit: "pack",
+            nutrition: SPICE_NUTRITION.bay_leaves,
+          };
+        }
+        return standardSpice(id, name, emoji);
+      }),
+
+      // ── TIER 2: well-stocked home cook ──
+      ...[
+        ["cardamom",        "Cardamom",               "🟢"],
+        ["cloves",          "Cloves",                 "🟤"],
+        ["nutmeg",          "Nutmeg",                 "🟤"],
+        ["allspice",        "Allspice",               "🟤"],
+        ["star_anise",      "Star Anise",             "⭐"],
+        ["fennel_seed",     "Fennel Seeds",           "🟢"],
+        ["mustard_seed",    "Mustard Seeds",          "🟡"],
+        ["curry_powder",    "Curry Powder",           "🟡"],
+        ["garam_masala",    "Garam Masala",           "🟤"],
+      ].map(([id, name, emoji]) => {
+        if (id === "star_anise") {
+          // Count-based — each pod ~1.5 g; tsp (crushed) ~2 g; jar ~14 g.
+          return {
+            id, name, emoji, category: "pantry",
+            units: [
+              { id: "count", label: "pods", toBase: 1.5 },
+              { id: "tsp",   label: "tsp",  toBase: 2.0 },
+              { id: "jar",   label: "jars", toBase: 14 },
+              { id: "g",     label: "g",    toBase: 1 },
+            ],
+            defaultUnit: "jar",
+            // Star anise has a strong flavor but tiny amounts — per-
+            // 100g kcal is comparable to other whole spices.
+            nutrition: { per: "100g", kcal: 337, protein_g: 18, fat_g: 16, carb_g: 50, fiber_g: 15 },
+          };
+        }
+        return standardSpice(id, name, emoji);
+      }),
+
+      // ── TIER 3: powders, dried herbs, seasoning salts, seeds, blends ──
+      // (garlic_powder, onion_powder, dried_thyme, italian_seasoning, etc.)
+      ...[
+        ["garlic_powder",       "Garlic Powder",          "🧄"],
+        ["onion_powder",        "Onion Powder",           "🧅"],
+        ["ginger_powder",       "Ground Ginger",          "🫚"],
+        ["italian_seasoning",   "Italian Seasoning",      "🌿"],
+        ["herbs_de_provence",   "Herbes de Provence",     "🌿"],
+        ["dried_thyme",         "Dried Thyme",            "🌿"],
+        ["dried_rosemary",      "Dried Rosemary",         "🌿"],
+        ["dried_sage",          "Dried Sage",             "🌿"],
+        ["dried_basil",         "Dried Basil",            "🌿"],
+        ["dried_parsley",       "Dried Parsley",          "🌿"],
+        ["dried_dill",          "Dried Dill",             "🌿"],
+        ["dried_tarragon",      "Dried Tarragon",         "🌿"],
+        ["dried_marjoram",      "Dried Marjoram",         "🌿"],
+        ["celery_salt",         "Celery Salt",            "🧂"],
+        ["garlic_salt",         "Garlic Salt",            "🧂"],
+        ["onion_salt",          "Onion Salt",             "🧂"],
+        ["seasoned_salt",       "Seasoned Salt",          "🧂"],
+        ["msg",                 "MSG",                    "🧂"],
+        ["saffron",             "Saffron",                "🌸"],
+        ["five_spice",          "Chinese Five Spice",     "🧂"],
+        ["taco_seasoning",      "Taco Seasoning",         "🌮"],
+        ["ranch_seasoning",     "Ranch Seasoning",        "🥗"],
+        ["everything_bagel",    "Everything Bagel Seasoning","🥯"],
+        ["lemon_pepper",        "Lemon Pepper",           "🍋"],
+        ["cajun_seasoning",     "Cajun Seasoning",        "🌶️"],
+        ["jerk_seasoning",      "Jerk Seasoning",         "🌶️"],
+        ["ras_el_hanout",       "Ras el Hanout",          "🧂"],
+        ["berbere",             "Berbere",                "🌶️"],
+        ["dukkah",              "Dukkah",                 "🥜"],
+        ["furikake",            "Furikake",               "🍚"],
+        ["togarashi",           "Shichimi Togarashi",     "🌶️"],
+        ["ground_mustard",      "Ground Mustard",         "🟡"],
+        ["cream_of_tartar",     "Cream of Tartar",        "🧂"],
+        ["poppy_seed",          "Poppy Seeds",            "🌸"],
+        ["caraway_seed",        "Caraway Seeds",          "🧂"],
+        ["celery_seed",         "Celery Seed",            "🧂"],
+        ["dried_chives",        "Dried Chives",           "🌿"],
+        ["dried_mint",          "Dried Mint",             "🌿"],
+        ["white_sesame",        "White Sesame Seeds",     "🫘"],
+        ["black_sesame",        "Black Sesame Seeds",     "🫘"],
+        ["mace",                "Mace",                   "🧂"],
+        ["fenugreek",           "Fenugreek",              "🧂"],
+        ["juniper_berries",     "Juniper Berries",        "🫐"],
+        ["annatto",             "Annatto Seeds",          "🟠"],
+        ["smoked_salt",         "Smoked Salt",            "🧂"],
+        ["truffle_salt",        "Truffle Salt",           "🧂"],
+        ["old_bay",             "Old Bay Seasoning",      "🦀"],
+        ["zaatar",              "Za'atar",                "🌿"],
+        ["sumac",               "Sumac",                  "🟣"],
+      ].map(([id, name, emoji]) => standardSpice(id, name, emoji)),
+    ];
+  })(),
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2290,6 +2575,49 @@ function syntheticFromInfo(slug, info) {
     : "";
   const name = displayOverride ||
     slug.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+
+  // Build a gram-based unit ladder from whatever density metadata the
+  // AI enrichment provided. `g` is always the base (toBase=1) so
+  // `scaleFactor` in src/lib/nutrition.js can apply `per=100g`
+  // nutrition without a special case. Pre-Phase-1 synthetics had a
+  // permissive [unit, oz, g] ladder with every toBase=1, which
+  // silently broke every tsp/tbsp/cup-unit recipe amount by failing
+  // to parse the unit at all.
+  //
+  // Density shape the AI prompt produces (v3+):
+  //   info.density = { g_per_tsp?, g_per_tbsp?, g_per_cup?, volume?, weight_g? }
+  // `volume`/`weight_g` is the old legacy pair — we translate it to
+  // the per-unit keys when present.
+  const d = (info && typeof info.density === "object") ? info.density : {};
+  let gPerTsp  = typeof d.g_per_tsp  === "number" ? d.g_per_tsp  : null;
+  let gPerTbsp = typeof d.g_per_tbsp === "number" ? d.g_per_tbsp : null;
+  let gPerCup  = typeof d.g_per_cup  === "number" ? d.g_per_cup  : null;
+  // Legacy { volume: "1 cup"|"1 tbsp"|"1 tsp", weight_g: N } → modern keys.
+  if (typeof d.weight_g === "number" && typeof d.volume === "string") {
+    const v = d.volume.toLowerCase();
+    if (/tsp|teaspoon/.test(v)  && gPerTsp  == null) gPerTsp  = d.weight_g;
+    if (/tbsp|tablespoon/.test(v) && gPerTbsp == null) gPerTbsp = d.weight_g;
+    if (/cup/.test(v)             && gPerCup  == null) gPerCup  = d.weight_g;
+  }
+  // Fill derivable gaps: 1 tbsp = 3 tsp, 1 cup = 48 tsp.
+  if (gPerTsp  == null && gPerTbsp != null) gPerTsp  = gPerTbsp / 3;
+  if (gPerTsp  == null && gPerCup  != null) gPerTsp  = gPerCup / 48;
+  if (gPerTbsp == null && gPerTsp  != null) gPerTbsp = gPerTsp * 3;
+  if (gPerCup  == null && gPerTbsp != null) gPerCup  = gPerTbsp * 16;
+
+  const units = [
+    { id: "g",    label: "g",    toBase: 1 },
+    { id: "oz",   label: "oz",   toBase: 28.35 },
+  ];
+  if (gPerTsp  != null) units.push({ id: "tsp",  label: "tsp",  toBase: gPerTsp });
+  if (gPerTbsp != null) units.push({ id: "tbsp", label: "tbsp", toBase: gPerTbsp });
+  if (gPerCup  != null) units.push({ id: "cup",  label: "cups", toBase: gPerCup });
+  // `unit` is a permissive fallback so a pantry row stored with the
+  // legacy `unit:"unit"` shape still parses. toBase=1 = 1 gram each —
+  // effectively a no-op for nutrition since the UI normally never
+  // writes this unit.
+  units.push({ id: "unit", label: "unit", toBase: 1 });
+
   return {
     id: slug,
     name,
@@ -2297,14 +2625,8 @@ function syntheticFromInfo(slug, info) {
     emoji: (info && info.emoji) || "✨",
     category: (info && info.category) || "user",
     parentId: undefined,
-    // Permissive unit list so toBase / unitLabel can't blow up on a
-    // user-canonical row that somehow received a quantity. Admin can
-    // refine this when they curate.
-    units: [
-      { id: "unit", label: "unit", toBase: 1 },
-      { id: "oz",   label: "oz",   toBase: 1 },
-      { id: "g",    label: "g",    toBase: 1 },
-    ],
+    units,
+    defaultUnit: gPerTsp != null ? "tsp" : "oz",
   };
 }
 
@@ -2373,6 +2695,34 @@ export function findIngredient(id) {
   const bundled = byId.get(id);
   if (bundled) return bundled;
   return dbCanonicals.get(id) || null;
+}
+
+/**
+ * Return every canonical that shares a parent hub with `id` —
+ * including `id` itself. Used by the ItemCard CUT picker so the user
+ * can swap between siblings of the same hub (chicken_breast ↔
+ * chicken_thigh ↔ chicken_tenderloin, etc.) without retyping the
+ * item from scratch. Sort is registry order so the picker reads
+ * top-to-bottom the way the file was authored.
+ *
+ * Returns [] when the canonical has no parentId (a hub itself, or a
+ * standalone ingredient like "flour"). Callers render the picker
+ * only when the list has ≥2 entries — a single-sibling hub has no
+ * cuts to switch between.
+ */
+export function siblingsInHub(id) {
+  const self = findIngredient(id);
+  if (!self) return [];
+  const hubId = self.parentId;
+  if (!hubId) return [];
+  const out = [];
+  for (const ing of INGREDIENTS) {
+    if (ing.parentId === hubId) out.push(ing);
+  }
+  for (const ing of dbCanonicals.values()) {
+    if (ing.parentId === hubId) out.push(ing);
+  }
+  return out;
 }
 
 /**
@@ -2618,6 +2968,143 @@ export function inferCanonicalFromName(name) {
     }
   }
   return bestId;
+}
+
+// Common freshness / prep / form modifiers the AI tends to prepend
+// to canonical-looking slugs ("fresh_tortillas", "canned_tomatoes",
+// "ground_cinnamon" when it means "cinnamon"). Stripped one at a
+// time from the leading position when a direct lookup misses, so
+// the coercer falls back to the underlying canonical rather than
+// silently dropping the reference. Order doesn't matter — the
+// coerce pass tries each prefix independently.
+const AI_MODIFIER_PREFIXES = [
+  "fresh", "dried", "dry", "canned", "jarred", "pickled",
+  "raw", "frozen", "cooked", "leftover",
+  "grilled", "roasted", "boiled", "steamed", "sauteed", "seared",
+  "pan_fried", "deep_fried", "baked",
+  "whole", "halved", "quartered",
+  "diced", "minced", "chopped", "sliced", "julienned",
+  "grated", "shredded", "crumbled",
+  "powdered", "ground",
+  "organic", "local",
+];
+
+/**
+ * Coerce a free-text or slug-ish ingredient reference into a known
+ * canonical id. Built to be robust against the ways AI-generated
+ * recipes drift from our registry:
+ *
+ *   "Tortillas"            → "tortillas"  (case)
+ *   "tortilla-wraps"       → null         (unless registered)
+ *   "fresh_tortillas"      → "tortillas"  (modifier strip)
+ *   "fresh tortillas"      → "tortillas"  (space→underscore, modifier strip)
+ *   "corn_tortillas"       → "tortillas"  (plural + lead-word strip)
+ *   "Ground Cinnamon"      → "ground_cinnamon" (direct hit — we have that slug)
+ *   "heirloom tomatoes"    → "tomato"     (infer-by-name on stripped form)
+ *   "pepperoni"            → db-canonical if admin-minted, else null
+ *
+ * Returns the canonical id when resolvable, or null when the input
+ * truly doesn't match. Never persists a non-canonical string as if
+ * it were a canonical — callers should drop the field on null
+ * rather than storing the raw AI guess.
+ */
+export function coerceToCanonicalId(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  // Strip surrounding noise → lowercase → spaces/hyphens become
+  // underscores → drop anything outside [a-z0-9_] → trim underscores.
+  const norm = raw.toLowerCase().trim()
+    .replace(/[\s\-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/^_+|_+$/g, "");
+  if (!norm) return null;
+
+  const direct = (id) => (byId.has(id) || dbCanonicals.has(id)) ? id : null;
+  const viaAlias = (id) => {
+    const alias = CANONICAL_ALIASES[id];
+    return (alias?.base && byId.has(alias.base)) ? alias.base : null;
+  };
+
+  // 1. Direct hit — most AI outputs land here when the prompt is
+  //    well-behaved and the model echoes pantry ids verbatim.
+  if (direct(norm)) return norm;
+  if (viaAlias(norm)) return viaAlias(norm);
+
+  // 2. Plural nudge. "tortilla" → "tortillas" and vice versa.
+  if (norm.endsWith("s")) {
+    const sing = norm.slice(0, -1);
+    if (direct(sing)) return sing;
+    if (viaAlias(sing)) return viaAlias(sing);
+  } else {
+    const plur = norm + "s";
+    if (direct(plur)) return plur;
+    if (viaAlias(plur)) return viaAlias(plur);
+  }
+
+  // 3. Strip lead modifier and retry (direct + plural nudge + alias).
+  //    "fresh_tortillas" → "tortillas" (plural direct hit).
+  //    "canned_tomato"   → "tomatoes" → "tomato" (plural nudge lands).
+  for (const mod of AI_MODIFIER_PREFIXES) {
+    const prefix = mod + "_";
+    if (!norm.startsWith(prefix)) continue;
+    const stripped = norm.slice(prefix.length);
+    if (!stripped) continue;
+    if (direct(stripped)) return stripped;
+    if (viaAlias(stripped)) return viaAlias(stripped);
+    if (stripped.endsWith("s")) {
+      const sing = stripped.slice(0, -1);
+      if (direct(sing)) return sing;
+      if (viaAlias(sing)) return viaAlias(sing);
+    } else {
+      const plur = stripped + "s";
+      if (direct(plur)) return plur;
+      if (viaAlias(plur)) return viaAlias(plur);
+    }
+  }
+
+  // 4. Last resort — treat the normalized string as prose and run the
+  //    full name-inference pass. Handles descriptors we haven't
+  //    enumerated as modifiers ("heirloom tomatoes" → tomato) via
+  //    longest-alias match across the whole registry.
+  const inferred = inferCanonicalFromName(norm.replace(/_/g, " "));
+  if (inferred) return inferred;
+
+  return null;
+}
+
+/**
+ * Walk every ingredient reference in a recipe object and rewrite
+ * `ingredientId` through `coerceToCanonicalId`. Unresolved ids get
+ * set to null — we never persist an AI hallucination as if it were
+ * a canonical. Returns a new recipe object; input is not mutated.
+ *
+ * Covers:
+ *   - recipe.ingredients[]  (canonical list)
+ *   - recipe.steps[].uses[] (per-step measurement subset)
+ *   - recipe.ideal[]        (sketch mode IDEAL column)
+ *   - recipe.pantry[]       (sketch mode PANTRY column)
+ */
+export function coerceRecipeCanonicalIds(recipe) {
+  if (!recipe || typeof recipe !== "object") return recipe;
+  const coerceRow = (row) => {
+    if (!row || typeof row !== "object") return row;
+    if (row.ingredientId === undefined && row.id === undefined) return row;
+    // Prefer ingredientId; some sketch shapes use `id` instead.
+    const raw = row.ingredientId ?? row.id ?? null;
+    const coerced = coerceToCanonicalId(raw);
+    return { ...row, ingredientId: coerced };
+  };
+  const next = { ...recipe };
+  if (Array.isArray(recipe.ingredients)) next.ingredients = recipe.ingredients.map(coerceRow);
+  if (Array.isArray(recipe.ideal))       next.ideal       = recipe.ideal.map(coerceRow);
+  if (Array.isArray(recipe.pantry))      next.pantry      = recipe.pantry.map(coerceRow);
+  if (Array.isArray(recipe.steps)) {
+    next.steps = recipe.steps.map(step => {
+      if (!step || typeof step !== "object") return step;
+      if (!Array.isArray(step.uses)) return step;
+      return { ...step, uses: step.uses.map(coerceRow) };
+    });
+  }
+  return next;
 }
 
 export function unitLabel(ingredient, unitId) {

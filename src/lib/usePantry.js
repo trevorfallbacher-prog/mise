@@ -111,6 +111,14 @@ function fromDb(row) {
   // / 'PROTEIN'. Rendered as pills by AttributePillsRow. Without
   // the mapping these vanish on persist and the pills go blank.
   if (row.attributes         !== undefined) item.attributes        = row.attributes || null;
+  // nutrition_override (migration 0065) — tier-1 of the nutrition
+  // resolver. When populated, wins over brand/canonical/bundled so
+  // the user can hand-correct macros for a specific jar when AI
+  // enrichment fails or a brand's label doesn't match the generic
+  // canonical. Defensively mapped like attributes — `undefined`
+  // from the DB = column not present = toDb skips the field so
+  // pre-0065 environments don't 400.
+  if (row.nutrition_override !== undefined) item.nutritionOverride = row.nutrition_override || null;
   // protected (migration 0044) — sentimental / keepsake rows that
   // shouldn't be ✕-deletable. DB enforces via the delete policy;
   // this mapping just lets the UI know so it can hide the delete
@@ -196,6 +204,7 @@ function toDb(item) {
     ...(item.brand             !== undefined ? { brand: item.brand || null } : {}),
     ...(item.barcodeUpc        !== undefined ? { barcode_upc: item.barcodeUpc || null } : {}),
     ...(item.attributes        !== undefined ? { attributes: item.attributes || null } : {}),
+    ...(item.nutritionOverride !== undefined ? { nutrition_override: item.nutritionOverride || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
     // Packaging + reserves (migration 0054). Passthrough only when the
     // caller set them — older code paths that don't know about

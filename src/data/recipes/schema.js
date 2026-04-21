@@ -43,6 +43,30 @@
 //               leadTime format: "T-2h", "T-30m", "T-1d"
 //   tags:       string[]
 //
+//   // Leftover reheat instructions. Optional; absent when the dish
+//   // is eaten fresh only (vinaigrettes, aiolis, anything raw) or
+//   // when we simply haven't authored it yet. The leftover pantry
+//   // row carries sourceRecipeSlug, so the I-ate-this sheet can
+//   // look up reheat from the recipe on-demand rather than stamping
+//   // it onto the meal row — single source of truth, improvements
+//   // to the recipe flow through to existing leftovers automatically.
+//   reheat?:    {
+//     primary: {
+//       method:   "oven" | "microwave" | "stovetop" | "air_fryer" |
+//                 "toaster_oven" | "cold",
+//       tempF:    number | null,   // null for microwave / cold
+//       timeMin:  number,           // single number of minutes
+//       covered:  boolean | null,   // null when not applicable
+//       tips:     "1-2 sentence specifics",
+//     },
+//     // 0-2 alternative methods for cooks who don't have the
+//     // primary gear (no oven → microwave fallback, etc.)
+//     alt?:     Array<{method, tempF, timeMin, covered, tips}>,
+//     // Optional quality / safety caveat ("eggs scramble if rushed",
+//     // "dairy-based sauces break on microwave — stovetop only").
+//     note?:    string | null,
+//   }
+//
 //   // Phase-1 compound-ingredient support. Optional; when absent, the
 //   // recipe implicitly produces a meal (finished dish, eaten fresh).
 //   produces?:  {
@@ -56,3 +80,24 @@
 //
 // Helpers below keep timer expressions readable (m(3) = 180s).
 export const m = (min) => min * 60;
+
+// Compact reheat summary for UI chips and sheet headers.
+//   "Oven 350°F · 20 min · covered"
+//   "Microwave · 3 min"
+//   "Stovetop · 5 min · uncovered"
+// Returns null when the recipe has no reheat block, so callers can
+// easily guard with ternary or && short-circuit.
+export function formatReheatSummary(reheatBlock) {
+  const b = reheatBlock?.primary || reheatBlock;
+  if (!b?.method) return null;
+  const labels = {
+    oven: "Oven", microwave: "Microwave", stovetop: "Stovetop",
+    air_fryer: "Air fryer", toaster_oven: "Toaster oven", cold: "Cold",
+  };
+  const bits = [labels[b.method] || b.method];
+  if (typeof b.tempF === "number") bits[0] += ` ${b.tempF}°F`;
+  if (typeof b.timeMin === "number") bits.push(`${b.timeMin} min`);
+  if (b.covered === true)  bits.push("covered");
+  if (b.covered === false) bits.push("uncovered");
+  return bits.join(" · ");
+}

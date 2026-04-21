@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { generateRecipe } from "../lib/generateRecipe";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
-import { findIngredient, INGREDIENTS } from "../data/ingredients";
+import { findIngredient, INGREDIENTS, coerceRecipeCanonicalIds } from "../data/ingredients";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 
@@ -432,14 +432,23 @@ export default function AIRecipe({
       if (result.fellBackToFinal) {
         // eslint-disable-next-line no-console
         console.warn("[AIRecipe] generate-recipe edge fn predates Phase 2 (sketch mode) — deploy `supabase functions deploy generate-recipe` to enable the tweak flow.");
-        setRecipe(result.recipe);
-        if (result.recipe?.title) {
-          setPreviousTitles(prev => (prev.includes(result.recipe.title) ? prev : [...prev, result.recipe.title]));
+        // Pipe every ingredientId through coerceRecipeCanonicalIds so
+        // the recipe we persist + render is strictly bound to the
+        // canonical registry. Claude occasionally drifts ("fresh
+        // tortillas" vs "tortillas"); the coercer normalizes those
+        // back and sets unknown ids to null.
+        const coerced = coerceRecipeCanonicalIds(result.recipe);
+        setRecipe(coerced);
+        if (coerced?.title) {
+          setPreviousTitles(prev => (prev.includes(coerced.title) ? prev : [...prev, coerced.title]));
         }
         setPhase("preview");
         return;
       }
-      const drafted = result.sketch;
+      // Same normalization on the sketch so pantry-coverage + swap
+      // matching downstream work against real canonicals, not the
+      // raw strings Claude handed back.
+      const drafted = coerceRecipeCanonicalIds(result.sketch);
       setSketch(drafted);
       // Reset the tweak diff every fresh sketch — old swaps from a
       // previous draft don't apply to the new ingredient list.
@@ -540,9 +549,14 @@ export default function AIRecipe({
         lockedIngredients: locked,
       };
       const { recipe: drafted } = await generateRecipe(payload);
-      setRecipe(drafted);
-      if (drafted?.title) {
-        setPreviousTitles(prev => (prev.includes(drafted.title) ? prev : [...prev, drafted.title]));
+      // Coerce canonical ids on the way in. Protects the stored
+      // user_recipes row from AI drift ("fresh_tortillas" → "tortillas")
+      // and guarantees the pantry-match loop downstream is operating
+      // on real registry slugs.
+      const normalized = coerceRecipeCanonicalIds(drafted);
+      setRecipe(normalized);
+      if (normalized?.title) {
+        setPreviousTitles(prev => (prev.includes(normalized.title) ? prev : [...prev, normalized.title]));
       }
       // Push shopping-source locked items into the parent's shopping
       // list. Happens only after the final cook actually lands so a
