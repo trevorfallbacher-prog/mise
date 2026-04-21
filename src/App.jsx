@@ -145,7 +145,13 @@ export default function App() {
     <ToastProvider>
       <IngredientInfoProvider>
         <BrandNutritionProvider>
-          <AuthedApp user={user} profile={profile} upsertProfile={upsertProfile} />
+          <AuthedApp
+            user={user}
+            profile={profile}
+            upsertProfile={upsertProfile}
+            patchProfile={patchProfile}
+            avatars={avatars}
+          />
         </BrandNutritionProvider>
       </IngredientInfoProvider>
     </ToastProvider>
@@ -154,7 +160,7 @@ export default function App() {
 
 // The authenticated app tree. Lives inside ToastProvider so realtime
 // callbacks can raise toasts.
-function AuthedApp({ user, profile, upsertProfile }) {
+function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   const [tab, setTab] = useState("home");
   const { push: pushToast } = useToast();
 
