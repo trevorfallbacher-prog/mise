@@ -17,6 +17,7 @@ import XpToastStack from "./components/XpToastStack";
 import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
+import { useAvatars } from "./lib/useAvatars";
 import { usePantry } from "./lib/usePantry";
 import { useShoppingList } from "./lib/useShoppingList";
 import { useRelationships } from "./lib/useRelationships";
@@ -65,44 +66,49 @@ function nameFromAuth(user) {
   );
 }
 
-// Profile-picture URL from the auth provider. Google populates
-// `avatar_url` and/or `picture` in user_metadata after OAuth; magic-link
-// sign-ins have neither, in which case we render the initial-letter
-// circle as before. Preferred over the initial fallback everywhere we
-// show the signed-in user to themselves. Not available for other users
-// (their auth session isn't ours) — that path waits on an upload
-// feature that caches the URL into profiles.avatar_url.
-function avatarUrlFromAuth(user) {
-  const md = user?.user_metadata || {};
-  return md.avatar_url || md.picture || null;
-}
-
 export default function App() {
   const { user, loading: authLoading } = useAuth();
-  const { profile, loading: profileLoading, upsert: upsertProfile } =
+  const { profile, loading: profileLoading, upsert: upsertProfile, patchLocal: patchProfile } =
     useProfile(user?.id);
 
-  // On first sign-in (or if an older account has no name / avatar yet),
-  // cache whatever the provider gave us. Name powers Home's greeting;
-  // avatar_url makes the Google profile pic visible to the viewer AND
-  // to family members who see the same row via RLS — which is how
-  // other users' Google pics reach the activity feed / diner picker
-  // / family tile without every viewer needing access to every
-  // chef's OAuth session. Manual uploads (Settings) overwrite this
-  // later; we intentionally don't clobber an existing avatar_url.
+  // Avatar catalog + owned pool + shuffle / pin RPCs. Single source of
+  // truth for anything character-avatar related — Home shuffles on
+  // mount (random mode), Settings renders the collection grid and
+  // drives pin / mode changes. See migration 0117 for the backend.
+  const avatars = useAvatars(user?.id);
+
+  // On first sign-in (or if an older account has no name yet), save whatever
+  // the provider gave us so Home can personalise greetings. Avatars are
+  // no longer sourced from the OAuth session — we use an in-game catalog
+  // (migration 0117) so users feel like a character, not themselves. The
+  // starter-grant RPC seeds their pool + picks an initial avatar_slug
+  // the first time they land.
   useEffect(() => {
     if (!user || profileLoading) return;
     const googleName = nameFromAuth(user);
-    const googleAvatar = avatarUrlFromAuth(user);
     if (!profile) {
-      upsertProfile({ name: googleName, avatar_url: googleAvatar }).catch(console.error);
-      return;
+      upsertProfile({ name: googleName }).catch(console.error);
+    } else if (!profile.name && googleName) {
+      upsertProfile({ name: googleName }).catch(console.error);
     }
-    const patch = {};
-    if (!profile.name && googleName) patch.name = googleName;
-    if (!profile.avatar_url && googleAvatar) patch.avatar_url = googleAvatar;
-    if (Object.keys(patch).length) upsertProfile(patch).catch(console.error);
   }, [user, profile, profileLoading, upsertProfile]);
+
+  // Grant starter avatars as soon as the user + catalog are both
+  // loaded. RPC short-circuits if they already own anything. The
+  // returned row carries the active slug / URL — patch the local
+  // profile so the first render after sign-in already shows a
+  // character instead of the initial-letter fallback.
+  useEffect(() => {
+    if (!user?.id) return;
+    if (!avatars.ready) return;
+    let cancelled = false;
+    (async () => {
+      const result = await avatars.grantStarters();
+      if (cancelled || !result) return;
+      patchProfile({ avatar_slug: result.slug, avatar_url: result.url });
+    })();
+    return () => { cancelled = true; };
+  }, [user?.id, avatars.ready, avatars.grantStarters, patchProfile]);
 
   if (authLoading) return <LoadingSplash />;
 
@@ -418,7 +424,11 @@ function AuthedApp({ user, profile, upsertProfile }) {
             avatarFor={avatarFor}
             openProfile={openProfile}
             openCook={openCook}
-            authAvatarUrl={avatarUrlFromAuth(user)}
+            ownedAvatarCount={avatars.owned.size}
+            onShuffleAvatar={async () => {
+              const result = await avatars.shuffle();
+              if (result) patchProfile({ avatar_slug: result.slug, avatar_url: result.url });
+            }}
           />
         )}
         {tab === "courses"  && (
@@ -477,6 +487,17 @@ function AuthedApp({ user, profile, upsertProfile }) {
           profile={profile}
           relationships={relationships}
           upsertProfile={upsertProfile}
+          avatarCatalog={avatars.catalog}
+          ownedAvatars={avatars.owned}
+          onPinAvatar={async (slug) => {
+            await avatars.pin(slug);
+            const cat = avatars.catalog.find(c => c.slug === slug);
+            patchProfile({ avatar_slug: slug, avatar_url: cat?.image_url || null, avatar_mode: "pinned" });
+          }}
+          onSetAvatarMode={async (mode) => {
+            await avatars.setMode(mode);
+            patchProfile({ avatar_mode: mode });
+          }}
           onClose={() => setSettingsOpen(false)}
           onOpenProfile={openProfile}
           // Re-open release notes from Settings — covers both casual
@@ -513,7 +534,6 @@ function AuthedApp({ user, profile, upsertProfile }) {
           onOpenSettings={() => { setProfileUserId(null); setSettingsOpen(true); }}
           onOpenNotifs={() => { setProfileUserId(null); openNotifs(); }}
           notifsUnread={notifications.unreadCount + (whatsNew.showNotification ? 1 : 0)}
-          authAvatarUrl={avatarUrlFromAuth(user)}
           onOpenCook={(cookId) => {
             // Cookbook is now an overlay inside UserProfile, so we
             // stay on this profile and just hand the deep link in —

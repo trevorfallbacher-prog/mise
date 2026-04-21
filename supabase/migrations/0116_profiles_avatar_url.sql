@@ -1,35 +1,28 @@
 -- 0116_profiles_avatar_url.sql
 --
--- Adds profiles.avatar_url so every chef has a stable place to hang a
--- profile picture. Two producers write into this column:
+-- Adds profiles.avatar_url: a URL to the chef's currently-displayed
+-- avatar image. In this codebase avatars are a *game catalog* (see
+-- migration 0118) — users don't upload photos, they earn / unlock
+-- character avatars that rotate on each Home mount (random mode) or
+-- stay fixed (pinned mode). This column is the denormalized "what do
+-- I render" value read by every rendering surface (Home top-right,
+-- activity feed rows, YOUR PROFILE identity band, Settings family
+-- list, CookComplete diner picker).
 --
---   1. Auto-seed on sign-in — the client pulls the Google OAuth
---      avatar URL (user_metadata.avatar_url / picture) and upserts it
---      into the profile row. This means family/friends who also signed
---      in with Google get a Google-provided pic on every surface
---      (activity feed, diners picker, family tile, profile header)
---      without anyone lifting a finger. Previously avatars were gated
---      to the viewer's own auth session, so other users always
---      rendered as initials — now we cache the URL so it's visible
---      cross-user.
---
---   2. Manual upload — Settings grows an "upload profile picture"
---      control that writes into the `avatars` storage bucket (see
---      0117) and overwrites avatar_url with the public URL. Users
---      who don't sign in with Google, or who want to override the
---      Google pic, can do so.
---
--- Nullable on purpose: magic-link sign-ins have no OAuth metadata, so
--- until they upload something we fall back to the initial-letter tile
--- (handled in the client renderer). No backfill needed — the sign-in
--- effect covers existing Google users the first time they load the
--- app after this ships.
+-- Source of truth is profiles.avatar_slug (added in 0118) + the
+-- avatar_catalog row it points at. avatar_url is kept in sync client-
+-- side whenever the slug changes — a tiny denormalization that saves
+-- every render site from doing a catalog join. Nullable on purpose:
+-- until the first mount grants the new user a starter pool, there's
+-- nothing to render, and the client falls back to the initial-letter
+-- circle.
 --
 -- RLS: the existing profiles policies already gate SELECT/UPDATE on
 -- auth.uid() + family_ids_of(), so adding a column doesn't require
--- policy changes. Family members can already read each other's
--- profile rows by design, which is exactly the cross-user avatar
--- visibility this column enables.
+-- policy changes. Family members can already read each other's profile
+-- rows by design — which is exactly the cross-user avatar visibility
+-- this column enables (your family sees your currently-rolled avatar
+-- on the feed in real time).
 
 alter table public.profiles
   add column if not exists avatar_url text;

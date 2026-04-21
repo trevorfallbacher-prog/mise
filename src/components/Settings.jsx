@@ -1,8 +1,7 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { signOut } from "../lib/useAuth";
 import { useWebPush } from "../lib/useWebPush";
 import { supabase } from "../lib/supabase";
-import { compressImage } from "../lib/compressImage";
 
 // Panel header used at the top of each section in Settings.
 function SectionHeader({ label }) {
@@ -108,6 +107,94 @@ function GhostButton({ onClick, children }) {
   );
 }
 
+// Rarity → tier color mapping. Matches the daily-roll palette so the
+// loot-box / level-up work coming later reuses the same language.
+const RARITY_COLOR = {
+  common:   "#8e8e8e",
+  uncommon: "#4ade80",
+  rare:     "#77a3d9",
+  ultra:    "#c77dd9",
+};
+
+// AVATAR section — collection grid + mode toggle. Owned tiles are
+// clickable (tapping pins that character and flips mode to 'pinned').
+// Unowned tiles render as silhouettes so the user sees "there's stuff
+// to unlock" without spoiling exact art. The random/pinned toggle sits
+// above the grid; in random mode the "current" chip on the active
+// tile is still shown so the user can see what they last rolled.
+function AvatarSection({ catalog, owned, currentSlug, mode, onPin, onSetMode }) {
+  if (!catalog?.length) return null;
+  return (
+    <>
+      <SectionHeader label="YOUR AVATAR" />
+      <div style={{ display:"flex", gap:0, padding:3, background:"#0f0f0f", border:"1px solid #1e1e1e", borderRadius:10, marginBottom:12 }}>
+        <button
+          onClick={() => onSetMode?.("random")}
+          style={{ flex:1, padding:"8px", background: mode==="random"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="random"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
+        >
+          RANDOM — ROLL EACH VISIT
+        </button>
+        <button
+          onClick={() => onSetMode?.("pinned")}
+          style={{ flex:1, padding:"8px", background: mode==="pinned"?"#1e1e1e":"transparent", border:"none", borderRadius:7, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, color: mode==="pinned"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em" }}
+        >
+          PINNED — STAY ON ONE
+        </button>
+      </div>
+      <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
+        {catalog.map(c => {
+          const isOwned   = owned.has(c.slug);
+          const isCurrent = currentSlug === c.slug;
+          const tier      = RARITY_COLOR[c.rarity] || "#2a2a2a";
+          const clickable = isOwned && typeof onPin === "function";
+          return (
+            <button
+              key={c.slug}
+              onClick={clickable ? () => onPin(c.slug) : undefined}
+              disabled={!clickable}
+              style={{
+                position:"relative",
+                aspectRatio:"1 / 1",
+                padding:0,
+                background: isCurrent ? "#1e1a0e" : "#141414",
+                border: `1px solid ${isCurrent ? "#f5c842" : (isOwned ? "#2a2a2a" : "#1a1a1a")}`,
+                borderRadius:14,
+                cursor: clickable ? "pointer" : "default",
+                overflow:"hidden",
+              }}
+              title={isOwned ? c.name : "Locked"}
+            >
+              {isOwned ? (
+                <img
+                  src={c.image_url}
+                  alt={c.name}
+                  style={{ width:"100%", height:"100%", objectFit:"cover", display:"block" }}
+                />
+              ) : (
+                <div style={{ width:"100%", height:"100%", background:"#0c0c0c", display:"flex", alignItems:"center", justifyContent:"center", fontSize:22, color:"#333" }}>
+                  🔒
+                </div>
+              )}
+              {/* Rarity dot, bottom-right */}
+              <span style={{ position:"absolute", bottom:4, right:4, width:8, height:8, borderRadius:4, background: tier, border:"1px solid rgba(0,0,0,0.4)" }} />
+              {isCurrent && (
+                <span style={{ position:"absolute", top:4, left:4, fontFamily:"'DM Mono',monospace", fontSize:8, color:"#111", background:"#f5c842", padding:"2px 5px", borderRadius:4, letterSpacing:"0.08em", fontWeight:700 }}>
+                  CURRENT
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginTop:8, lineHeight:1.5 }}>
+        {mode === "random"
+          ? "Your avatar rolls a new one from your collection each time you visit Home."
+          : "Your avatar stays locked to the tile you tapped. Switch to Random to let it roll."}
+      </div>
+    </>
+  );
+}
+
 /**
  * Settings screen. Shown as a full overlay — tap the × to close.
  *
@@ -117,7 +204,12 @@ function GhostButton({ onClick, children }) {
  *   onClose         — close the overlay
  *   onEditProfile   — (optional) open the profile editor
  */
-export default function Settings({ userId, profile, relationships, upsertProfile, onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin }) {
+export default function Settings({
+  userId, profile, relationships, upsertProfile,
+  avatarCatalog = [], ownedAvatars = new Set(),
+  onPinAvatar, onSetAvatarMode,
+  onClose, onOpenProfile, onOpenReleaseNotes, onOpenAdmin,
+}) {
   const [code, setCode] = useState("");
   const [kind, setKind] = useState("family"); // "family" | "friend"
   const [error, setError] = useState(null);
@@ -172,62 +264,6 @@ export default function Settings({ userId, profile, relationships, upsertProfile
     }
   };
 
-  // Avatar upload. Pipes the chosen file through the shared
-  // compressImage helper (downscales to 1600px long-side JPEG q=0.72)
-  // to keep the `avatars` bucket light, writes to
-  // `<userId>/<uuid>.jpg` so the RLS prefix policy accepts it (see
-  // migration 0117), then upserts the public URL onto the profile row.
-  // New UUID per upload so the <img> src changes and the browser/CDN
-  // doesn't serve a stale cached version. Old files are orphaned in
-  // storage; cheap and safe to sweep later.
-  const avatarInputRef = useRef(null);
-  const [avatarBusy, setAvatarBusy] = useState(false);
-  const [avatarError, setAvatarError] = useState(null);
-  const displayAvatar = profile?.avatar_url || null;
-  const displayInitial = (profile?.name || "?")[0]?.toUpperCase() || "?";
-
-  const pickAvatar = () => {
-    setAvatarError(null);
-    avatarInputRef.current?.click();
-  };
-
-  const onAvatarChosen = async (e) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";                // allow re-picking the same file
-    if (!file || !userId) return;
-    if (!file.type.startsWith("image/")) {
-      setAvatarError("Pick an image file.");
-      return;
-    }
-    setAvatarBusy(true);
-    setAvatarError(null);
-    try {
-      const { base64, mediaType } = await compressImage(file);
-      // base64 → Uint8Array for Supabase Storage upload.
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      const uuid = (crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      const path = `${userId}/${uuid}.jpg`;
-      const { error: upErr } = await supabase.storage
-        .from("avatars")
-        .upload(path, bytes, {
-          contentType: mediaType || "image/jpeg",
-          cacheControl: "3600",
-          upsert: false,
-        });
-      if (upErr) throw upErr;
-      const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path);
-      const publicUrl = urlData?.publicUrl;
-      if (!publicUrl) throw new Error("Upload succeeded but no public URL returned.");
-      await upsertProfile({ avatar_url: publicUrl });
-    } catch (err) {
-      console.error("[avatar upload]", err);
-      setAvatarError(err?.message || "Upload failed.");
-    } finally {
-      setAvatarBusy(false);
-    }
-  };
 
   const myCode = profile?.invite_code || "—";
 
@@ -309,47 +345,19 @@ export default function Settings({ userId, profile, relationships, upsertProfile
           </div>
         )}
 
-        {/* Profile picture — preview + upload. Google users arrive with
-            avatar_url pre-seeded from OAuth; this is how they override
-            it, and how magic-link users set one for the first time. */}
-        <SectionHeader label="PROFILE PICTURE" />
-        <div style={{ display:"flex", alignItems:"center", gap:14, background:"#141414", border:"1px solid #1e1e1e", borderRadius:14, padding:"14px 16px" }}>
-          {displayAvatar ? (
-            <img
-              src={displayAvatar}
-              alt={profile?.name || "Profile"}
-              referrerPolicy="no-referrer"
-              style={{ width:56, height:56, borderRadius:28, objectFit:"cover", flexShrink:0, display:"block" }}
-            />
-          ) : (
-            <div style={{ width:56, height:56, borderRadius:28, background:"#2a2015", color:"#f5c842", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'Fraunces',serif", fontSize:24, fontWeight:500, flexShrink:0 }}>
-              {displayInitial}
-            </div>
-          )}
-          <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
-              {displayAvatar ? "Replace your picture" : "Add a profile picture"}
-            </div>
-            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", marginTop:2 }}>
-              Family and friends see this on your cooks and profile.
-            </div>
-            {avatarError && (
-              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#ef4444", marginTop:6, letterSpacing:"0.04em" }}>
-                {avatarError}
-              </div>
-            )}
-          </div>
-          <input
-            ref={avatarInputRef}
-            type="file"
-            accept="image/*"
-            onChange={onAvatarChosen}
-            style={{ display:"none" }}
-          />
-          <SmallButton onClick={pickAvatar}>
-            {avatarBusy ? "…" : (displayAvatar ? "REPLACE" : "UPLOAD")}
-          </SmallButton>
-        </div>
+        {/* Avatar — collection grid + random/pinned toggle. Random
+            rolls a new character each Home mount; pinned locks to the
+            last tile tapped. Locked tiles show as silhouettes to hint
+            at what's out there to unlock (future loot-box / level-up
+            work grants new catalog rows via user_avatars). */}
+        <AvatarSection
+          catalog={avatarCatalog}
+          owned={ownedAvatars}
+          currentSlug={profile?.avatar_slug || null}
+          mode={profile?.avatar_mode || "random"}
+          onPin={onPinAvatar}
+          onSetMode={onSetAvatarMode}
+        />
 
         {/* My invite code */}
         <SectionHeader label="MY SHARE CODE" />
