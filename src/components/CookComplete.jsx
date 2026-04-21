@@ -1024,34 +1024,69 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                           ? { amount: Number(match.packageAmount), unit: match.packageUnit }
                           : null;
                         const pkgInUsed = pkgQty ? toUsed(pkgQty) : null;
-                        // Aggregate total pantry = sum across every
-                        // sibling row (row.matches). Decrement cascades
-                        // across them oldest-expires-first.
-                        const stockTotal = (row.matches || []).reduce((sum, m) => {
-                          if (m.unit === row.usedUnit) return sum + Number(m.amount);
+                        // Per-row "original stock" in user's unit.
+                        // Three signals, most-specific wins:
+                        //   1. packageAmount × 1 (explicit pack size)
+                        //   2. max (original amount when opened)
+                        //   3. amount (current — partial pack with no
+                        //      capacity info)
+                        // convertWithBridge handles cross-unit so a row
+                        // in lb with max=1.5 resolves correctly when
+                        // usedUnit is oz, etc.
+                        const rowOriginalInUsed = (m) => {
+                          const pack = m.packageAmount && m.packageUnit
+                            ? (m.packageUnit === row.usedUnit
+                                ? Number(m.packageAmount)
+                                : (convertWithBridge(
+                                    { amount: Number(m.packageAmount), unit: m.packageUnit },
+                                    row.usedUnit, ing, m,
+                                  ).value))
+                            : null;
+                          if (Number.isFinite(pack) && pack > 0) return pack;
+                          const max = Number(m.max);
+                          if (Number.isFinite(max) && max > 0) {
+                            if (m.unit === row.usedUnit) return max;
+                            const res = convertWithBridge(
+                              { amount: max, unit: m.unit },
+                              row.usedUnit, ing, m,
+                            );
+                            return res.ok ? res.value : null;
+                          }
+                          if (m.unit === row.usedUnit) return Number(m.amount);
                           const res = convertWithBridge(
                             { amount: Number(m.amount), unit: m.unit },
                             row.usedUnit, ing, m,
                           );
-                          // Skip un-convertible siblings rather than
-                          // contaminate the sum with raw mixed-unit
-                          // numbers (the "33.3 quarts" bug was this
-                          // exact class — raw amounts summed across
-                          // incompatible units).
-                          return sum + (res.ok ? res.value : 0);
+                          return res.ok ? res.value : null;
+                        };
+                        const rowCurrentInUsed = (m) => {
+                          if (m.unit === row.usedUnit) return Number(m.amount);
+                          const res = convertWithBridge(
+                            { amount: Number(m.amount), unit: m.unit },
+                            row.usedUnit, ing, m,
+                          );
+                          return res.ok ? res.value : 0;
+                        };
+                        // Sum across every sibling row. Original stock =
+                        // the full-package ceiling (bar width); current
+                        // stock = what's physically in the kitchen now.
+                        // The gap between them is "already consumed from
+                        // packages" — rendered as the empty tail that
+                        // user asked for ("we start from less because
+                        // the package has been opened").
+                        const stockOriginal = (row.matches || []).reduce((sum, m) => {
+                          const v = rowOriginalInUsed(m);
+                          return sum + (Number.isFinite(v) && v > 0 ? v : 0);
                         }, 0);
-                        const pantryNow = Math.max(maxInUsed, stockTotal);
-                        // Meter scale: pantry total when no package info,
-                        // OR package-count × packageSize when package info
-                        // gives us a bigger canvas (so a 4-pack stocked
-                        // doesn't look like the whole bar is full when
-                        // 3 packs are sealed).
+                        const stockCurrent = (row.matches || []).reduce((sum, m) => {
+                          const v = rowCurrentInUsed(m);
+                          return sum + (Number.isFinite(v) && v > 0 ? v : 0);
+                        }, 0);
+                        const pantryNow = Math.max(maxInUsed, stockCurrent);
+                        const meterMax  = Math.max(pantryNow, stockOriginal);
                         const packageCount = (pkgInUsed && pkgInUsed > 0)
-                          ? Math.max(1, Math.round(pantryNow / pkgInUsed))
+                          ? Math.max(1, Math.round(meterMax / pkgInUsed))
                           : 0;
-                        const meterMax = (pkgInUsed && pkgInUsed > 0 && packageCount * pkgInUsed > pantryNow)
-                          ? packageCount * pkgInUsed
-                          : pantryNow;
                         const step = meterMax <= 10 ? 0.1 : meterMax <= 100 ? 1 : meterMax / 100;
                         const cur = Number.isFinite(Number(row.usedAmount))
                           ? Math.min(Number(row.usedAmount), pantryNow)
