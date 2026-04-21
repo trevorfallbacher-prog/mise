@@ -65,9 +65,10 @@ function avatarColor(name) {
 export default function UserProfile({
   targetUserId, viewerId, relationship = "stranger",
   familyKey, nameFor, onOpenCook, onOpenProfile, onClose,
-  // Self-view only — opens the Settings overlay. Surfaced here because
-  // the fixed settings gear was removed from the top-right chrome.
-  onOpenSettings,
+  // Self-view only — opens the Settings / Notifications overlays.
+  // Surfaced here because the fixed top-bar icons were pulled; the
+  // profile header is now the single entry point for both.
+  onOpenSettings, onOpenNotifs, notifsUnread = 0,
   // Cook-log deep link handed in from App (notification tap / Home
   // feed). When present, we auto-open the full Cookbook overlay so the
   // embedded Cookbook's own pipeline resolves the detail view.
@@ -147,15 +148,34 @@ export default function UserProfile({
               {isSelf ? "YOUR PROFILE" : "CHEF PROFILE"}
             </div>
           </div>
-          {isSelf && onOpenSettings && (
-            <button
-              onClick={onOpenSettings}
-              title="Settings"
-              aria-label="Settings"
-              style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:18, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
-            >
-              ⚙
-            </button>
+          {isSelf && (
+            <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+              {onOpenNotifs && (
+                <button
+                  onClick={onOpenNotifs}
+                  title="Notifications"
+                  aria-label="Notifications"
+                  style={{ position:"relative", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:16, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
+                >
+                  🔔
+                  {notifsUnread > 0 && (
+                    <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
+                      {notifsUnread > 99 ? "99+" : notifsUnread}
+                    </span>
+                  )}
+                </button>
+              )}
+              {onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  title="Settings"
+                  aria-label="Settings"
+                  style={{ background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:20, width:36, height:36, color:"#aaa", fontSize:18, cursor:"pointer", lineHeight:1, display:"flex", alignItems:"center", justifyContent:"center" }}
+                >
+                  ⚙
+                </button>
+              )}
+            </div>
           )}
         </div>
 

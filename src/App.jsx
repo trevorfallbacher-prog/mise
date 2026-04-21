@@ -345,44 +345,16 @@ function AuthedApp({ user, profile, upsertProfile }) {
           CookCompleteSummary via context while a beat sequence plays. */}
       <XpToastStack userId={user?.id} />
 
-      {/* Notifications — fixed top-left in the slot freed up by dropping
-          the mise wordmark from Home. The settings gear used to sit
-          top-right; it's gone now, access lives inside the profile
-          screen (reachable via the enlarged avatar in Home's top-right). */}
-      <button
-        onClick={openNotifs}
-        title="Notifications"
-        style={{
-          position: "fixed", top: 12, left: 12, zIndex: 50,
-          background: "#161616", border: "1px solid #2a2a2a",
-          borderRadius: 20, width: 36, height: 36,
-          color: "#aaa", fontSize: 16, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}
-      >
-        🔔
-        {(() => {
-          // Badge counts real unread notifications PLUS the synthetic
-          // release-notes pin when an unacknowledged release exists.
-          const total = notifications.unreadCount + (whatsNew.showNotification ? 1 : 0);
-          if (total <= 0) return null;
-          return (
-            <span style={{ position:"absolute", top:-2, right:-2, minWidth:14, height:14, padding:"0 3px", borderRadius:7, background:"#f5c842", color:"#111", fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center" }}>
-              {total > 99 ? "99+" : total}
-            </span>
-          );
-        })()}
-      </button>
-
-      {/* Admin quick-link — sits to the right of the bell. Admin-only,
-          so non-admin users see the bell alone at left:12. */}
+      {/* Admin quick-link — only fixed chrome left in the top bar.
+          Bell + settings moved into the profile screen header; access
+          them via the enlarged avatar in Home's top-right. */}
       {profile?.role === "admin" && (
         <button
           onClick={() => setAdminOpen(true)}
           title="Open admin tools"
           aria-label="Open admin tools"
           style={{
-            position: "fixed", top: 18, left: 56, zIndex: 50,
+            position: "fixed", top: 12, left: 12, zIndex: 50,
             background: "#2a0a0a",
             border: "1px solid #ef4444",
             color: "#ef4444",
@@ -493,7 +465,14 @@ function AuthedApp({ user, profile, upsertProfile }) {
           deepLink={deepLink}
           onConsumeDeepLink={() => setDeepLink(null)}
           onOpenProfile={openProfile}
-          onOpenSettings={() => setSettingsOpen(true)}
+          // Both handlers close the profile before opening their
+          // overlay — Settings + UserProfile are both zIndex:200, so
+          // stacking them makes the newer one disappear behind this
+          // one. Same goes for NotificationsPanel (zIndex:100, would
+          // land behind us). Close first, land clean.
+          onOpenSettings={() => { setProfileUserId(null); setSettingsOpen(true); }}
+          onOpenNotifs={() => { setProfileUserId(null); openNotifs(); }}
+          notifsUnread={notifications.unreadCount + (whatsNew.showNotification ? 1 : 0)}
           onOpenCook={(cookId) => {
             // Cookbook is now an overlay inside UserProfile, so we
             // stay on this profile and just hand the deep link in —
