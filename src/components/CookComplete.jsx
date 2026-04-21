@@ -895,30 +895,55 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                       </div>
                       {match && maxInUsed != null && maxInUsed > 0 && (() => {
                         // Three nested bars telling the full story
-                        // of what happens to the package as the user
+                        // of what happens to the pantry as the user
                         // commits their deduction:
                         //
-                        //   |--|            2 oz LEFT AFTER COOK
-                        //   |------|        4 oz PANTRY NOW
-                        //   |----------|    8 oz PACKAGE SIZE
+                        //   |--|            2 oz   LEFT AFTER COOK
+                        //   |------|        4 oz   PANTRY NOW
+                        //   |----------|    3 × 8 oz  PACKAGES STOCKED
                         //
-                        // Each bar's width is proportional to its value
-                        // on a shared scale (package size when known,
-                        // else pantry amount). The slider beneath sets
-                        // USED — the top bar is derived as pantry−used
-                        // so it shrinks live as the user drags.
+                        // Multi-package aware: when the user stocked
+                        // several sibling rows of the same ingredient
+                        // (3 × 8oz cream cheeses), the meter scales to
+                        // the full stock and the package row reads
+                        // "3 × 8 oz" so the user sees why the pantry
+                        // total is what it is. The cascade removal
+                        // plan already walks siblings FIFO — the UI
+                        // was the laggard; now it tracks reality.
                         const pkgQty = match.packageAmount && match.packageUnit
                           ? { amount: Number(match.packageAmount), unit: match.packageUnit }
                           : null;
                         const pkgInUsed = pkgQty ? toUsed(pkgQty) : null;
-                        const meterMax = (pkgInUsed && pkgInUsed >= maxInUsed)
-                          ? pkgInUsed
-                          : maxInUsed;
-                        const step = maxInUsed <= 10 ? 0.1 : maxInUsed <= 100 ? 1 : maxInUsed / 100;
-                        const cur = Number.isFinite(Number(row.usedAmount))
-                          ? Math.min(Number(row.usedAmount), maxInUsed)
+                        // Aggregate total pantry = sum across every
+                        // sibling row (row.matches). All siblings share
+                        // canonical + state; decrement cascades across
+                        // them oldest-expires-first via buildRemovalPlan.
+                        const stockTotal = (row.matches || []).reduce((sum, m) => {
+                          const converted = m.unit === row.usedUnit
+                            ? Number(m.amount)
+                            : (convertWithBridge(
+                                { amount: Number(m.amount), unit: m.unit },
+                                row.usedUnit, ing, m,
+                              ).ok
+                                ? convertWithBridge(
+                                    { amount: Number(m.amount), unit: m.unit },
+                                    row.usedUnit, ing, m,
+                                  ).value
+                                : Number(m.amount));
+                          return sum + (Number.isFinite(converted) ? converted : 0);
+                        }, 0);
+                        // Slider ceiling is total stock; user can't
+                        // commit more than they physically have.
+                        const maxUsedAcrossStock = Math.max(maxInUsed, stockTotal);
+                        const packageCount = (pkgInUsed && pkgInUsed > 0)
+                          ? Math.round(maxUsedAcrossStock / pkgInUsed)
                           : 0;
-                        const leftAfter = Math.max(0, maxInUsed - cur);
+                        const meterMax = maxUsedAcrossStock;
+                        const step = meterMax <= 10 ? 0.1 : meterMax <= 100 ? 1 : meterMax / 100;
+                        const cur = Number.isFinite(Number(row.usedAmount))
+                          ? Math.min(Number(row.usedAmount), maxUsedAcrossStock)
+                          : 0;
+                        const leftAfter = Math.max(0, maxUsedAcrossStock - cur);
                         const pct = (v) => Math.max(0, Math.min(100, (v / meterMax) * 100));
                         const unitTxt = unitLabel(ing, row.usedUnit);
                         const Bar = ({ value, color, label, muted }) => (
@@ -951,21 +976,54 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                             </span>
                           </div>
                         );
+                        // Package-size label renders as "N × size"
+                        // when the user has multiple packs stocked, so
+                        // "3 × 8 oz" telegraphs the pack math. Single
+                        // pack stays as plain "8 oz" — no scare quotes.
+                        const pkgLabel = (pkgInUsed != null && pkgInUsed > 0 && packageCount >= 1)
+                          ? (packageCount > 1
+                              ? `${packageCount} × ${fmt(pkgInUsed)} ${unitTxt} PACKAGES STOCKED`
+                              : `${fmt(pkgInUsed)} ${unitTxt} PACKAGE SIZE`)
+                          : null;
                         return (
                           <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:2 }}>
                             <Bar value={leftAfter} color="#7ec87e" label="LEFT AFTER COOK" />
-                            <Bar value={maxInUsed} color="#b8a878" label="PANTRY NOW" muted />
-                            {pkgInUsed != null && pkgInUsed > maxInUsed && (
-                              <Bar value={pkgInUsed} color="#555" label="PACKAGE SIZE" muted />
+                            <Bar value={maxUsedAcrossStock} color="#b8a878" label="PANTRY NOW" muted />
+                            {pkgLabel && maxUsedAcrossStock * 1 !== pkgInUsed && (
+                              <div style={{
+                                display:"flex", alignItems:"center", gap:8,
+                                width:"100%",
+                              }}>
+                                <div style={{ flex:1, minWidth:0, height:6, position:"relative" }}>
+                                  <div style={{
+                                    position:"absolute", inset:0,
+                                    background:"#1a1a1a", borderRadius:3,
+                                  }} />
+                                  <div style={{
+                                    position:"absolute", top:0, bottom:0, left:0,
+                                    width: "100%",
+                                    background:"#555", borderRadius:3, opacity:0.5,
+                                  }} />
+                                </div>
+                                <span style={{
+                                  flexShrink:0,
+                                  fontFamily:"'DM Mono',monospace", fontSize:9,
+                                  color:"#666", letterSpacing:"0.04em",
+                                  minWidth:140, textAlign:"left",
+                                }}>
+                                  {pkgLabel}
+                                </span>
+                              </div>
                             )}
-                            {/* Slider — controls USED. Sliding right
-                                reduces "left after cook"; sliding left
-                                leaves more. Range is 0..pantry amount
-                                (can't use more than you have). */}
+                            {/* Slider — controls USED. Ceiling is the
+                                TOTAL stock across sibling rows, not a
+                                single pack, so a recipe that wants 16 oz
+                                against a 3 × 8 oz stock lets the user
+                                commit the full 16 on the slider. */}
                             <div style={{ width:"100%", marginTop:4 }}>
                               <input
                                 type="range"
-                                min="0" max={maxInUsed} step={step}
+                                min="0" max={maxUsedAcrossStock} step={step}
                                 value={cur}
                                 onChange={e => setRow(row.idx, {
                                   usedAmount: Number(e.target.value),
@@ -981,6 +1039,9 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                               }}>
                                 <span style={{ color:"#f5c842" }}>
                                   {fmt(cur)} {unitTxt} USED
+                                  {pkgInUsed && pkgInUsed > 0 && cur > pkgInUsed && (
+                                    <> · {fmt(cur / pkgInUsed)} PACKS</>
+                                  )}
                                 </span>
                                 {recipeInUsed != null && (
                                   <span style={{ color:"#7eb8d4" }}>
