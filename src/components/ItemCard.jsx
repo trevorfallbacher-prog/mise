@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, findHub, membersOfHub, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -860,34 +860,48 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   itself is user-created (no parent hub link) — that's
                   how "pepperoni" with food category=pork still shows
                   the pork cut/form state picker. */}
-              {/* CUT — shown when this item's canonical has ≥2 hub
-                  siblings (chicken_breast / chicken_thigh /
-                  chicken_tenderloin / etc.). Changing cut = changing
-                  canonicalId to a sibling under the same parentId.
-                  Uses the same purple tint as STATE because
-                  cut+state are paired axes in the user's mental
-                  model, both describing the physical item; the
-                  distinction is anatomy (cut) vs preparation (state).
-                  Hidden on hubs and standalone ingredients where
-                  there's nothing to switch between. */}
+              {/* CUT — anatomy axis paired with STATE (preparation).
+                  Same muted purple as STATE because they describe the
+                  same physical item together. Rendered in two modes:
+                    1. Canonical IS a hub (chicken_hub) → "+ SET CUT"
+                       opens a picker of the hub's children. The
+                       calorie-logging refactor moved identity to
+                       canonicalId, so a "chicken" item on the
+                       pantry now sits on the hub and needs this
+                       affordance to promote to a specific cut.
+                    2. Canonical is a hub child (chicken_breast) with
+                       ≥2 siblings → "CUT: BREAST" opens a picker of
+                       hub siblings to swap between.
+                  Reads identity from canonicalId first, then
+                  ingredientId (legacy). Hidden on standalone
+                  ingredients (no hub) and on hubs whose membership is
+                  < 2 (nothing to pick). */}
               {(() => {
-                const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
-                if (siblings.length < 2) return null;
-                const selfCanon = findIngredient(item.ingredientId);
-                const cutLabel = selfCanon?.shortName || selfCanon?.name || "SET CUT";
+                const cutId = item.canonicalId || item.ingredientId || null;
+                if (!cutId) return null;
+                const selfHub   = findHub(cutId);
+                const selfCanon = selfHub ? null : findIngredient(cutId);
+                const options   = selfHub
+                  ? membersOfHub(selfHub.id)
+                  : (selfCanon ? siblingsInHub(cutId) : []);
+                if (options.length < 2) return null;
+                const hasPick = !selfHub && !!selfCanon;
+                const cutLabel = hasPick
+                  ? (selfCanon.shortName || selfCanon.name).toUpperCase()
+                  : "+ SET CUT";
                 return (
                   <div
-                    onClick={e => { e.stopPropagation(); startEdit("cut"); }}
+                    onClick={e => { e.stopPropagation(); if (!readOnly) startEdit("cut"); }}
                     style={{
                       fontFamily: "'DM Mono',monospace", fontSize: 10,
-                      color: selfCanon ? "#c7a8d4" : "#555",
+                      color: hasPick ? "#c7a8d4" : "#8a7a9a",
                       letterSpacing: "0.08em", marginTop: 3,
                       textTransform: "uppercase",
                       cursor: readOnly ? "default" : "pointer",
                     }}
                   >
                     CUT: <span style={{
-                      color: selfCanon ? "#c7a8d4" : "#888",
+                      color: hasPick ? "#c7a8d4" : "#8a7a9a",
                       borderBottom: readOnly ? "none" : "1px dashed #c7a8d444",
                     }}>{cutLabel}</span>
                   </div>
@@ -2219,15 +2233,29 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           row down every time the user tapped STATE. Stacked sheet now;
           same write path (commit({state})) so clearing + re-picking
           stays atomic. */}
-      {/* CUT picker — hub sibling swap. Pantry identity is bound to
-          canonicalId, so changing the cut rewrites ingredientId. The
-          state axis is preserved through the swap — a pantry row of
-          ground chicken_breast becoming ground chicken_thigh stays
-          "ground". Closing via tap on the active cut is a no-op;
-          the user already has that cut. */}
+      {/* CUT picker — hub promotion or sibling swap. Identity lives
+          on canonicalId (post-calorie-logging refactor), so picking a
+          cut rewrites canonicalId to the chosen child canonical.
+          ingredientId is kept in sync when it was already set
+          (legacy rows written before the refactor) so downstream
+          readers that still fall back to it don't see stale data.
+          State (ground / sliced) rides through unchanged.
+          Two entry points:
+            - Item on a hub (chicken_hub) → options = hub children
+            - Item on a hub child (chicken_breast) → options = siblings
+              + a CLEAR CUT row that drops back to the hub. */}
       {editingField === "cut" && (() => {
-        const siblings = item.ingredientId ? siblingsInHub(item.ingredientId) : [];
-        if (siblings.length < 2) return null;
+        const cutId = item.canonicalId || item.ingredientId || null;
+        if (!cutId) return null;
+        const selfHub   = findHub(cutId);
+        const selfCanon = selfHub ? null : findIngredient(cutId);
+        const options   = selfHub
+          ? membersOfHub(selfHub.id)
+          : (selfCanon ? siblingsInHub(cutId) : []);
+        if (options.length < 2) return null;
+        const activeId = selfCanon?.id || null;
+        const hubId    = selfHub?.id || selfCanon?.parentId || null;
+        const itemHadIngredientId = !!item.ingredientId;
         return (
           <ModalSheet
             onClose={() => setEditingField(null)}
@@ -2246,19 +2274,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               fontFamily: "'DM Sans',sans-serif", fontSize: 12,
               color: "#888", lineHeight: 1.5, margin: "0 0 14px",
             }}>
-              Switching cut moves the item to a different canonical in
-              the same family. Your state (ground, sliced, etc.)
+              Picking a cut refines this item to a specific canonical
+              in the same family. Your state (ground, sliced, etc.)
               carries over.
             </p>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-              {siblings.map(s => {
-                const active = s.id === item.ingredientId;
+              {options.map(s => {
+                const active = s.id === activeId;
                 return (
                   <button
                     key={s.id}
                     onClick={() => {
-                      if (!active) commit({ ingredientId: s.id });
-                      setEditingField(null);
+                      if (!active) {
+                        const patch = { canonicalId: s.id };
+                        if (itemHadIngredientId) patch.ingredientId = s.id;
+                        commit(patch);
+                      } else {
+                        setEditingField(null);
+                      }
                     }}
                     style={{
                       padding: "14px 10px",
@@ -2282,6 +2315,24 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 );
               })}
             </div>
+            {activeId && hubId && (
+              <button
+                onClick={() => {
+                  const patch = { canonicalId: hubId };
+                  if (itemHadIngredientId) patch.ingredientId = hubId;
+                  commit(patch);
+                }}
+                style={{
+                  width: "100%", padding: "12px", marginTop: 14,
+                  background: "transparent", border: "1px solid #2a2a2a",
+                  color: "#888", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 11,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                CLEAR CUT
+              </button>
+            )}
           </ModalSheet>
         );
       })()}
