@@ -951,161 +951,175 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                         </div>
                       )}
                       {match && maxInUsed != null && maxInUsed > 0 && (() => {
-                        // Three nested bars telling the full story
-                        // of what happens to the pantry as the user
-                        // commits their deduction:
+                        // Single horizontal bar with three colored
+                        // segments side-by-side:
                         //
-                        //   |--|            2 oz   LEFT AFTER COOK
-                        //   |------|        4 oz   PANTRY NOW
-                        //   |----------|    3 × 8 oz  PACKAGES STOCKED
+                        //   |====left after (dynamic)====|==used==|==pack rem==|
+                        //                                ^ slider thumb
                         //
-                        // Multi-package aware: when the user stocked
-                        // several sibling rows of the same ingredient
-                        // (3 × 8oz cream cheeses), the meter scales to
-                        // the full stock and the package row reads
-                        // "3 × 8 oz" so the user sees why the pantry
-                        // total is what it is. The cascade removal
-                        // plan already walks siblings FIFO — the UI
-                        // was the laggard; now it tracks reality.
+                        // The LEFT AFTER COOK fill color shifts live
+                        // with how much is left, acting as a status
+                        // light for the pantry row:
+                        //
+                        //   > 60% left → GREEN  (good condition)
+                        //   25–60%     → TAN    (getting low)
+                        //   < 25%      → RUST   (almost out)
+                        //
+                        // USED TODAY is always blue. The tail after
+                        // the current pantry total (gray) shows package
+                        // headroom / package reference so the user sees
+                        // how many packs their stock adds up to.
                         const pkgQty = match.packageAmount && match.packageUnit
                           ? { amount: Number(match.packageAmount), unit: match.packageUnit }
                           : null;
                         const pkgInUsed = pkgQty ? toUsed(pkgQty) : null;
                         // Aggregate total pantry = sum across every
-                        // sibling row (row.matches). All siblings share
-                        // canonical + state; decrement cascades across
-                        // them oldest-expires-first via buildRemovalPlan.
+                        // sibling row (row.matches). Decrement cascades
+                        // across them oldest-expires-first.
                         const stockTotal = (row.matches || []).reduce((sum, m) => {
-                          const converted = m.unit === row.usedUnit
-                            ? Number(m.amount)
-                            : (convertWithBridge(
-                                { amount: Number(m.amount), unit: m.unit },
-                                row.usedUnit, ing, m,
-                              ).ok
-                                ? convertWithBridge(
-                                    { amount: Number(m.amount), unit: m.unit },
-                                    row.usedUnit, ing, m,
-                                  ).value
-                                : Number(m.amount));
-                          return sum + (Number.isFinite(converted) ? converted : 0);
+                          if (m.unit === row.usedUnit) return sum + Number(m.amount);
+                          const res = convertWithBridge(
+                            { amount: Number(m.amount), unit: m.unit },
+                            row.usedUnit, ing, m,
+                          );
+                          // Skip un-convertible siblings rather than
+                          // contaminate the sum with raw mixed-unit
+                          // numbers (the "33.3 quarts" bug was this
+                          // exact class — raw amounts summed across
+                          // incompatible units).
+                          return sum + (res.ok ? res.value : 0);
                         }, 0);
-                        // Slider ceiling is total stock; user can't
-                        // commit more than they physically have.
-                        const maxUsedAcrossStock = Math.max(maxInUsed, stockTotal);
+                        const pantryNow = Math.max(maxInUsed, stockTotal);
+                        // Meter scale: pantry total when no package info,
+                        // OR package-count × packageSize when package info
+                        // gives us a bigger canvas (so a 4-pack stocked
+                        // doesn't look like the whole bar is full when
+                        // 3 packs are sealed).
                         const packageCount = (pkgInUsed && pkgInUsed > 0)
-                          ? Math.round(maxUsedAcrossStock / pkgInUsed)
+                          ? Math.max(1, Math.round(pantryNow / pkgInUsed))
                           : 0;
-                        const meterMax = maxUsedAcrossStock;
+                        const meterMax = (pkgInUsed && pkgInUsed > 0 && packageCount * pkgInUsed > pantryNow)
+                          ? packageCount * pkgInUsed
+                          : pantryNow;
                         const step = meterMax <= 10 ? 0.1 : meterMax <= 100 ? 1 : meterMax / 100;
                         const cur = Number.isFinite(Number(row.usedAmount))
-                          ? Math.min(Number(row.usedAmount), maxUsedAcrossStock)
+                          ? Math.min(Number(row.usedAmount), pantryNow)
                           : 0;
-                        const leftAfter = Math.max(0, maxUsedAcrossStock - cur);
+                        const leftAfter = Math.max(0, pantryNow - cur);
                         const pct = (v) => Math.max(0, Math.min(100, (v / meterMax) * 100));
                         const unitTxt = unitLabel(ing, row.usedUnit);
-                        const Bar = ({ value, color, label, muted }) => (
-                          <div style={{
-                            display:"flex", alignItems:"center", gap:8,
-                            width:"100%",
-                          }}>
-                            <div style={{ flex:1, minWidth:0, height:6, position:"relative" }}>
-                              <div style={{
-                                position:"absolute", inset:0,
-                                background:"#1a1a1a", borderRadius:3,
-                              }} />
-                              <div style={{
-                                position:"absolute", top:0, bottom:0, left:0,
-                                width:`${pct(value)}%`,
-                                background:color,
-                                borderRadius:3,
-                                opacity: muted ? 0.5 : 1,
-                                transition:"width 0.08s linear",
-                              }} />
-                            </div>
-                            <span style={{
-                              flexShrink:0,
-                              fontFamily:"'DM Mono',monospace", fontSize:9,
-                              color: muted ? "#666" : color,
-                              letterSpacing:"0.04em",
-                              minWidth:140, textAlign:"left",
-                            }}>
-                              {fmt(value)} {unitTxt} {label}
-                            </span>
-                          </div>
-                        );
-                        // Package-size label renders as "N × size"
-                        // when the user has multiple packs stocked, so
-                        // "3 × 8 oz" telegraphs the pack math. Single
-                        // pack stays as plain "8 oz" — no scare quotes.
-                        const pkgLabel = (pkgInUsed != null && pkgInUsed > 0 && packageCount >= 1)
-                          ? (packageCount > 1
-                              ? `${packageCount} × ${fmt(pkgInUsed)} ${unitTxt} PACKAGES STOCKED`
-                              : `${fmt(pkgInUsed)} ${unitTxt} PACKAGE SIZE`)
-                          : null;
+                        // Health color — shifts live as the user moves
+                        // the slider. Ratio is against pantryNow (not
+                        // meterMax) so a user with 4 full packs doesn't
+                        // read "bad condition" the moment they commit
+                        // one pack; badness is relative to what they
+                        // actually have on hand.
+                        const leftRatio = pantryNow > 0 ? leftAfter / pantryNow : 0;
+                        const leftColor = leftRatio >= 0.6 ? "#7ec87e"     // good
+                                        : leftRatio >= 0.25 ? "#c9a34e"   // medium
+                                        : "#c05a44";                       // bad
+                        const leftLabel = leftRatio >= 0.6 ? "GOOD"
+                                        : leftRatio >= 0.25 ? "LOW"
+                                        : "ALMOST OUT";
+                        const leftPct = pct(leftAfter);
+                        const usedPct = pct(cur);
+                        // pkg-tail covers the meter beyond pantryNow,
+                        // i.e. the package-count × packageSize headroom
+                        // that represents sealed packages the user isn't
+                        // drawing from this cook.
                         return (
-                          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:2 }}>
-                            <Bar value={leftAfter} color="#7ec87e" label="LEFT AFTER COOK" />
-                            <Bar value={maxUsedAcrossStock} color="#b8a878" label="PANTRY NOW" muted />
-                            {pkgLabel && maxUsedAcrossStock * 1 !== pkgInUsed && (
+                          <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:6 }}>
+                            {/* Labels row — LEFT on the left side, USED
+                                on the right. Colors telegraph which
+                                segment each number describes. */}
+                            <div style={{
+                              display:"flex", justifyContent:"space-between",
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              letterSpacing:"0.04em",
+                            }}>
+                              <span style={{ color: leftColor }}>
+                                {fmt(leftAfter)} {unitTxt} LEFT · {leftLabel}
+                              </span>
+                              <span style={{ color:"#7eb8d4" }}>
+                                USED: {fmt(cur)} {unitTxt}
+                              </span>
+                            </div>
+                            {/* The bar — layered absolute divs. Slider
+                                rides on top invisibly so drag still
+                                updates usedAmount; visible thumb dot
+                                tracks the left/used boundary. */}
+                            <div style={{ position:"relative", width:"100%", height:22 }}>
                               <div style={{
-                                display:"flex", alignItems:"center", gap:8,
-                                width:"100%",
-                              }}>
-                                <div style={{ flex:1, minWidth:0, height:6, position:"relative" }}>
-                                  <div style={{
-                                    position:"absolute", inset:0,
-                                    background:"#1a1a1a", borderRadius:3,
-                                  }} />
-                                  <div style={{
-                                    position:"absolute", top:0, bottom:0, left:0,
-                                    width: "100%",
-                                    background:"#555", borderRadius:3, opacity:0.5,
-                                  }} />
-                                </div>
-                                <span style={{
-                                  flexShrink:0,
-                                  fontFamily:"'DM Mono',monospace", fontSize:9,
-                                  color:"#666", letterSpacing:"0.04em",
-                                  minWidth:140, textAlign:"left",
-                                }}>
-                                  {pkgLabel}
-                                </span>
-                              </div>
-                            )}
-                            {/* Slider — controls USED. Ceiling is the
-                                TOTAL stock across sibling rows, not a
-                                single pack, so a recipe that wants 16 oz
-                                against a 3 × 8 oz stock lets the user
-                                commit the full 16 on the slider. */}
-                            <div style={{ width:"100%", marginTop:4 }}>
+                                position:"absolute", top:5, left:0, right:0, height:12,
+                                background:"#2a2a2a", borderRadius:6,
+                              }} />
+                              {/* LEFT AFTER COOK segment (colored) */}
+                              <div style={{
+                                position:"absolute", top:5, left:0, height:12,
+                                width:`${leftPct}%`,
+                                background:leftColor,
+                                borderRadius: leftPct >= 99.5 ? 6 : "6px 0 0 6px",
+                                transition:"width 0.08s linear, background 0.15s linear",
+                              }} />
+                              {/* USED TODAY segment (blue) — stacks to the
+                                  right of left-after */}
+                              <div style={{
+                                position:"absolute", top:5, left:`${leftPct}%`, height:12,
+                                width:`${usedPct}%`,
+                                background:"#7eb8d4",
+                                transition:"width 0.08s linear, left 0.08s linear",
+                              }} />
+                              {/* Thumb — yellow dot at the left/used
+                                  boundary, purely decorative (the real
+                                  drag is the invisible range input). */}
+                              <div style={{
+                                position:"absolute",
+                                top:2, left:`calc(${leftPct}% - 9px)`,
+                                width:18, height:18,
+                                background:"#f5c842",
+                                border:"3px solid #0a0a0a",
+                                borderRadius:"50%",
+                                pointerEvents:"none",
+                                boxShadow:"0 0 6px #f5c84266",
+                              }} />
                               <input
                                 type="range"
-                                min="0" max={maxUsedAcrossStock} step={step}
+                                min="0" max={pantryNow} step={step}
                                 value={cur}
                                 onChange={e => setRow(row.idx, {
                                   usedAmount: Number(e.target.value),
                                   usedUnit: row.usedUnit,
                                 })}
                                 aria-label={`Estimate ${displayName} used`}
-                                style={{ width:"100%", accentColor:"#f5c842" }}
+                                style={{
+                                  position:"absolute", inset:0,
+                                  width: meterMax > 0
+                                    ? `${(pantryNow / meterMax) * 100}%`
+                                    : "100%",
+                                  margin:0,
+                                  opacity:0.01,
+                                  cursor:"pointer",
+                                }}
                               />
-                              <div style={{
-                                display:"flex", justifyContent:"space-between",
-                                fontFamily:"'DM Mono',monospace", fontSize:9,
-                                letterSpacing:"0.04em", color:"#666",
-                              }}>
-                                <span style={{ color:"#f5c842" }}>
-                                  {fmt(cur)} {unitTxt} USED
-                                  {pkgInUsed && pkgInUsed > 0 && cur > pkgInUsed && (
-                                    <> · {fmt(cur / pkgInUsed)} PACKS</>
-                                  )}
+                            </div>
+                            {/* Bottom labels — pantry stock composition
+                                (package count × size) on the left, recipe
+                                ask on the right. */}
+                            <div style={{
+                              display:"flex", justifyContent:"space-between",
+                              fontFamily:"'DM Mono',monospace", fontSize:9,
+                              letterSpacing:"0.04em", color:"#666",
+                            }}>
+                              <span style={{ color:"#7ec87e" }}>
+                                IN PANTRY: {(pkgInUsed && pkgInUsed > 0 && packageCount > 1)
+                                  ? `${fmt(pkgInUsed)} × ${packageCount} PACKS`
+                                  : `${fmt(pantryNow)} ${unitTxt}`}
+                              </span>
+                              {recipeInUsed != null && (
+                                <span style={{ color:"#b8a878" }}>
+                                  RECIPE: {fmt(recipeInUsed)} {unitTxt}
                                 </span>
-                                {recipeInUsed != null && (
-                                  <span style={{ color:"#7eb8d4" }}>
-                                    RECIPE: {fmt(recipeInUsed)} {unitTxt}
-                                  </span>
-                                )}
-                              </div>
+                              )}
                             </div>
                           </div>
                         );
