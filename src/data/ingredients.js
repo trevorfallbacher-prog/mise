@@ -2662,27 +2662,80 @@ export function dbCanonicalsSnapshot() {
 
 // Canonical aliases — legacy slugs where STATE was baked into the
 // canonical id ("ground_beef", "ground_pork", "ground_turkey").
-// Per CLAUDE.md the identity hierarchy keeps state as a SEPARATE
-// axis (purple), so these deprecated slugs resolve to the BASE
-// canonical + a state hint. findIngredient falls through so
-// pantry_items rows written under an old slug still render
-// correctly until migration 0060 rewrites them to the base.
+// Per CLAUDE.md the identity hierarchy keeps state AND cut as
+// separate axes from the canonical. These deprecated slugs resolve
+// to the BASE canonical + a state or cut hint. findIngredient falls
+// through so pantry_items rows written under an old slug still
+// render correctly until migration 0060 / 0122 rewrites them.
 //
-// Shape: { [legacySlug]: { base: <baseSlug>, state: <stateToken> } }
+// Shape: { [legacySlug]: { base: <baseSlug>, state?: <stateToken>, cut?: <cutToken> } }
+// Exactly one of `state` or `cut` is typically set; they address
+// different axes. "chicken_breast" is chicken + cut=breast; "ground_beef"
+// is beef + state=ground.
 export const CANONICAL_ALIASES = {
+  // STATE-baked slugs — migration 0060 collapsed these.
   ground_beef:   { base: "beef",   state: "ground" },
   ground_pork:   { base: "pork",   state: "ground" },
   ground_turkey: { base: "turkey", state: "ground" },
+  // CUT-baked slugs — migration 0122 collapsed these. Per user
+  // principle: "chicken is canonical, cut is breast". Chicken breast
+  // and chicken thigh are the SAME ingredient in different anatomies,
+  // orthogonal to the state axis (cubed chicken breast and ground
+  // chicken thigh are both legitimate combinations).
+  chicken_breast:     { base: "chicken", cut: "breast" },
+  chicken_thigh:      { base: "chicken", cut: "thigh" },
+  chicken_leg:        { base: "chicken", cut: "leg" },
+  chicken_wing:       { base: "chicken", cut: "wing" },
+  chicken_tenderloin: { base: "chicken", cut: "tenderloin" },
+  ribeye:             { base: "beef",    cut: "ribeye" },
+  ny_strip:           { base: "beef",    cut: "ny_strip" },
+  sirloin:            { base: "beef",    cut: "sirloin" },
+  brisket:            { base: "beef",    cut: "brisket" },
+  chuck_roast:        { base: "beef",    cut: "chuck" },
+  pork_chop:          { base: "pork",    cut: "chop" },
+  pork_loin:          { base: "pork",    cut: "loin" },
+  pork_shoulder:      { base: "pork",    cut: "shoulder" },
+  turkey_breast:      { base: "turkey",  cut: "breast" },
 };
 
 /**
- * Look up an ingredient by slug. Transparently resolves aliased
- * legacy slugs (ground_beef → beef). Returns null when the slug
- * doesn't match any bundled canonical OR alias.
+ * Resolve a slug to its canonical tuple: { ingredient, cut, state }.
+ * Used by callers that need the axis hints carried on legacy slugs
+ * — scan resolution, the pairing resolver, AI-recipe ingestion —
+ * so a row read as "chicken_breast" surfaces as ingredient=Chicken,
+ * cut=breast rather than silently losing the cut on the redirect.
  *
- * This keeps existing pantry_items.canonical_id values working
- * even after migration 0060 rewrites them; the deprecated slugs
- * resolve to the same underlying ingredient object.
+ * Returns { ingredient: null, cut: null, state: null } when the
+ * slug matches neither an alias nor a registered canonical. When an
+ * alias is hit the ingredient is its base (never the deprecated
+ * leaf) and the cut/state field reflects whichever axis the legacy
+ * slug baked in.
+ */
+export function resolveSlug(id) {
+  if (!id) return { ingredient: null, cut: null, state: null };
+  const alias = CANONICAL_ALIASES[id];
+  if (alias) {
+    return {
+      ingredient: byId.get(alias.base) || null,
+      cut:        alias.cut   || null,
+      state:      alias.state || null,
+    };
+  }
+  const ing = byId.get(id) || dbCanonicals.get(id) || null;
+  return { ingredient: ing, cut: null, state: null };
+}
+
+/**
+ * Look up an ingredient by slug. Transparently resolves aliased
+ * legacy slugs (ground_beef → beef, chicken_breast → chicken).
+ * Returns null when the slug doesn't match any bundled canonical
+ * OR alias.
+ *
+ * Loses the cut/state axis info carried by the alias — callers that
+ * need those hints must use resolveSlug(id) instead.
+ *
+ * Kept for compatibility with every site that just wants "what's
+ * this slug's ingredient object?" — the overwhelmingly common case.
  */
 export function findIngredient(id) {
   if (!id) return null;
@@ -6156,6 +6209,50 @@ const MEAT_STATES = [
   // Legacy compound — retained for backward compatibility
   "shredded_cooked", "diced_cooked",
 ];
+
+// CUT axis — anatomical / butchery slot. Orthogonal to STATE per
+// CLAUDE.md; a given (canonical, cut) pair can take any state value.
+// Chicken breast, cubed is chicken + cut=breast + state=cubed; ground
+// chicken thigh is chicken + cut=thigh + state=ground.
+//
+// Scope is deliberately pragmatic: the cuts listed are what a typical
+// grocery shopper encounters (Jewel, Kroger, Trader Joe's shelf cuts).
+// Full-animal butchery yield trees (primals, subprimals, retail cuts)
+// are out of scope — that's a pro-butcher workflow, not a pantry app.
+//
+// Keyed by BASE canonical slug. Other species (lamb) can be added as
+// new base canonicals ship without touching existing entries.
+export const CUTS_FOR = {
+  chicken: ["breast","thigh","leg","wing","tenderloin","back","whole_bird"],
+  beef:    ["ribeye","ny_strip","sirloin","brisket","chuck","round","flank","skirt","short_rib","tenderloin"],
+  pork:    ["chop","loin","shoulder","belly","tenderloin","rib","ham","shank"],
+  turkey:  ["breast","thigh","leg","wing","tenderloin","whole_bird"],
+};
+
+export const CUT_LABELS = {
+  breast: "breast", thigh: "thigh", leg: "leg", wing: "wing",
+  tenderloin: "tenderloin", back: "back", whole_bird: "whole bird",
+  ribeye: "ribeye", ny_strip: "NY strip", sirloin: "sirloin",
+  brisket: "brisket", chuck: "chuck", round: "round", flank: "flank",
+  skirt: "skirt", short_rib: "short rib",
+  chop: "chop", loin: "loin", shoulder: "shoulder", belly: "belly",
+  rib: "rib", ham: "ham", shank: "shank",
+};
+
+export function cutsForIngredient(ingredientOrId) {
+  const id = typeof ingredientOrId === "string" ? ingredientOrId : ingredientOrId?.id;
+  if (!id) return null;
+  if (CUTS_FOR[id]) return CUTS_FOR[id];
+  // Walk to base through aliases — "chicken_breast" → "chicken" → has cuts.
+  const alias = CANONICAL_ALIASES[id];
+  if (alias?.base && CUTS_FOR[alias.base]) return CUTS_FOR[alias.base];
+  return null;
+}
+
+export function cutLabel(cut) {
+  if (!cut) return null;
+  return CUT_LABELS[cut] || String(cut).replace(/_/g, " ");
+}
 
 export const INGREDIENT_STATES = {
   bread:         ["loaf", "slices", "crumbs", "cubes", "toasted"],
