@@ -23,7 +23,7 @@
 // complete flow to resolve "used 2 tbsp butter" → "decrement the
 // pantry's 1.5-stick row by 28.4 g → 1.25 sticks remaining".
 
-import { toBase } from "../data/ingredients";
+import { toBase, CUT_WEIGHTS_G, CANONICAL_ALIASES } from "../data/ingredients";
 
 // A canonical is "mass-based" iff its ladder includes `{g:1}` or
 // `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
@@ -43,42 +43,57 @@ export function isMassLadder(canonical) {
 }
 
 // Resolve the effective grams-per-count for a pantry row against its
-// canonical. Precedence:
+// canonical. Precedence (most-specific wins):
 //   1. pantryRow.countWeightG (explicit user override from the
 //      ItemCard "each ~__g" field; migration 0121).
-//   2. Derived from packageAmount + packageUnit + max (or current
-//      amount as fallback) when packageUnit is mass-based on this
-//      canonical's ladder — a 680g four-pack derives to 170g each.
-//      The preferred path is to persist the derived value into
-//      countWeightG at write-time (ItemCard does this) so the
-//      calibration doesn't drift as amount decays.
-//   3. null — caller falls back to the canonical's own count.toBase
-//      (often a sensible default already baked into the registry).
+//   2. Derived from packageAmount + packageUnit + max — a 680g four-
+//      pack derives to 170g each. Needs package-level mass metadata.
+//   3. Cut-specific default from CUT_WEIGHTS_G[base][cut] — "chicken
+//      with cut=breast → 200g per count." Pulls from the registry's
+//      anatomical weight table so every meat pantry row with a cut
+//      axis set knows how much one count weighs without the user
+//      hand-entering it.
+//   4. null — caller falls back to the canonical's own count.toBase
+//      (which for chicken / beef / pork / turkey now carries a
+//      reasonable default, so most downstream paths still work).
 //
 // Only returns a positive finite number or null.
 export function effectiveCountWeightG(pantryRow, canonical) {
   if (!canonical) return null;
+  // 1. explicit row-level override
   const explicit = Number(pantryRow?.countWeightG);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
+
+  // 2. derived from package metadata
   const pkgAmt  = Number(pantryRow?.packageAmount);
   const pkgUnit = pantryRow?.packageUnit;
-  // Denominator: prefer `max` (original pack count) over `amount`
-  // (current remaining). max is set alongside amount at add-time
-  // (ItemCard PKG row) and doesn't decay as the user consumes,
-  // keeping derivation stable through the lifetime of the row.
-  // Falling back to amount covers legacy rows that never populated max.
   const maxCount = Number(pantryRow?.max);
   const count = (Number.isFinite(maxCount) && maxCount > 0)
     ? maxCount
     : Number(pantryRow?.amount);
-  if (!Number.isFinite(pkgAmt) || pkgAmt <= 0) return null;
-  if (!Number.isFinite(count)  || count  <= 0) return null;
-  if (!pkgUnit || pkgUnit === "count") return null;
-  const entry = canonical.units?.find(u => u.id === pkgUnit);
-  if (!entry) return null;
-  const g = pkgAmt * Number(entry.toBase);
-  if (!Number.isFinite(g) || g <= 0) return null;
-  return g / count;
+  if (Number.isFinite(pkgAmt) && pkgAmt > 0 &&
+      Number.isFinite(count)  && count  > 0 &&
+      pkgUnit && pkgUnit !== "count") {
+    const entry = canonical.units?.find(u => u.id === pkgUnit);
+    if (entry) {
+      const g = pkgAmt * Number(entry.toBase);
+      if (Number.isFinite(g) && g > 0) return g / count;
+    }
+  }
+
+  // 3. cut-specific default from the registry. Walks aliases so a
+  // legacy compound slug like chicken_breast (alias → chicken +
+  // cut=breast) still finds the right weight when the pantry row
+  // was written under the old model and cut isn't yet populated.
+  const cut = pantryRow?.cut || CANONICAL_ALIASES[pantryRow?.ingredientId || ""]?.cut || null;
+  if (cut) {
+    const baseId = CUT_WEIGHTS_G[canonical.id]
+      ? canonical.id
+      : (CANONICAL_ALIASES[canonical.id]?.base || null);
+    const g = baseId ? CUT_WEIGHTS_G[baseId]?.[cut] : null;
+    if (Number.isFinite(g) && g > 0) return g;
+  }
+  return null;
 }
 
 // Convert { amount, unit } into a target unit within the same ingredient's

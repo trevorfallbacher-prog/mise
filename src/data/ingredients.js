@@ -538,10 +538,19 @@ export const INGREDIENTS = [
     // empty so the registry isn't lying about its role.
     id: "chicken", name: "Chicken", shortName: null,
     parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    // Full mass ladder with a count entry — count defaults to 200g
+    // (middle of USDA 170–225g boneless-skinless breast range) but
+    // cut-specific weights from CUT_WEIGHTS_G override this via
+    // effectiveCountWeightG when the pantry row carries a cut value
+    // (thigh ≈ 120g, wing ≈ 80g, tenderloin ≈ 45g). g:1 anchor
+    // makes this a proper mass ladder so isMassLadder-gated paths
+    // light up (scaleFactor, countWeightG override).
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 200 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -695,10 +704,15 @@ export const INGREDIENTS = [
     // aliased below to this canonical + state='ground'.
     id: "beef", name: "Beef", shortName: "Beef",
     parentId: "beef_hub", emoji: "🥩", category: "meat",
+    // Full mass ladder + count. Count default 340g = ~12 oz (typical
+    // steak portion). Cut-specific weights in CUT_WEIGHTS_G override
+    // per pantry row (brisket ≈ 2.3 kg, chuck roast ≈ 1.4 kg, etc.).
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 340 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -727,10 +741,15 @@ export const INGREDIENTS = [
     // above — same pattern. Aliased slugs: ground_pork.
     id: "pork", name: "Pork", shortName: "Pork",
     parentId: "pork_hub", emoji: "🥩", category: "meat",
+    // Full mass ladder + count. Count default 170g = 6oz (bone-in
+    // chop, common portion). CUT_WEIGHTS_G overrides per cut —
+    // loin ≈ 1.4 kg, shoulder ≈ 1.8 kg, tenderloin ≈ 340 g, etc.
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 170 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -849,10 +868,15 @@ export const INGREDIENTS = [
     // above — same pattern. Aliased slugs: ground_turkey.
     id: "turkey", name: "Turkey", shortName: "Turkey",
     parentId: "turkey_hub", emoji: "🦃", category: "meat",
+    // Full mass ladder + count. Count default 3175g = ~7 lb (turkey
+    // breast is the most common countable portion). CUT_WEIGHTS_G
+    // overrides for thigh / leg / wing / whole bird.
     units: [
-      { id: "lb", label: "lb", toBase: 453.6 },
-      { id: "oz", label: "oz", toBase: 28.35 },
-      { id: "kg", label: "kg", toBase: 1000 },
+      { id: "count", label: "pieces", toBase: 3175 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "lb",    label: "lb",     toBase: 453.6 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
   },
@@ -6248,6 +6272,60 @@ export const CUTS_FOR = {
   beef:    ["ribeye","ny_strip","sirloin","brisket","chuck","round","flank","skirt","short_rib","tenderloin"],
   pork:    ["chop","loin","shoulder","belly","tenderloin","rib","ham","shank"],
   turkey:  ["breast","thigh","leg","wing","tenderloin","whole_bird"],
+};
+
+// Default gram weights per count for each meat cut. The "one piece"
+// conversion — 1 chicken breast ≈ 200g, 1 thigh ≈ 120g, 1 ribeye ≈
+// 340g. Keyed by BASE canonical, then cut slug. Used as a fallback
+// in effectiveCountWeightG when the pantry row doesn't carry an
+// explicit countWeightG and doesn't have a packageAmount-derivable
+// value — "the user has Chicken + cut=breast, recipe wants 3 count,
+// we know a breast is ~200g so 3 count ≈ 600g ≈ 1.32 lb."
+//
+// Users can still override per-row via pantry_items.count_weight_g
+// ("my cloves are big — 6g each, not 4") and that wins over these
+// defaults. These are rough averages good enough for the default
+// prefill + conversion shadow; not claims of precision.
+export const CUT_WEIGHTS_G = {
+  chicken: {
+    breast:      200,  // boneless-skinless, 170–225g USDA range
+    thigh:       120,  // boneless-skinless
+    leg:         180,  // drumstick, bone-in
+    wing:         80,
+    tenderloin:   45,
+    back:        300,
+    whole_bird: 1800,  // ~4 lb whole chicken
+  },
+  beef: {
+    ribeye:      340,  // 12 oz steak
+    ny_strip:    340,
+    sirloin:     225,  // 8 oz
+    brisket:    2270,  // 5 lb point
+    chuck:      1360,  // 3 lb roast
+    round:       680,
+    flank:       680,
+    skirt:       340,
+    short_rib:   170,
+    tenderloin:  340,
+  },
+  pork: {
+    chop:        170,  // 6 oz bone-in
+    loin:       1360,  // 3 lb roast
+    shoulder:   1800,  // 4 lb Boston butt
+    belly:      1360,
+    tenderloin:  340,  // small cut, ~12 oz
+    rib:         680,
+    ham:        3175,  // 7 lb bone-in
+    shank:       680,
+  },
+  turkey: {
+    breast:     3175,  // 7 lb boneless
+    thigh:       900,
+    leg:        1360,
+    wing:        500,
+    tenderloin:  200,
+    whole_bird: 6800,  // 15 lb whole turkey
+  },
 };
 
 export const CUT_LABELS = {
