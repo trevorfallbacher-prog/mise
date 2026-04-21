@@ -15,6 +15,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabase, safeChannel } from "./supabase";
+import { validateNutrition } from "./nutrition";
 
 // Shape returned by the context — matches what src/lib/nutrition.js
 // expects via its `brandNutrition` parameter (a Map with .get()).
@@ -141,6 +142,17 @@ export function BrandNutritionProvider({ children }) {
   }) => {
     if (!canonicalId || !brand || !nutrition) {
       throw new Error("brand_nutrition upsert needs canonicalId + brand + nutrition");
+    }
+    // Reject malformed / lazy nutrition blobs at the write boundary so
+    // garbage can't reach brand_nutrition and silently inflate dashboard
+    // totals. Legitimate sources (OFF via lookup-barcode, the pantry
+    // override sheet, the admin editor) all produce enum-shaped blocks
+    // — anything that fails validateNutrition is a bug at the caller,
+    // not in resolver math.
+    const check = validateNutrition(nutrition);
+    if (!check.ok) {
+      console.warn(`[brand_nutrition] refusing malformed nutrition for ${canonicalId}/${brand}: ${check.reason}`);
+      return null;
     }
     const normalizedBrand = String(brand).trim().toLowerCase();
     const displayBrand    = String(brand).trim();

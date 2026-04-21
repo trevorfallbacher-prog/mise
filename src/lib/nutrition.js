@@ -30,7 +30,7 @@ import { findIngredient } from "../data/ingredients";
 export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
   if (!pantryRow) return { nutrition: null, source: null };
   // 1. Pantry-row override (Phase 4).
-  if (pantryRow.nutritionOverride && hasNumbers(pantryRow.nutritionOverride)) {
+  if (pantryRow.nutritionOverride && acceptableForResolve(pantryRow.nutritionOverride)) {
     return { nutrition: pantryRow.nutritionOverride, source: "pantry" };
   }
   const canonId = pantryRow.ingredientId || pantryRow.canonicalId || null;
@@ -38,14 +38,14 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
   if (canonId && pantryRow.brand && brandNutrition) {
     const brandKey = String(pantryRow.brand).trim().toLowerCase();
     const hit = brandNutrition.get?.(`${canonId}::${brandKey}`);
-    if (hit?.nutrition && hasNumbers(hit.nutrition)) {
+    if (hit?.nutrition && acceptableForResolve(hit.nutrition)) {
       return { nutrition: hit.nutrition, source: "brand", brand: hit.displayBrand || pantryRow.brand };
     }
   }
   // 3. ingredient_info.nutrition — the admin-approved canonical average.
   if (canonId && typeof getInfo === "function") {
     const info = getInfo(canonId);
-    if (info?.nutrition && hasNumbers(info.nutrition)) {
+    if (info?.nutrition && acceptableForResolve(info.nutrition)) {
       return { nutrition: info.nutrition, source: "canonical" };
     }
   }
@@ -53,11 +53,34 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
   //    been seeded for this canonical yet.
   if (canonId) {
     const canon = findIngredient(canonId);
-    if (canon?.nutrition && hasNumbers(canon.nutrition)) {
+    if (canon?.nutrition && acceptableForResolve(canon.nutrition)) {
       return { nutrition: canon.nutrition, source: "default" };
     }
   }
   return { nutrition: null, source: null };
+}
+
+// Read-side gate. Stricter than hasNumbers — even if a row slipped
+// past the write-side `validateNutrition` (old data, a direct SQL edit,
+// a future OFF ingestion path we haven't gated yet), the resolver
+// pretends the tier is empty and falls through to the next one. The
+// tolerant fallback in `scaleFactor` still handles the legacy
+// `per="1 tsp (5g)"` shape separately, so we deliberately DON'T bounce
+// those here — bouncing legacy rows would strand existing DB data the
+// user hasn't had a chance to re-enrich yet. We only refuse shapes
+// that the scaleFactor can't interpret under any branch.
+function acceptableForResolve(n) {
+  if (!hasNumbers(n)) return false;
+  // Modern enum is always fine.
+  if (n.per === "100g" || n.per === "count") return true;
+  if (n.per === "serving") {
+    const sg = Number(n.serving_g);
+    return Number.isFinite(sg) && sg > 0;
+  }
+  // Legacy free-text "(Ng)" shape — scaleFactor salvages it.
+  if (typeof n.per === "string" && /\(\s*[\d.]+\s*g\s*\)/i.test(n.per)) return true;
+  // Anything else is garbage — skip the tier.
+  return false;
 }
 
 function hasNumbers(n) {
@@ -65,6 +88,45 @@ function hasNumbers(n) {
   // At least one macro has to be a real number; otherwise there's
   // nothing to render and the UI should treat it as missing.
   return ["kcal", "protein_g", "fat_g", "carb_g"].some(k => typeof n[k] === "number");
+}
+
+// Strict sanity check on a nutrition block before it's written to the
+// DB (or trusted at read time). Rejects lazy / malformed entries that
+// would otherwise silently inflate the dashboard:
+//   - wrong `per` value (not in the enum)
+//   - per="serving" without a positive numeric serving_g
+//   - kcal missing, non-finite, negative, or absurdly large (>10000 per
+//     base unit — a stick of butter is 813 kcal, dense fat is 900; 10k
+//     is unreachable by real food, so it's a safe ceiling)
+//   - any macro that's present but not a finite non-negative number
+// Returns { ok: true } on pass or { ok: false, reason } on failure. Used
+// by useBrandNutrition.upsert and the pantry-override write path to
+// reject bad data at the boundary rather than propagating it.
+export function validateNutrition(n) {
+  if (!n || typeof n !== "object") return { ok: false, reason: "not an object" };
+  const per = n.per;
+  if (per !== "100g" && per !== "count" && per !== "serving") {
+    return { ok: false, reason: `per must be "100g"|"count"|"serving", got ${JSON.stringify(per)}` };
+  }
+  if (per === "serving") {
+    const sg = Number(n.serving_g);
+    if (!Number.isFinite(sg) || sg <= 0 || sg > 5000) {
+      return { ok: false, reason: `serving_g required and must be 0-5000g when per="serving", got ${JSON.stringify(n.serving_g)}` };
+    }
+  }
+  const kcal = Number(n.kcal);
+  if (!Number.isFinite(kcal) || kcal < 0 || kcal > 10000) {
+    return { ok: false, reason: `kcal must be 0-10000, got ${JSON.stringify(n.kcal)}` };
+  }
+  const MACRO_CEILINGS = { protein_g: 100, fat_g: 100, carb_g: 100, fiber_g: 100, sugar_g: 100, sodium_mg: 50000 };
+  for (const [key, ceiling] of Object.entries(MACRO_CEILINGS)) {
+    if (n[key] == null) continue;
+    const v = Number(n[key]);
+    if (!Number.isFinite(v) || v < 0 || v > ceiling) {
+      return { ok: false, reason: `${key} must be 0-${ceiling}, got ${JSON.stringify(n[key])}` };
+    }
+  }
+  return { ok: true };
 }
 
 // Scale factor for applying a nutrition block to a quantity. Returns
