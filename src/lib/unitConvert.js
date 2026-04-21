@@ -23,7 +23,7 @@
 // complete flow to resolve "used 2 tbsp butter" → "decrement the
 // pantry's 1.5-stick row by 28.4 g → 1.25 sticks remaining".
 
-import { toBase, CUT_WEIGHTS_G, CANONICAL_ALIASES } from "../data/ingredients";
+import { toBase, CUT_WEIGHTS_G, CANONICAL_ALIASES, INGREDIENT_DENSITY_G_PER_ML } from "../data/ingredients";
 
 // Universal mass / volume conversion factors. These are PHYSICS, not
 // ingredient-specific — 1 lb is always 453.6 g whether we're weighing
@@ -51,6 +51,35 @@ const UNIVERSAL_VOLUME_ML = {
 };
 const MASS_UNITS   = new Set(Object.keys(UNIVERSAL_MASS_G));
 const VOLUME_UNITS = new Set(Object.keys(UNIVERSAL_VOLUME_ML));
+
+// True when the two units span mass AND volume (i.e. one is mass,
+// the other is volume). This is the density-bridge case — different
+// families, same ingredient, needs g/ml to cross.
+function sameMassVolumeFamilies(a, b) {
+  if (!a || !b) return false;
+  return (MASS_UNITS.has(a) && VOLUME_UNITS.has(b)) ||
+         (VOLUME_UNITS.has(a) && MASS_UNITS.has(b));
+}
+
+// Look up the ingredient's density (g/ml) from the central
+// INGREDIENT_DENSITY_G_PER_ML table, walking CANONICAL_ALIASES so a
+// legacy compound slug (ground_beef → beef) still finds the right
+// value. Defaults to 1.0 (water-equivalent) for ingredients without
+// an explicit entry — works for most water-adjacent liquids (broth,
+// stock, juice, most dairy) within ~10%. Dense syrups and flours
+// need explicit entries or they'd drift.
+function resolveDensity(ingredient) {
+  if (!ingredient) return 0;
+  const id = ingredient.id;
+  if (INGREDIENT_DENSITY_G_PER_ML[id] != null) {
+    return Number(INGREDIENT_DENSITY_G_PER_ML[id]) || 0;
+  }
+  const alias = CANONICAL_ALIASES[id];
+  if (alias?.base && INGREDIENT_DENSITY_G_PER_ML[alias.base] != null) {
+    return Number(INGREDIENT_DENSITY_G_PER_ML[alias.base]) || 0;
+  }
+  return 1.0;
+}
 
 // True when both units are in the same universal family (both mass or
 // both volume). Count is neither — count↔mass bridging still needs
@@ -295,6 +324,30 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
           // bridged:true flags this as row-calibrated — the display
           // uses "≈" because per-row grams-per-count is a calibration
           // choice, not a universal constant.
+          return { ok: true, value, bridged: true };
+        }
+      }
+    }
+  }
+
+  // Mass ↔ Volume bridge via ingredient density. 2 tbsp olive oil
+  // (volume) needs to convert to oz (mass) and vice-versa — the
+  // universal ladder can't do this because mass and volume are
+  // different physical families. INGREDIENT_DENSITY_G_PER_ML holds
+  // gram-per-ml values for common cooking ingredients (oils, flours,
+  // honey, salts, etc.); unknown ingredients default to 1.0 (water-
+  // equivalent), which is fine for most dairy / broth / juice calls.
+  if (!countInvolved && sameMassVolumeFamilies(normFromUnit, normToUnit)) {
+    const density = resolveDensity(ingredient);
+    if (density > 0) {
+      const ml = normFromUnit in UNIVERSAL_VOLUME_ML
+        ? Number(qty.amount) * UNIVERSAL_VOLUME_ML[normFromUnit]
+        : (Number(qty.amount) * UNIVERSAL_MASS_G[normFromUnit]) / density;
+      if (Number.isFinite(ml)) {
+        const value = normToUnit in UNIVERSAL_VOLUME_ML
+          ? ml / UNIVERSAL_VOLUME_ML[normToUnit]
+          : (ml * density) / UNIVERSAL_MASS_G[normToUnit];
+        if (Number.isFinite(value)) {
           return { ok: true, value, bridged: true };
         }
       }

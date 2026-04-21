@@ -6259,6 +6259,79 @@ const MEAT_STATES = [
   "shredded_cooked", "diced_cooked",
 ];
 
+// Ingredient densities (grams per millilitre) for mass ↔ volume
+// bridging inside convertWithBridge. Without this, a recipe calling
+// for "2 tbsp olive oil" against a pantry row in oz fails to convert
+// because oil's mass (oz) and volume (tbsp) live in different unit
+// families — the universal ladder only bridges within a family.
+//
+// Values from standard culinary references (USDA, King Arthur Baking,
+// Cook's Illustrated). Close approximations; precision beyond one
+// decimal isn't meaningful for cook-time estimation.
+//
+// CANONICAL DEFAULT when a slug isn't in this table: 1.0 g/ml (water-
+// equivalent). Works for water-like liquids (broth, stock, most
+// milks, juices, vinegars) within ~10% accuracy. Dense syrups and
+// low-density fats need explicit entries to avoid drift.
+export const INGREDIENT_DENSITY_G_PER_ML = {
+  // Fats and oils
+  olive_oil:     0.92,
+  vegetable_oil: 0.92,
+  canola_oil:    0.92,
+  coconut_oil:   0.92,
+  sesame_oil:    0.92,
+  butter:        0.911,
+  ghee:          0.91,
+  // Dairy — close to water; entries here mostly for explicit
+  // calibration, not correction
+  milk:          1.03,
+  milk_2pct:     1.03,
+  milk_skim:     1.035,
+  heavy_cream:   0.994,
+  half_and_half: 1.01,
+  buttermilk:    1.03,
+  yogurt:        1.04,
+  sour_cream:    0.994,
+  // Sweeteners — dense
+  honey:         1.42,
+  maple_syrup:   1.32,
+  corn_syrup:    1.38,
+  molasses:      1.43,
+  agave:         1.40,
+  sugar:         0.85,  // granulated (bulk density — not true density)
+  brown_sugar:   0.93,  // packed
+  powdered_sugar: 0.56,
+  // Flours & starches (bulk density)
+  flour:         0.53,  // all-purpose, sifted
+  bread_flour:   0.53,
+  cake_flour:    0.45,
+  whole_wheat_flour: 0.54,
+  cornstarch:    0.51,
+  cornmeal:      0.68,
+  oats:          0.41,  // rolled
+  // Salts
+  salt:          1.20,  // table salt (fine)
+  kosher_salt:   0.96,
+  sea_salt:      1.04,
+  // Other baking / pantry
+  baking_powder: 0.90,
+  baking_soda:   1.10,
+  cocoa_powder:  0.41,
+  // Condiments / sauces — most are water-adjacent
+  soy_sauce:     1.18,
+  fish_sauce:    1.20,
+  vinegar:       1.01,
+  balsamic_vinegar: 1.06,
+  ketchup:       1.09,
+  mustard:       1.05,
+  mayonnaise:    0.91,
+  // Pastes / concentrates
+  tomato_paste:  1.04,
+  tomato_sauce:  1.05,
+  peanut_butter: 1.09,
+  tahini:        1.07,
+};
+
 // CUT axis — anatomical / butchery slot. Orthogonal to STATE per
 // CLAUDE.md; a given (canonical, cut) pair can take any state value.
 // Chicken breast, cubed is chicken + cut=breast + state=cubed; ground
