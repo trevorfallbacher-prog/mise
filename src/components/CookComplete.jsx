@@ -3,7 +3,7 @@ import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
 import { convert, convertWithBridge, decrementRow, formatQty, planInstanceDecrement } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
-import { sameCanonicalFamily, resolvesToSameCanonical } from "../lib/recipePairing";
+import { sameCanonicalFamily, resolvesToSameCanonical, pairRecipeIngredients } from "../lib/recipePairing";
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
@@ -61,39 +61,68 @@ function totalXpForRecipe(recipe) {
 //                  phase. Untracked rows have both null and a ✕-only card.
 //   skipped      — user tapped ✕. Final removal plan ignores skipped rows.
 // Pure function — no React, easy to unit test once we add a test harness.
-export function buildInitialUsedItems(recipe, pantry) {
+export function buildInitialUsedItems(recipe, pantry, session) {
   const ingredients = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
   const list = Array.isArray(pantry) ? pantry : [];
+  // Run the SAME pairer CookMode uses so closest-match substitutes
+  // (recipe wants Mozzarella, user has Parmesan, Tier 3 category
+  // match picks Parmesan) carry through to the deduction screen.
+  // Previously this function filtered with resolvesToSameCanonical
+  // alone — exact canonical — so a substitute like Parmesan-for-
+  // Mozzarella was invisible here and the row rendered "NOT IN
+  // PANTRY" even after CookMode paired it live.
+  const pairings = pairRecipeIngredients(ingredients, list);
   return ingredients.map((ing, idx) => {
     const canonical = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
-    // Sort FIFO by expires_at ASC (tie-break: purchased_at ASC) so the
-    // auto-picked default is the oldest-expiring instance — consume
-    // before it spoils. Matches the stack-drilldown FIFO ordering so
-    // the user's mental model ("oldest first") holds across surfaces.
-    // Match pantry rows via resolvesToSameCanonical — exact canonical
-    // after alias redirect, NOT hub widening. Deduction is narrower
-    // than pairing: a recipe asking for heavy_cream must NOT drain
-    // milk rows even though they share milk_hub (different canonicals,
-    // different ingredients). User saw "33.3 quarts LEFT AFTER COOK"
-    // when sameCanonicalFamily swept every dairy row into the meter.
-    // Aliases still redirect (chicken_breast legacy slug hits a
-    // chicken + cut=breast new-model row), which is what buildRemoval-
-    // Plan's cascade is built for — but hub-siblings stay distinct.
-    const matches = ing.ingredientId
+    // Match universe for this ingredient row — the cascade that
+    // deduction and the swap picker choose from. Three tiers:
+    //   1. Explicit canonical family (exact match after alias
+    //      redirect, no hub widening — heavy_cream and milk stay
+    //      distinct).
+    //   2. Pairer's paired row (same canonical / hub) and
+    //      closestMatch row (substitute band) — surfaces rows that
+    //      pairRecipeIngredients already decided were valid.
+    //   3. Deduped, sorted FIFO by expires_at so the oldest-
+    //      expiring instance is the default (consume before spoil).
+    const familyMatches = ing.ingredientId
       ? list.filter(p =>
           resolvesToSameCanonical(p.ingredientId, ing.ingredientId) &&
           (p.kind || "ingredient") === "ingredient" &&
           Number(p.amount) > 0
-        ).sort((a, b) => {
-          const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
-          const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
-          if (ea !== eb) return ea - eb;
-          const pa = a.purchasedAt ? new Date(a.purchasedAt).getTime() : 0;
-          const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
-          return pa - pb;
-        })
+        )
       : [];
-    const defaultMatch = matches[0] || null;
+    const pairing = pairings[idx] || null;
+    const suggested = [pairing?.paired, pairing?.closestMatch].filter(Boolean);
+    const seen = new Set();
+    const matches = [...familyMatches, ...suggested]
+      .filter(m => {
+        if (!m || !m.id || seen.has(m.id)) return false;
+        seen.add(m.id);
+        return (m.kind || "ingredient") === "ingredient"
+          && Number(m.amount) > 0;
+      })
+      .sort((a, b) => {
+        const ea = a.expiresAt ? new Date(a.expiresAt).getTime() : Infinity;
+        const eb = b.expiresAt ? new Date(b.expiresAt).getTime() : Infinity;
+        if (ea !== eb) return ea - eb;
+        const pa = a.purchasedAt ? new Date(a.purchasedAt).getTime() : 0;
+        const pb = b.purchasedAt ? new Date(b.purchasedAt).getTime() : 0;
+        return pa - pb;
+      });
+    // Session override wins over all defaults: if the user explicitly
+    // swapped this slot on the cook-prep screen (CookMode) or during
+    // an AIRecipe tweak, that choice is authoritative. Else prefer the
+    // pairer's exact-match row, then its closest-match substitute,
+    // then the FIFO first from the family universe.
+    const overrideRowId = session?.overrides?.[idx]?.pantryItemId || null;
+    const overrideRow = overrideRowId
+      ? list.find(p => p.id === overrideRowId) || null
+      : null;
+    const defaultMatch = overrideRow
+      || pairing?.paired
+      || pairing?.closestMatch
+      || matches[0]
+      || null;
     // Resolve the recipe's called-for quantity so the slider + amount
     // field prefill instead of loading at 0 (seen in the wild: "What
     // did you use?" screen with every slider pinned to 0 because
@@ -107,28 +136,22 @@ export function buildInitialUsedItems(recipe, pantry) {
     //   3. null — untracked / free-text, slider stays manual
     const recipeQty = ing.qty || (canonical ? parseAmountString(ing.amount, canonical) : null);
 
-    // Conversion pass: if the recipe's unit differs from the default
-    // pantry row's unit, translate so the slider reads in the pantry
-    // row's native unit. Package size is bible — we always convert
-    // TOWARD the pantry, never away from it, so the user sees their
-    // stock in the units they stored it in.
+    // Display unit policy: RECIPE UNIT WINS.
     //
-    // convertWithBridge handles both same-ladder (tbsp↔stick, count↔lb
-    // on meats) and count↔mass bridging via countWeightG (the "8
-    // tortillas in a 16 oz pack" case) in one call. Returns
-    // bridged:true when the cross-family bridge was used; display
-    // flags that with an "≈" in the shadow readout since bridged
-    // values are approximations (they depend on a per-row average
-    // weight).
+    // Recipe called for "¾ cup" → show everything in cups. Pantry
+    // row happens to be stored in quarts → convert quarts to cups
+    // for display, don't force the user to read the pantry's unit.
+    // Previous behavior (pantry unit wins) was the bug the user
+    // flagged: recipe in cups but meter showing quarts + pints,
+    // too many units on screen.
+    //
+    // Only fall back to the pantry row's unit when (a) the recipe
+    // had no parseable qty, or (b) the recipe's unit isn't in the
+    // canonical's ladder (e.g. garlic recipe says "2 tbsp" but
+    // garlic's ladder is [clove, head] — can't display "tbsp").
+    // That fallback path is handled by the coherence guard below.
     let displayAmount = recipeQty?.amount ?? null;
     let displayUnit   = recipeQty?.unit   ?? (defaultMatch?.unit ?? null);
-    if (recipeQty && canonical && defaultMatch?.unit && recipeQty.unit !== defaultMatch.unit) {
-      const result = convertWithBridge(recipeQty, defaultMatch.unit, canonical, defaultMatch);
-      if (result.ok) {
-        displayAmount = Number(result.value.toFixed(3));
-        displayUnit   = defaultMatch.unit;
-      }
-    }
 
     // Coherence guard: usedUnit MUST be in the canonical's ladder,
     // otherwise the dropdown shows the first option (browser fallback
@@ -291,7 +314,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   return out;
 }
 
-export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish }) {
+export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish, cookSession = null }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
   const [rating, setRating] = useState(null);
@@ -316,7 +339,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // the ingredients-used → confirm-removal → save sequence. Seeded once from
   // the initial pantry snapshot; realtime pantry changes during the flow are
   // intentionally ignored so the user's edits don't flip out from under them.
-  const [usedItems, setUsedItems] = useState(() => buildInitialUsedItems(recipe, pantry));
+  const [usedItems, setUsedItems] = useState(() => buildInitialUsedItems(recipe, pantry, cookSession?.session));
   // pickerForIdx is the row whose multi-match picker is currently open (null
   // for closed). Sheet overlays the phase and lets the user choose which
   // pantry row to draw from when more than one matches the ingredient id.
@@ -1060,10 +1083,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                             {/* Single-line "how much left" label. Drops
                                 the · LOW / · GOOD / · ALMOST OUT tag —
                                 color already telegraphs condition, the
-                                words were redundant noise. Dropped the
-                                right-side USED label too — the input /
-                                dropdown at the top of the row is the
-                                used amount, no need to echo it. */}
+                                words were redundant noise. */}
                             <div style={{
                               fontFamily:"'DM Mono',monospace", fontSize:9,
                               letterSpacing:"0.04em",
@@ -1071,23 +1091,34 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                             }}>
                               {fmt(leftAfter)} {unitTxt} LEFT AFTER COOK
                             </div>
-                            {/* The bar. Segment order flipped: USED
-                                (animated delta) grows from the LEFT so
-                                dragging the slider right naturally
-                                increases it — the previous layout had
-                                the thumb moving opposite to the drag
-                                direction. LEFT AFTER COOK is the solid
-                                tail on the right. */}
+                            {/* The bar. 0 on the left, pantry-max on
+                                the right. LEFT AFTER COOK is the solid
+                                fill growing from 0; USED (animated
+                                delta) is the hatched tail on the right.
+                                Slider value maps to leftAfter (not
+                                used) — so dragging RIGHT increases
+                                leftAfter (= less used) and moves the
+                                thumb RIGHT. Reading and interaction
+                                both go the same direction now, no
+                                inversion. */}
                             <div style={{ position:"relative", width:"100%", height:22 }}>
                               <div style={{
                                 position:"absolute", top:5, left:0, right:0, height:12,
                                 background:"#2a2a2a", borderRadius:6,
                               }} />
-                              {/* USED TODAY — animated delta growing
-                                  from the left edge. Faded leftColor
-                                  with scrolling diagonal hatches. */}
+                              {/* LEFT AFTER COOK — solid color, grows
+                                  from 0 to leftPct% */}
                               <div style={{
                                 position:"absolute", top:5, left:0, height:12,
+                                width:`${leftPct}%`,
+                                background: leftColor,
+                                borderRadius: leftPct >= 99.5 ? 6 : "6px 0 0 6px",
+                                transition:"width 0.08s linear, background 0.15s linear",
+                              }} />
+                              {/* USED TODAY — animated delta tail,
+                                  from leftPct% to leftPct+usedPct% */}
+                              <div style={{
+                                position:"absolute", top:5, left:`${leftPct}%`, height:12,
                                 width:`${usedPct}%`,
                                 background: `repeating-linear-gradient(
                                   -45deg,
@@ -1098,27 +1129,18 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                                 )`,
                                 backgroundSize: "17px 17px",
                                 animation: "cookCompleteDelta 1.8s linear infinite",
-                                borderRadius: usedPct >= 99.5 ? 6 : "6px 0 0 6px",
-                                transition:"width 0.08s linear, background 0.15s linear",
-                              }} />
-                              {/* LEFT AFTER COOK — solid-color tail
-                                  starting where the delta ends. */}
-                              <div style={{
-                                position:"absolute", top:5, left:`${usedPct}%`, height:12,
-                                width:`${leftPct}%`,
-                                background: leftColor,
                                 borderRadius:
-                                  (usedPct + leftPct) >= 99.5 && usedPct < 0.5 ? 6
-                                  : (usedPct + leftPct) >= 99.5 ? "0 6px 6px 0"
+                                  (leftPct + usedPct) >= 99.5 && leftPct < 0.5 ? 6
+                                  : (leftPct + usedPct) >= 99.5 ? "0 6px 6px 0"
                                   : 0,
                                 transition:"width 0.08s linear, left 0.08s linear, background 0.15s linear",
                               }} />
-                              {/* Thumb — color-matched to leftColor so
-                                  it reads as part of the same system,
-                                  not a loud yellow accent. */}
+                              {/* Thumb — color-matched to leftColor.
+                                  Sits at the leftPct% boundary. Driven
+                                  by the invisible range input below. */}
                               <div style={{
                                 position:"absolute",
-                                top:2, left:`calc(${usedPct}% - 9px)`,
+                                top:2, left:`calc(${leftPct}% - 9px)`,
                                 width:18, height:18,
                                 background: leftColor,
                                 border:"3px solid #0a0a0a",
@@ -1127,14 +1149,24 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                                 boxShadow:`0 0 6px ${leftColor}66`,
                                 transition:"background 0.15s linear, box-shadow 0.15s linear, left 0.08s linear",
                               }} />
+                              {/* Range input drives LEFT AFTER directly:
+                                  value = pantryNow − usedAmount. Drag
+                                  right → leftAfter up → used down →
+                                  thumb tracks right. Drag left → used
+                                  up → thumb tracks left. Visual and
+                                  interaction aligned. */}
                               <input
                                 type="range"
                                 min="0" max={pantryNow} step={step}
-                                value={cur}
-                                onChange={e => setRow(row.idx, {
-                                  usedAmount: Number(e.target.value),
-                                  usedUnit: row.usedUnit,
-                                })}
+                                value={leftAfter}
+                                onChange={e => {
+                                  const nextLeft = Number(e.target.value);
+                                  const nextUsed = Math.max(0, pantryNow - nextLeft);
+                                  setRow(row.idx, {
+                                    usedAmount: nextUsed,
+                                    usedUnit: row.usedUnit,
+                                  });
+                                }}
                                 aria-label={`Estimate ${displayName} used`}
                                 style={{
                                   position:"absolute", inset:0,
@@ -1169,37 +1201,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                           </div>
                         );
                       })()}
-                      {/* Conversion shadow — live readout of the current
-                          used-amount translated into the NEXT meaningful
-                          unit. Picks the recipe's original unit when
-                          present (so the user sees their commitment
-                          back-translated to the AI's ask), else the
-                          canonical's default, else the first ladder
-                          entry. "=" for exact ladder conversions, "≈"
-                          when the countWeightG bridge was used. */}
-                      {(() => {
-                        if (!ing || !row.usedAmount || !row.usedUnit) return null;
-                        const curQty = { amount: Number(row.usedAmount), unit: row.usedUnit };
-                        if (!Number.isFinite(curQty.amount) || curQty.amount <= 0) return null;
-                        const recipeUnit = recipeQty?.unit || null;
-                        const ladder = Array.isArray(ing.units) ? ing.units.map(u => u.id) : [];
-                        const candidates = [recipeUnit, ing.defaultUnit, ...ladder]
-                          .filter(Boolean)
-                          .filter(u => u !== row.usedUnit);
-                        if (candidates.length === 0) return null;
-                        const shadowUnit = candidates[0];
-                        const res = convertWithBridge(curQty, shadowUnit, ing, match);
-                        if (!res.ok) return null;
-                        const pretty = Number(res.value.toFixed(res.value >= 10 ? 1 : 2));
-                        return (
-                          <div style={{
-                            fontFamily:"'DM Mono',monospace", fontSize:10,
-                            color:"#888", letterSpacing:"0.04em",
-                          }}>
-                            {res.bridged ? "≈ " : "= "}{pretty} {unitLabel(ing, shadowUnit)}
-                          </div>
-                        );
-                      })()}
+                      {/* Conversion shadow intentionally removed.
+                          The prefill now defaults to the recipe's unit
+                          and the meter/labels all use ONE unit, so the
+                          shadow readout was just noise ("0.86 pints"
+                          popping up when the user is already reading
+                          cups everywhere else). If the user flips the
+                          dropdown to a different unit, the number
+                          live-converts and the whole row re-renders in
+                          that unit — no second unit needed on screen. */}
                     </div>
                   );
                 })() : null}

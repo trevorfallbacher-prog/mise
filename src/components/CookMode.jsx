@@ -7,6 +7,7 @@ import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
+import { useCookSession } from "../lib/useCookSession";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -265,16 +266,15 @@ export default function CookMode({
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
   const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
-  // Per-ingredient overrides that layer on top of the persisted
-  // recipe — the user's cook-time tweaks. None of these mutate
-  // user_recipes; they're session-scoped so the saved recipe stays
-  // intent-only ("I want Mozzarella") while the live pairing reads
-  // "you swapped in Great Value string cheese for this cook".
-  //   pantrySwaps: Map<recipeIngredientIdx, pantryItemId>
-  //   swappedToShopping: Set<recipeIngredientIdx> — one-tap + SHOP
-  //                      per-row additions; shown as ✓ after commit.
-  const [pantrySwaps, setPantrySwaps] = useState({});
-  const [swappedToShopping, setSwappedToShopping] = useState(new Set());
+  // Shared cook-time session state (src/lib/useCookSession.js). Owns
+  // per-ingredient overrides (pantryItemId swaps, shopping promotions,
+  // skip flags) and user-added extras. Passed as a prop to
+  // CookComplete so the "What did you use?" screen reads the same
+  // swaps the user made on cook-prep. Previously each screen kept
+  // its own parallel override shape and overrides vanished on screen
+  // transition; session fixes that permanently.
+  const cookSession = useCookSession();
+  const { session, setOverride, clearOverride } = cookSession;
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
   const [swapSearch, setSwapSearch] = useState("");
   const openSwapPicker = (idx) => { setSwapOpenIdx(idx); setSwapSearch(""); };
@@ -319,12 +319,14 @@ export default function CookMode({
   // so brand/availability drift a month from now doesn't fossilize
   // a stale pair. Zipped by index into ingredientStatus.
   //
-  // pantrySwaps layers the user's per-row cook-time swap choices
-  // on top — stamping pantryItemId on the ingredient so the Tier 0
-  // short-circuit in pairRecipeIngredients uses the exact row the
-  // user picked, even when the canonical doesn't match.
+  // cookSession.overrides[i].pantryItemId layers the user's per-row
+  // cook-time swap choices on top — stamping pantryItemId on the
+  // ingredient so the Tier 0 short-circuit in pairRecipeIngredients
+  // uses the exact row the user picked, even when the canonical
+  // doesn't match. CookComplete reads the same map so the swap
+  // carries through to the deduction flow.
   const ingredientsForPairing = (recipe.ingredients || []).map((ing, i) => {
-    const swapId = pantrySwaps[i];
+    const swapId = session.overrides[i]?.pantryItemId;
     if (!swapId) return ing;
     return { ...ing, pantryItemId: swapId };
   });
@@ -383,7 +385,7 @@ export default function CookMode({
   // race on the parent's shopping list.
   const addOneToShoppingList = (ing, row, idx) => {
     if (!setShoppingList) return;
-    if (swappedToShopping.has(idx)) return;
+    if (session.overrides[idx]?.promotedToShopping) return;
     setShoppingList(prev => {
       const existing = new Set(prev.map(i => i.ingredientId || i.name.toLowerCase()));
       const candidateName = row?.name || ing.item;
@@ -404,11 +406,7 @@ export default function CookMode({
         source: "recipe",
       }];
     });
-    setSwappedToShopping(prev => {
-      const next = new Set(prev);
-      next.add(idx);
-      return next;
-    });
+    setOverride(idx, { promotedToShopping: true });
   };
 
   // Rank every pantry row by closeness to a recipe ingredient. Same
@@ -452,12 +450,8 @@ export default function CookMode({
     return scored;
   };
 
-  const applySwap = (idx, pantryItemId) => setPantrySwaps(prev => ({ ...prev, [idx]: pantryItemId }));
-  const clearSwap = (idx) => setPantrySwaps(prev => {
-    const next = { ...prev };
-    delete next[idx];
-    return next;
-  });
+  const applySwap = (idx, pantryItemId) => setOverride(idx, { pantryItemId });
+  const clearSwap = (idx) => clearOverride(idx, ["pantryItemId"]);
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
@@ -592,14 +586,14 @@ export default function CookMode({
             // else ("to taste" salt, decorative herbs) just renders static.
             const tappable = !!ing.ingredientId;
             const swapOpen = swapOpenIdx === i;
-            const swapped  = !!pantrySwaps[i];
+            const swapped  = !!session.overrides[i]?.pantryItemId;
             // Swap/shop affordances surface per-row on the cook prep
             // screen. SWAP when the ingredient is missing OR paired as
             // a substitute (user might want to override), SHOP only
             // when missing (already-paired rows have nothing to buy).
             const showSwap = status === "missing" || pairing?.status === "substitute" || swapped;
             const showShop = status === "missing" && !!setShoppingList;
-            const shopDone = swappedToShopping.has(i);
+            const shopDone = !!session.overrides[i]?.promotedToShopping;
             return (
               <div
                 key={i}
@@ -932,6 +926,12 @@ export default function CookMode({
           friends={friends}
           pantry={pantry}
           setPantry={setPantry}
+          // Shared cook-time session state (see useCookSession). Lets
+          // CookComplete seed its selected pantry row from the user's
+          // cook-prep swaps — "swap Mozzarella for Parmesan" on this
+          // screen now carries through to the "What did you use?"
+          // screen so the deduction hits the row they actually used.
+          cookSession={cookSession}
           // Threaded so CookComplete can call recipeNutrition() at
           // save time to stamp cook_logs.nutrition (migration 0068).
           // CookMode already reads both for its own meta-row card; no
