@@ -949,13 +949,26 @@ export const INGREDIENTS = [
   // ── produce ─────────────────────────────────────────────────────────────
   {
     id: "garlic", name: "Garlic", emoji: "🧄", category: "produce",
+    // Unit ladder encodes average weights so a count-only user and a
+    // weight-only user both get accurate conversions. 1 clove ≈ 4g
+    // (the 3–5g range from USDA peeled fresh); 1 head ≈ 10 cloves.
+    // tbsp / tsp sized against minced garlic density (~9g / tbsp,
+    // ~3g / tsp) so a recipe "2 tbsp minced garlic" against a jar of
+    // minced garlic in oz or a head of whole cloves both convert
+    // cleanly. Full mass ladder (g:1 anchor) makes this a mass
+    // canonical, so isMassLadder-gated paths (scaleFactor, count
+    // override via effectiveCountWeightG) light up.
     units: [
-      { id: "clove", label: "cloves", toBase: 1 },
-      { id: "head",  label: "heads",  toBase: 10 },
+      { id: "clove", label: "cloves", toBase: 4 },
+      { id: "head",  label: "heads",  toBase: 40 },
+      { id: "g",     label: "g",      toBase: 1 },
+      { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "tbsp",  label: "tbsp",   toBase: 9 },
+      { id: "tsp",   label: "tsp",    toBase: 3 },
     ],
     defaultUnit: "clove",
-    // Per clove (~3g). Tiny amount per recipe but gets counted honestly.
-    nutrition: { per: "count", kcal: 4.5, protein_g: 0.2, fat_g: 0, carb_g: 1, sodium_mg: 0.5 },
+    // Per 4g clove.
+    nutrition: { per: "100g", kcal: 149, protein_g: 6.4, fat_g: 0.5, carb_g: 33, fiber_g: 2.1, sodium_mg: 17 },
   },
   {
     id: "yellow_onion", name: "Yellow Onion", emoji: "🧅", category: "produce",
