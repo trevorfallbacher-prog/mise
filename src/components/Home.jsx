@@ -100,18 +100,10 @@ export default function Home({
 
   return (
     <div style={{ minHeight: "100vh", paddingBottom: 100 }}>
-      {/* Brand — tiny at the very top, sets identity without stealing
-          real estate from the hero greeting. */}
-      <div style={{ padding: "18px 20px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button
-          onClick={openSelf}
-          style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer" }}
-          title="Your profile"
-        >
-          <span style={{ fontFamily: "'Fraunces',serif", fontSize: 18, fontStyle: "italic", fontWeight: 400, color: "#f5c842", letterSpacing: "-0.02em" }}>
-            mise
-          </span>
-        </button>
+      {/* Top row — streak + avatar on the right. Wordmark was pulled;
+          the avatar (bumped to 48px) now carries identity on its own,
+          and the fixed bell/ADMIN pins live in the freed-up left slot. */}
+      <div style={{ padding: "18px 20px 0", display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {streak > 0 && !tombstoneActive && (
             <div style={{
@@ -165,7 +157,7 @@ export default function Home({
               profile (Quick Stats band + Nutrition dashboard), so
               surfacing it twice made Home feel like a dashboard
               clone instead of a standalone screen. */}
-          <FlairHalo active={isFlairActive(profile)} size={36}>
+          <FlairHalo active={isFlairActive(profile)} size={48}>
             <Avatar
               name={profile.name}
               initial={(profile.name || "?")[0]?.toUpperCase() || "?"}
@@ -371,10 +363,10 @@ function Avatar({ name, initial, onClick }) {
       onClick={onClick}
       title={name}
       style={{
-        width: 36, height: 36, borderRadius: 18,
+        width: 48, height: 48, borderRadius: 24,
         background: avatarColor(name), color: "#f5c842",
         display: "flex", alignItems: "center", justifyContent: "center",
-        fontFamily: "'Fraunces',serif", fontSize: 17, fontWeight: 500,
+        fontFamily: "'Fraunces',serif", fontSize: 22, fontWeight: 500,
         flexShrink: 0, border: "none", cursor: "pointer", padding: 0,
       }}
     >
