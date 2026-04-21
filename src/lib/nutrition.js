@@ -71,38 +71,88 @@ function hasNumbers(n) {
 // null when the conversion isn't possible (unknown unit, missing
 // serving_g on a per-serving nutrition, etc.) — callers should
 // treat that as a coverage gap rather than a zero.
+//
+// Every mass-based canonical's ladder declares `toBase` in GRAMS (butter,
+// flour, spices — see the spice factory in src/data/ingredients.js for the
+// gram-base convention). Count-based canonicals (eggs, apples, bananas)
+// declare `toBase=1` per count. The nutrition.per value picks which axis
+// we're scaling along.
 export function scaleFactor(qty, canonical, nutrition) {
-  if (!qty || !canonical || !nutrition?.per) return null;
+  if (!qty || !canonical || !nutrition) return null;
   const fromEntry = canonical.units?.find(u => u.id === qty.unit);
   if (!fromEntry) return null;
   const baseAmount = Number(qty.amount) * Number(fromEntry.toBase);
   if (!Number.isFinite(baseAmount)) return null;
-  switch (nutrition.per) {
+
+  // Tolerant fallback — pre-v3 AI enrichment wrote free-text into
+  // `per` ("1 tsp (5g)", "1 medium apple (182g)"). The gram weight is
+  // right there in parentheses; salvage it so rows already persisted
+  // in production still resolve instead of silently scoring zero.
+  // Forward-going, the edge function strips malformed blocks before
+  // they land — this branch only matters for the migration window.
+  const per = coercePer(nutrition);
+  if (!per) return null;
+
+  switch (per.kind) {
     case "100g":
-      // Mass ladders have toBase in grams. A canonical with a "count"
-      // default but nutrition.per === "100g" (seeded that way) would
-      // resolve correctly only when the row's unit is a mass unit —
-      // we bail when it isn't, which is the right answer.
       if (!isMassLadder(canonical)) return null;
       return baseAmount / 100;
     case "count":
-      // Count ladders: toBase=1 per item. baseAmount is the count.
+      // Count ladders have toBase=1 per item. baseAmount is the count.
       return baseAmount;
-    case "serving":
-      if (!Number.isFinite(Number(nutrition.serving_g))) return null;
+    case "serving": {
+      const g = per.serving_g;
+      if (!Number.isFinite(g) || g <= 0) return null;
       if (!isMassLadder(canonical)) return null;
-      return baseAmount / Number(nutrition.serving_g);
+      return baseAmount / g;
+    }
     default:
       return null;
   }
 }
 
-// Heuristic: if the canonical's ladder includes any unit id in
-// MASS_UNIT_IDS, we treat it as mass-based. Otherwise it's count.
-// Hand-curated set; expand if the registry gains new mass units.
-const MASS_UNIT_IDS = new Set(["g", "kg", "oz", "lb", "lbs", "stick", "cup", "tbsp", "tsp", "ml", "l"]);
+// Normalize nutrition.per into a structured shape the switch above can
+// consume. Handles the modern enum {"100g","count","serving"} and the
+// legacy free-text format ("1 tsp (5g)", "1 medium apple (182g)")
+// written by pre-v3 AI enrichments. The free-text fallback reads as
+// "per=serving with serving_g=N" — the gram weight is the canonical
+// reference; the leading "1 tsp" / "1 medium apple" is flavor text for
+// humans, not a conversion instruction.
+function coercePer(nutrition) {
+  const raw = nutrition?.per;
+  if (raw === "100g")    return { kind: "100g" };
+  if (raw === "count")   return { kind: "count" };
+  if (raw === "serving") return { kind: "serving", serving_g: Number(nutrition.serving_g) };
+  if (typeof raw === "string") {
+    // Match a trailing "(<number><optional space>g)" group.
+    const m = raw.match(/\(\s*([\d.]+)\s*g\s*\)/i);
+    if (m) {
+      const g = Number(m[1]);
+      if (Number.isFinite(g) && g > 0) return { kind: "serving", serving_g: g };
+    }
+    if (/^\s*100\s*g\s*$/i.test(raw)) return { kind: "100g" };
+  }
+  return null;
+}
+
+// A canonical is "mass-based" iff its ladder includes `{g:1}` or
+// `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
+// ladder declares how many grams (or millilitres, treated as grams for
+// nutrition purposes) it equals. Count-based canonicals (eggs, apple)
+// intentionally lack this anchor, which is how `scaleFactor`'s "100g"
+// and "serving" branches know to bail for count ladders and fall
+// through to `per="count"` alone.
+//
+// Why accept `ml:1`: liquid canonicals (milk, oil, maple syrup) use a
+// millilitre base. For nutrition purposes we approximate 1 ml ≈ 1 g,
+// which is exact for water-based liquids and within ~10% for oils
+// (~0.92 g/ml) and ~30% for dense syrups (honey ~1.42 g/ml).
+// Per-liquid density correction is a future refinement — this keeps
+// the 0→nonzero pipeline working today.
 function isMassLadder(canonical) {
-  return (canonical?.units || []).some(u => MASS_UNIT_IDS.has(u.id));
+  return (canonical?.units || []).some(
+    u => (u.id === "g" || u.id === "ml") && Number(u.toBase) === 1,
+  );
 }
 
 // Parse a free-text amount string into { amount, unit } against a
