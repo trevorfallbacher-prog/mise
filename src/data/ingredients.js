@@ -6492,6 +6492,24 @@ export const DEFAULT_CUT_PER_HUB = {
   turkey:  "breast",
 };
 
+// Per-state nutrition for meat hub canonicals. Grinding homogenizes
+// the animal — ground beef from a mixed trim is nutritionally distinct
+// from any one whole cut (typical 85/15 at ~250 kcal vs ribeye's 291,
+// round's 139). The resolver consults this table BEFORE CUT_NUTRITION,
+// so state=ground wins over any cut axis: grinding effectively erases
+// the cut distinction.
+//
+// Seeded with "ground" for the four meat hubs using commonly-purchased
+// fat ratios (85/15 for beef, default-blend for chicken/pork/turkey).
+// Add new states (brined, cured, smoked, cooked) here if/when they
+// surface as pantry tags.
+export const STATE_NUTRITION = {
+  beef:    { ground: { per: "100g", kcal: 250, protein_g: 18, fat_g: 20, carb_g: 0 } },  // 85/15 raw
+  chicken: { ground: { per: "100g", kcal: 143, protein_g: 17, fat_g: 8,  carb_g: 0 } },  // blend raw
+  pork:    { ground: { per: "100g", kcal: 263, protein_g: 17, fat_g: 22, carb_g: 0 } },  // blend raw
+  turkey:  { ground: { per: "100g", kcal: 148, protein_g: 19, fat_g: 8,  carb_g: 0 } },  // 93/7 raw
+};
+
 export const CUT_LABELS = {
   breast: "breast", thigh: "thigh", leg: "leg", wing: "wing",
   tenderloin: "tenderloin", back: "back", whole_bird: "whole bird",

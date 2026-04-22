@@ -20,7 +20,7 @@
 //   "count"   → each item carries the nutrition (eggs, apples).
 //   "serving" → use nutrition.serving_g to scale grams.
 
-import { findIngredient, CUT_NUTRITION, DEFAULT_CUT_PER_HUB, CANONICAL_ALIASES } from "../data/ingredients";
+import { findIngredient, CUT_NUTRITION, STATE_NUTRITION, DEFAULT_CUT_PER_HUB, CANONICAL_ALIASES } from "../data/ingredients";
 import { convertWithBridge, effectiveCountWeightG, isMassLadder } from "./unitConvert";
 
 // Resolve the best available nutrition for a pantry row. Phase 1 only
@@ -66,48 +66,61 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
       return { nutrition: hit.nutrition, source: "brand", brand: hit.displayBrand || pantryRow.brand };
     }
   }
-  // 3. ingredient_info.nutrition — the admin-approved canonical average.
+  // Resolve axes once for the remaining meat-hub-aware tiers. canon
+  // walks CANONICAL_ALIASES so "chicken_breast" → chicken; hubId is
+  // the hub canonical id for table lookups; state/cut come from the
+  // new-model pantry row first, then from the alias entry for legacy
+  // compound slugs (ground_beef, chicken_breast, ribeye).
+  const canon = canonId ? findIngredient(canonId) : null;
+  const aliasEntry = canonId ? CANONICAL_ALIASES[canonId] : null;
+  const hubId = canon?.id || aliasEntry?.base || canonId;
+  const rowState = pantryRow.state || aliasEntry?.state || null;
+  const rowCut   = pantryRow.cut   || aliasEntry?.cut   || null;
+
+  // 3. ingredient_info — admin-approved per canonical. Prefer cut- or
+  //    state-specific blocks when the info row supplies them (emitted
+  //    by the enrich-ingredient edge function for meat hubs). State
+  //    wins over cut because grinding homogenizes the animal.
   if (canonId && typeof getInfo === "function") {
     const info = getInfo(canonId);
-    if (info?.nutrition && acceptableForResolve(info.nutrition)) {
-      return { nutrition: info.nutrition, source: "canonical" };
-    }
-  }
-  // 4. Cut-specific registry lookup — for meat-hub canonicals
-  //    (chicken / beef / pork / turkey) the hub itself doesn't carry
-  //    nutrition because the value depends on the cut. Walk the row's
-  //    cut axis to resolve a per-100g value from CUT_NUTRITION.
-  //    Precedence within the tier:
-  //      a. pantryRow.cut — new-model canonical+cut rows.
-  //      b. CANONICAL_ALIASES[canonId]?.cut — legacy compound slugs
-  //         like "chicken_breast" still carry cut info via the alias.
-  //      c. DEFAULT_CUT_PER_HUB[hub] — untagged hub rows fall to the
-  //         hub's conventional default (matches count.toBase).
-  //    Resolved hub can come from the canonical we just found (aliases
-  //    route to the base) OR from CANONICAL_ALIASES when canonId is a
-  //    legacy compound slug.
-  if (canonId) {
-    const canon = findIngredient(canonId);
-    const aliasEntry = CANONICAL_ALIASES[canonId];
-    const hubId = canon?.id || aliasEntry?.base || canonId;
-    if (CUT_NUTRITION[hubId]) {
-      const cut = pantryRow.cut
-        || aliasEntry?.cut
-        || DEFAULT_CUT_PER_HUB[hubId]
-        || null;
-      const cutN = cut ? CUT_NUTRITION[hubId][cut] : null;
-      if (cutN && acceptableForResolve(cutN)) {
-        return { nutrition: cutN, source: "cut" };
+    if (info) {
+      if (rowState && info.stateNutrition?.[rowState]
+          && acceptableForResolve(info.stateNutrition[rowState])) {
+        return { nutrition: info.stateNutrition[rowState], source: "state" };
+      }
+      if (rowCut && info.cutNutrition?.[rowCut]
+          && acceptableForResolve(info.cutNutrition[rowCut])) {
+        return { nutrition: info.cutNutrition[rowCut], source: "cut" };
+      }
+      if (info.nutrition && acceptableForResolve(info.nutrition)) {
+        return { nutrition: info.nutrition, source: "canonical" };
       }
     }
   }
-  // 5. In-code registry fallback — fires when ingredient_info hasn't
-  //    been seeded for this canonical yet.
-  if (canonId) {
-    const canon = findIngredient(canonId);
-    if (canon?.nutrition && acceptableForResolve(canon.nutrition)) {
-      return { nutrition: canon.nutrition, source: "default" };
+  // 4a. State-specific registry lookup (ground beef / chicken / pork /
+  //     turkey). Grinding erases the cut axis so this tier fires
+  //     before cut-specific lookup.
+  if (hubId && STATE_NUTRITION[hubId] && rowState) {
+    const stateN = STATE_NUTRITION[hubId][rowState];
+    if (stateN && acceptableForResolve(stateN)) {
+      return { nutrition: stateN, source: "state" };
     }
+  }
+  // 4b. Cut-specific registry lookup. Falls back to DEFAULT_CUT_PER_HUB
+  //     when the pantry row is an untagged hub canonical — chicken
+  //     without a cut defaults to breast, matching count.toBase=200g.
+  if (hubId && CUT_NUTRITION[hubId]) {
+    const cut = rowCut || DEFAULT_CUT_PER_HUB[hubId] || null;
+    const cutN = cut ? CUT_NUTRITION[hubId][cut] : null;
+    if (cutN && acceptableForResolve(cutN)) {
+      return { nutrition: cutN, source: "cut" };
+    }
+  }
+  // 5. In-code registry fallback — fires when ingredient_info hasn't
+  //    been seeded for this canonical yet. Reuses `canon` resolved
+  //    above so we don't double-walk the alias map.
+  if (canon?.nutrition && acceptableForResolve(canon.nutrition)) {
+    return { nutrition: canon.nutrition, source: "default" };
   }
   return { nutrition: null, source: null };
 }
@@ -587,6 +600,7 @@ export function sourceBadge(source) {
     case "brand":     return { label: "BRAND",    color: "#c7a8d4" };
     case "canonical": return { label: "CANONICAL", color: "#b8a878" };
     case "cut":       return { label: "CUT",      color: "#a8553a" };
+    case "state":     return { label: "STATE",    color: "#c7a8d4" };
     case "default":   return { label: "EST.",     color: "#888"    };
     default:          return { label: "",         color: "#555"    };
   }
