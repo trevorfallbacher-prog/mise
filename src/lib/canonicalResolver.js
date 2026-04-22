@@ -1120,5 +1120,14 @@ export function buildAttributesFromScan({
   if (certifications.length > 0) out.certifications = certifications;
   if (flavor.length > 0)         out.flavor         = flavor;
   if (claims.length > 0)         out.claims         = claims;
+  // Stash the raw OFF categoryHints on the row alongside the pretty
+  // pills. Not for display — the ItemCard ignores this field — but
+  // so later correction flows (admin rewire, LinkIngredient relink)
+  // can seed the Tier-1 learned tag map from the original scan's
+  // hints without re-querying OFF. Without this stash the rewire
+  // would have no idea what tags the product carried.
+  if (Array.isArray(categoryHints) && categoryHints.length > 0) {
+    out.categoryHints = categoryHints;
+  }
   return Object.keys(out).length > 0 ? out : null;
 }

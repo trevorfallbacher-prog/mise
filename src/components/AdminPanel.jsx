@@ -777,6 +777,43 @@ function CanonicalsList({ viewerId }) {
         .update({ canonical_id: newSlug })
         .eq("canonical_id", row.id);
       if (upErr) throw upErr;
+      // Also carry ingredient_id (legacy scalar — some read paths
+      // still consult it as the primary tag) and barcode_identity_
+      // corrections so the UPC → canonical memory survives a rename.
+      // Without this carry, every previously-taught UPC would stay
+      // pointed at the old slug; next scan would try to open a
+      // canonical that no longer exists and fall back to fuzzy
+      // matching all over again.
+      await supabase
+        .from("pantry_items")
+        .update({ ingredient_id: newSlug })
+        .eq("ingredient_id", row.id);
+      await supabase
+        .from("barcode_identity_corrections")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      // off_category_tag_canonicals (migration 0123) also needs to
+      // follow the canonical through a rename — otherwise every
+      // learned tag would still point at the old slug and Tier-1
+      // resolution would try to open a canonical that's been renamed
+      // away. Non-fatal on older envs that haven't applied 0123.
+      const { error: tagMapErr } = await supabase
+        .from("off_category_tag_canonicals")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      if (tagMapErr && tagMapErr.code !== "42P01") {
+        console.warn("[admin-rename] off_category_tag_canonicals carry:", tagMapErr.message);
+      }
+      // user_scan_corrections is the family-scoped mirror; same carry.
+      // Non-fatal if the table doesn't exist on older envs — we just
+      // log and move on.
+      const { error: userCorrErr } = await supabase
+        .from("user_scan_corrections")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      if (userCorrErr && userCorrErr.code !== "42P01") {
+        console.warn("[admin-rename] user_scan_corrections carry:", userCorrErr.message);
+      }
       setVersion(v => v + 1); refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
@@ -958,14 +995,18 @@ function CanonicalsList({ viewerId }) {
             console.warn("[admin-rewire] enrichment failed for", newSlug, err?.message);
           });
       }
-      // Read the row's components + barcode_upc so we can (a) scrub
-      // any mention of the old slug from components before the UPDATE
-      // lands and (b) persist a barcode_identity_corrections entry
-      // below if this row came from a scan. Single read is cheap and
-      // avoids a race with whatever the client last wrote.
+      // Read the row's components + barcode_upc + attributes so we
+      // can (a) scrub any mention of the old slug from components
+      // before the UPDATE lands, (b) persist a
+      // barcode_identity_corrections entry below if this row came
+      // from a scan, and (c) seed the Tier-1 learned tag map from
+      // the categoryHints that the scan originally carried (stored
+      // inside attributes.categoryHints per the scan-flow). Single
+      // read is cheap and avoids a race with whatever the client
+      // last wrote.
       const { data: curRow, error: readErr } = await supabase
         .from("pantry_items")
-        .select("components, ingredient_ids, barcode_upc")
+        .select("components, ingredient_ids, barcode_upc, attributes")
         .eq("id", pantryRow.id)
         .maybeSingle();
       if (readErr) throw readErr;
@@ -1003,6 +1044,9 @@ function CanonicalsList({ viewerId }) {
       // the GLOBAL barcode_identity_corrections table (all users benefit)
       // rather than the family-scoped user_scan_corrections.
       const scannedUpc = curRow?.barcode_upc || null;
+      const scannedHints = Array.isArray(curRow?.attributes?.categoryHints)
+        ? curRow.attributes.categoryHints
+        : null;
       if (scannedUpc && viewerId) {
         rememberBarcodeCorrection({
           userId:        viewerId,
@@ -1010,6 +1054,7 @@ function CanonicalsList({ viewerId }) {
           barcodeUpc:    scannedUpc,
           canonicalId:   newSlug,
           ingredientIds: [newSlug],
+          categoryHints: scannedHints,   // seeds the Tier-1 tag map
           ...(emoji ? { emoji } : {}),
         })
           .then(res => {

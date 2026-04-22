@@ -58,6 +58,7 @@ import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { useCanonicalOffTags } from "../lib/useCanonicalOffTags";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
@@ -247,6 +248,14 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
   const [canonicalCreatePrompt, setCanonicalCreatePrompt] = useState(null);
   //   { suggestedName, pendingRow, pendingBrandNutrition }
   const { rows: brandNutritionRowsForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
+  // Tier-1 learned tag map — OFF categoryHint → canonical_id. Empty
+  // on cold start; admin rewires (AdminPanel) and scan-flow canonical
+  // creations (CanonicalCreatePrompt) both seed it via
+  // rememberBarcodeCorrection's seedTagMap pass. Passed to every
+  // resolveCanonicalFromScan call site below so Tier 1 actually fires
+  // (it was scaffolded in canonicalResolver.js but nothing wired the
+  // lookup until now).
+  const learnedTagLookup = useCanonicalOffTags();
   // Admin bypass for the PENDING status. Admins approve canonicals
   // themselves, so when they create one we auto-upsert the
   // ingredient_info stub (same shape AdminPanel.approveCustom writes)
@@ -963,6 +972,16 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 willWrite: !!(scanUpc && userId),
               });
               if (scanUpc && userId) {
+                // categoryHints from the original scan feed the Tier-1
+                // learned tag map so a future fresh scan (different
+                // UPC) with overlapping hints auto-lands on this slug.
+                // See rememberBarcodeCorrection + migration 0123.
+                // Hints live on pendingRow.attributes.categoryHints —
+                // buildAttributesFromScan stamps them alongside
+                // origins/claims at scan time.
+                const scanHints = Array.isArray(cpSnapshot?.pendingRow?.attributes?.categoryHints)
+                  ? cpSnapshot.pendingRow.attributes.categoryHints
+                  : null;
                 rememberBarcodeCorrection({
                   userId,
                   isAdmin,
@@ -970,6 +989,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   canonicalId:   slug,
                   emoji:         canonEmoji,
                   ingredientIds: [slug],
+                  categoryHints: scanHints,
                 })
                   .then(res => console.log("[upc-debug] 4/write-result", res))
                   .catch(e => console.warn("[upc-debug] write threw:", e));
@@ -1144,6 +1164,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brand:         res.brand,
                 productName:   res.productName,
                 categoryHints: res.categoryHints || [],
+                learnedTagLookup,
                 findIngredient,
               });
               const rawState = parseStateFromText(res.productName, res.categoryHints || []);
@@ -3340,6 +3361,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                       brand:         res.brand,
                       productName:   res.productName,
                       categoryHints: res.categoryHints || [],
+                      learnedTagLookup,
                       findIngredient,
                     });
                     // Extract state + package size opportunistically.
