@@ -43,19 +43,18 @@ function tokens(s) {
   return new Set(normalizeName(s).split(" ").filter(t => t.length >= 3));
 }
 
-// Normalize barcodes to a pure digit string so leading zeros, spaces,
-// or hyphens from OCR don't prevent equality matches. "00070038000563"
-// vs "70038000563" compare equal after normalization (strip leading
-// zeros after the length check — UPC-A is 12 digits, EAN-13 is 13, an
-// 8-digit EAN-8 is 8; receipts sometimes pad with leading zeros).
+// Normalize barcodes so printing variants of the same product match.
+// UPC-A (12 digits) vs EAN-13 (UPC-A with an extra leading "0" for
+// US/Canada country prefix) vs 11-digit short-form (leading zero
+// dropped on some thermal printers) should all compare equal. The
+// safest way to do that without a full checksum rebuild: strip all
+// non-digits, then strip ALL leading zeros. "0070038000563" ↔
+// "070038000563" ↔ "70038000563" all normalize to the same run.
 function normalizeBarcode(b) {
   const digits = String(b || "").replace(/\D+/g, "");
   if (digits.length < 8 || digits.length > 14) return "";
-  // Align UPC-A ↔ EAN-13 — EAN-13 is just a country-code-prefixed
-  // UPC-A. Stripping a leading "0" from a 13-digit code yields the
-  // UPC-A representation of the same product.
-  if (digits.length === 13 && digits.startsWith("0")) return digits.slice(1);
-  return digits;
+  const stripped = digits.replace(/^0+/, "");
+  return stripped || digits; // guard against all-zeros sentinels
 }
 
 // Match a trip_scan to a receipt line. UPC direct match wins (the
@@ -69,6 +68,20 @@ function matchScanToReceiptLine(scan, receiptLines, claimed) {
     const byUpc = receiptLines.findIndex(
       (line, i) => !claimed.has(i) && normalizeBarcode(line?.barcode) === scanUpc,
     );
+    // Trace so mismatches are visible in the console — users report
+    // "the UPCs match" but the code wasn't seeing them as equal; log
+    // lets us see the exact normalized forms side by side.
+    console.log("[shop-checkout] UPC match attempt", {
+      scanUpc,
+      scanRaw: scan.barcodeUpc,
+      receiptUpcs: receiptLines.map((l, i) => ({
+        i,
+        raw: l?.barcode,
+        normalized: normalizeBarcode(l?.barcode),
+        claimed: claimed.has(i),
+      })),
+      matchedIndex: byUpc,
+    });
     if (byUpc >= 0) return byUpc;
   }
   // Token overlap on productName + brand vs receipt rawText + name.
