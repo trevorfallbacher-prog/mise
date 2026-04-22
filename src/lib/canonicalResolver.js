@@ -212,6 +212,73 @@ function bestMatchAboveFloor(phrase, floor) {
   return top.score >= floor ? top : null;
 }
 
+// Detect the dominant semantic family from OFF's categoryHints. We do
+// this with a token-regex over the joined hint text rather than a
+// strict enum because OFF hints are long-tail ("diet-cola-soft-drink",
+// "artificially-sweetened-beverages", "light-yogurts") and we only
+// need coarse buckets. Returns one of:
+//   "beverage" | "meat" | "seafood" | "dairy" | "produce" | null
+// null = no strong family signal — the guard below falls through.
+function detectOffFamily(categoryHints) {
+  const text = (Array.isArray(categoryHints) ? categoryHints : [])
+    .join(" ")
+    .toLowerCase();
+  if (!text) return null;
+  if (/\b(beverage|drink|drinks|soda|sodas|cola|colas|juice|smoothie|shake|tea|coffee|water|waters|kombucha|cider|beer|wine|spirit|cocktail)\b/.test(text)) {
+    return "beverage";
+  }
+  if (/\b(fish|fishes|seafood|shellfish|shrimp|salmon|tuna|cod|halibut|crab|lobster|scallop|sardine|anchov|mussel|oyster|clam)\b/.test(text)) {
+    return "seafood";
+  }
+  if (/\b(meat|meats|poultry|beef|pork|chicken|turkey|lamb|sausage|bacon|ham|salami|prosciutto|deli)\b/.test(text)) {
+    return "meat";
+  }
+  if (/\b(dairy|dairies|yogurt|yoghurt|cheese|cheeses|milk|milks|cream|butter|curd)\b/.test(text)) {
+    return "dairy";
+  }
+  if (/\b(fruit|fruits|vegetable|vegetables|produce|berry|berries|apple|citrus)\b/.test(text)) {
+    return "produce";
+  }
+  return null;
+}
+
+// Reject obvious family mismatches between OFF's category signal and a
+// candidate canonical. Returns true when the candidate is PLAUSIBLE
+// for the family, false when it's a known-bad fit. Synthetic user
+// canonicals (category "user") get a free pass — we don't know their
+// family, and the user-created slugs are usually the correct answer
+// for exactly the kind of product OFF mishandles (soda_pop being the
+// canonical example: Pepsi Zero's categoryHints are
+// [beverages, carbonated-drinks, sodas, colas, ...] but OFF's
+// productName "ZERO SUGAR" fuzzes to the bundled `sugar` canonical,
+// which has category=pantry — a clear mismatch. The guard filters
+// those out so the admin-created `soda_pop` synthetic wins by default
+// once it's in the picker / learned tag map.
+function canonicalFitsFamily(canonical, family) {
+  if (!canonical || !family) return true;
+  const cat = canonical.category || null;
+  // Synthetics from ingredient_info come through as category="user";
+  // we can't assume their family, so never reject them here.
+  if (cat === "user" || !cat) return true;
+  switch (family) {
+    case "beverage":
+      // Bundled beverages live under "dairy" (milk, cream, buttermilk)
+      // and "produce" (oj, juices). Everything else is a wrong-family
+      // fit — notably "pantry" which catches sugar / salt / flour.
+      return cat === "dairy" || cat === "produce";
+    case "seafood":
+      return cat === "meat";                // mise groups seafood under meat
+    case "meat":
+      return cat === "meat";
+    case "dairy":
+      return cat === "dairy";
+    case "produce":
+      return cat === "produce";
+    default:
+      return true;
+  }
+}
+
 // Public resolver. Layers tiers 1→3 and returns the first confident
 // hit. Tier 1 (learned tags) is a separate lookup function passed as
 // `learnedTagLookup(tag) → canonicalId | null`; caller wires it to
@@ -367,9 +434,15 @@ export function resolveCanonicalFromScan({
   // autoApply trips at 95+: a scan where cleanProductName returns
   // the exact canonical name ("Heavy Cream" → "heavy cream" →
   // Heavy Cream canonical norm'd "heavy cream") — no tap needed.
+  // Same family guard as the weak-fallback below: an OFF signal of
+  // "beverages / sodas / colas" overrides a productName-token match
+  // against the pantry `sugar` canonical, so a product with those
+  // hints can't silently land on sugar even if the cleaned phrase
+  // happened to contain "sugar".
   if (cleaned) {
     const hit = bestMatchAboveFloor(cleaned, 60);
-    if (hit) {
+    const tier3Family = detectOffFamily(categoryHints);
+    if (hit && (!tier3Family || canonicalFitsFamily(hit.ingredient, tier3Family))) {
       return {
         canonical: hit.ingredient,
         confidence: "medium",
@@ -401,9 +474,23 @@ export function resolveCanonicalFromScan({
     const hit = bestMatchAboveFloor(cleaned, 30);
     if (hit) weakCandidates.push({ hit, reason: "name-cleaned", matchedOn: cleaned });
   }
-  if (weakCandidates.length > 0) {
-    weakCandidates.sort((a, b) => b.hit.score - a.hit.score);
-    const best = weakCandidates[0];
+  // Family-compatibility guard. OFF's categoryHints are the strongest
+  // SEMANTIC signal — a Pepsi Zero scan tells us plainly it's a
+  // beverage via [beverages, carbonated-drinks, sodas, colas, ...].
+  // But without this guard, the permissive 30-point floor above lets
+  // the bundled `sugar` canonical (category=pantry) hit on e.g. a
+  // "sugar" substring from "sugary-drinks" and we silently tag a
+  // soda as sugar. Drop every candidate whose category doesn't fit
+  // the family signal BEFORE picking the best, so family-compatible
+  // candidates (milk under beverage, synthetic soda_pop, etc.) get a
+  // chance to win even when their raw score was lower than sugar's.
+  const family = detectOffFamily(categoryHints);
+  const compatibleWeak = family
+    ? weakCandidates.filter(c => canonicalFitsFamily(c.hit.ingredient, family))
+    : weakCandidates;
+  if (compatibleWeak.length > 0) {
+    compatibleWeak.sort((a, b) => b.hit.score - a.hit.score);
+    const best = compatibleWeak[0];
     return {
       canonical:  best.hit.ingredient,
       confidence: "low",
