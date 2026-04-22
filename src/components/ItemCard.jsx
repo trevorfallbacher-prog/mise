@@ -27,6 +27,7 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
 import IAteThisSheet from "./IAteThisSheet";
+import ScheduleEatingSheet from "./ScheduleEatingSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
@@ -171,6 +172,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // level and doesn't inherit layout constraints from the nutrition
   // band.
   const [iAteOpen, setIAteOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const item = useMemo(
     () => ({ ...(itemProp || {}), ...pendingChanges }),
     [itemProp, pendingChanges],
@@ -1257,28 +1259,46 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             onUpdate={onUpdate}
           />
 
-          {/* "I ate this" — one-tap consumption log. Hidden on draft
-              rows (nothing's in the pantry yet to eat) and on rows
-              with zero amount (the button would decrement below zero
-              which we clamp, but the UX of tapping an empty row to
-              "eat it" is just confusing). Writes a consumption_logs
-              row + decrements pantry_items.amount; the nutrition
-              dashboard picks up the event via realtime. */}
+          {/* "I ate this" + "Schedule" — paired consumption affordances.
+              LEFT button logs a consumption NOW (opens IAteThisSheet);
+              RIGHT button schedules it for later (opens
+              ScheduleEatingSheet → scheduled_meals row with
+              from_pantry_row_id). Both hidden on draft rows (nothing's
+              in the pantry yet to eat) and on zero-amount rows where
+              eat-now would clamp to empty; scheduling a row that's
+              currently empty is ALSO hidden because it'll just frustrate
+              the user at slot-fire time. */}
           {!isDraft && Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId) && (
-            <button
-              type="button"
-              onClick={() => setIAteOpen(true)}
-              style={{
-                width: "100%", padding: "12px 14px", marginBottom: 14,
-                background: "#0f1a0f", border: "1px solid #1e3a1e",
-                color: "#7ec87e", borderRadius: 10,
-                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
-                letterSpacing: "0.08em", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              }}
-            >
-              <span style={{ fontSize: 16 }}>🍽️</span> I ATE THIS
-            </button>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button
+                type="button"
+                onClick={() => setIAteOpen(true)}
+                style={{
+                  flex: 1, padding: "12px 14px",
+                  background: "#0f1a0f", border: "1px solid #1e3a1e",
+                  color: "#7ec87e", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>🍽️</span> I ATE THIS
+              </button>
+              <button
+                type="button"
+                onClick={() => setScheduleOpen(true)}
+                style={{
+                  flex: 1, padding: "12px 14px",
+                  background: "#141414", border: "1px solid #2a2a2a",
+                  color: "#f5c842", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>📅</span> SCHEDULE
+              </button>
+            </div>
           )}
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
@@ -3030,6 +3050,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         />
       )}
 
+      {/* Schedule-to-eat overlay. Same layering vocabulary as
+          IAteThisSheet (Z.picker, ModalSheet). Writes scheduled_meals
+          with from_pantry_row_id so the Plan calendar surfaces the
+          slot and routes tap → IAteThisSheet when the time arrives. */}
+      {scheduleOpen && (
+        <ScheduleEatingSheet
+          pantryRow={item}
+          userId={userId}
+          onClose={() => setScheduleOpen(false)}
+          onDone={() => setScheduleOpen(false)}
+        />
+      )}
+
       {/* Full-screen success after UPDATE commits. Lists every field
           that changed so the user confirms what they just approved
           was actually what they meant. Tap DONE to dismiss. */}
@@ -3524,11 +3557,20 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
+  // Pass the full identity slice (including state + cut) so the
+  // resolver's state/cut-specific tiers fire — chicken row tagged
+  // cut="breast" resolves to breast-specific numbers, not the hub
+  // default. Without these axes the chip silently showed the wrong
+  // fallback, and the I-ATE-THIS sheet (which passes the full row)
+  // would surface different numbers than the card above it.
   const { nutrition, source, brand } = pantryItemNutrition(
     {
       ingredientId: item?.ingredientId || item?.canonicalId || null,
+      canonicalId: item?.canonicalId || null,
       brand: item?.brand || null,
       nutritionOverride: item?.nutritionOverride || null,
+      state: item?.state || null,
+      cut: item?.cut || null,
     },
     { getInfo, brandNutrition: brandNutritionMap },
   );

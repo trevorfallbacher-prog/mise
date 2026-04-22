@@ -885,18 +885,52 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                                     </button>
                                   );
                                 }
-                                // Scheduled meal
+                                // Scheduled meal. Three shapes sit on this row:
+                                //   1. Recipe cook — recipe_slug resolves, no
+                                //      from_pantry_row_id. Original flow.
+                                //   2. Leftover eat — recipe_slug resolves AND
+                                //      from_pantry_row_id is set. Migration
+                                //      0120: tap routes to IAteThisSheet.
+                                //   3. Ingredient eat — recipe_slug null,
+                                //      from_pantry_row_id set. Migration 0124.
+                                //      Pure pantry-item consumption plan.
+                                //      Title/emoji come from the pantry row.
                                 const meal = row;
-                                const recipe = findRecipe(meal.recipe_slug, findUserRecipe);
+                                const recipe = meal.recipe_slug ? findRecipe(meal.recipe_slug, findUserRecipe) : null;
+                                const pantryEatRow = meal.from_pantry_row_id
+                                  ? (pantry || []).find(p => p.id === meal.from_pantry_row_id)
+                                  : null;
+                                const isIngredientEat = !meal.recipe_slug && !!meal.from_pantry_row_id;
                                 const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
-                                const isRequest = meal.cook_id == null;
-                                const cookLabel = isRequest
+                                const isRequest = meal.cook_id == null && !isIngredientEat;
+                                const cookLabel = isIngredientEat
+                                  ? "Eat from pantry"
+                                  : isRequest
                                   ? `Requested by ${nameFor ? nameFor(meal.user_id) : "someone"}`
                                   : `Cooking: ${nameFor ? nameFor(meal.cook_id) : ""}`;
+                                const displayEmoji = recipe?.emoji
+                                  || pantryEatRow?.emoji
+                                  || "🍽️";
+                                const displayTitle = recipe?.title
+                                  || pantryEatRow?.name
+                                  || meal.recipe_slug
+                                  || "Pantry item";
+                                // Ingredient-eat rows skip MealDetailDrawer
+                                // (it assumes a recipe) and open the
+                                // I-ate-this sheet straight away; if the
+                                // pantry row has been deleted we fall back
+                                // to the drawer so the user isn't stuck.
+                                const onTap = () => {
+                                  if (isIngredientEat && pantryEatRow) {
+                                    setEatingLeftover(pantryEatRow);
+                                    return;
+                                  }
+                                  setOpenMeal(meal);
+                                };
                                 return (
                                   <button
                                     key={`meal-${meal.id}`}
-                                    onClick={() => setOpenMeal(meal)}
+                                    onClick={onTap}
                                     style={{
                                       display: "flex", alignItems: "center", gap: 12,
                                       padding: "12px 14px",
@@ -905,11 +939,11 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                                       borderRadius: 12, cursor: "pointer", textAlign: "left",
                                     }}
                                   >
-                                    <div style={{ fontSize: 26, flexShrink: 0 }}>{recipe?.emoji || "🍽️"}</div>
+                                    <div style={{ fontSize: 26, flexShrink: 0 }}>{displayEmoji}</div>
                                     <div style={{ flex: 1, minWidth: 0 }}>
                                       <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
                                         <span style={{ fontFamily: "'Fraunces',serif", fontSize: 15, color: "#f0ece4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                          {recipe?.title || meal.recipe_slug}
+                                          {displayTitle}
                                         </span>
                                         <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", flexShrink: 0 }}>
                                           {fmtTime(meal.scheduled_for)}
@@ -917,7 +951,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                                       </div>
                                       <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: isRequest ? "#d9b877" : "#555", letterSpacing: "0.05em", marginTop: 3 }}>
                                         {isRequest && "🙋 "}{cookLabel}
-                                        {meal.servings != null && ` · 👥 ${meal.servings}`}
+                                        {meal.servings != null && !isIngredientEat && ` · 👥 ${meal.servings}`}
                                         {recipe && ` · ${totalTimeMin(recipe)} MIN`}
                                         {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
                                         {meal.note && " · 📝"}

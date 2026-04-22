@@ -251,10 +251,20 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
 
   // Live macro preview. Re-resolves on every amount/unit tick so the
   // number on the confirm button matches exactly what the tally will
-  // receive. Null when we can't compute (no canonical / cook_log
-  // nutrition, no nutrition, or unit not in the ladder) — in that
-  // case we still let them log for inventory purposes but tell them
-  // up front the macros are skipped.
+  // receive.
+  //
+  // Three-tier computation:
+  //   1. Scaled — scaleFactor converts the user's (amount, unit) into
+  //      a multiplier against the resolved nutrition's `per` axis.
+  //      Preferred path when the unit is in the canonical's ladder.
+  //   2. Approximate — nutrition resolved but scaleFactor failed
+  //      (e.g. soda row tagged to sugar canonical, user picked fl oz
+  //      which isn't in sugar's ladder). We surface the base block
+  //      from the resolver at amount=1 so the preview still reads
+  //      like the ItemCard chip, with an "approximate" note. Prevents
+  //      the "chip shows 310 kcal but sheet says no nutrition"
+  //      discrepancy users reported.
+  //   3. Empty — no nutrition resolved at all (coverage gap).
   const preview = useMemo(() => {
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) return { macros: null, source: null };
@@ -268,20 +278,31 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
       }
       return { macros, source: "cook" };
     }
-    if (!canonical) return null;
     const { nutrition, source, brand } = resolveNutrition(pantryRow, {
       brandNutrition,
       getInfo: ingredientInfo?.getInfo,
     });
     if (!nutrition) return { macros: null, source: null };
-    const countWeightG = effectiveCountWeightG(pantryRow, canonical);
-    const f = scaleFactor({ amount: amt, unit }, canonical, nutrition, { countWeightG });
-    if (f == null || !Number.isFinite(f)) return { macros: null, source };
+    const countWeightG = canonical ? effectiveCountWeightG(pantryRow, canonical) : null;
+    const f = canonical
+      ? scaleFactor({ amount: amt, unit }, canonical, nutrition, { countWeightG })
+      : null;
+    if (f != null && Number.isFinite(f)) {
+      const macros = {};
+      for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
+        if (typeof nutrition[k] === "number") macros[k] = nutrition[k] * f;
+      }
+      return { macros, source, brand };
+    }
+    // Approximate fallback — surface the base nutrition unscaled so
+    // the user sees the same numbers the ItemCard chip shows. Flag it
+    // so the UI can label the row clearly rather than silently
+    // pretending the conversion worked.
     const macros = {};
     for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
-      if (typeof nutrition[k] === "number") macros[k] = nutrition[k] * f;
+      if (typeof nutrition[k] === "number") macros[k] = nutrition[k];
     }
-    return { macros, source, brand };
+    return { macros, source, brand, approx: true, per: nutrition.per, serving_g: nutrition.serving_g };
   }, [amount, unit, isMealRow, mealCookNutrition, canonical, pantryRow, brandNutrition, ingredientInfo]);
 
   // Slider meter — how much is in the pantry right now, expressed in
@@ -778,11 +799,21 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           </div>
         </div>
 
-        {/* Macro preview */}
+        {/* Macro preview. Three visual states:
+            - Scaled (green bg) — macros reflect the user's amount+unit.
+            - Approximate (amber bg) — scaleFactor couldn't translate
+              the unit into the nutrition's axis; we render the base
+              block unscaled so the user still sees the chip's numbers
+              instead of a silent blank.
+            - Empty (grey bg) — no nutrition at all in any tier. */}
         <div style={{
           padding: "12px 14px",
-          background: preview?.macros ? "#0f1a0f" : "#141414",
-          border: `1px solid ${preview?.macros ? "#1e3a1e" : "#2a2a2a"}`,
+          background: preview?.macros
+            ? (preview.approx ? "#1a1608" : "#0f1a0f")
+            : "#141414",
+          border: `1px solid ${preview?.macros
+            ? (preview.approx ? "#3a2f10" : "#1e3a1e")
+            : "#2a2a2a"}`,
           borderRadius: 10,
           marginBottom: 14,
         }}>
@@ -791,8 +822,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4" }}>
                 ~ {formatMacros(preview.macros, { verbose: true })}
               </div>
-              <div style={{ marginTop: 4, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em" }}>
-                {preview.source === "brand" && preview.brand
+              <div style={{ marginTop: 4, fontFamily: "'DM Mono',monospace", fontSize: 9, color: preview.approx ? "#e0a868" : "#666", letterSpacing: "0.08em" }}>
+                {preview.approx
+                  ? `PER ${preview.per === "serving" && preview.serving_g ? `${preview.serving_g}G SERVING` : String(preview.per || "").toUpperCase()} · UNIT NOT IN LADDER`
+                  : preview.source === "brand" && preview.brand
                   ? `FROM BRAND · ${String(preview.brand).toUpperCase()}`
                   : `FROM ${String(preview.source || "").toUpperCase()}`}
               </div>
