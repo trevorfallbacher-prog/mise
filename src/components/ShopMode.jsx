@@ -36,6 +36,16 @@ const FLASH_COLORS = {
   red:    { bg: "#8a3030", label: "NO DATA" },       // brick — manual later
 };
 
+// Muted backgrounds for list rows that have paired scans. Same hue
+// family as the flash banners above, cranked way down in saturation
+// so a list full of greens doesn't blind the user. Border still uses
+// the strong FLASH_COLORS.bg so the status reads at a glance.
+const STATUS_TILE_BG = {
+  green:  "#152b1f",
+  yellow: "#2b2415",
+  red:    "#2b1818",
+};
+
 const FLASH_MS = 900; // enough to read the status, short enough to feel snappy
 
 export default function ShopMode({
@@ -59,12 +69,28 @@ export default function ShopMode({
     cancelTrip,
   } = useShopMode(userId);
 
-  // lastScan = { scan, flashColor, shown: true } — the transient state
-  // that drives the flash + pair sheet. Clears on pair or dismiss.
+  // lastScan = { scan, flashColor } — drives the flash banner (brief).
+  // armedListItemId = the list item the user has pre-tapped as the
+  // pair target for the NEXT scan. Tap-ahead model: pick what you're
+  // about to scan, then scan, and the pair lands instantly. Stays
+  // armed across scans so 6 apples → arm "apples" once, scan 6 times.
+  // Tapping the same item again disarms; tapping a different item
+  // re-arms. 'impulse' is the magic value that routes scans into the
+  // silent-list-add path.
   const [lastScan, setLastScan] = useState(null);
   const [flashVisible, setFlashVisible] = useState(false);
   const flashTimerRef = useRef(null);
   const [looking, setLooking] = useState(false);
+  const [armedListItemId, setArmedListItemId] = useState(null);
+  // armedRef mirrors armedListItemId so handleDetected (captured in
+  // onDetected closure) always reads the freshest value even across
+  // rapid scans that don't re-render between each.
+  const armedRef = useRef(null);
+  useEffect(() => { armedRef.current = armedListItemId; }, [armedListItemId]);
+  // setShoppingList mirrored for the same reason — impulse-add path
+  // needs the freshest setter.
+  const setShoppingListRef = useRef(setShoppingList);
+  useEffect(() => { setShoppingListRef.current = setShoppingList; }, [setShoppingList]);
 
   useEffect(() => {
     return () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); };
@@ -149,38 +175,37 @@ export default function ShopMode({
       status: flashColor,
     });
 
-    // Flash + pair sheet.
+    // Tap-ahead pair. If the user pre-armed a list item, the scan
+    // auto-pairs to it immediately — no sheet, no extra tap. Armed
+    // stays on (so 6 apple scans all pair to "apples" without re-
+    // tapping). The special 'impulse' sentinel routes through the
+    // silent-list-add path instead.
+    const armed = armedRef.current;
+    if (scan?.id && armed) {
+      if (armed === "__impulse__") {
+        await doImpulseAdd(scan);
+      } else {
+        await pairScanToList(scan.id, armed);
+      }
+    }
+
+    // Flash banner — always fires; confirms the pair status.
     setLastScan({ scan, flashColor });
     setFlashVisible(true);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     flashTimerRef.current = setTimeout(() => setFlashVisible(false), FLASH_MS);
   }
 
-  // Pair the most recent scan to a chosen list item. Dismisses the
-  // sheet + re-arms the scanner (it's still mounted; the sheet is
-  // just an overlay).
-  async function handlePairToList(listItemId) {
-    if (!lastScan?.scan?.id) return;
-    await pairScanToList(lastScan.scan.id, listItemId);
-    setLastScan(null);
-  }
-
-  // "NOT ON MY LIST" path — silent-list-add: append a new
-  // shopping_list_items row with source='trip_impulse', use its id
-  // for the pair. Keeps pair model uniform downstream.
-  async function handleImpulse() {
-    if (!lastScan?.scan) return;
-    const scan = lastScan.scan;
+  // Silent-list-add: builds a fresh shopping_list_items row from the
+  // scan's OFF data (or UPC fallback) and pairs the scan to it. Used
+  // when the user has armed "impulse mode" on the bottom half.
+  async function doImpulseAdd(scan) {
     const name = scan.productName || scan.brand || `Scanned item (${scan.barcodeUpc.slice(-4)})`;
-    // Generate the id OUTSIDE the functional updater — React StrictMode
-    // calls the updater twice in dev, and a fresh randomUUID() in each
-    // invocation would leak two ids (same bug as the scan-commit loop
-    // in Kitchen.jsx, see stableNewIds comment there).
     const newItemId = (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
-      setShoppingList?.(prev => ([
+      setShoppingListRef.current?.(prev => ([
         ...prev,
         {
           id: newItemId,
@@ -198,7 +223,12 @@ export default function ShopMode({
       console.warn("[shop-mode] impulse add failed:", e);
     }
     await pairScanToList(scan.id, newItemId);
-    setLastScan(null);
+  }
+
+  // Tap a list item to arm it as the pair target for the next scan.
+  // Same item tapped again disarms; different item re-arms.
+  function toggleArm(listItemId) {
+    setArmedListItemId(prev => (prev === listItemId ? null : listItemId));
   }
 
   async function handleUnpair(scanId) {
@@ -261,189 +291,262 @@ export default function ShopMode({
     );
   }
 
-  // Active trip — render the scanner + overlays.
+  // Active trip — split layout: scanner on top half, shopping list
+  // on bottom half (always visible, tap-to-arm).
   const flash = lastScan && flashVisible ? FLASH_COLORS[lastScan.flashColor] : null;
 
+  // statusByListId — for each list item, the worst-case status of
+  // its paired scans (green > yellow > red → so the MOST urgent
+  // wins). Used to color the list row itself. Unpaired rows render
+  // in the neutral style.
+  const statusByListId = new Map();
+  for (const [id, pairedScans] of pairedByListId.entries()) {
+    // Pick the "worst" status so a yellow or red scan isn't hidden
+    // by a sibling green. Precedence: red > yellow > green.
+    let worst = "green";
+    for (const s of pairedScans) {
+      if (s.status === "red")   { worst = "red";    break; }
+      if (s.status === "yellow") worst = "yellow";
+    }
+    statusByListId.set(id, worst);
+  }
+
   return (
-    <div style={{ ...overlayStyle, background: "#000" }}>
-      {/* Scanner (full-screen, z=348). Overlays mount ABOVE at z=360+. */}
-      <BarcodeScanner
-        mode="rapid"
-        onDetected={handleDetected}
-        onCancel={handleCancel}
-      />
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 340,
+      background: "#000",
+      display: "flex", flexDirection: "column",
+    }}>
+      {/* ── TOP HALF — scanner (embedded) ───────────────────────────── */}
+      <div style={{
+        flex: "1 1 50%",
+        minHeight: 0,
+        position: "relative",
+        borderBottom: "1px solid #222",
+      }}>
+        <BarcodeScanner
+          embedded
+          mode="rapid"
+          onDetected={handleDetected}
+          onCancel={handleCancel}
+        />
 
-      {/* Flash overlay — brief colored band that names the result. */}
-      {flash && (
-        <div style={{
-          position: "fixed", top: 64, left: 16, right: 16, zIndex: 361,
-          padding: "14px 18px",
-          background: flash.bg,
-          color: "#fff",
-          fontWeight: 700,
-          letterSpacing: 1.2,
-          fontSize: 16,
-          textAlign: "center",
-          borderRadius: 8,
-          boxShadow: "0 6px 20px rgba(0,0,0,0.4)",
-          animation: "shop-mode-flash 900ms ease-out",
-        }}>
-          {flash.label}
-          {looking ? " — LOOKING UP" : null}
-        </div>
-      )}
-
-      {/* Pair-to-list sheet — slides up from the bottom after each
-          scan. Stays until the user taps a list item or NOT ON MY
-          LIST. While it's open the scanner keeps running but the
-          1500ms dedupe window + sheet z-index mean the same UPC
-          can't re-fire and steal the user's tap. */}
-      {lastScan?.scan && (
-        <div style={{
-          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 360,
-          background: "#121212",
-          borderTop: "1px solid #333",
-          maxHeight: "65vh",
-          display: "flex", flexDirection: "column",
-        }}>
-          <div style={{ padding: "14px 20px 8px", borderBottom: "1px solid #222" }}>
-            <div style={{ fontSize: 12, letterSpacing: 1.5, color: "#c7a8d4" }}>
-              WHAT DID YOU JUST SCAN?
-            </div>
-            <div style={{ fontSize: 20, fontStyle: "italic", color: "#fff", marginTop: 4 }}>
-              {lastScan.scan.productName || lastScan.scan.brand || `UPC ${lastScan.scan.barcodeUpc}`}
-            </div>
-            {lastScan.scan.brand && lastScan.scan.productName && (
-              <div style={{ fontSize: 13, color: "#b8a878", marginTop: 2 }}>
-                {lastScan.scan.brand}
-              </div>
-            )}
+        {/* Flash overlay — brief colored band on top of the scanner
+            panel. Sits at absolute to scope it to the scanner half. */}
+        {flash && (
+          <div style={{
+            position: "absolute", top: 10, left: 10, right: 10, zIndex: 5,
+            padding: "10px 14px",
+            background: flash.bg,
+            color: "#fff",
+            fontWeight: 700,
+            letterSpacing: 1.2,
+            fontSize: 14,
+            textAlign: "center",
+            borderRadius: 8,
+            boxShadow: "0 4px 14px rgba(0,0,0,0.4)",
+            animation: "shop-mode-flash 900ms ease-out",
+            pointerEvents: "none",
+          }}>
+            {flash.label}{looking ? " — LOOKING UP" : null}
           </div>
+        )}
 
-          <div style={{ overflow: "auto", padding: "8px 12px 12px" }}>
-            {listTargets.length === 0 && (
-              <div style={{ padding: 16, color: "#888", fontStyle: "italic" }}>
-                Nothing on your list — tap NOT ON MY LIST to log an impulse buy.
+        {/* Armed banner — shows the user what their next scan will
+            pair to, so they can confidently fire the scanner. Sits
+            pinned at the bottom of the scanner half so it's close to
+            the list (which is RIGHT below it). Sits above flash via
+            its own zIndex. */}
+        {armedListItemId && !flashVisible && (() => {
+          const armedItem = armedListItemId === "__impulse__"
+            ? { name: "Impulse buy (adds to list on scan)", emoji: "🛒" }
+            : listTargets.find(i => i.id === armedListItemId);
+          if (!armedItem) return null;
+          return (
+            <div style={{
+              position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 5,
+              padding: "10px 12px",
+              background: "rgba(20, 16, 8, 0.94)",
+              border: "1px solid #f5c842",
+              borderRadius: 8,
+              display: "flex", alignItems: "center", gap: 10,
+              backdropFilter: "blur(4px)",
+            }}>
+              <span style={{ fontSize: 18 }}>{armedItem.emoji || "🛒"}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
+                  NEXT SCAN → {armedListItemId === "__impulse__" ? "IMPULSE ADD" : "PAIRS TO"}
+                </div>
+                <div style={{
+                  fontSize: 14, fontStyle: "italic", color: "#fff",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {armedItem.name}
+                </div>
               </div>
-            )}
-            {listTargets.map(item => {
-              const paired = pairedByListId.get(item.id) || [];
-              const isPairedHere = paired.some(s => s.id === lastScan.scan.id);
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => handlePairToList(item.id)}
-                  style={{
-                    display: "flex", width: "100%", alignItems: "center", gap: 10,
-                    padding: "10px 12px",
-                    background: isPairedHere ? "#2a1f3a" : "#1a1a1a",
-                    border: `1px solid ${paired.length ? "#c7a8d4" : "#2a2a2a"}`,
-                    borderRadius: 8,
-                    marginBottom: 6,
-                    textAlign: "left",
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ fontSize: 20 }}>{item.emoji || "🛒"}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ color: "#fff", fontSize: 15 }}>{item.name}</div>
-                    {paired.length > 0 && (
-                      <div style={{ fontSize: 11, color: "#c7a8d4", marginTop: 2 }}>
-                        ✓ PAIRED ({paired.length} scan{paired.length === 1 ? "" : "s"})
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+              <button
+                onClick={() => setArmedListItemId(null)}
+                style={{
+                  background: "transparent", border: "none",
+                  color: "#888", fontSize: 18, cursor: "pointer",
+                  padding: "0 4px",
+                }}
+                aria-label="Disarm"
+              >✕</button>
+            </div>
+          );
+        })()}
+      </div>
 
-            <button
-              onClick={handleImpulse}
-              style={{
-                display: "block", width: "100%",
-                padding: "10px 12px",
-                background: "#1a1a1a",
-                border: "1px dashed #555",
-                color: "#ddd",
-                borderRadius: 8,
-                marginTop: 8,
-                cursor: "pointer",
-                fontSize: 14,
-                letterSpacing: 0.8,
-              }}
-            >+ NOT ON MY LIST (impulse buy)</button>
-
-            <button
-              onClick={() => setLastScan(null)}
-              style={{
-                display: "block", width: "100%",
-                padding: "8px 12px",
-                background: "transparent",
-                border: "none",
-                color: "#888",
-                marginTop: 4,
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >Skip — pair later</button>
-          </div>
-        </div>
-      )}
-
-      {/* Bottom action bar — visible only when the pair sheet is NOT
-          open, so the DONE button can't accidentally be tapped while
-          the user is looking for a list match. */}
-      {!lastScan?.scan && (
+      {/* ── BOTTOM HALF — shopping list (always visible) ────────────── */}
+      <div style={{
+        flex: "1 1 50%",
+        minHeight: 0,
+        display: "flex", flexDirection: "column",
+        background: "#0b0b0b",
+      }}>
+        {/* Sticky summary / action bar */}
         <div style={{
-          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 355,
-          background: "#0b0b0b",
-          borderTop: "1px solid #222",
-          padding: "10px 16px 18px",
+          padding: "10px 14px",
           display: "flex", alignItems: "center", gap: 10,
+          borderBottom: "1px solid #1e1e1e",
+          background: "#0d0d0d",
         }}>
-          <div style={{ flex: 1, color: "#aaa", fontSize: 13 }}>
-            {scans.length === 0 ? "Point at a barcode to scan." : (
-              <span>
-                {scans.length} scan{scans.length === 1 ? "" : "s"} · {pairedCount(scans)} paired
-              </span>
-            )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
+              SHOPPING LIST · {listTargets.length} TO GO
+            </div>
+            <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+              {armedListItemId
+                ? "NEXT SCAN WILL AUTO-PAIR"
+                : scans.length === 0
+                  ? "Tap an item to arm it for the next scan."
+                  : `${scans.length} scan${scans.length === 1 ? "" : "s"} · ${pairedCount(scans)} paired`}
+            </div>
           </div>
           <button
             onClick={handleCheckout}
             disabled={scans.length === 0}
             style={{
-              ...primaryBtn,
-              opacity: scans.length === 0 ? 0.5 : 1,
-              padding: "8px 18px",
-              fontSize: 14,
+              background: scans.length === 0 ? "#1a1a1a" : "#b8a878",
+              color: scans.length === 0 ? "#555" : "#111",
+              border: "none",
+              borderRadius: 8,
+              padding: "8px 14px",
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: 1,
+              cursor: scans.length === 0 ? "not-allowed" : "pointer",
+              whiteSpace: "nowrap",
             }}
-          >DONE — SCAN RECEIPT →</button>
+          >DONE →</button>
         </div>
-      )}
 
-      {/* Scan history strip — horizontal list of stacked scans
-          across the top, under the scanner header. Shows qty and the
-          paired list slot name if bound. Tapping a chip opens a
-          mini-editor to adjust qty or unpair. */}
-      {scans.length > 0 && (
-        <div style={{
-          position: "fixed", left: 0, right: 0, top: 120, zIndex: 349,
-          display: "flex", gap: 6, overflowX: "auto",
-          padding: "8px 12px",
-          background: "rgba(0,0,0,0.6)",
-          pointerEvents: lastScan?.scan ? "none" : "auto",
-        }}>
-          {scans.slice().reverse().map(scan => (
-            <ScanChip
-              key={scan.id}
-              scan={scan}
-              listName={nameForListId(shoppingList, scan.pairedShoppingListItemId)}
-              onAdjust={(next) => adjustScanQty(scan.id, next)}
-              onUnpair={() => handleUnpair(scan.id)}
-            />
-          ))}
+        {/* Scrollable list body */}
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 10px 12px" }}>
+          {listTargets.length === 0 && (
+            <div style={{ padding: 20, color: "#666", fontSize: 13, fontStyle: "italic", textAlign: "center" }}>
+              Your list is empty. Arm IMPULSE BUY below and every scan becomes a new entry.
+            </div>
+          )}
+          {listTargets.map(item => {
+            const status = statusByListId.get(item.id);         // "green" | "yellow" | "red" | undefined
+            const paired = pairedByListId.get(item.id) || [];
+            const isArmed = armedListItemId === item.id;
+            const bg = isArmed
+              ? "#2a2410"
+              : status
+                ? STATUS_TILE_BG[status]
+                : "#141414";
+            const border = isArmed
+              ? "#f5c842"
+              : status
+                ? FLASH_COLORS[status].bg
+                : "#1e1e1e";
+            return (
+              <button
+                key={item.id}
+                onClick={() => toggleArm(item.id)}
+                style={{
+                  display: "flex", width: "100%", alignItems: "center", gap: 10,
+                  padding: "10px 12px",
+                  background: bg,
+                  border: `${isArmed ? 2 : 1}px solid ${border}`,
+                  borderRadius: 10,
+                  marginBottom: 6,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  transition: "border-color 0.15s, background 0.15s",
+                }}
+              >
+                <div style={{ fontSize: 20 }}>{item.emoji || "🛒"}</div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ color: "#f0ece4", fontSize: 14 }}>{item.name}</div>
+                  {paired.length > 0 && (
+                    <div style={{ fontSize: 10, color: border, marginTop: 2, letterSpacing: 0.6 }}>
+                      ✓ {paired.reduce((n, s) => n + (s.qty || 1), 0)} PAIRED · {FLASH_COLORS[status]?.label || status?.toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                {isArmed && (
+                  <div style={{ fontSize: 10, color: "#f5c842", letterSpacing: 1.2 }}>
+                    ARMED
+                  </div>
+                )}
+              </button>
+            );
+          })}
+
+          {/* IMPULSE BUY arm — always available. Armed → next scan
+              silently appends a new list row for the scanned item. */}
+          <button
+            onClick={() => toggleArm("__impulse__")}
+            style={{
+              display: "flex", width: "100%", alignItems: "center", gap: 10,
+              padding: "10px 12px",
+              background: armedListItemId === "__impulse__" ? "#2a2410" : "#141414",
+              border: `${armedListItemId === "__impulse__" ? 2 : 1}px ${armedListItemId === "__impulse__" ? "solid" : "dashed"} ${armedListItemId === "__impulse__" ? "#f5c842" : "#555"}`,
+              color: "#ddd",
+              borderRadius: 10,
+              marginTop: 4,
+              cursor: "pointer",
+              fontSize: 13,
+              letterSpacing: 0.6,
+              textAlign: "left",
+            }}
+          >
+            <span style={{ fontSize: 18 }}>🛒</span>
+            <span style={{ flex: 1 }}>
+              IMPULSE BUY — next scan adds as a new list entry
+            </span>
+            {armedListItemId === "__impulse__" && (
+              <span style={{ fontSize: 10, color: "#f5c842", letterSpacing: 1.2 }}>ARMED</span>
+            )}
+          </button>
+
+          {/* Scan history — stacked at the bottom of the list body so
+              users can scroll down to review/adjust qty without a
+              floating chip strip competing for scanner focus. */}
+          {scans.length > 0 && (
+            <div style={{ marginTop: 16, paddingTop: 10, borderTop: "1px solid #1a1a1a" }}>
+              <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#555", margin: "0 2px 6px" }}>
+                RECENT SCANS
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {scans.slice().reverse().map(scan => (
+                  <ScanChip
+                    key={scan.id}
+                    scan={scan}
+                    listName={nameForListId(shoppingList, scan.pairedShoppingListItemId)}
+                    onAdjust={(next) => adjustScanQty(scan.id, next)}
+                    onUnpair={() => handleUnpair(scan.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

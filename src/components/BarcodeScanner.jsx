@@ -36,7 +36,7 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
 
-export default function BarcodeScanner({ onDetected, onCancel, mode = "single" }) {
+export default function BarcodeScanner({ onDetected, onCancel, mode = "single", embedded = false }) {
   const rapidMode = mode === "rapid";
   const lastRapidRef = useRef({ upc: "", at: 0 });
   const videoRef   = useRef(null);
@@ -421,7 +421,17 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single" }
   const showTyped = state === "native_unavailable" || state === "camera_denied" || state === "error" || state === "verify_photo";
 
   return (
-    <div style={{
+    <div style={embedded ? {
+      // Embedded: fills its parent container. ShopMode uses this so
+      // the scanner can share the screen with a live shopping-list
+      // preview (top half scanner, bottom half list). No fixed /
+      // inset / zIndex — the host layout controls placement.
+      position: "relative",
+      width: "100%", height: "100%",
+      background: "#000",
+      display: "flex", flexDirection: "column",
+      overflow: "hidden",
+    } : {
       // Full-screen overlay — must win over every possible parent
       // modal (AddItemModal = 160, ItemCard = 320, LinkIngredient = 340).
       // Confirm layer (350) is the next tier up; stay just below so
