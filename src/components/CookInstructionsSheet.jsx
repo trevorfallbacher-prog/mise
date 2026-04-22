@@ -22,7 +22,13 @@ import { suggestCookInstructions } from "../lib/suggestCookInstructions";
  *   onSave(block | null) — persist. Pass null to clear.
  */
 
-export default function CookInstructionsSheet({ item, fromCanonical = false, onClose, onSave }) {
+export default function CookInstructionsSheet({
+  item,
+  fromCanonical = false,
+  fromRecipe = false,
+  verb = "COOK",
+  onClose, onSave,
+}) {
   const existing = item?.cookInstructions || null;
 
   const [draft,    setDraft]    = useState(existing);
@@ -93,10 +99,15 @@ export default function CookInstructionsSheet({ item, fromCanonical = false, onC
               {item?.name || "Ingredient"}
             </div>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", marginTop: 4, letterSpacing: "0.12em" }}>
-              MINI RECIPE · OPENS ON "I ATE THIS"
+              MINI {verb} RECIPE · OPENS ON "I ATE THIS"
               {fromCanonical && (
                 <span style={{ marginLeft: 8, color: "#a99870" }}>
                   · FROM ENRICHMENT
+                </span>
+              )}
+              {fromRecipe && (
+                <span style={{ marginLeft: 8, color: "#a99870" }}>
+                  · FROM RECIPE
                 </span>
               )}
             </div>

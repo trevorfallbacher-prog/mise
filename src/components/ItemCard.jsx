@@ -31,6 +31,9 @@ import ScheduleEatingSheet from "./ScheduleEatingSheet";
 import CookInstructionsSheet from "./CookInstructionsSheet";
 import ReheatMode from "./ReheatMode";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
+import { findRecipe } from "../data/recipes";
+import { useUserRecipes } from "../lib/useUserRecipes";
+import { reheatToCookInstructions } from "../lib/reheatToCookInstructions";
 import { formatReheatSummary } from "./../data/recipes/schema";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
@@ -358,20 +361,57 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // the deep-dive already shows the same info.
   const { getInfo: getDbInfo, getPendingInfo, refreshDb } = useIngredientInfo();
   const { get: getBrandNutrition, upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
-  // Effective cook instructions — per-row override wins, canonical
-  // enrichment is the fallback. Memoized on the axes that actually
-  // matter (the row's explicit override, the canonical id, and the
-  // ingredient-info lookup function identity from the context).
+  // User-recipe resolver — feeds findRecipe() below so meal leftovers
+  // cooked from AI-drafted user recipes resolve their sourceRecipeSlug
+  // the same way bundled recipes do.
+  const { findBySlug: findUserRecipe } = useUserRecipes(userId);
+  // Effective cook/reheat instructions. Three-tier resolution:
+  //   1. item.cookInstructions — per-row override the user authored
+  //      or a prior SUGGEST call wrote. Always wins.
+  //   2. ingredient_info.info.cookInstructions — canonical-level
+  //      autofill from the enrich-ingredient edge function. Shared
+  //      across all pantry rows tagged to this canonical.
+  //   3. sourceRecipe.reheat — for meal leftovers (kind="meal" with
+  //      a sourceRecipeSlug), synthesize a walkthrough on the fly
+  //      from the recipe's reheat.primary block. This is why your
+  //      leftover spaghetti shows REHEAT steps even though it has no
+  //      canonical and you never tapped SUGGEST — the recipe it was
+  //      cooked from carries the method + time + temp + tips, and
+  //      reheatToCookInstructions turns those into 1–2 tight steps.
+  // Memoized on every axis that can change the result so the pill /
+  // button / ReheatMode render all read the same resolved value.
   const effectiveCookInstructions = useMemo(() => {
     const own = item?.cookInstructions;
-    if (own && Array.isArray(own.steps) && own.steps.length > 0) return own;
+    if (own && Array.isArray(own.steps) && own.steps.length > 0) {
+      return { ci: own, source: "row" };
+    }
     const id = item?.ingredientId || item?.canonicalId;
-    if (!id || typeof getDbInfo !== "function") return null;
-    const info = getDbInfo(id);
-    const ci = info?.cookInstructions;
-    return (ci && Array.isArray(ci.steps) && ci.steps.length > 0) ? ci : null;
-  }, [item?.cookInstructions, item?.ingredientId, item?.canonicalId, getDbInfo]);
-  const cookInstructionsFromCanonical = !item?.cookInstructions && !!effectiveCookInstructions;
+    if (id && typeof getDbInfo === "function") {
+      const info = getDbInfo(id);
+      const ci = info?.cookInstructions;
+      if (ci && Array.isArray(ci.steps) && ci.steps.length > 0) {
+        return { ci, source: "canonical" };
+      }
+    }
+    if (item?.sourceRecipeSlug) {
+      const rec = findRecipe(item.sourceRecipeSlug, findUserRecipe);
+      const synth = reheatToCookInstructions(rec);
+      if (synth && Array.isArray(synth.steps) && synth.steps.length > 0) {
+        return { ci: synth, source: "recipe" };
+      }
+    }
+    return { ci: null, source: null };
+  }, [item?.cookInstructions, item?.ingredientId, item?.canonicalId, item?.sourceRecipeSlug, getDbInfo, findUserRecipe]);
+  const cookInstructionsSource = effectiveCookInstructions.source;
+  // Back-compat binding so older render sites keep reading just the
+  // block. Renamed uses below read .ci directly.
+  const cookInstructionsFromCanonical = cookInstructionsSource === "canonical";
+  // Cooked leftovers speak a different dialect than raw ingredients —
+  // the label should say REHEAT, not COOK, so "TAP TO ADD COOK
+  // INSTRUCTIONS" on a jar of spaghetti doesn't read as "I'm
+  // starting from scratch."
+  const isMealLeftover = item?.kind === "meal";
+  const cookVerb = isMealLeftover ? "REHEAT" : "COOK";
   const { push: pushToast } = useToast();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
@@ -1309,9 +1349,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               Per-row wins because an explicit override is the user
               saying "this jar is different from the generic canon." */}
           {!isDraft && (() => {
-            const ci = effectiveCookInstructions;
-            const fromCanonical = cookInstructionsFromCanonical;
+            const ci = effectiveCookInstructions.ci;
+            const source = effectiveCookInstructions.source;
             const stepCount = Array.isArray(ci?.steps) ? ci.steps.length : 0;
+            const fromKicker =
+              source === "canonical" ? "· FROM ENRICHMENT"
+              : source === "recipe"  ? "· FROM RECIPE"
+              : "";
             if (!ci || stepCount === 0) {
               return (
                 <button
@@ -1331,7 +1375,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                     fontFamily: "'DM Mono',monospace", fontSize: 11,
                     color: "#888", letterSpacing: "0.08em",
                   }}>
-                    TAP TO ADD COOK INSTRUCTIONS
+                    TAP TO ADD {cookVerb} INSTRUCTIONS
                   </span>
                   <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>+</span>
                 </button>
@@ -1362,10 +1406,10 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                     fontFamily: "'DM Mono',monospace", fontSize: 9,
                     color: "#f5c842", letterSpacing: "0.14em",
                   }}>
-                    COOK · {stepCount} STEP{stepCount === 1 ? "" : "S"}
-                    {fromCanonical && (
+                    {cookVerb} · {stepCount} STEP{stepCount === 1 ? "" : "S"}
+                    {fromKicker && (
                       <span style={{ marginLeft: 8, color: "#a99870" }}>
-                        · FROM ENRICHMENT
+                        {fromKicker}
                       </span>
                     )}
                   </div>
@@ -1391,7 +1435,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               eat-now would clamp to empty; scheduling a row that's
               currently empty is ALSO hidden because it'll just frustrate
               the user at slot-fire time. */}
-          {!isDraft && Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId) && (
+          {/* Eat / schedule gate. Two shapes qualify:
+                - ingredient row: positive amount AND a canonical (so
+                  nutrition / decrement math works)
+                - meal leftover: kind="meal" with a positive
+                  servingsRemaining, no canonical needed since
+                  identity lives on sourceCookLogId / sourceRecipeSlug
+              Previously the meal branch was silently hidden because
+              the gate required a canonical; users couldn't log or
+              schedule a bite of their own leftovers. */}
+          {!isDraft && (
+            (item?.kind === "meal" && Number(item?.servingsRemaining) > 0) ||
+            (Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId))
+          ) && (
             <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
               <button
                 type="button"
@@ -1403,7 +1459,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   // the IAteThisSheet amount-and-log phase. Rows
                   // without any cook instructions skip straight to
                   // the log.
-                  if (effectiveCookInstructions?.steps?.length) {
+                  if (effectiveCookInstructions.ci?.steps?.length) {
                     setReheatOpen(true);
                   } else {
                     setIAteOpen(true);
@@ -1418,8 +1474,10 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
-                <span style={{ fontSize: 16 }}>{effectiveCookInstructions?.steps?.length ? "♨" : "🍽️"}</span>
-                {effectiveCookInstructions?.steps?.length ? "COOK & EAT" : "I ATE THIS"}
+                <span style={{ fontSize: 16 }}>{effectiveCookInstructions.ci?.steps?.length ? "♨" : "🍽️"}</span>
+                {effectiveCookInstructions.ci?.steps?.length
+                  ? (isMealLeftover ? "REHEAT & EAT" : "COOK & EAT")
+                  : "I ATE THIS"}
               </button>
               <button
                 type="button"
@@ -3189,12 +3247,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
 
       {/* Reheat walkthrough. Full-screen CookMode-visual-vocabulary
           component driven by the effective cookInstructions — per-row
-          override wins, canonical enrichment falls back. FINISH
-          chains into IAteThisSheet (amount + log); EXIT cancels the
-          whole flow without decrementing. */}
-      {reheatOpen && effectiveCookInstructions?.steps?.length > 0 && (
+          override wins, canonical enrichment next, source recipe's
+          reheat block synthesizes last. FINISH chains into
+          IAteThisSheet (amount + log); EXIT cancels without
+          decrementing. */}
+      {reheatOpen && effectiveCookInstructions.ci?.steps?.length > 0 && (
         <ReheatMode
-          recipe={effectiveCookInstructions}
+          recipe={effectiveCookInstructions.ci}
           emoji={item.emoji}
           onFinish={() => {
             setReheatOpen(false);
@@ -3225,14 +3284,15 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         <CookInstructionsSheet
           // Synthetic "effective" item — the sheet reads
           // cookInstructions off the row directly, so we hydrate it
-          // with the canonical enrichment fallback when the user has
-          // no override yet. SAVE always persists as a per-row
-          // cookInstructions (the onUpdate path below writes to
-          // pantry_items, not ingredient_info), so even if the user
-          // just taps SAVE on the inherited draft we land a per-row
-          // copy — stable against future enrichment changes.
-          item={{ ...item, cookInstructions: effectiveCookInstructions || item?.cookInstructions || null }}
-          fromCanonical={cookInstructionsFromCanonical}
+          // with whichever fallback tier resolved (canonical
+          // enrichment or source-recipe reheat). SAVE always persists
+          // a per-row cookInstructions via onUpdate — writing to
+          // pantry_items, not ingredient_info — so users tweak one
+          // jar without mutating the canonical for every other row.
+          item={{ ...item, cookInstructions: effectiveCookInstructions.ci || item?.cookInstructions || null }}
+          fromCanonical={cookInstructionsSource === "canonical"}
+          fromRecipe={cookInstructionsSource === "recipe"}
+          verb={cookVerb}
           onClose={() => setCookInstructionsOpen(false)}
           onSave={async (block) => { onUpdate?.({ cookInstructions: block }); }}
         />
