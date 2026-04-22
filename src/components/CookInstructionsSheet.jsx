@@ -1,6 +1,7 @@
 import { useState } from "react";
 import ModalSheet from "./ModalSheet";
 import { Z } from "../lib/tokens";
+import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 
 /**
  * CookInstructionsSheet — editor for pantry_items.cook_instructions.
@@ -57,9 +58,45 @@ export default function CookInstructionsSheet({ item, onClose, onSave }) {
   );
   const [tips,    setTips]    = useState(existing?.tips || "");
   const [saving,  setSaving]  = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [error,   setError]   = useState(null);
 
   const methodSpec = METHODS.find(m => m.id === method) || METHODS[0];
+
+  // AI autofill. Calls the suggest-cook-instructions edge function
+  // with the row's identity axes and pre-fills every form field from
+  // the response. Covered tri-state maps { true → "covered", false →
+  // "uncovered", null → "na" } so the picker reflects what Claude
+  // emitted. User can still tweak before SAVE — the button is a
+  // starting point, not a commit.
+  const suggest = async () => {
+    setError(null);
+    setSuggesting(true);
+    try {
+      const { cookInstructions, error: err } = await suggestCookInstructions({
+        name:        item?.name,
+        canonicalId: item?.ingredientId || item?.canonicalId,
+        brand:       item?.brand,
+        state:       item?.state,
+        cut:         item?.cut,
+        category:    item?.category,
+      });
+      if (err) { setError(err); return; }
+      const p = cookInstructions?.primary;
+      if (!p) { setError("Couldn't suggest — try again."); return; }
+      setMethod(p.method);
+      setTempF(p.tempF != null ? String(p.tempF) : "");
+      setTimeMin(p.timeMin != null ? String(p.timeMin) : "");
+      setCovered(p.covered === true ? "covered"
+               : p.covered === false ? "uncovered"
+               : "na");
+      setTips(typeof p.tips === "string" ? p.tips : "");
+    } catch (e) {
+      setError(e?.message || "Couldn't suggest — try again.");
+    } finally {
+      setSuggesting(false);
+    }
+  };
 
   const buildBlock = () => {
     const t = Number(timeMin);
@@ -125,6 +162,31 @@ export default function CookInstructionsSheet({ item, onClose, onSave }) {
             </div>
           </div>
         </div>
+
+        {/* AI autofill. Calls suggest-cook-instructions which returns
+            a single primary block; pre-fills every form input from the
+            response. User can tweak before SAVE. Same button pattern
+            as AIRecipe — sparkle icon, gold-on-dark palette, explicit
+            "AI SUGGEST" label so users understand it's a draft, not
+            an authoritative answer. */}
+        <button
+          type="button"
+          onClick={suggest}
+          disabled={suggesting || saving}
+          style={{
+            width: "100%", padding: "12px 14px", marginBottom: 14,
+            background: suggesting ? "#1a1a1a" : "#1a1608",
+            border: `1px solid ${suggesting ? "#2a2a2a" : "#3a2f10"}`,
+            color: suggesting ? "#888" : "#f5c842",
+            borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+            letterSpacing: "0.1em", cursor: suggesting || saving ? "not-allowed" : "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>{suggesting ? "⏳" : "✨"}</span>
+          {suggesting ? "SUGGESTING…" : existing ? "RE-SUGGEST WITH AI" : "SUGGEST WITH AI"}
+        </button>
 
         {/* Method chips — method drives which of the tempF and
             covered fields are meaningful. Microwave / stovetop hide
