@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { INGREDIENTS, HUBS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
+import { enrichIngredient } from "../lib/enrichIngredient";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 // EditPackagingModal import removed — admin sizes catalog retired.
@@ -898,12 +899,41 @@ function CanonicalsList({ viewerId }) {
     const newSlug = slugifyIngredientName(trimmed);
     if (!newSlug || newSlug === oldSlug) return;
 
+    // Optional emoji — prompt only when we're creating a brand-new
+    // synthetic (existing bundled + approved targets already have one
+    // from the registry / admin edit). Blank-or-cancel keeps the stub
+    // emoji-less and lets the ✨ fallback apply, which is still
+    // better than the previous "sparkles forever" because enrichment
+    // below will usually produce a better one within seconds.
+    const isBundled = INGREDIENTS.some(i => i.id === newSlug);
+    const isApproved = approvedIds?.has(newSlug);
+    let emoji = null;
+    if (!isBundled && !isApproved) {
+      // eslint-disable-next-line no-alert
+      const rawEmoji = window.prompt(
+        `Emoji for "${trimmed}"?\n\nSingle emoji like 🥤 / 🍺 / 🍕. ` +
+          `Leave blank and we'll use a ✨ placeholder until enrichment ` +
+          `fills one in.`,
+        "",
+      );
+      if (rawEmoji === null) return;   // admin cancelled the whole op
+      emoji = rawEmoji.trim() || null;
+    }
+
     setBusy(`row:${pantryRow.id}`);
     try {
-      const isBundled = INGREDIENTS.some(i => i.id === newSlug);
-      const isApproved = approvedIds?.has(newSlug);
       if (!isBundled && !isApproved) {
+        // Rich stub so the synthetic is searchable in LinkIngredient
+        // (display_name feeds the picker's fuzzy matcher — without it
+        // the slug "soda_pop" didn't match the query "Soda Pop"),
+        // renderable on ItemCard + Kitchen tiles (emoji populated so
+        // the fallback ✨ doesn't leak), and not grouped under a
+        // random hub (no parentId — let the admin set it explicitly
+        // via GROUP UNDER, which is safer than auto-inferring since
+        // the slug might not match any keyword bucket cleanly).
         const stub = {
+          display_name: trimmed,
+          ...(emoji ? { emoji } : {}),
           _meta: {
             reviewed: true,
             reviewed_by: viewerId || null,
@@ -915,6 +945,17 @@ function CanonicalsList({ viewerId }) {
           .from("ingredient_info")
           .upsert({ ingredient_id: newSlug, info: stub }, { onConflict: "ingredient_id" });
         if (infoErr) throw infoErr;
+        // Fire-and-forget AI enrichment. Fills in density / category /
+        // nutrition / sourcing / substitutions so the synthetic stops
+        // reading as a bare stub and starts rendering the same
+        // cooking metadata bundled canonicals have. Same pattern as
+        // LinkIngredient's createNewFromQuery — no await, network
+        // slowness doesn't block the rewire.
+        enrichIngredient({ canonical_id: newSlug, source_name: trimmed })
+          .then(() => { refreshDb?.(); })
+          .catch(err => {
+            console.warn("[admin-rewire] enrichment failed for", newSlug, err?.message);
+          });
       }
       // Read the row's components so we can scrub any mention of the
       // old slug before the UPDATE lands. Single read is cheap and

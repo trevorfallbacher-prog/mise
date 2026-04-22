@@ -5884,6 +5884,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           // scan_raw also takes last-wins — most recent scan's read is
           // what the user is currently verifying.
           if (s.scanRaw) ex.scanRaw = s.scanRaw;
+          // Brand + barcode carry forward from the fresh scan whenever
+          // the existing row was missing them. This is how a re-scan
+          // of a Pepsi that merges into an unbranded legacy sugar row
+          // finally picks up "PEPSI" — before this fix, the merge
+          // path only touched expiration / receipt pointers / scan
+          // metadata, and brand / barcodeUpc from the scan silently
+          // vanished. The draft card displayed "PEPSI" (local state
+          // carried it) but the DB row kept brand=null, so on next
+          // mount the brand chip read empty and a user "touch + blur"
+          // on the brand field was the only way to persist what the
+          // scan had already surfaced.
+          if (s.brand      && !ex.brand)      ex.brand      = s.brand;
+          if (s.barcodeUpc && !ex.barcodeUpc) ex.barcodeUpc = s.barcodeUpc;
           // Union scan-derived attributes (origins / certifications /
           // flavor / product claims like ORIGINAL / SCOOPS) into the
           // existing row. Missing this step dropped the fresh scan's
