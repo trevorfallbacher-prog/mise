@@ -216,7 +216,7 @@ Return ONLY a JSON object — no markdown fences, no prose — with this shape:
   ]
 }
 
-EVERY item must include the `barcode` field — set it to null when
+EVERY item must include the "barcode" field — set it to null when
 no UPC/EAN-shaped digit string appears on that line, never omit it.
 
 If the image clearly is not a grocery receipt or you can't read any items,
