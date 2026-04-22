@@ -534,6 +534,16 @@ function CanonicalsList({ viewerId }) {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(null);    // canonical_id mid-op
   const [version, setVersion] = useState(0); // cheap refresh trigger
+  // Per-canonical row drilldown. Clicking the ×N usage badge loads
+  // the actual pantry_items rows attached to that canonical so the
+  // admin can rewire a SPECIFIC row (the mistagged Pepsi) without
+  // rewriting every row on the slug the way the blanket RENAME does.
+  // rowsFor is the canonical_id currently expanded (null = collapsed).
+  // rowsCache lazily memoizes the fetched list by slug — invalidated
+  // per-slug after each rewire so the row we just moved away drops
+  // out of the visible list.
+  const [rowsFor, setRowsFor] = useState(null);
+  const [rowsCache, setRowsCache] = useState(new Map());
   // Packaging editor — opens a ModalSheet over the admin panel,
   // seeded with the canonical's saved sizes + parentId. Null =
   // closed; object = the row being edited.
@@ -801,6 +811,98 @@ function CanonicalsList({ viewerId }) {
     }
   }
 
+  // Expand/collapse the pantry-row drilldown for a canonical. On first
+  // expand we fetch the rows (lazy, cached in rowsCache) so idle
+  // canonicals don't pay the query cost. Scoped to canonical_id; we
+  // pull brand + name so the admin can visually identify which row
+  // is the mistagged one (brand="PEPSI" + name="Soda Pop" on a sugar
+  // canonical jumps out immediately).
+  async function toggleRows(canonicalId) {
+    if (rowsFor === canonicalId) {
+      setRowsFor(null);
+      return;
+    }
+    setRowsFor(canonicalId);
+    if (rowsCache.has(canonicalId)) return;
+    const { data, error: pErr } = await supabase
+      .from("pantry_items")
+      .select("id, name, brand, emoji, amount, unit, user_id, canonical_id")
+      .eq("canonical_id", canonicalId)
+      .order("name", { ascending: true })
+      .limit(100);
+    if (pErr) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Couldn't load rows: ${pErr.message}`);
+      return;
+    }
+    setRowsCache(prev => new Map(prev).set(canonicalId, data || []));
+  }
+
+  // Per-row rewire — move ONE pantry_items row off its current
+  // canonical and onto a (possibly new) target canonical. The key
+  // difference vs renameCustom: that one rewrites every row on the
+  // slug wholesale, which is catastrophic when only one row is
+  // mistagged (classic misfire: a "SUGAR FREE" Pepsi landed on the
+  // sugar canonical, the other sugar rows are legit and must stay).
+  // Flow: admin types the new display name → slugify → if the target
+  // slug isn't already a bundled canonical or an approved synthetic,
+  // we upsert an ingredient_info stub (same pattern as approveCustom)
+  // so it reads as APPROVED immediately → update that single row's
+  // canonical_id → invalidate the cache for the old slug so the row
+  // drops out of the drilldown.
+  async function rewireRow(pantryRow, oldSlug) {
+    // eslint-disable-next-line no-alert
+    const next = window.prompt(
+      `Rewire this pantry row off "${oldSlug}".\n\n` +
+        `Row: ${pantryRow.brand ? pantryRow.brand + " · " : ""}${pantryRow.name || "(unnamed)"}\n\n` +
+        `Type the NEW canonical display name. If the slug doesn't exist ` +
+        `yet, we'll create it as an approved synthetic so it stops reading ` +
+        `as PENDING.`
+    );
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed) return;
+    const newSlug = slugifyIngredientName(trimmed);
+    if (!newSlug || newSlug === oldSlug) return;
+
+    setBusy(`row:${pantryRow.id}`);
+    try {
+      const isBundled = INGREDIENTS.some(i => i.id === newSlug);
+      const isApproved = approvedIds?.has(newSlug);
+      if (!isBundled && !isApproved) {
+        const stub = {
+          _meta: {
+            reviewed: true,
+            reviewed_by: viewerId || null,
+            reviewed_at: new Date().toISOString(),
+            source: "admin_rewire",
+          },
+        };
+        const { error: infoErr } = await supabase
+          .from("ingredient_info")
+          .upsert({ ingredient_id: newSlug, info: stub }, { onConflict: "ingredient_id" });
+        if (infoErr) throw infoErr;
+      }
+      const { error: upErr } = await supabase
+        .from("pantry_items")
+        .update({ canonical_id: newSlug })
+        .eq("id", pantryRow.id);
+      if (upErr) throw upErr;
+      setRowsCache(prev => {
+        const m = new Map(prev);
+        m.delete(oldSlug);
+        m.delete(newSlug);
+        return m;
+      });
+      setVersion(v => v + 1); refreshDb?.();
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Rewire failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rejectCustom(row) {
     // eslint-disable-next-line no-alert
     const confirm = window.confirm(
@@ -907,16 +1009,25 @@ function CanonicalsList({ viewerId }) {
                   {r.category && ` · ${r.category.toUpperCase()}`}
                 </div>
               </div>
-              <span style={{
-                fontFamily: "'DM Mono',monospace", fontSize: 9,
-                color: r.count > 0 ? "#7ec87e" : "#555",
-                background: r.count > 0 ? "#0f1a0f" : "transparent",
-                border: `1px solid ${r.count > 0 ? "#1e3a1e" : "#242424"}`,
-                padding: "2px 7px", borderRadius: 10, letterSpacing: "0.08em",
-                flexShrink: 0,
-              }}>
-                {r.count > 0 ? `×${r.count}` : "UNUSED"}
-              </span>
+              <button
+                type="button"
+                onClick={() => r.count > 0 && toggleRows(r.id)}
+                disabled={r.count === 0}
+                title={r.count > 0 ? "View pantry rows + rewire" : "No rows"}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: r.count > 0 ? "#7ec87e" : "#555",
+                  background: r.count > 0 ? "#0f1a0f" : "transparent",
+                  border: `1px solid ${r.count > 0 ? "#1e3a1e" : "#242424"}`,
+                  padding: "2px 7px", borderRadius: 10, letterSpacing: "0.08em",
+                  flexShrink: 0,
+                  cursor: r.count > 0 ? "pointer" : "default",
+                }}
+              >
+                {r.count > 0
+                  ? `${rowsFor === r.id ? "▾" : "▸"} ×${r.count}`
+                  : "UNUSED"}
+              </button>
               <span style={{
                 fontFamily: "'DM Mono',monospace", fontSize: 8,
                 color: statusColor, letterSpacing: "0.1em",
@@ -1012,6 +1123,71 @@ function CanonicalsList({ viewerId }) {
                   })}
                 </div>
               )}
+
+              {/* Row drilldown. Clicking the count badge loads the
+                  actual pantry_items on this canonical so the admin
+                  can rewire a single row to a different (or new)
+                  canonical — surgical per-row fix for scan misfires
+                  like "SUGAR FREE" Pepsi landing on the sugar slug.
+                  Lazy-fetched; renders a spinner-ish state until the
+                  query lands. */}
+              {rowsFor === r.id && (
+                <div style={{
+                  width: "100%", marginTop: 6,
+                  padding: "6px 0 0", borderTop: "1px dashed #242424",
+                  display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  {!rowsCache.has(r.id) ? (
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", padding: "6px 4px", letterSpacing: "0.08em" }}>
+                      LOADING ROWS…
+                    </div>
+                  ) : (rowsCache.get(r.id) || []).length === 0 ? (
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", padding: "6px 4px", letterSpacing: "0.08em" }}>
+                      NO ROWS FOUND (usage count may be stale — refresh)
+                    </div>
+                  ) : (rowsCache.get(r.id) || []).map(pr => {
+                    const rowBusy = busy === `row:${pr.id}`;
+                    const amtTxt = pr.amount != null
+                      ? `${Number(pr.amount) % 1 ? Number(pr.amount).toFixed(2) : pr.amount}${pr.unit ? ` ${pr.unit}` : ""}`
+                      : "";
+                    return (
+                      <div key={pr.id} style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "6px 8px",
+                        background: "#0a0a0a",
+                        border: "1px solid #1f1f1f",
+                        borderRadius: 8,
+                      }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{pr.emoji || "🥫"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                            color: "#f0ece4",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {pr.brand ? <span style={{ color: "#a99870" }}>{pr.brand} · </span> : null}
+                            {pr.name || "(unnamed)"}
+                          </div>
+                          <div style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 8,
+                            color: "#555", marginTop: 1, letterSpacing: "0.04em",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {amtTxt}{amtTxt && " · "}{pr.id.slice(0, 8)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => rewireRow(pr, r.id)}
+                          disabled={rowBusy}
+                          style={adminBtnStyle("#0a1a2a", "#7eb8d4")}
+                        >
+                          {rowBusy ? "…" : "REWIRE →"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })
@@ -1031,10 +1207,14 @@ function CanonicalsList({ viewerId }) {
         stub so the slug stops reading as PENDING, REJECT clears the
         slug from every pantry_items row and drops the stub, RENAME
         rewrites the slug across the board and carries any approval
-        forward. Package sizes are no longer admin-curated here —
-        they're learned from pantry_items observations
-        (popular_package_sizes RPC) with AI-generated typicalSizes
-        as the cold-start fallback.
+        forward. Click the ×N usage badge to drill into the individual
+        pantry rows on a canonical and REWIRE a single row to a
+        different (or brand-new) canonical — use this when a scan
+        misfired on just one row ("SUGAR FREE" Pepsi landing on the
+        sugar slug) and you don't want to rewrite every sugar row.
+        Package sizes are no longer admin-curated here — they're
+        learned from pantry_items observations (popular_package_sizes
+        RPC) with AI-generated typicalSizes as the cold-start fallback.
       </div>
 
       {/* EditPackagingModal removed — admin sizes catalog retired.
