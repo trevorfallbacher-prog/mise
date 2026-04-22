@@ -288,7 +288,20 @@ export default function CookMode({
   // its own parallel override shape and overrides vanished on screen
   // transition; session fixes that permanently.
   const cookSession = useCookSession();
-  const { session, setOverride, clearOverride } = cookSession;
+  const { session, setOverride, clearOverride, resetSession } = cookSession;
+  // Reset the ephemeral swap/skip session whenever the cooked recipe
+  // changes. useState inside useCookSession already resets on remount,
+  // so this only matters when the parent swaps the recipe prop without
+  // unmounting CookMode — but that path DOES exist (CreateMenu and
+  // Plan both keep CookMode alive across some transitions), and a
+  // stale session carrying butter→HWC overrides into a v2 where HWC
+  // is already canon would re-paint the v2 as "swapped" on first
+  // render. Keying on recipe.slug (stable across ingredient edits)
+  // rather than identity avoids spurious resets when the parent hands
+  // back a fresh object reference for the same recipe.
+  useEffect(() => {
+    resetSession();
+  }, [recipe?.slug, resetSession]);
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
   const [swapSearch, setSwapSearch] = useState("");
   const openSwapPicker = (idx) => { setSwapOpenIdx(idx); setSwapSearch(""); };
