@@ -1,15 +1,16 @@
 // Supabase Edge Function: suggest-cook-instructions
 //
-// AI-autofill for pantry_items.cook_instructions (migration 0125). The
-// mini-recipe-on-an-item shape mirrors recipes.reheat so IAteThisSheet
-// can render it verbatim. Called from CookInstructionsSheet's SUGGEST
-// button; the user sees the filled form and can tweak before saving.
+// AI-autofills pantry_items.cook_instructions with a recipe-shaped
+// mini-cook. Shape matches the bundled recipe schema so the client
+// can render it through the same CookMode visual vocabulary without
+// a second template. Writes a SMALL recipe — one identity, 2-5 steps,
+// optional timer per step — not a full meal recipe.
 //
-// Single-shot Haiku call. Input is the pantry row's identity
-// (canonical id, brand, state, cut, display name) — enough for Claude
-// to pick a sensible heating method without a full cook-log history.
-// Output is one `{ primary: {method, tempF, timeMin, covered, tips} }`
-// block — no alternates (users refine manually from there).
+// Why recipe-shape (vs a flat reheat block): the user asked for
+// cook_instructions to "look like the cook screen." Reusing the
+// recipe schema means the step card / progress bar / heat badge /
+// doneCue grammar already rendered by CookMode can render reheats
+// too, with no new template.
 //
 // Deploy:
 //   supabase functions deploy suggest-cook-instructions
@@ -25,7 +26,16 @@
 //     category?:     string,   // optional food category
 //   }
 //
-// Response: { cookInstructions: { primary: {...} } } or { error }
+// Response:
+//   {
+//     cookInstructions: {
+//       title:   string,
+//       emoji:   string,
+//       summary: string,                   // one-liner for item card preview
+//       reheat:  { primary: {...} },       // drives the itemcard pill
+//       steps:   [{ id, title, instruction, icon?, timer?, tip?, heat?, doneCue? }],
+//     }
+//   }
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
@@ -61,53 +71,85 @@ function buildPrompt(input: Input): string {
     lines.push("- (no additional identity — infer from display name alone)");
   }
 
-  return `You are writing a SINGLE reheat/cook instruction block for a pantry item.
-The user will see your suggestion pre-filled into a form that they can
-edit. Pick the ONE best method for THIS specific item — not a generic
-default. Be honest about time and temperature.
+  return `You are writing a TIGHT mini cook-recipe for a single pantry
+item. This is NOT a full meal recipe — it's the short sequence of
+steps the user walks through before eating this specific item. The
+output will render in a cook-screen walkthrough (progress bar, step
+card, per-step timer).
 
 ${lines.join("\n")}
 
-Heuristics that should drive the method pick:
+Decide method first, then write steps. Method heuristics:
 - Pizza / pizza slice: stovetop on a cast-iron pan (crisps the base).
 - Lasagna / baked casseroles: oven (even heat, no sogginess).
-- Soup / stew / braise: stovetop (microwave makes the proteins rubbery).
+- Soup / stew / braise: stovetop (microwave makes proteins rubbery).
 - Fried food / wings / fries: air_fryer or oven (re-crisp the exterior).
-- Egg dishes / frittata: toaster_oven or cold (gentle — microwave
-  scrambles eggs further).
+- Egg dishes / frittata: toaster_oven or cold (microwave scrambles).
 - Whole raw proteins (chicken breast, pork chop, ground beef): stovetop
-  when cooking fresh; oven when reheating a cooked cut.
+  when fresh; oven when reheating a cooked cut.
 - Breads / rolls / bagels: toaster_oven.
 - Prepared cold items (yogurt, cheese, cured meats, fresh salads): cold.
-- Frozen meals / burritos / dumplings: microwave if that's what the
-  packaging assumes; otherwise air_fryer.
-- Raw produce / dry goods that don't need cooking: cold with a short
-  "eat as-is" tip.
+- Frozen meals / burritos / dumplings: microwave if the packaging
+  assumes it; otherwise air_fryer.
+- Raw produce / beverages that don't need cooking: cold with a single
+  "eat as-is" step.
 
-If the item TRULY requires no heating (raw produce, drinks,
-condiments, yogurt), return method="cold" with a one-line "eat as-is"
-tip. Do not fabricate a fake temp / time just to fill the field.
+Steps rules:
+- 2 to 5 steps. Most reheats need 3: preheat → heat → check/serve.
+- Each step has ONE action. Don't pack "remove from oven and let rest"
+  into a heating step — make "rest" its own step.
+- The heating step must carry a timer (in SECONDS). Prep and plating
+  steps set timer to null.
+- Every step needs a short title (3-5 words) and a 1-2 sentence
+  instruction written in plain, second-person, active voice.
+- doneCue is required on the step where visual/sensory confirmation
+  matters (e.g. "steam rising steadily", "edges start to brown",
+  "center feels warm to the back of your hand"). Null otherwise.
+- heat is required for stovetop steps ("medium-low" / "medium" /
+  "medium-high" / "high"). Null for other methods.
+- tip is optional — a specific fix when things go sideways (splash of
+  water, loosely tent with foil, flip halfway). Use it sparingly.
 
-Temp rules:
-- tempF is REQUIRED for oven, air_fryer, toaster_oven.
-- tempF MUST be null for microwave, stovetop, cold.
-- timeMin is ALWAYS a single number (not a range). Pick the midpoint
-  when the realistic window is wide.
-- covered: true when a lid helps (braises, casseroles, rice). false
-  when a lid traps steam and ruins the texture (fries, pizza,
-  anything crispy). null when it doesn't apply (microwave defaults).
+If the item truly needs NO heating (raw produce, bottled drinks,
+condiments), return a single step with method="cold" and a one-line
+"eat as-is" instruction. Do not fabricate fake heat just to fill
+steps.
 
-Return EXACTLY this JSON — no markdown fence, no prose, no keys beyond
-what's shown:
+Title rules:
+- Start with an action verb: "Reheat", "Crisp up", "Warm through",
+  "Slice and serve", "Plate cold".
+- Include the item in plain language: "Reheat leftover lasagna",
+  "Crisp up frozen fries". 4-6 words.
+
+Return EXACTLY this JSON shape — no markdown fence, no prose, no
+keys beyond what's shown:
 
 {
-  "primary": {
-    "method":  "oven" | "microwave" | "stovetop" | "air_fryer" | "toaster_oven" | "cold",
-    "tempF":   <number or null>,
-    "timeMin": <number>,
-    "covered": <true | false | null>,
-    "tips":    "<1-2 sentences of specific, actionable guidance — a splash of water, loosely cover with foil, medium-low heat, stir once, etc. Never generic.>"
-  }
+  "title":   "<4-6 word action title>",
+  "emoji":   "<one relevant food emoji>",
+  "summary": "<one-line summary for the item-card pill, like 'Oven 350°F · 15 min' or 'Stovetop · 5 min · medium heat'>",
+  "reheat": {
+    "primary": {
+      "method":  "oven" | "microwave" | "stovetop" | "air_fryer" | "toaster_oven" | "cold",
+      "tempF":   <number or null for microwave/stovetop/cold>,
+      "timeMin": <number — total active time in minutes>,
+      "covered": <true | false | null when N/A>,
+      "tips":    "<1 sentence top-level tip or null>"
+    }
+  },
+  "steps": [
+    {
+      "id":          "step1",
+      "title":       "<3-5 word step title>",
+      "instruction": "<1-2 sentence plain-language instruction>",
+      "icon":        "<one emoji>",
+      "timer":       <seconds or null>,
+      "tip":         "<optional short tip or null>",
+      "heat":        "<'low'|'medium-low'|'medium'|'medium-high'|'high' or null>",
+      "doneCue":     "<qualitative ready-signal or null>"
+    },
+    ...
+  ]
 }
 `;
 }
@@ -115,59 +157,94 @@ what's shown:
 const METHODS = new Set([
   "oven", "microwave", "stovetop", "air_fryer", "toaster_oven", "cold",
 ]);
+const HEATS = new Set([
+  "low", "medium-low", "medium", "medium-high", "high", "off",
+]);
 
-// Salvage the JSON block even when Claude wraps it in a code fence
-// or adds a trailing explanation. We only need the {...} payload.
 function extractJson(text: string): string {
   const trimmed = text.trim();
-  // Strip ```json fences if present.
   const fence = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```\s*$/);
   if (fence) return fence[1].trim();
-  // Locate the first balanced {...} block. Handles cases where
-  // Claude prefixes a short explanation ("Here's the block:\n{...}").
   const first = trimmed.indexOf("{");
   const last  = trimmed.lastIndexOf("}");
   if (first >= 0 && last > first) return trimmed.slice(first, last + 1);
   return trimmed;
 }
 
-function sanitize(block: unknown): { primary: Record<string, unknown> } | null {
-  if (!block || typeof block !== "object") return null;
-  const obj = block as Record<string, unknown>;
-  const primary = obj.primary && typeof obj.primary === "object"
-    ? obj.primary as Record<string, unknown>
+function sanitizeStep(raw: unknown, i: number): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  const title = typeof s.title === "string" ? s.title.trim() : "";
+  const instruction = typeof s.instruction === "string" ? s.instruction.trim() : "";
+  if (!title || !instruction) return null;
+  const timer = typeof s.timer === "number" && Number.isFinite(s.timer) && s.timer > 0
+    ? Math.round(s.timer) : null;
+  const heat = typeof s.heat === "string" && HEATS.has(s.heat) ? s.heat : null;
+  const icon = typeof s.icon === "string" && s.icon.trim() ? s.icon.trim() : "👨‍🍳";
+  const tip = typeof s.tip === "string" && s.tip.trim() ? s.tip.trim() : null;
+  const doneCue = typeof s.doneCue === "string" && s.doneCue.trim() ? s.doneCue.trim() : null;
+  const id = typeof s.id === "string" && s.id.trim() ? s.id.trim() : `step${i + 1}`;
+  return { id, title, instruction, icon, timer, tip, heat, doneCue };
+}
+
+function sanitize(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+
+  const title = typeof obj.title === "string" ? obj.title.trim() : "";
+  if (!title) return null;
+
+  const emoji = typeof obj.emoji === "string" && obj.emoji.trim() ? obj.emoji.trim() : "♨";
+  const summary = typeof obj.summary === "string" ? obj.summary.trim() : "";
+
+  // Reheat block — validated like the pre-pivot version so the
+  // ItemCard pill always reads consistently.
+  const reheatRaw = obj.reheat && typeof obj.reheat === "object"
+    ? obj.reheat as Record<string, unknown>
     : null;
-  if (!primary) return null;
+  const primaryRaw = reheatRaw?.primary && typeof reheatRaw.primary === "object"
+    ? reheatRaw.primary as Record<string, unknown>
+    : null;
+  if (!primaryRaw) return null;
 
-  const method = typeof primary.method === "string" ? primary.method : "";
+  const method = typeof primaryRaw.method === "string" ? primaryRaw.method : "";
   if (!METHODS.has(method)) return null;
-
   const needsTemp = method === "oven" || method === "air_fryer" || method === "toaster_oven";
   let tempF: number | null = null;
   if (needsTemp) {
-    const t = Number(primary.tempF);
+    const t = Number(primaryRaw.tempF);
     tempF = Number.isFinite(t) && t > 0 ? Math.round(t) : null;
-    if (tempF == null) return null;   // oven without a temp is broken
+    if (tempF == null) return null;
   }
-
-  const timeRaw = Number(primary.timeMin);
+  const timeRaw = Number(primaryRaw.timeMin);
   if (!Number.isFinite(timeRaw) || timeRaw <= 0) return null;
   const timeMin = Math.round(timeRaw * 10) / 10;
-
-  const covered = primary.covered === true ? true
-                : primary.covered === false ? false
+  const covered = primaryRaw.covered === true ? true
+                : primaryRaw.covered === false ? false
                 : null;
+  const tips = typeof primaryRaw.tips === "string" ? primaryRaw.tips.trim() : "";
 
-  const tips = typeof primary.tips === "string" ? primary.tips.trim() : "";
+  const stepsRaw = Array.isArray(obj.steps) ? obj.steps : [];
+  const steps = stepsRaw
+    .map((s, i) => sanitizeStep(s, i))
+    .filter((s): s is Record<string, unknown> => !!s);
+  if (steps.length === 0) return null;
+  if (steps.length > 6) steps.length = 6;
 
   return {
-    primary: {
-      method,
-      tempF,
-      timeMin,
-      covered,
-      tips: tips || null,
+    title,
+    emoji,
+    summary: summary || null,
+    reheat: {
+      primary: {
+        method,
+        tempF,
+        timeMin,
+        covered,
+        tips: tips || null,
+      },
     },
+    steps,
   };
 }
 
@@ -190,9 +267,6 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Strip empty strings so the prompt only mentions axes we actually
-  // have. An all-empty input still works — Claude just falls back to
-  // heuristics keyed off whatever display name survived.
   const input: Input = {
     name:        typeof body.name === "string"        ? body.name.trim()        : "",
     canonicalId: typeof body.canonicalId === "string" ? body.canonicalId.trim() : "",
@@ -232,11 +306,10 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: MODEL,
-        // 500 tokens is plenty for a single-block response; this caps
-        // cost and makes the timeout budget predictable. If Claude
-        // ever needs more headroom (a verbose tips field), we bump it
-        // — for now the typical response is ~100 tokens.
-        max_tokens: 500,
+        // 1500-token cap — a 3-5 step cook-walkthrough runs 400-800
+        // tokens typical. Leaves margin for a verbose tips field
+        // without risking truncation mid-step.
+        max_tokens: 1500,
         messages: [{ role: "user", content: buildPrompt(input) }],
       }),
     });

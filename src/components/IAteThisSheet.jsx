@@ -75,24 +75,18 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const sourceCookLogId = pantryRow?.sourceCookLogId || null;
   const sourceRecipeSlug = pantryRow?.sourceRecipeSlug || null;
 
-  // Reheat / cook-instructions lookup. Two tiers, pantry-row wins:
-  //   1. pantryRow.cookInstructions (migration 0125) — per-item
-  //      mini-recipe the user authored on the ItemCard. Covers raw
-  //      ingredient rows (a fresh chicken breast the user plans to
-  //      pan-sear, a frozen burrito with microwave directions) that
-  //      have no source recipe.
-  //   2. source recipe's `reheat` block — meal-kind leftover rows
-  //      (migration 0026) with a cook log. Inherited from whatever
-  //      recipe was cooked, via findRecipe → bundled or user_recipes.
-  // Second argument falls through only when the pantry row itself
-  // has no instructions, so per-row authored notes always win over
-  // the generic recipe reheat (the jar of Grandma's chili knows
-  // itself better than the recipe template does).
+  // Reheat lookup for meal leftovers. Only fires when the pantry row
+  // is a meal-kind leftover (migration 0026) with a source recipe
+  // that has an authored `reheat` block. Pantry-item cookInstructions
+  // are NOT surfaced here — ReheatMode owns that walkthrough
+  // full-screen before this sheet opens (ItemCard routes
+  // I-ATE-THIS → ReheatMode → onFinish → IAteThisSheet), so by the
+  // time we render the user has already completed their cook.
   const { findBySlug: findUserRecipe } = useUserRecipes(userId);
   const sourceRecipe = (isMealRow && sourceRecipeSlug)
     ? findRecipe(sourceRecipeSlug, findUserRecipe)
     : null;
-  const reheat = pantryRow?.cookInstructions || sourceRecipe?.reheat || null;
+  const reheat = sourceRecipe?.reheat || null;
 
   // Meal-kind leftovers don't have a canonical; their nutrition lives
   // on cook_logs.nutrition (per-serving blob stamped at cook-time).

@@ -29,6 +29,7 @@ import EnrichmentButton from "./EnrichmentButton";
 import IAteThisSheet from "./IAteThisSheet";
 import ScheduleEatingSheet from "./ScheduleEatingSheet";
 import CookInstructionsSheet from "./CookInstructionsSheet";
+import ReheatMode from "./ReheatMode";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
 import { formatReheatSummary } from "./../data/recipes/schema";
 import { Z } from "../lib/tokens";
@@ -176,6 +177,10 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   const [iAteOpen, setIAteOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [cookInstructionsOpen, setCookInstructionsOpen] = useState(false);
+  // Reheat walkthrough. Opens on I-ATE-THIS when the row has a
+  // recipe-shape cookInstructions with steps[]; chains to the
+  // iAte sheet on FINISH so the two screens read as one flow.
+  const [reheatOpen, setReheatOpen] = useState(false);
   const item = useMemo(
     () => ({ ...(itemProp || {}), ...pendingChanges }),
     [itemProp, pendingChanges],
@@ -1262,18 +1267,18 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             onUpdate={onUpdate}
           />
 
-          {/* COOK INSTRUCTIONS — mini-recipe carried on the pantry row
-              itself. Empty state is a dashed "+ ADD COOK INSTRUCTIONS"
-              button; filled state reads like a CookMode header with
-              method · temp · time. Tapping opens the editor
-              (CookInstructionsSheet). When set, IAteThisSheet opens on
-              a reheat walkthrough phase before the log step so the
-              user actually heats the food before declaring they ate
-              it. Shape mirrors recipes.reheat so the same UI renders
-              both pantry cooks and recipe reheats. */}
+          {/* COOK INSTRUCTIONS — mini recipe carried on the pantry row.
+              Shape is recipe-like (title, emoji, steps[], reheat
+              summary) so the ReheatMode walkthrough renders through
+              the same CookMode visual vocabulary — progress bar, step
+              card, per-step timer. Empty state offers the AI-autofill
+              entry; filled state reads like a recipe chip with title
+              and step count. Tap opens the editor
+              (CookInstructionsSheet) to regenerate or clear. */}
           {!isDraft && (() => {
-            const block = item?.cookInstructions?.primary || null;
-            if (!block) {
+            const ci = item?.cookInstructions || null;
+            const stepCount = Array.isArray(ci?.steps) ? ci.steps.length : 0;
+            if (!ci || stepCount === 0) {
               return (
                 <button
                   type="button"
@@ -1298,6 +1303,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                 </button>
               );
             }
+            // Prefer the AI-written one-line summary; fall back to
+            // the old reheat-block formatter for legacy rows written
+            // under the pre-pivot (primary-only) shape.
+            const summary = ci.summary
+              || formatReheatSummary(ci.reheat)
+              || formatReheatSummary(ci)
+              || `${stepCount} step${stepCount === 1 ? "" : "s"}`;
             return (
               <button
                 type="button"
@@ -1310,20 +1322,20 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   cursor: "pointer", textAlign: "left",
                 }}
               >
-                <span style={{ fontSize: 16 }}>♨</span>
+                <span style={{ fontSize: 16 }}>{ci.emoji || "♨"}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{
                     fontFamily: "'DM Mono',monospace", fontSize: 9,
                     color: "#f5c842", letterSpacing: "0.14em",
                   }}>
-                    COOK INSTRUCTIONS
+                    COOK · {stepCount} STEP{stepCount === 1 ? "" : "S"}
                   </div>
                   <div style={{
                     fontFamily: "'DM Sans',sans-serif", fontSize: 13,
                     color: "#f0ece4", marginTop: 2,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                   }}>
-                    {formatReheatSummary(item.cookInstructions) || "Custom cook"}
+                    {ci.title || summary}
                   </div>
                 </div>
                 <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>✎</span>
@@ -1344,7 +1356,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
               <button
                 type="button"
-                onClick={() => setIAteOpen(true)}
+                onClick={() => {
+                  // Route through the full-screen ReheatMode first when
+                  // the row has a recipe-shape cookInstructions with
+                  // steps. FINISH on the last step advances to the
+                  // IAteThisSheet amount-and-log phase. Rows without
+                  // cook instructions skip straight to the log.
+                  const steps = item?.cookInstructions?.steps;
+                  if (Array.isArray(steps) && steps.length > 0) {
+                    setReheatOpen(true);
+                  } else {
+                    setIAteOpen(true);
+                  }
+                }}
                 style={{
                   flex: 1, padding: "12px 14px",
                   background: "#0f1a0f", border: "1px solid #1e3a1e",
@@ -1354,7 +1378,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
-                <span style={{ fontSize: 16 }}>🍽️</span> I ATE THIS
+                <span style={{ fontSize: 16 }}>{item?.cookInstructions?.steps?.length ? "♨" : "🍽️"}</span>
+                {item?.cookInstructions?.steps?.length ? "COOK & EAT" : "I ATE THIS"}
               </button>
               <button
                 type="button"
@@ -3119,6 +3144,22 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           userId={userId}
           onClose={() => setIAteOpen(false)}
           onDone={() => setIAteOpen(false)}
+        />
+      )}
+
+      {/* Reheat walkthrough. Full-screen CookMode-visual-vocabulary
+          component driven by pantryRow.cookInstructions.steps[].
+          FINISH chains into IAteThisSheet (amount + log); EXIT
+          cancels the whole flow without decrementing. */}
+      {reheatOpen && item?.cookInstructions?.steps?.length > 0 && (
+        <ReheatMode
+          recipe={item.cookInstructions}
+          emoji={item.emoji}
+          onFinish={() => {
+            setReheatOpen(false);
+            setIAteOpen(true);
+          }}
+          onExit={() => setReheatOpen(false)}
         />
       )}
 
