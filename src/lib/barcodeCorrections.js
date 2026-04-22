@@ -92,6 +92,27 @@ export async function findBarcodeCorrection(barcodeUpc) {
  *
  * Best-effort: errors log and return { error } but never throw.
  */
+// OFF category hints that are too generic to map to a canonical at
+// Tier-1 exact confidence. "beverages" matches every soda / juice /
+// water equally, so teaching "beverages → soft_drink" would mistag
+// every scanned juice box as a soda. These get filtered OUT of the
+// tag-map seeding — the narrower siblings (colas, sodas, sparkling-
+// waters) carry the actual discriminating signal.
+const GENERIC_OFF_TAGS = new Set([
+  "beverages", "drinks", "foods", "snacks", "meals", "dishes",
+  "plant-based-foods", "plant-based-beverages",
+  "ultra-processed-foods", "processed-foods", "fresh-foods",
+  "frozen-foods", "canned-foods",
+  "dairies", "dairy-products",
+  "meats", "fishes", "seafoods",
+  "fruits", "vegetables",
+  "sauces", "condiments", "seasonings",
+  "sweet-snacks", "salty-snacks", "savory-snacks",
+  "sugary-drinks", "sugary-snacks", "sugary-foods",
+  "fatty-foods",
+  "breakfasts",
+]);
+
 export async function rememberBarcodeCorrection({
   userId,
   isAdmin,
@@ -100,6 +121,7 @@ export async function rememberBarcodeCorrection({
   typeId,
   emoji,
   ingredientIds,
+  categoryHints = null,   // optional — admin path seeds the tag map when present
 }) {
   if (!userId || !barcodeUpc) return { error: new Error("userId + barcodeUpc required") };
   const upc = String(barcodeUpc).trim();
@@ -140,6 +162,7 @@ export async function rememberBarcodeCorrection({
         console.warn("[barcode_identity_corrections] update failed:", error.message);
         return { error };
       }
+      await seedTagMap({ userId, canonicalId, categoryHints });
       return { error: null, source: "global", existed: true };
     }
     const { error } = await supabase
@@ -155,6 +178,7 @@ export async function rememberBarcodeCorrection({
       console.warn("[barcode_identity_corrections] insert failed:", error.message);
       return { error };
     }
+    await seedTagMap({ userId, canonicalId, categoryHints });
     return { error: null, source: "global", existed: false };
   }
 
@@ -204,4 +228,81 @@ export async function rememberBarcodeCorrection({
     return { error };
   }
   return { error: null, source: "family", existed: false };
+}
+
+// Seed the Tier-1 learned tag map. For each OFF categoryHint that
+// was on the corrected scan's row, upsert a (tag → canonical_id)
+// mapping into off_category_tag_canonicals. Next fresh scan of a
+// different UPC that carries any of the same hints hits Tier 1 at
+// "exact" confidence and auto-lands on this canonical — no more
+// per-product rewire for the same semantic class (sodas, yogurts,
+// chicken soups, etc.).
+//
+// Guards:
+//   - Admin-gated at the RLS layer; non-admin callers just eat the
+//     error silently (we warn on the first row and move on).
+//   - GENERIC_OFF_TAGS filtered out so "beverages" doesn't become
+//     a catch-all pointing at whichever beverage was last
+//     corrected.
+//   - Silent noop when migration 0123 hasn't been applied yet —
+//     PostgREST returns 42P01 (undefined_table) which we swallow so
+//     old envs keep working.
+async function seedTagMap({ userId, canonicalId, categoryHints }) {
+  if (!canonicalId || !userId) return;
+  if (!Array.isArray(categoryHints) || categoryHints.length === 0) return;
+  const now = new Date().toISOString();
+  const tags = Array.from(new Set(
+    categoryHints
+      .map(t => String(t || "").trim().toLowerCase())
+      .filter(t => t && !GENERIC_OFF_TAGS.has(t))
+  ));
+  if (tags.length === 0) return;
+  for (const tag of tags) {
+    // Read-then-write so correction_count bumps rather than
+    // resetting to 1 every time the mapping re-lands on the same
+    // canonical. Cheap — tags is small (usually < 10 per scan).
+    const { data: existing, error: selErr } = await supabase
+      .from("off_category_tag_canonicals")
+      .select("off_tag, canonical_id, correction_count")
+      .eq("off_tag", tag)
+      .maybeSingle();
+    if (selErr) {
+      if (selErr.code === "42P01") return;    // migration not applied — silent noop
+      console.warn("[off_tag_map] select failed:", selErr.message);
+      continue;
+    }
+    if (existing && existing.canonical_id === canonicalId) {
+      await supabase
+        .from("off_category_tag_canonicals")
+        .update({
+          correction_count: (existing.correction_count || 1) + 1,
+          last_used_at: now,
+        })
+        .eq("off_tag", tag);
+    } else if (existing) {
+      // Mapping conflict — latest correction wins, count resets.
+      // The admin just told us this tag means `canonicalId`; trust
+      // the most recent signal. Future: could keep per-canonical
+      // counts instead of one row per tag, but v1 keeps shape
+      // simple.
+      await supabase
+        .from("off_category_tag_canonicals")
+        .update({
+          canonical_id: canonicalId,
+          correction_count: 1,
+          last_used_at: now,
+        })
+        .eq("off_tag", tag);
+    } else {
+      await supabase
+        .from("off_category_tag_canonicals")
+        .insert({
+          off_tag: tag,
+          canonical_id: canonicalId,
+          correction_count: 1,
+          last_used_at: now,
+          created_by: userId,
+        });
+    }
+  }
 }

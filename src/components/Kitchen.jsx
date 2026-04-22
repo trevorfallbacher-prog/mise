@@ -58,6 +58,8 @@ import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import { useCanonicalOffTags } from "../lib/useCanonicalOffTags";
+import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
@@ -247,6 +249,14 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
   const [canonicalCreatePrompt, setCanonicalCreatePrompt] = useState(null);
   //   { suggestedName, pendingRow, pendingBrandNutrition }
   const { rows: brandNutritionRowsForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
+  // Tier-1 learned tag map — OFF categoryHint → canonical_id. Empty
+  // on cold start; admin rewires (AdminPanel) and scan-flow canonical
+  // creations (CanonicalCreatePrompt) both seed it via
+  // rememberBarcodeCorrection's seedTagMap pass. Passed to every
+  // resolveCanonicalFromScan call site below so Tier 1 actually fires
+  // (it was scaffolded in canonicalResolver.js but nothing wired the
+  // lookup until now).
+  const learnedTagLookup = useCanonicalOffTags();
   // Admin bypass for the PENDING status. Admins approve canonicals
   // themselves, so when they create one we auto-upsert the
   // ingredient_info stub (same shape AdminPanel.approveCustom writes)
@@ -963,6 +973,16 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 willWrite: !!(scanUpc && userId),
               });
               if (scanUpc && userId) {
+                // categoryHints from the original scan feed the Tier-1
+                // learned tag map so a future fresh scan (different
+                // UPC) with overlapping hints auto-lands on this slug.
+                // See rememberBarcodeCorrection + migration 0123.
+                // Hints live on pendingRow.attributes.categoryHints —
+                // buildAttributesFromScan stamps them alongside
+                // origins/claims at scan time.
+                const scanHints = Array.isArray(cpSnapshot?.pendingRow?.attributes?.categoryHints)
+                  ? cpSnapshot.pendingRow.attributes.categoryHints
+                  : null;
                 rememberBarcodeCorrection({
                   userId,
                   isAdmin,
@@ -970,6 +990,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   canonicalId:   slug,
                   emoji:         canonEmoji,
                   ingredientIds: [slug],
+                  categoryHints: scanHints,
                 })
                   .then(res => console.log("[upc-debug] 4/write-result", res))
                   .catch(e => console.warn("[upc-debug] write threw:", e));
@@ -1144,6 +1165,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brand:         res.brand,
                 productName:   res.productName,
                 categoryHints: res.categoryHints || [],
+                learnedTagLookup,
                 findIngredient,
               });
               const rawState = parseStateFromText(res.productName, res.categoryHints || []);
@@ -1274,15 +1296,37 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // registry could already answer. typeIdForCanonical
               // reads canonicalToType map; inferTileFromName falls
               // back to keyword heuristics when no explicit mapping.
-              const prefilledTypeId = canon?.id ? (typeIdForCanonical(canon.id) || null) : null;
+              //
+              // When no canonical resolved (brand-new UPC, cold
+              // resolver state), fall back to OFF's own categoryHint
+              // taxonomy via tagHintsToAxes — OFF already told us
+              // "this is a beverage / cola / carbonated drink", so
+              // the draft card can land with STORED IN=drinks and
+              // CATEGORY=beverage pre-selected instead of defaulting
+              // to "pantry / unset" and making the user fix both
+              // axes manually.
+              const hintAxes = tagHintsToAxes(res.categoryHints || []);
+              const prefilledTypeId = canon?.id
+                ? (typeIdForCanonical(canon.id) || null)
+                : (hintAxes.typeId || null);
               const rowName = res.productName || canon?.name || firstHintPretty || `Barcode ${barcode}`;
-              const prefilledTileId = inferTileFromName(rowName) || null;
+              const prefilledTileId = inferTileFromName(rowName)
+                || hintAxes.tileId
+                || null;
+              // Category priority: canonical wins → OFF-hint fallback
+              // → last-resort "pantry". Adding OFF-hint here also
+              // means defaultLocationForCategory downstream will
+              // route category="beverage" / "frozen" / etc. to the
+              // right location without any further work.
+              const prefilledCategory = canon?.category
+                || hintAxes.category
+                || "pantry";
               const row = {
                 id:            freshId,
                 name:          rowName,
                 emoji:         canon?.emoji || "🥫",
                 brand:         effectiveBrand || null,
-                category:      canon?.category || "pantry",
+                category:      prefilledCategory,
                 confidence:    match?.autoApply ? "high" : match ? "medium" : "low",
                 canonicalId:   canon?.id || null,
                 ingredientId:  canon?.id || null,
@@ -3340,6 +3384,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                       brand:         res.brand,
                       productName:   res.productName,
                       categoryHints: res.categoryHints || [],
+                      learnedTagLookup,
                       findIngredient,
                     });
                     // Extract state + package size opportunistically.
@@ -5153,6 +5198,26 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // persists the row (via addScannedItems sans draftMode). DISCARD /
   // close clears the draft with no DB write.
   const [draftItem, setDraftItem] = useState(null);
+  // In-flight guard for draft commits. A rapid double-tap on STOCK IN
+  // PANTRY was landing two rows: React fires both click events before
+  // setDraftItem(null) flushes, so onStock ran twice and each call
+  // pushed its own row through the setPantry reducer → useSyncedList
+  // inserted both. This ref flips true on the first commit and
+  // short-circuits the second; resets on every fresh draft so
+  // back-to-back scans each get their own one-shot commit.
+  const committingDraftRef = useRef(false);
+  useEffect(() => {
+    if (draftItem) committingDraftRef.current = false;
+  }, [draftItem]);
+  // Draft-stocking multiplier. When the user taps + in the draft
+  // ItemCard's STACKING card to say "I'm stocking 3 of these," STOCK
+  // IN PANTRY fans out to that many identical siblings. Resets to 1
+  // on every fresh draft so back-to-back scans don't inherit a
+  // stale count.
+  const [draftStockCount, setDraftStockCount] = useState(1);
+  useEffect(() => {
+    if (draftItem) setDraftStockCount(1);
+  }, [draftItem]);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -5323,11 +5388,16 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         ? locClassify(p, { findIngredient, hubForIngredient })
         : null;
       const tile = tileId ? (locTiles?.find(t => t.id === tileId) || null) : null;
-      // Match against everything textual we carry on the row: name, emoji,
-      // ingredient id, canonical name, category, and the tile's own label
-      // so searching "bread" surfaces tortillas / pita / naan via the tile.
+      // Match against everything textual we carry on the row: name,
+      // brand, emoji, ingredient id, canonical name, category, and
+      // the tile's own label so searching "bread" surfaces tortillas
+      // / pita / naan via the tile — and searching "pepsi" surfaces a
+      // row whose name is "Soda Pop" but whose brand column is set
+      // (the grouped-search path at line 5389 already includes brand;
+      // this legacy path had diverged).
       const hay = [
         p.name,
+        p.brand || "",
         p.emoji,
         p.ingredientId || "",
         p.category || "",
@@ -5730,6 +5800,23 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
 
+    // Pre-generate the new-row ids OUTSIDE the setPantry reducer.
+    // Why: the reducer below is called twice in React.StrictMode
+    // (dev) to flag impurities, and `crypto.randomUUID()` inside the
+    // reducer returned a DIFFERENT id each invocation — so the
+    // committed local state ended up with one id while
+    // useSyncedList's persistDiff (also running inside the reducer
+    // in each invocation) inserted rows with BOTH ids into the DB.
+    // The realtime subscription then re-added the DB-only id back
+    // into local state, yielding the "scanned once, appears twice"
+    // symptom. Hoisting the id stamp out of the reducer makes the
+    // reducer pure: same inputs → same output, no matter how many
+    // times React runs it. Each fannedItem gets exactly one stable
+    // id that both the local commit and the persist step see.
+    const gen = () => (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const stableNewIds = fannedItems.map(() => gen());
     // Captured from inside the setPantry reducer below so that, when
     // the Scanner signals a single-item barcode flow via
     // meta.autoOpenFirst, we can pop the ItemCard for the freshly
@@ -5738,7 +5825,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     let firstNewRowId = null;
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
-      fannedItems.forEach(s => {
+      fannedItems.forEach((s, sIdx) => {
         // Default expiration for this scanned item = purchased_at +
         // estimateExpirationDays(storage, location). Returns null when the
         // ingredient has no structured storage info — in which case we leave
@@ -5800,7 +5887,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // pantryFormat so check-off + scan + manual add all agree on
         // what counts as "a physical package."
         let ex = null;
-        if (!isDiscreteInstance(s)) {
+        // _forceStackNew bypasses merge entirely — used by the draft
+        // STACKING card when stocking N identical siblings. Without
+        // this, three 8-oz wonton packages would collapse into one
+        // 24-oz row via sameIdentity() matching. Keeping them as
+        // siblings preserves per-package expiration, per-instance
+        // provenance, and the visual ×N stack in the Kitchen grid.
+        if (!isDiscreteInstance(s) && !s._forceStackNew) {
           if (s.ingredientId) {
             ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
           }
@@ -5884,6 +5977,19 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           // scan_raw also takes last-wins — most recent scan's read is
           // what the user is currently verifying.
           if (s.scanRaw) ex.scanRaw = s.scanRaw;
+          // Brand + barcode carry forward from the fresh scan whenever
+          // the existing row was missing them. This is how a re-scan
+          // of a Pepsi that merges into an unbranded legacy sugar row
+          // finally picks up "PEPSI" — before this fix, the merge
+          // path only touched expiration / receipt pointers / scan
+          // metadata, and brand / barcodeUpc from the scan silently
+          // vanished. The draft card displayed "PEPSI" (local state
+          // carried it) but the DB row kept brand=null, so on next
+          // mount the brand chip read empty and a user "touch + blur"
+          // on the brand field was the only way to persist what the
+          // scan had already surfaced.
+          if (s.brand      && !ex.brand)      ex.brand      = s.brand;
+          if (s.barcodeUpc && !ex.barcodeUpc) ex.barcodeUpc = s.barcodeUpc;
           // Union scan-derived attributes (origins / certifications /
           // flavor / product claims like ORIGINAL / SCOOPS) into the
           // existing row. Missing this step dropped the fresh scan's
@@ -5901,7 +6007,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             canonicalId: s.canonicalId,
             willSpreadBrand: !!s.brand,
           });
-          const freshId = crypto.randomUUID();
+          const freshId = stableNewIds[sIdx];
           if (!firstNewRowId) firstNewRowId = freshId;
           // Quantity floor — never let a row land with amount 0.
           // A pantry row with 0 quantity is meaningless (it's not
@@ -7620,17 +7726,41 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           isAdmin={isAdmin}
           familyIds={familyIds}
           isDraft
+          stockCount={draftStockCount}
+          onStockCountChange={(n) => setDraftStockCount(Math.max(1, Math.floor(Number(n) || 1)))}
           onUpdate={(patch) => setDraftItem(prev => prev ? { ...prev, ...patch } : prev)}
           onEditTags={() => setLinkingItem(draftItem)}
           onStock={(finalDraft) => {
-            // Commit the draft as if it were a fresh scan row —
-            // reusing addScannedItems keeps the merge-on-existing,
-            // expiration-estimate, receipt-line-index, and toast
-            // paths all consistent with the pre-draft flow. No
-            // draftMode / autoOpenFirst this time so it actually
-            // lands in pantry.
+            // Double-tap guard: the React batch may not flush
+            // setDraftItem(null) before a second click lands, and
+            // both clicks ran onStock → addScannedItems → setPantry →
+            // TWO rows inserted. Short-circuit via a ref so the
+            // second tap becomes a no-op. The ref resets when a new
+            // draftItem lands (see useEffect above).
+            if (committingDraftRef.current) return;
+            committingDraftRef.current = true;
+            const count = Math.max(1, Number(draftStockCount) || 1);
+            // Fan out to N identical siblings when the user set
+            // STACKING ×N on the draft. Each copy gets a fresh id
+            // and a _forceStackNew flag so the setPantry reducer
+            // skips its merge-into-existing search (otherwise every
+            // identical sibling would collapse into one row with
+            // amount = N × original). Discrete-count units still
+            // take the existing fan-out path inside addScannedItems
+            // for amount>1 — this flag only affects non-discrete
+            // multi-stock (the "3 identical 8oz packages of
+            // wontons" case).
+            const gen = () => (typeof crypto !== "undefined" && crypto.randomUUID)
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const copies = Array.from({ length: count }, (_, i) => ({
+              ...finalDraft,
+              id: i === 0 ? finalDraft.id : gen(),
+              ...(count > 1 ? { _forceStackNew: true } : {}),
+            }));
             setDraftItem(null);
-            addScannedItems([finalDraft], { store: null, date: null, totalCents: null });
+            setDraftStockCount(1);
+            addScannedItems(copies, { store: null, date: null, totalCents: null });
           }}
           onClose={() => setDraftItem(null)}
         />
@@ -7681,19 +7811,64 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 >
                   − 1 PACKAGE
                 </button>
+                <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.06em" }}>
+                  ×{ordered.length}
+                </span>
+              </div>
+
+              {/* STACKING card — mirrors the ItemCard pattern
+                  (ItemCard.jsx:1754-1794) so the drilldown has the
+                  same visual weight as the single-item surface for
+                  "add another package." Previously the + 1 PACKAGE
+                  button was a small chip next to − 1 PACKAGE in the
+                  top row, which didn't read as an affordance for
+                  anyone who opened the drilldown to stock a fresh
+                  receipt's worth of the same item. Now it's a
+                  labeled card block with a description, matching
+                  ItemCard's stacking surface. Same underlying
+                  addStackInstance call — clones the top instance's
+                  shape (size, unit, location, category, etc.) so
+                  back-to-back stocks land as identical siblings. */}
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px",
+                background: "#0f0f0f", border: "1px solid #1e1e1e",
+                borderRadius: 10,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#f5c842", letterSpacing: "0.08em",
+                  }}>
+                    STACKING
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                    color: "#888", marginTop: 2,
+                  }}>
+                    Add another identical {top.name} to the stack
+                  </div>
+                </div>
                 <button
                   onClick={() => {
                     addStackInstance(setPantry, bucket);
                     pushToast(`Added 1 ${top.name}`, { emoji: top.emoji || "🛒", kind: "success", ttl: 2800 });
                   }}
-                  style={{ padding:"8px 14px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+                  aria-label={`Add another ${top.name}`}
+                  style={{
+                    padding: "8px 12px",
+                    background: "#1a1608",
+                    border: "1px solid #f5c84244",
+                    borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: "#f5c842", letterSpacing: "0.06em",
+                    cursor: "pointer", flexShrink: 0,
+                  }}
                 >
                   + 1 PACKAGE
                 </button>
-                <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.06em" }}>
-                  ×{ordered.length}
-                </span>
               </div>
+
               <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", letterSpacing:"0.12em" }}>
                 INSTANCES · FIFO BY EXPIRATION
               </div>

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { INGREDIENTS, HUBS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
+import { enrichIngredient } from "../lib/enrichIngredient";
+import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 // EditPackagingModal import removed — admin sizes catalog retired.
@@ -534,6 +536,23 @@ function CanonicalsList({ viewerId }) {
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(null);    // canonical_id mid-op
   const [version, setVersion] = useState(0); // cheap refresh trigger
+  // Per-canonical row drilldown. Clicking the ×N usage badge loads
+  // the actual pantry_items rows attached to that canonical so the
+  // admin can rewire a SPECIFIC row (the mistagged Pepsi) without
+  // rewriting every row on the slug the way the blanket RENAME does.
+  // rowsFor is the canonical_id currently expanded (null = collapsed).
+  // rowsCache lazily memoizes the fetched list by slug — invalidated
+  // per-slug after each rewire so the row we just moved away drops
+  // out of the visible list.
+  const [rowsFor, setRowsFor] = useState(null);
+  const [rowsCache, setRowsCache] = useState(new Map());
+  // Reverse index of the Tier-1 learned tag map: canonical_id →
+  // [off_tag, ...]. Admins can add/remove tags per canonical to
+  // teach the resolver explicitly (without waiting for a user
+  // correction to seed a hint). The value is loaded once per
+  // CanonicalsList reload cycle so the chips under each row stay in
+  // sync with writes. Empty when migration 0123 isn't applied yet.
+  const [offTagsByCanonical, setOffTagsByCanonical] = useState(new Map());
   // Packaging editor — opens a ModalSheet over the admin panel,
   // seeded with the canonical's saved sizes + parentId. Null =
   // closed; object = the row being edited.
@@ -580,6 +599,29 @@ function CanonicalsList({ viewerId }) {
       }
       setOverrides(om);
       setParentIds(pm);
+    }
+    // Tier-1 learned tag map (migration 0123). Reverse-index into
+    // canonical_id → [off_tag, ...] so each canonical card can list
+    // its mapped tags inline. Silent no-op on envs without 0123.
+    const { data: tagRows, error: tagErr } = await supabase
+      .from("off_category_tag_canonicals")
+      .select("off_tag, canonical_id");
+    if (tagErr) {
+      if (tagErr.code !== "42P01") {
+        console.warn("[admin] off tag map load:", tagErr.message);
+      }
+      setOffTagsByCanonical(new Map());
+    } else {
+      const tm = new Map();
+      for (const r of (tagRows || [])) {
+        if (!r?.canonical_id || !r?.off_tag) continue;
+        const arr = tm.get(r.canonical_id) || [];
+        arr.push(r.off_tag);
+        tm.set(r.canonical_id, arr);
+      }
+      // Sort tags alphabetically so chip order is predictable.
+      for (const arr of tm.values()) arr.sort();
+      setOffTagsByCanonical(tm);
     }
   }
 
@@ -765,6 +807,43 @@ function CanonicalsList({ viewerId }) {
         .update({ canonical_id: newSlug })
         .eq("canonical_id", row.id);
       if (upErr) throw upErr;
+      // Also carry ingredient_id (legacy scalar — some read paths
+      // still consult it as the primary tag) and barcode_identity_
+      // corrections so the UPC → canonical memory survives a rename.
+      // Without this carry, every previously-taught UPC would stay
+      // pointed at the old slug; next scan would try to open a
+      // canonical that no longer exists and fall back to fuzzy
+      // matching all over again.
+      await supabase
+        .from("pantry_items")
+        .update({ ingredient_id: newSlug })
+        .eq("ingredient_id", row.id);
+      await supabase
+        .from("barcode_identity_corrections")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      // off_category_tag_canonicals (migration 0123) also needs to
+      // follow the canonical through a rename — otherwise every
+      // learned tag would still point at the old slug and Tier-1
+      // resolution would try to open a canonical that's been renamed
+      // away. Non-fatal on older envs that haven't applied 0123.
+      const { error: tagMapErr } = await supabase
+        .from("off_category_tag_canonicals")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      if (tagMapErr && tagMapErr.code !== "42P01") {
+        console.warn("[admin-rename] off_category_tag_canonicals carry:", tagMapErr.message);
+      }
+      // user_scan_corrections is the family-scoped mirror; same carry.
+      // Non-fatal if the table doesn't exist on older envs — we just
+      // log and move on.
+      const { error: userCorrErr } = await supabase
+        .from("user_scan_corrections")
+        .update({ canonical_id: newSlug })
+        .eq("canonical_id", row.id);
+      if (userCorrErr && userCorrErr.code !== "42P01") {
+        console.warn("[admin-rename] user_scan_corrections carry:", userCorrErr.message);
+      }
       setVersion(v => v + 1); refreshDb?.();
     } catch (e) {
       // eslint-disable-next-line no-alert
@@ -796,6 +875,316 @@ function CanonicalsList({ viewerId }) {
     } catch (e) {
       // eslint-disable-next-line no-alert
       window.alert(`Approve failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Expand/collapse the pantry-row drilldown for a canonical. On first
+  // expand we fetch the rows (lazy, cached in rowsCache) so idle
+  // canonicals don't pay the query cost. Scoped to canonical_id; we
+  // pull brand + name so the admin can visually identify which row
+  // is the mistagged one (brand="PEPSI" + name="Soda Pop" on a sugar
+  // canonical jumps out immediately).
+  async function toggleRows(canonicalId) {
+    if (rowsFor === canonicalId) {
+      setRowsFor(null);
+      return;
+    }
+    setRowsFor(canonicalId);
+    if (rowsCache.has(canonicalId)) return;
+    const { data, error: pErr } = await supabase
+      .from("pantry_items")
+      .select("id, name, brand, emoji, amount, unit, user_id, canonical_id")
+      .eq("canonical_id", canonicalId)
+      .order("name", { ascending: true })
+      .limit(100);
+    if (pErr) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Couldn't load rows: ${pErr.message}`);
+      return;
+    }
+    setRowsCache(prev => new Map(prev).set(canonicalId, data || []));
+  }
+
+  // Per-row rewire — move ONE pantry_items row off its current
+  // canonical and onto a (possibly new) target canonical. The key
+  // difference vs renameCustom: that one rewrites every row on the
+  // slug wholesale, which is catastrophic when only one row is
+  // mistagged (classic misfire: a "SUGAR FREE" Pepsi landed on the
+  // sugar canonical, the other sugar rows are legit and must stay).
+  //
+  // "Completely drop the old identity" means every column on the
+  // pantry row that was populated from (or validated against) the old
+  // canonical gets cleared in the same UPDATE:
+  //   - canonical_id      → new slug
+  //   - ingredient_id     → new slug (legacy dual column — reading
+  //                          code still consults it as the primary
+  //                          scalar in some paths; out-of-sync here
+  //                          is how "ghost sugar" lingers).
+  //   - cut               → null    (meat-only axis; invalid unless
+  //                          the target canonical is also meat — we
+  //                          clear unconditionally so the admin can
+  //                          re-pick on the new canonical's
+  //                          vocabulary rather than carrying a stale
+  //                          "chicken breast" onto a beef row).
+  //   - state             → null    (per-canonical state vocab; a
+  //                          "SWEETENED / ZERO SUGAR" tag inherited
+  //                          from the sugar misfire has no meaning on
+  //                          a soda_pop row — clear and let the user
+  //                          re-tag from the new canonical's options).
+  //   - nutrition_override→ null    (tier-1 nutrition blob computed
+  //                          against the old canonical's per-unit
+  //                          shape; keeping it would leak old-
+  //                          canonical macros into the new identity's
+  //                          tally. Force a re-resolve.)
+  //   - components        → filter out the old slug if it appears
+  //                          there (composed rows that explicitly
+  //                          listed the wrong canonical in their
+  //                          composition stack — rare, but leaving it
+  //                          is a leak).
+  //
+  // Columns deliberately LEFT ALONE because they're orthogonal to
+  // canonical identity: brand, name, emoji, attributes, barcode_upc,
+  // package_amount/package_unit, count_weight_g, location, category.
+  // Those track the physical item, not the classification.
+  async function rewireRow(pantryRow, oldSlug) {
+    // eslint-disable-next-line no-alert
+    const next = window.prompt(
+      `Rewire this pantry row off "${oldSlug}".\n\n` +
+        `Row: ${pantryRow.brand ? pantryRow.brand + " · " : ""}${pantryRow.name || "(unnamed)"}\n\n` +
+        `Type the NEW canonical display name. If the slug doesn't exist ` +
+        `yet, we'll create it as an approved synthetic so it stops reading ` +
+        `as PENDING.\n\n` +
+        `Every canonical-tied field on this row (cut, state, ` +
+        `nutrition_override, ingredient_id, components entries on the ` +
+        `old slug) will be fully dropped — brand, name, emoji, and ` +
+        `package metadata stay.`
+    );
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed) return;
+    const newSlug = slugifyIngredientName(trimmed);
+    if (!newSlug || newSlug === oldSlug) return;
+
+    // Optional emoji — prompt only when we're creating a brand-new
+    // synthetic (existing bundled + approved targets already have one
+    // from the registry / admin edit). Blank-or-cancel keeps the stub
+    // emoji-less and lets the ✨ fallback apply, which is still
+    // better than the previous "sparkles forever" because enrichment
+    // below will usually produce a better one within seconds.
+    const isBundled = INGREDIENTS.some(i => i.id === newSlug);
+    const isApproved = approvedIds?.has(newSlug);
+    let emoji = null;
+    if (!isBundled && !isApproved) {
+      // eslint-disable-next-line no-alert
+      const rawEmoji = window.prompt(
+        `Emoji for "${trimmed}"?\n\nSingle emoji like 🥤 / 🍺 / 🍕. ` +
+          `Leave blank and we'll use a ✨ placeholder until enrichment ` +
+          `fills one in.`,
+        "",
+      );
+      if (rawEmoji === null) return;   // admin cancelled the whole op
+      emoji = rawEmoji.trim() || null;
+    }
+
+    setBusy(`row:${pantryRow.id}`);
+    try {
+      if (!isBundled && !isApproved) {
+        // Rich stub so the synthetic is searchable in LinkIngredient
+        // (display_name feeds the picker's fuzzy matcher — without it
+        // the slug "soda_pop" didn't match the query "Soda Pop"),
+        // renderable on ItemCard + Kitchen tiles (emoji populated so
+        // the fallback ✨ doesn't leak), and not grouped under a
+        // random hub (no parentId — let the admin set it explicitly
+        // via GROUP UNDER, which is safer than auto-inferring since
+        // the slug might not match any keyword bucket cleanly).
+        const stub = {
+          display_name: trimmed,
+          ...(emoji ? { emoji } : {}),
+          _meta: {
+            reviewed: true,
+            reviewed_by: viewerId || null,
+            reviewed_at: new Date().toISOString(),
+            source: "admin_rewire",
+          },
+        };
+        const { error: infoErr } = await supabase
+          .from("ingredient_info")
+          .upsert({ ingredient_id: newSlug, info: stub }, { onConflict: "ingredient_id" });
+        if (infoErr) throw infoErr;
+        // Fire-and-forget AI enrichment. Fills in density / category /
+        // nutrition / sourcing / substitutions so the synthetic stops
+        // reading as a bare stub and starts rendering the same
+        // cooking metadata bundled canonicals have. Same pattern as
+        // LinkIngredient's createNewFromQuery — no await, network
+        // slowness doesn't block the rewire.
+        enrichIngredient({ canonical_id: newSlug, source_name: trimmed })
+          .then(() => { refreshDb?.(); })
+          .catch(err => {
+            console.warn("[admin-rewire] enrichment failed for", newSlug, err?.message);
+          });
+      }
+      // Read the row's components + barcode_upc + attributes so we
+      // can (a) scrub any mention of the old slug from components
+      // before the UPDATE lands, (b) persist a
+      // barcode_identity_corrections entry below if this row came
+      // from a scan, and (c) seed the Tier-1 learned tag map from
+      // the categoryHints that the scan originally carried (stored
+      // inside attributes.categoryHints per the scan-flow). Single
+      // read is cheap and avoids a race with whatever the client
+      // last wrote.
+      const { data: curRow, error: readErr } = await supabase
+        .from("pantry_items")
+        .select("components, ingredient_ids, barcode_upc, attributes")
+        .eq("id", pantryRow.id)
+        .maybeSingle();
+      if (readErr) throw readErr;
+      const rawComponents = Array.isArray(curRow?.components)
+        ? curRow.components
+        : (Array.isArray(curRow?.ingredient_ids) ? curRow.ingredient_ids : null);
+      const scrubbed = rawComponents
+        ? rawComponents.filter(x => x && x !== oldSlug)
+        : null;
+      const componentsPatch = scrubbed == null
+        ? {}
+        : scrubbed.length === 0
+          ? { components: null }
+          : { components: scrubbed };
+
+      const { error: upErr } = await supabase
+        .from("pantry_items")
+        .update({
+          canonical_id:       newSlug,
+          ingredient_id:      newSlug,
+          cut:                null,
+          state:              null,
+          nutrition_override: null,
+          ...componentsPatch,
+        })
+        .eq("id", pantryRow.id);
+      if (upErr) throw upErr;
+
+      // Teach the barcode resolver. If the pantry row we just rewired
+      // came from a scan (barcode_upc is set), the admin has now given
+      // us the authoritative canonical for that UPC — future scans of
+      // the same barcode should skip OFF's productName fuzzy-match and
+      // land on this slug. Mirrors the same hook the scan-flow
+      // CanonicalCreatePrompt uses at Kitchen.jsx:966. Admins write to
+      // the GLOBAL barcode_identity_corrections table (all users benefit)
+      // rather than the family-scoped user_scan_corrections.
+      const scannedUpc = curRow?.barcode_upc || null;
+      const scannedHints = Array.isArray(curRow?.attributes?.categoryHints)
+        ? curRow.attributes.categoryHints
+        : null;
+      if (scannedUpc && viewerId) {
+        rememberBarcodeCorrection({
+          userId:        viewerId,
+          isAdmin:       true,
+          barcodeUpc:    scannedUpc,
+          canonicalId:   newSlug,
+          ingredientIds: [newSlug],
+          categoryHints: scannedHints,   // seeds the Tier-1 tag map
+          ...(emoji ? { emoji } : {}),
+        })
+          .then(res => {
+            if (res?.error) {
+              console.warn("[admin-rewire] barcode correction write failed:", res.error.message);
+            }
+          })
+          .catch(err => {
+            console.warn("[admin-rewire] barcode correction threw:", err?.message);
+          });
+      }
+      setRowsCache(prev => {
+        const m = new Map(prev);
+        m.delete(oldSlug);
+        m.delete(newSlug);
+        return m;
+      });
+      setVersion(v => v + 1); refreshDb?.();
+    } catch (e) {
+      // eslint-disable-next-line no-alert
+      window.alert(`Rewire failed: ${e.message || e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Add one-or-more OFF category tag → this canonical mappings.
+  // Admin-only; surfaces the Tier-1 learned tag map directly so you
+  // don't have to scan-and-correct a product to seed it. Comma-
+  // separated input keeps the interaction dense — typical use is
+  // bulk-add after renaming a canonical ("soft_drink: sodas, colas,
+  // carbonated-drinks, diet-sodas" in one shot).
+  async function addOffTags(row) {
+    // eslint-disable-next-line no-alert
+    const raw = window.prompt(
+      `Add OFF category tags to "${row.name}" (${row.id}).\n\n` +
+        `Comma-separated. OFF slug form only — dashes not spaces ` +
+        `(e.g. "sodas, colas, carbonated-drinks, diet-sodas").\n\n` +
+        `Any fresh scan whose categoryHints contain one of these ` +
+        `will Tier-1 match this canonical at "exact" confidence, no ` +
+        `user correction needed. If the same tag already maps to ` +
+        `another canonical, the most recent write wins — so adding ` +
+        `"sodas" here steals the mapping from whatever had it before.`
+    );
+    if (!raw) return;
+    const tags = Array.from(new Set(
+      raw.split(",")
+        .map(t => t.trim().toLowerCase().replace(/\s+/g, "-"))
+        .filter(Boolean)
+    ));
+    if (tags.length === 0) return;
+    setBusy(`tags:${row.id}`);
+    try {
+      const now = new Date().toISOString();
+      for (const tag of tags) {
+        const { error } = await supabase
+          .from("off_category_tag_canonicals")
+          .upsert(
+            {
+              off_tag:          tag,
+              canonical_id:     row.id,
+              correction_count: 1,
+              last_used_at:     now,
+              created_by:       viewerId || null,
+            },
+            { onConflict: "off_tag" },
+          );
+        if (error) {
+          if (error.code === "42P01") {
+            // eslint-disable-next-line no-alert
+            window.alert(
+              "Tag map table not found. Migration 0123 hasn't been applied to this database yet — run `supabase db push` and retry."
+            );
+            return;
+          }
+          console.warn(`[admin] add off_tag ${tag}:`, error.message);
+        }
+      }
+      setVersion(v => v + 1);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Remove a single tag → canonical mapping. Because the map's key
+  // is off_tag alone (one canonical per tag globally), this is a
+  // straight DELETE by primary key — no cascade needed.
+  async function removeOffTag(tag) {
+    const trimmed = String(tag || "").trim().toLowerCase();
+    if (!trimmed) return;
+    setBusy(`untag:${trimmed}`);
+    try {
+      const { error } = await supabase
+        .from("off_category_tag_canonicals")
+        .delete()
+        .eq("off_tag", trimmed);
+      if (error && error.code !== "42P01") {
+        console.warn(`[admin] remove off_tag ${trimmed}:`, error.message);
+      }
+      setVersion(v => v + 1);
     } finally {
       setBusy(null);
     }
@@ -907,16 +1296,25 @@ function CanonicalsList({ viewerId }) {
                   {r.category && ` · ${r.category.toUpperCase()}`}
                 </div>
               </div>
-              <span style={{
-                fontFamily: "'DM Mono',monospace", fontSize: 9,
-                color: r.count > 0 ? "#7ec87e" : "#555",
-                background: r.count > 0 ? "#0f1a0f" : "transparent",
-                border: `1px solid ${r.count > 0 ? "#1e3a1e" : "#242424"}`,
-                padding: "2px 7px", borderRadius: 10, letterSpacing: "0.08em",
-                flexShrink: 0,
-              }}>
-                {r.count > 0 ? `×${r.count}` : "UNUSED"}
-              </span>
+              <button
+                type="button"
+                onClick={() => r.count > 0 && toggleRows(r.id)}
+                disabled={r.count === 0}
+                title={r.count > 0 ? "View pantry rows + rewire" : "No rows"}
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: r.count > 0 ? "#7ec87e" : "#555",
+                  background: r.count > 0 ? "#0f1a0f" : "transparent",
+                  border: `1px solid ${r.count > 0 ? "#1e3a1e" : "#242424"}`,
+                  padding: "2px 7px", borderRadius: 10, letterSpacing: "0.08em",
+                  flexShrink: 0,
+                  cursor: r.count > 0 ? "pointer" : "default",
+                }}
+              >
+                {r.count > 0
+                  ? `${rowsFor === r.id ? "▾" : "▸"} ×${r.count}`
+                  : "UNUSED"}
+              </button>
               <span style={{
                 fontFamily: "'DM Mono',monospace", fontSize: 8,
                 color: statusColor, letterSpacing: "0.1em",
@@ -1012,6 +1410,133 @@ function CanonicalsList({ viewerId }) {
                   })}
                 </div>
               )}
+
+              {/* OFF TAGS — Tier-1 learned tag map editor. Lists every
+                  OFF categoryHint slug currently mapped to this
+                  canonical, with an × on each chip to unmap and a
+                  "+ TAG" button to bulk-add. Rendered for BOTH
+                  bundled and custom canonicals — an admin might want
+                  to seed "milks, dairy-milks" onto bundled `milk`
+                  just as much as "sodas, colas" onto custom
+                  `soft_drink`. Tag chips are tan (canonical color)
+                  since OFF tags are literally "what this canonical
+                  is" in OFF's taxonomy. */}
+              <div style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 8,
+                  color: "#555", letterSpacing: "0.1em",
+                  marginRight: 2,
+                }}>
+                  OFF TAGS
+                </span>
+                {(offTagsByCanonical.get(r.id) || []).map(tag => {
+                  const untagBusy = busy === `untag:${tag}`;
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => removeOffTag(tag)}
+                      disabled={untagBusy}
+                      title={`Remove "${tag}" mapping`}
+                      style={{
+                        padding: "3px 7px",
+                        background: "#141008",
+                        border: "1px solid #3a2f10",
+                        color: "#b8a878",
+                        borderRadius: 10,
+                        fontFamily: "'DM Mono',monospace", fontSize: 8,
+                        letterSpacing: "0.05em",
+                        cursor: untagBusy ? "not-allowed" : "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                      }}
+                    >
+                      <span>{tag}</span>
+                      <span style={{ color: "#8a7a5a" }}>×</span>
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => addOffTags(r)}
+                  disabled={busy === `tags:${r.id}`}
+                  title="Add OFF category tags that should Tier-1 match this canonical"
+                  style={{
+                    padding: "3px 7px",
+                    background: "transparent",
+                    border: "1px dashed #3a2f10",
+                    color: "#8a7a5a",
+                    borderRadius: 10,
+                    fontFamily: "'DM Mono',monospace", fontSize: 8,
+                    letterSpacing: "0.05em",
+                    cursor: busy === `tags:${r.id}` ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {busy === `tags:${r.id}` ? "…" : "+ TAG"}
+                </button>
+              </div>
+
+              {/* Row drilldown. Clicking the count badge loads the
+                  actual pantry_items on this canonical so the admin
+                  can rewire a single row to a different (or new)
+                  canonical — surgical per-row fix for scan misfires
+                  like "SUGAR FREE" Pepsi landing on the sugar slug.
+                  Lazy-fetched; renders a spinner-ish state until the
+                  query lands. */}
+              {rowsFor === r.id && (
+                <div style={{
+                  width: "100%", marginTop: 6,
+                  padding: "6px 0 0", borderTop: "1px dashed #242424",
+                  display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  {!rowsCache.has(r.id) ? (
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", padding: "6px 4px", letterSpacing: "0.08em" }}>
+                      LOADING ROWS…
+                    </div>
+                  ) : (rowsCache.get(r.id) || []).length === 0 ? (
+                    <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", padding: "6px 4px", letterSpacing: "0.08em" }}>
+                      NO ROWS FOUND (usage count may be stale — refresh)
+                    </div>
+                  ) : (rowsCache.get(r.id) || []).map(pr => {
+                    const rowBusy = busy === `row:${pr.id}`;
+                    const amtTxt = pr.amount != null
+                      ? `${Number(pr.amount) % 1 ? Number(pr.amount).toFixed(2) : pr.amount}${pr.unit ? ` ${pr.unit}` : ""}`
+                      : "";
+                    return (
+                      <div key={pr.id} style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        padding: "6px 8px",
+                        background: "#0a0a0a",
+                        border: "1px solid #1f1f1f",
+                        borderRadius: 8,
+                      }}>
+                        <span style={{ fontSize: 16, flexShrink: 0 }}>{pr.emoji || "🥫"}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{
+                            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                            color: "#f0ece4",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {pr.brand ? <span style={{ color: "#a99870" }}>{pr.brand} · </span> : null}
+                            {pr.name || "(unnamed)"}
+                          </div>
+                          <div style={{
+                            fontFamily: "'DM Mono',monospace", fontSize: 8,
+                            color: "#555", marginTop: 1, letterSpacing: "0.04em",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                          }}>
+                            {amtTxt}{amtTxt && " · "}{pr.id.slice(0, 8)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => rewireRow(pr, r.id)}
+                          disabled={rowBusy}
+                          style={adminBtnStyle("#0a1a2a", "#7eb8d4")}
+                        >
+                          {rowBusy ? "…" : "REWIRE →"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })
@@ -1031,10 +1556,20 @@ function CanonicalsList({ viewerId }) {
         stub so the slug stops reading as PENDING, REJECT clears the
         slug from every pantry_items row and drops the stub, RENAME
         rewrites the slug across the board and carries any approval
-        forward. Package sizes are no longer admin-curated here —
-        they're learned from pantry_items observations
-        (popular_package_sizes RPC) with AI-generated typicalSizes
-        as the cold-start fallback.
+        forward. Click the ×N usage badge to drill into the individual
+        pantry rows on a canonical and REWIRE a single row to a
+        different (or brand-new) canonical — use this when a scan
+        misfired on just one row ("SUGAR FREE" Pepsi landing on the
+        sugar slug) and you don't want to rewrite every sugar row.
+        OFF TAGS teaches the resolver directly: any tag added here
+        wins Tier-1 "exact" matching on every fresh scan whose OFF
+        categoryHints carry it — one bulk-add of
+        "sodas, colas, carbonated-drinks, diet-sodas" onto soft_drink
+        and future cold-start soda scans resolve without a correction
+        round-trip. Package sizes are no longer admin-curated here
+        — they're learned from pantry_items observations
+        (popular_package_sizes RPC) with AI-generated typicalSizes as
+        the cold-start fallback.
       </div>
 
       {/* EditPackagingModal removed — admin sizes catalog retired.

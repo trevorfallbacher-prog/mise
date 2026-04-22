@@ -6,7 +6,12 @@ import { useSyncedList } from "./useSyncedList";
 // backfill in migration 0008.
 export function defaultLocationForCategory(category) {
   if (category === "frozen") return "freezer";
-  if (category === "dairy" || category === "produce" || category === "meat") return "fridge";
+  // "beverage" added alongside dairy/produce/meat so a scanned soda
+  // / juice / carton of milk-alternative lands in the fridge by
+  // default — otherwise OFF-tagged beverages whose canonical doesn't
+  // resolve (or whose category is the new "beverage" bucket from
+  // tagHintsToAxes) would fall through to pantry.
+  if (category === "dairy" || category === "produce" || category === "meat" || category === "beverage") return "fridge";
   return "pantry";
 }
 
