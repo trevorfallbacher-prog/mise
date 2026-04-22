@@ -29,6 +29,7 @@ import { useShopMode } from "../lib/useShopMode";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import { findIngredient } from "../data/ingredients";
 import { resolveCanonicalFromScan } from "../lib/canonicalResolver";
+import { supabase } from "../lib/supabase";
 
 const FLASH_COLORS = {
   green:  { bg: "#1f6b3a", label: "MATCHED" },       // forest — clear win
@@ -93,10 +94,6 @@ export default function ShopMode({
   // rapid scans that don't re-render between each.
   const armedRef = useRef(null);
   useEffect(() => { armedRef.current = armedListItemId; }, [armedListItemId]);
-  // setShoppingList mirrored for the same reason — impulse-add path
-  // needs the freshest setter.
-  const setShoppingListRef = useRef(setShoppingList);
-  useEffect(() => { setShoppingListRef.current = setShoppingList; }, [setShoppingList]);
   // listTargets + already-paired-ids mirrored for handleDetected's
   // closure (it's passed to BarcodeScanner.onDetected and so captures
   // whatever refs/state existed at mount time otherwise).
@@ -273,28 +270,32 @@ export default function ShopMode({
   // Silent-list-add: builds a fresh shopping_list_items row from the
   // scan's OFF data (or UPC fallback) and pairs the scan to it. Used
   // when the user has armed "impulse mode" on the bottom half.
+  //
+  // Direct supabase insert (not setShoppingList) so the row exists
+  // in the DB BEFORE we try to stamp paired_shopping_list_item_id on
+  // the trip_scan — the FK on that column would otherwise reject the
+  // pair silently (useSyncedList persists asynchronously, so the
+  // optimistic local row isn't in the DB yet when we pair). Realtime
+  // subscription picks the row up and adds it to local state.
   async function doImpulseAdd(scan) {
     const name = scan.productName || scan.brand || `Scanned item (${scan.barcodeUpc.slice(-4)})`;
     const newItemId = (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    try {
-      setShoppingListRef.current?.(prev => ([
-        ...prev,
-        {
-          id: newItemId,
-          name,
-          emoji: "🛒",
-          amount: scan.qty || 1,
-          unit: "",
-          category: "pantry",
-          source: "trip_impulse",
-          ingredientId: scan.canonicalId || null,
-          priceCents: null,
-        },
-      ]));
-    } catch (e) {
-      console.warn("[shop-mode] impulse add failed:", e);
+    const { error } = await supabase.from("shopping_list_items").insert({
+      id:            newItemId,
+      user_id:       userId,
+      name,
+      emoji:         "🛒",
+      amount:        scan.qty || 1,
+      unit:          "",
+      category:      "pantry",
+      source:        "trip_impulse",
+      ingredient_id: scan.canonicalId || null,
+    });
+    if (error) {
+      console.warn("[shop-mode] impulse list insert failed:", error.message);
+      return;
     }
     await pairScanToList(scan.id, newItemId);
   }
