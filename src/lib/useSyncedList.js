@@ -101,12 +101,27 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
     return () => { supabase.removeChannel(ch); };
   }, [table, userId]);
 
+  // StrictMode dedup: React invokes the updater below twice in dev
+  // with the same `prev` reference to expose impurities. If
+  // persistDiff runs both times it fires TWO Supabase inserts for the
+  // same logical change; when the caller's updater is non-pure (e.g.
+  // Kitchen's reducer used to call crypto.randomUUID() inside the
+  // body) the two inserts get different ids, and the realtime
+  // subscription re-adds the DB-only id back into local state,
+  // yielding a "scanned once, appears twice" duplicate. We can't
+  // force the caller's updater to be pure from here, but we can make
+  // persistDiff fire exactly once per setList call by remembering
+  // which `prev` we last persisted against.
+  const lastPersistedPrevRef = useRef(null);
   // Diff-based setter. Accepts a value or functional updater, just like useState.
   const setList = useCallback(
     (updater) => {
       setItems(prev => {
         const next = typeof updater === "function" ? updater(prev) : updater;
-        if (userId) persistDiff({ table, userId, toDb, prev, next });
+        if (userId && lastPersistedPrevRef.current !== prev) {
+          lastPersistedPrevRef.current = prev;
+          persistDiff({ table, userId, toDb, prev, next });
+        }
         return next;
       });
     },

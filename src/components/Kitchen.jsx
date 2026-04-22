@@ -5746,6 +5746,23 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
 
+    // Pre-generate the new-row ids OUTSIDE the setPantry reducer.
+    // Why: the reducer below is called twice in React.StrictMode
+    // (dev) to flag impurities, and `crypto.randomUUID()` inside the
+    // reducer returned a DIFFERENT id each invocation — so the
+    // committed local state ended up with one id while
+    // useSyncedList's persistDiff (also running inside the reducer
+    // in each invocation) inserted rows with BOTH ids into the DB.
+    // The realtime subscription then re-added the DB-only id back
+    // into local state, yielding the "scanned once, appears twice"
+    // symptom. Hoisting the id stamp out of the reducer makes the
+    // reducer pure: same inputs → same output, no matter how many
+    // times React runs it. Each fannedItem gets exactly one stable
+    // id that both the local commit and the persist step see.
+    const gen = () => (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const stableNewIds = fannedItems.map(() => gen());
     // Captured from inside the setPantry reducer below so that, when
     // the Scanner signals a single-item barcode flow via
     // meta.autoOpenFirst, we can pop the ItemCard for the freshly
@@ -5754,7 +5771,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     let firstNewRowId = null;
     setPantry(prev => {
       const next = prev.map(p => ({ ...p }));
-      fannedItems.forEach(s => {
+      fannedItems.forEach((s, sIdx) => {
         // Default expiration for this scanned item = purchased_at +
         // estimateExpirationDays(storage, location). Returns null when the
         // ingredient has no structured storage info — in which case we leave
@@ -5930,7 +5947,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             canonicalId: s.canonicalId,
             willSpreadBrand: !!s.brand,
           });
-          const freshId = crypto.randomUUID();
+          const freshId = stableNewIds[sIdx];
           if (!firstNewRowId) firstNewRowId = freshId;
           // Quantity floor — never let a row land with amount 0.
           // A pantry row with 0 quantity is meaningless (it's not
