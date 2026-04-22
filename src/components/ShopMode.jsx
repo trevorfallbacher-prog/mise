@@ -487,6 +487,25 @@ export default function ShopMode({
       background: "#000",
       display: "flex", flexDirection: "column",
     }}>
+      {/* Keyframes for the scan flashes. shop-mode-flash drives the
+          text banner at the top of the scanner; shop-mode-panel-flash
+          drives the full-panel color wash behind it. Both share the
+          same 900ms envelope so they land and clear together. */}
+      <style>{`
+        @keyframes shop-mode-flash {
+          0%   { opacity: 0; transform: translateY(-4px); }
+          15%  { opacity: 1; transform: translateY(0); }
+          80%  { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        @keyframes shop-mode-panel-flash {
+          0%   { opacity: 0; }
+          12%  { opacity: 0.65; }
+          55%  { opacity: 0.45; }
+          100% { opacity: 0; }
+        }
+      `}</style>
+
       {/* ── TOP HALF — scanner (embedded) ───────────────────────────── */}
       <div style={{
         flex: "1 1 50%",
@@ -504,6 +523,26 @@ export default function ShopMode({
           onDetected={handleDetected}
           onCancel={handleCancel}
         />
+
+        {/* Full-panel flash — colored wash over the whole scanner
+            pane for visceral "your scan landed" feedback. Keyed
+            by lastScan.scan.id so a same-color re-scan still
+            re-animates (React remounts the node when the key
+            changes). Opacity animation defined as shop-mode-panel-
+            flash keyframes below — fades in/out over the same
+            FLASH_MS window as the text banner above. */}
+        {flash && lastScan?.scan?.id && (
+          <div
+            key={`panel-flash-${lastScan.scan.id}-${flashVisible ? "on" : "off"}`}
+            style={{
+              position: "absolute", inset: 0, zIndex: 4,
+              background: flash.bg,
+              pointerEvents: "none",
+              animation: "shop-mode-panel-flash 900ms ease-out",
+              mixBlendMode: "screen",
+            }}
+          />
+        )}
 
         {/* Blocked overlay — dark scrim over the scanner half when a
             red scan needs a name + pair. Tapping disabled (pointer-
