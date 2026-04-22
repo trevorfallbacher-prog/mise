@@ -267,6 +267,12 @@ export default function ShopMode({
         await pairScanToList(scan.id, armed);
         autoPairedTo = armed;
       }
+      // Consume the armed state on success — one pair per arm. If
+      // the user wants to bind another UPC to the same list slot
+      // (two brands of salmon → "salmon"), they re-tap. Sticky
+      // arming across DIFFERENT upcs surprised users; duplicate
+      // detection + the "+1 MORE" prompt covers the 6-apples case.
+      setArmedListItemId(null);
       setPendingPairScanId(null);
     } else if (scan?.id && (flashColor === "green" || flashColor === "yellow")) {
       // Auto-match: green scans go through all three tiers
