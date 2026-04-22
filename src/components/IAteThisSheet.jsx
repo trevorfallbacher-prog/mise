@@ -102,23 +102,50 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   //   - Ingredient rows: every unit in the canonical's ladder.
   //   - Orphan rows (no canonical, not a meal): fall back to the row's
   //     own unit so we can at least log the event for inventory history.
-  const availableUnits = isMealRow
-    ? [{ id: "serving", label: "serving" }]
-    : (canonical?.units || [{ id: pantryRow?.unit || "unit", label: pantryRow?.unit || "unit" }]);
+  // Unit chips for the sheet. We start from the canonical's ladder and
+  // augment with the pantry row's own unit + packageUnit when they're
+  // not already in it. Reason: a row can be tagged to a canonical
+  // whose ladder doesn't include the row's declared package axis
+  // (Pepsi Soda Pop tagged against "sugar" carries packageUnit "fl
+  // oz", which isn't in sugar's [cup, tbsp, tsp, lb, g] ladder). The
+  // user has explicitly told us the row is measured in fl oz on the
+  // ItemCard — we MUST surface that as a pickable chip here, not
+  // silently force them into a cups-of-sugar reading of a soda.
+  const availableUnits = useMemo(() => {
+    if (isMealRow) return [{ id: "serving", label: "serving" }];
+    const base = (canonical?.units || []).map(u => ({ id: u.id, label: u.label || u.id }));
+    const seen = new Set(base.map(u => u.id));
+    const extras = [];
+    if (pantryRow?.unit && !seen.has(pantryRow.unit)) {
+      extras.push({ id: pantryRow.unit, label: pantryRow.unit });
+      seen.add(pantryRow.unit);
+    }
+    if (pantryRow?.packageUnit && !seen.has(pantryRow.packageUnit)) {
+      extras.push({ id: pantryRow.packageUnit, label: pantryRow.packageUnit });
+    }
+    const all = [...base, ...extras];
+    return all.length > 0 ? all : [{ id: pantryRow?.unit || "unit", label: pantryRow?.unit || "unit" }];
+  }, [isMealRow, canonical, pantryRow?.unit, pantryRow?.packageUnit]);
 
-  // Default serving depends on the row type. Meal leftovers always
-  // start at 1 serving. Otherwise we lean on the canonical's own
-  // `defaultUnit` — the package axis the ingredient is naturally
-  // measured on (soda → "can", butter → "stick", eggs → "count"). We
-  // deliberately do NOT fall back to pantryRow.unit from the canonical
-  // branch: pantry rows created before a row was linked to its proper
-  // canonical often carry a stale unit from the initial scan (a soda
-  // pop mis-scanned as sugar keeps "g" on the row), and surfacing that
-  // unit here makes the sheet offer "how many grams of sugar did you
-  // drink" on confirm-time. Canonical intent wins.
+  // Default unit — PACKAGE SIZING FIRST. Priority:
+  //   1. meal row      → "serving"
+  //   2. packageUnit   — the row's declared package axis. The user
+  //      typed this into the ItemCard's PACKAGE SIZE widget ("12 fl
+  //      oz"), so it's the highest-fidelity signal of what this item
+  //      is measured in. Wins even when the row is tagged to a
+  //      canonical with a different native ladder (Pepsi row linked
+  //      to "sugar" still reads as fl oz, not cups).
+  //   3. row.unit      — the row's current storage unit. Same logic,
+  //      slightly weaker because it tracks the current quantity
+  //      rather than the declared package.
+  //   4. canonical.defaultUnit — the registry's idea of the natural
+  //      axis for this canonical, when the row has told us nothing.
+  //   5. heuristic ladder walk — last-resort fallback.
   const defaultUnit = useMemo(() => {
     if (isMealRow) return "serving";
-    if (!canonical) return pantryRow?.unit || "unit";
+    if (pantryRow?.packageUnit) return pantryRow.packageUnit;
+    if (pantryRow?.unit)        return pantryRow.unit;
+    if (!canonical) return "unit";
     const ids = (canonical.units || []).map(u => u.id);
     if (canonical.defaultUnit && ids.includes(canonical.defaultUnit)) {
       return canonical.defaultUnit;
@@ -128,7 +155,7 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
       if (ids.includes(pref)) return pref;
     }
     return ids[0] || "unit";
-  }, [isMealRow, canonical, pantryRow?.unit]);
+  }, [isMealRow, canonical, pantryRow?.unit, pantryRow?.packageUnit]);
 
   const [amount,   setAmount]   = useState(1);
   const [unit,     setUnit]     = useState(defaultUnit);

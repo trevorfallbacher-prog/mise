@@ -207,16 +207,46 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
       } else if (canon) {
         const next = decrementRow(pantryRow, { amount: amt, unit }, canon);
         if (next != null && next !== Number(pantryRow.amount)) {
-          const { error: updErr } = await supabase
-            .from("pantry_items")
-            .update({ amount: next })
-            .eq("id", pantryRow.id);
-          if (updErr) {
-            // Non-fatal. The consumption_logs row already landed, so
-            // the dashboard tally is correct; inventory just didn't
-            // decrement. Warn so we see drift in logs rather than
-            // ignoring it silently.
-            console.warn("[consumption_logs] pantry decrement failed:", updErr.message);
+          // Zero-amount cleanup. Mirrors CookComplete's post-cook
+          // pop-or-delete behavior so the two "reduce pantry by X"
+          // flows end the same way: either pop the next sealed pack
+          // (migration 0054 reserves) or drop the row outright so the
+          // Kitchen tile disappears instead of lingering as an empty
+          // ghost. consumption_logs.pantry_row_id is ON DELETE SET
+          // NULL, so the log we just inserted stays intact.
+          if (next <= 0) {
+            const reserves = Number(pantryRow.reserveCount);
+            const packAmt  = Number(pantryRow.packageAmount);
+            if (Number.isFinite(reserves) && reserves > 0 &&
+                Number.isFinite(packAmt)  && packAmt  > 0) {
+              const { error: popErr } = await supabase
+                .from("pantry_items")
+                .update({ amount: packAmt, reserve_count: reserves - 1 })
+                .eq("id", pantryRow.id);
+              if (popErr) {
+                console.warn("[consumption_logs] reserve-pop failed:", popErr.message);
+              }
+            } else {
+              const { error: delErr } = await supabase
+                .from("pantry_items")
+                .delete()
+                .eq("id", pantryRow.id);
+              if (delErr) {
+                console.warn("[consumption_logs] empty-row delete failed:", delErr.message);
+              }
+            }
+          } else {
+            const { error: updErr } = await supabase
+              .from("pantry_items")
+              .update({ amount: next })
+              .eq("id", pantryRow.id);
+            if (updErr) {
+              // Non-fatal. The consumption_logs row already landed,
+              // so the dashboard tally is correct; inventory just
+              // didn't decrement. Warn so we see drift in logs rather
+              // than ignoring it silently.
+              console.warn("[consumption_logs] pantry decrement failed:", updErr.message);
+            }
           }
         }
       }
