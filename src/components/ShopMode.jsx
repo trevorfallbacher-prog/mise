@@ -152,6 +152,12 @@ export default function ShopMode({
 
   async function handleDetected(upc) {
     if (!activeTrip?.id || !upc) return;
+    console.log("[shop-mode] handleDetected", {
+      upc,
+      upcType: typeof upc,
+      upcLen: upc?.length,
+      existingOnTrip: scans.some(s => s.barcodeUpc === upc),
+    });
     // Re-scan gate: if this UPC is already on the trip, DON'T silently
     // bump qty. Prompt the user — are you adding another identical
     // package to the cart, or was this a bumped-scanner dupe? Flash

@@ -287,6 +287,7 @@ export default function ShopModeCheckout({
       //     amount = qty). trip_scans are the identity source here.
       const nowIso = new Date().toISOString();
       const newPantryIds = new Map(); // scanId → pantry_items.id
+      const insertErrors = [];
       for (const scan of scans) {
         const priceInfo = priceByScan.get(scan.id);
         const id = (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -316,13 +317,42 @@ export default function ShopModeCheckout({
           location:       "pantry",
           purchased_at:   nowIso,
         };
+        // Trace the UPC end-to-end so mismatches between what the
+        // scanner read and what lands in pantry_items are visible
+        // in the console without firing up the DB client.
+        console.log("[shop-checkout] insert pantry row", {
+          scanId: scan.id,
+          scannedUpc: scan.barcodeUpc,
+          writingUpc: row.barcode_upc,
+          canonical: row.canonical_id,
+          brand: row.brand,
+          qty: row.amount,
+          price: row.price_cents,
+          listSlot: row.source_shopping_list_item_id,
+        });
         const { error: piErr } = await supabase.from("pantry_items").insert(row);
         if (piErr) {
-          console.warn("[shop-checkout] pantry insert failed:", piErr.message, { scan });
-          // Continue — one failed row shouldn't break the rest of the commit.
+          console.error("[shop-checkout] pantry insert FAILED", piErr.message, { scan, row });
+          insertErrors.push({ scan, message: piErr.message });
         } else {
           newPantryIds.set(scan.id, id);
         }
+      }
+
+      // If any pantry row failed to insert, surface it visibly instead
+      // of pretending the commit succeeded. The most likely cause
+      // during rollout: migrations 0127/0128 not applied yet, so the
+      // source_shopping_list_item_id / purchased_* columns don't exist.
+      if (insertErrors.length > 0) {
+        const firstMsg = insertErrors[0].message;
+        const hasMigrationHint = /column .* does not exist/i.test(firstMsg);
+        throw new Error(
+          `${insertErrors.length} of ${scans.length} items failed to stock.\n\n` +
+          (hasMigrationHint
+            ? "Looks like a database column is missing — run `supabase db push` to apply migrations 0126, 0127, and 0128.\n\n"
+            : "") +
+          `First error: ${firstMsg}`
+        );
       }
 
       // 3. Update trip_scans with paired_pantry_item_id +
