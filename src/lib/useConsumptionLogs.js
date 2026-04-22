@@ -204,8 +204,26 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
             }
           }
         }
-      } else if (canon) {
-        const next = decrementRow(pantryRow, { amount: amt, unit }, canon);
+      } else {
+        // Ingredient-row decrement. This path runs for BOTH canonical-
+        // linked rows (canon != null) and orphan rows (canon == null).
+        // Before: we gated the whole block on `canon`, which meant
+        // orphans (or rows tagged to the wrong canonical whose ladder
+        // couldn't bridge to the row's unit) silently skipped the
+        // decrement — "I ate this" logged the event but inventory
+        // stayed at 12 fl oz. Now we try the canonical-aware
+        // decrement first, then fall back to a direct same-unit
+        // subtraction when the conversion path can't be found.
+        let next = canon ? decrementRow(pantryRow, { amount: amt, unit }, canon) : null;
+        if (next == null && unit === pantryRow.unit) {
+          // Same unit as the row, no conversion needed. Happens when
+          // a Pepsi row tagged to "sugar" is eaten in fl oz: sugar's
+          // ladder doesn't carry fl oz, so decrementRow returns null,
+          // but the arithmetic is trivial — amount minus amount in
+          // the same unit. Catches the common "wrong canonical, right
+          // unit" shape.
+          next = Math.max(0, Number((Number(pantryRow.amount) - amt).toFixed(4)));
+        }
         if (next != null && next !== Number(pantryRow.amount)) {
           // Zero-amount cleanup. Mirrors CookComplete's post-cook
           // pop-or-delete behavior so the two "reduce pantry by X"
