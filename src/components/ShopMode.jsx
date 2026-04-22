@@ -96,6 +96,11 @@ export default function ShopMode({
   // item by accident). Null = no prompt. { scan } = the existing
   // trip_scan to bump on confirm.
   const [addAnotherPrompt, setAddAnotherPrompt] = useState(null);
+  // redNameDraft — text the user is typing in the red-scan pick-
+  // mode name field. Cleared when the pair completes. Required
+  // before the pair goes through so dead-end rows don't stock as
+  // "UPC 1234" gibberish.
+  const [redNameDraft, setRedNameDraft] = useState("");
   // armedRef mirrors armedListItemId so handleDetected (captured in
   // onDetected closure) always reads the freshest value even across
   // rapid scans that don't re-render between each.
@@ -355,6 +360,26 @@ export default function ShopMode({
     if (pendingPairScanId) {
       const pending = scans.find(s => s.id === pendingPairScanId);
       if (pending) {
+        // Red scans require a name before pair goes through. Gate
+        // the tap and leave the prompt up so the user gets the
+        // hint about why nothing happened.
+        if (pending.status === "red" && !redNameDraft.trim()) {
+          console.log("[shop-mode] red scan needs a name first");
+          return;
+        }
+        // For red scans, stamp the typed name onto the trip_scan
+        // before we pair — that way the committed pantry row reads
+        // as "Sriracha" instead of "UPC 34567".
+        if (pending.status === "red" && redNameDraft.trim()) {
+          try {
+            await supabase
+              .from("trip_scans")
+              .update({ product_name: redNameDraft.trim() })
+              .eq("id", pending.id);
+          } catch (e) {
+            console.warn("[shop-mode] red-scan name write failed:", e);
+          }
+        }
         if (listItemId === "__impulse__") {
           await doImpulseAdd(pending);
         } else {
@@ -362,6 +387,7 @@ export default function ShopMode({
         }
       }
       setPendingPairScanId(null);
+      setRedNameDraft("");
       return;
     }
     // Tap-first flow — arm / disarm.
@@ -431,6 +457,13 @@ export default function ShopMode({
   // Active trip — split layout: scanner on top half, shopping list
   // on bottom half (always visible, tap-to-arm).
   const flash = lastScan && flashVisible ? FLASH_COLORS[lastScan.flashColor] : null;
+  // Red-scan hard stop — when a scan came back with no OFF data
+  // (status='red'), we pause the scanner and force the user to name
+  // it + pair it. Otherwise dead-end rows stock as "UPC 1234"
+  // garbage nobody can later cook with. scannerBlocked keys both
+  // BarcodeScanner's paused prop and the dark scrim overlay.
+  const pendingScan = pendingPairScanId ? scans.find(s => s.id === pendingPairScanId) : null;
+  const scannerBlocked = !!(pendingScan && pendingScan.status === "red");
 
   // statusByListId — for each list item, the worst-case status of
   // its paired scans (green > yellow > red → so the MOST urgent
@@ -461,33 +494,69 @@ export default function ShopMode({
         position: "relative",
         borderBottom: "1px solid #222",
       }}>
+        {/* Scanner is paused while a red scan awaits pair + name.
+            Forces the user to handle the dead-end scan before firing
+            a new one. Stream stays alive so resume is instant. */}
         <BarcodeScanner
           embedded
           mode="rapid"
+          paused={scannerBlocked}
           onDetected={handleDetected}
           onCancel={handleCancel}
         />
 
-        {/* Flash overlay — brief colored band on top of the scanner
-            panel. Sits at absolute to scope it to the scanner half. */}
-        {flash && (
+        {/* Blocked overlay — dark scrim over the scanner half when a
+            red scan needs a name + pair. Tapping disabled (pointer-
+            events), so the user's attention goes to the red prompt
+            that sits above it. */}
+        {scannerBlocked && (
           <div style={{
-            position: "absolute", top: 10, left: 10, right: 10, zIndex: 5,
-            padding: "10px 14px",
-            background: flash.bg,
-            color: "#fff",
-            fontWeight: 700,
-            letterSpacing: 1.2,
-            fontSize: 14,
-            textAlign: "center",
-            borderRadius: 8,
-            boxShadow: "0 4px 14px rgba(0,0,0,0.4)",
-            animation: "shop-mode-flash 900ms ease-out",
+            position: "absolute", inset: 0, zIndex: 3,
+            background: "rgba(0,0,0,0.68)",
+            display: "flex", alignItems: "center", justifyContent: "center",
             pointerEvents: "none",
           }}>
-            {flash.label}{looking ? " — LOOKING UP" : null}
+            <div style={{
+              color: "#fff", fontSize: 13, fontStyle: "italic",
+              padding: "8px 14px",
+              background: "rgba(138,48,48,0.6)",
+              borderRadius: 20,
+              letterSpacing: 0.6,
+            }}>
+              SCANNER PAUSED — NAME + PAIR THE LAST SCAN
+            </div>
           </div>
         )}
+
+        {/* Flash overlay — brief colored band on top of the scanner
+            panel. On green scans, show the resolved canonical name
+            ("FOUND CORN") so the user sees the identity, not just
+            the status word. Yellow/red keep their generic labels. */}
+        {flash && (() => {
+          const s = lastScan?.scan;
+          const canonical = s?.canonicalId ? findIngredient(s.canonicalId) : null;
+          const display = lastScan?.flashColor === "green"
+            ? `FOUND ${(canonical?.shortName || canonical?.name || s?.productName || flash.label).toUpperCase()}`
+            : flash.label;
+          return (
+            <div style={{
+              position: "absolute", top: 10, left: 10, right: 10, zIndex: 5,
+              padding: "10px 14px",
+              background: flash.bg,
+              color: "#fff",
+              fontWeight: 700,
+              letterSpacing: 1.2,
+              fontSize: 14,
+              textAlign: "center",
+              borderRadius: 8,
+              boxShadow: "0 4px 14px rgba(0,0,0,0.4)",
+              animation: "shop-mode-flash 900ms ease-out",
+              pointerEvents: "none",
+            }}>
+              {display}{looking ? " — LOOKING UP" : null}
+            </div>
+          );
+        })()}
 
         {/* Add-another prompt — fires when a UPC already on the trip
             is re-scanned. Wins precedence over every other banner
@@ -509,13 +578,13 @@ export default function ShopMode({
               <span style={{ color: statusBg, fontSize: 18 }}>●</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
-                  ALREADY ON YOUR TRIP · ×{s.qty || 1}
+                  DUPLICATE DETECTED — ALREADY ×{s.qty || 1}
                 </div>
                 <div style={{
                   fontSize: 14, fontStyle: "italic", color: "#fff",
                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                 }}>
-                  {s.productName || s.brand || `UPC ${s.barcodeUpc}`}
+                  Add another {s.productName || s.brand || `item with UPC ${s.barcodeUpc}`}?
                 </div>
               </div>
               <button
@@ -526,7 +595,7 @@ export default function ShopMode({
                   fontSize: 12, fontWeight: 700, letterSpacing: 0.8,
                   cursor: "pointer",
                 }}
-              >+1 MORE</button>
+              >YES, +1</button>
               <button
                 onClick={dismissAddAnother}
                 style={{
@@ -542,44 +611,71 @@ export default function ShopMode({
         })()}
 
         {/* Pick-mode banner — "scan-first" branch. Last scan is
-            waiting for a list-item tap. Wins precedence over the
-            armed banner since, by definition, scan-first means
-            nothing's armed. */}
+            waiting for a list-item tap. Red scans (no OFF data) get
+            an extra name input since the fallback label "UPC 12345"
+            would stock as garbage. Yellow / green scans keep the
+            simple "pick which list item this is" copy. */}
         {pendingPairScanId && !flashVisible && !addAnotherPrompt && (() => {
           const pending = scans.find(s => s.id === pendingPairScanId);
           if (!pending) return null;
+          const isRed = pending.status === "red";
           const statusBg = FLASH_COLORS[pending.status]?.bg || "#444";
           return (
             <div style={{
               position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 5,
               padding: "10px 12px",
-              background: "rgba(14, 10, 22, 0.94)",
+              background: isRed ? "rgba(30, 14, 14, 0.97)" : "rgba(14, 10, 22, 0.94)",
               border: `1px solid ${statusBg}`,
               borderRadius: 8,
-              display: "flex", alignItems: "center", gap: 10,
+              display: "flex", flexDirection: "column", gap: 8,
               backdropFilter: "blur(4px)",
             }}>
-              <span style={{ color: statusBg, fontSize: 18 }}>●</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#c7a8d4" }}>
-                  PICK WHICH LIST ITEM THIS IS
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ color: statusBg, fontSize: 18 }}>●</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10, letterSpacing: 1.2, color: isRed ? "#f8c7c7" : "#c7a8d4" }}>
+                    {isRed ? "NO DATA — NAME IT, THEN PAIR" : "PICK WHICH LIST ITEM THIS IS"}
+                  </div>
+                  <div style={{
+                    fontSize: 14, fontStyle: "italic", color: "#fff",
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  }}>
+                    {pending.productName || pending.brand || `UPC ${pending.barcodeUpc}`}
+                  </div>
                 </div>
-                <div style={{
-                  fontSize: 14, fontStyle: "italic", color: "#fff",
-                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                }}>
-                  {pending.productName || pending.brand || `UPC ${pending.barcodeUpc}`}
-                </div>
+                <button
+                  onClick={() => { setPendingPairScanId(null); setRedNameDraft(""); }}
+                  style={{
+                    background: "transparent", border: "none",
+                    color: "#888", fontSize: 18, cursor: "pointer",
+                    padding: "0 4px",
+                  }}
+                  aria-label="Skip"
+                >✕</button>
               </div>
-              <button
-                onClick={() => setPendingPairScanId(null)}
-                style={{
-                  background: "transparent", border: "none",
-                  color: "#888", fontSize: 18, cursor: "pointer",
-                  padding: "0 4px",
-                }}
-                aria-label="Skip"
-              >✕</button>
+              {/* Required name field for red scans — the pick can't
+                  fire until this is filled. Dims the list row taps
+                  visually via the outer scannerBlocked overlay. */}
+              {isRed && (
+                <input
+                  type="text"
+                  value={redNameDraft}
+                  onChange={e => setRedNameDraft(e.target.value)}
+                  placeholder="What is this? (e.g. sriracha, beans, feta)"
+                  autoFocus
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    background: "#0d0d0d",
+                    border: "1px solid #8a3030",
+                    borderRadius: 6,
+                    color: "#f0ece4",
+                    fontSize: 14,
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              )}
             </div>
           );
         })()}

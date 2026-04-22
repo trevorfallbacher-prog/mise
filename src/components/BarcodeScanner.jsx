@@ -36,9 +36,15 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
 
-export default function BarcodeScanner({ onDetected, onCancel, mode = "single", embedded = false }) {
+export default function BarcodeScanner({ onDetected, onCancel, mode = "single", embedded = false, paused = false }) {
   const rapidMode = mode === "rapid";
   const lastRapidRef = useRef({ upc: "", at: 0 });
+  // pausedRef mirrors the `paused` prop so the polling loops (native
+  // + zxing) can check a stable reference inside setTimeout
+  // continuations without re-binding the loop on every re-render.
+  // When paused, loops skip the decode step but keep ticking so
+  // resume is instant.
+  const pausedRef = useRef(paused);
   const videoRef   = useRef(null);
   const streamRef  = useRef(null);
   const detectorRef = useRef(null);
@@ -182,7 +188,7 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single", 
           onDetected?.(digits);
         },
         (err) => { console.warn("[barcode] zxing live error:", err); },
-        { continuous: rapidMode },
+        { continuous: rapidMode, isPaused: () => pausedRef.current },
       );
       zxingStopRef.current = scanner;
     } catch (err) {
@@ -200,6 +206,12 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single", 
   function startNativePolling() {
     const tick = async () => {
       if (cancelledRef.current) return;
+      // Paused: skip the decode step but keep ticking so resume is
+      // instant when the caller clears the pause flag.
+      if (pausedRef.current) {
+        tickRef.current = window.setTimeout(tick, 350);
+        return;
+      }
       const video = videoRef.current;
       const detector = detectorRef.current;
       if (video && detector && video.readyState >= 2) {
@@ -253,6 +265,10 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single", 
       stopStream();
     };
   }, []);
+
+  // Keep pausedRef in sync with the prop so the next polling tick
+  // picks up the new state without a re-bind.
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
 
   function stopStream() {
     if (tickRef.current) {

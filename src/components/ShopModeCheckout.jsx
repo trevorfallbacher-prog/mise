@@ -684,6 +684,13 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
           <div style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {label}{scan.qty > 1 ? `  ×${scan.qty}` : ""}
           </div>
+          {/* UPC directly under the name — pre-receipt review needs
+              to see exactly what the scanner captured so the user can
+              verify identity before the pantry row commits. Mono
+              font to keep digit shape legible at small sizes. */}
+          <div style={{ color: "#b8a878aa", fontSize: 10, fontFamily: "'DM Mono',monospace", marginTop: 2, letterSpacing: 0.4 }}>
+            UPC {scan.barcodeUpc}
+          </div>
           <div style={{ color: "#888", fontSize: 11, marginTop: 2 }}>
             {listName ? `→ ${listName}` : "unpaired"}
             {scan.brand && scan.productName ? ` · ${scan.brand}` : ""}

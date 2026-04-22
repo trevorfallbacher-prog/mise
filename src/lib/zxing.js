@@ -96,7 +96,11 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
   //                   close/reopen of the camera between each. A
   //                   1500ms suppression window prevents the same UPC
   //                   from re-firing while the pair sheet is up.
+  // opts.isPaused — () => boolean. When it returns true, the decoder
+  //                   skips decoding on this tick but keeps the loop
+  //                   alive so resume is instant. Stream stays up.
   const continuous = !!opts.continuous;
+  const isPaused = typeof opts.isPaused === "function" ? opts.isPaused : () => false;
   let browser;
   try {
     browser = await loadReader();
@@ -111,6 +115,13 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
   let lastAt   = 0;
   const tick = async () => {
     if (stopped) return;
+    if (isPaused()) {
+      // Caller has the scanner blocked (e.g. red-scan name prompt).
+      // Skip the decode but keep the loop ticking so resume is
+      // instant when isPaused() flips back to false.
+      setTimeout(tick, 250);
+      return;
+    }
     if (!videoElement || videoElement.readyState < 2) {
       // Video not yet painting frames — retry next tick.
       setTimeout(tick, 250);
