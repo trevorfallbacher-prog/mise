@@ -577,7 +577,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // point at user_recipes rows (custom or AI recipes scheduled via
   // Quick Cook). Without this wired in, scheduled user recipes would
   // render as blank tiles on the calendar.
-  const { recipes: userRecipesList, findBySlug: findUserRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipesList, findBySlug: findUserRecipe, saveRecipe: saveUserRecipe } = useUserRecipes(userId);
 
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we
@@ -665,6 +665,22 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     return map;
   }, [pastCooks]);
 
+  // Stash the leftover pantry row id between pick and save — the
+  // SchedulePicker doesn't know about leftovers, it just collects
+  // date/time/notification settings, so we keep fromPantryRowId in
+  // this parent scope and stamp it on the scheduled_meals insert
+  // alongside whatever the picker returns.
+  //
+  // Hooks MUST live above the early return below; prior iterations
+  // added these after the return and tripped "rendered fewer hooks
+  // than expected" the moment cookingRecipe flipped truthy (N hooks
+  // on the pre-cook render, N-2 on the cook-mode render).
+  const [scheduleFromPantryRowId, setScheduleFromPantryRowId] = useState(null);
+  // When a scheduled leftover slot fires, we open IAteThisSheet on
+  // that pantry row instead of CookMode. Held here at the Plan level
+  // so the sheet renders above the whole view, not inside MealDetail.
+  const [eatingLeftover, setEatingLeftover] = useState(null);
+
   // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
   // Pantry + shoppingList wiring is identical to the Cook tab's path so
   // "ADD MISSING TO SHOPPING LIST" works regardless of where you started.
@@ -685,20 +701,14 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         userId={userId}
         family={family}
         friends={friends}
+        // Fork-to-new-recipe handler for CookComplete's "SAVE CHANGES
+        // AS NEW RECIPE" action. Wraps useUserRecipes.saveRecipe —
+        // unique-slug logic in that hook means forking beef-wellington
+        // lands as beef-wellington-2, leaving the original untouched.
+        onForkRecipe={saveUserRecipe}
       />
     );
   }
-
-  // Stash the leftover pantry row id between pick and save — the
-  // SchedulePicker doesn't know about leftovers, it just collects
-  // date/time/notification settings, so we keep fromPantryRowId in
-  // this parent scope and stamp it on the scheduled_meals insert
-  // alongside whatever the picker returns.
-  const [scheduleFromPantryRowId, setScheduleFromPantryRowId] = useState(null);
-  // When a scheduled leftover slot fires, we open IAteThisSheet on
-  // that pantry row instead of CookMode. Held here at the Plan level
-  // so the sheet renders above the whole view, not inside MealDetail.
-  const [eatingLeftover, setEatingLeftover] = useState(null);
   const onPickRecipe = (recipe, opts = {}) => {
     setRecipeToSchedule(recipe);
     setScheduleFromPantryRowId(opts.fromPantryRowId || null);

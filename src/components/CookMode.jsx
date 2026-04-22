@@ -8,6 +8,7 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
+import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -263,6 +264,16 @@ export default function CookMode({
   recipe, onDone, onExit, onSchedule,
   pantry = [], setPantry, setShoppingList, onGoToShopping,
   userId, family = [], friends = [],
+  // Fork-to-new-recipe callback. Wired by the parent (Plan.jsx /
+  // CreateMenu.jsx) to useUserRecipes.saveRecipe. When the user
+  // finishes a cook with active swaps, CookComplete offers "SAVE
+  // CHANGES AS NEW RECIPE" which calls this with the materialized
+  // effective recipe; saveRecipe generates a unique slug, so the
+  // original recipe stays untouched — "the recipe remains the
+  // golden standard" principle the user called out when designing
+  // this flow. Optional: if not provided, the save action simply
+  // isn't offered.
+  onForkRecipe = null,
 }) {
   const [view, setView] = useState("overview");
   const [activeStep, setActiveStep] = useState(0);
@@ -277,7 +288,20 @@ export default function CookMode({
   // its own parallel override shape and overrides vanished on screen
   // transition; session fixes that permanently.
   const cookSession = useCookSession();
-  const { session, setOverride, clearOverride } = cookSession;
+  const { session, setOverride, clearOverride, resetSession } = cookSession;
+  // Reset the ephemeral swap/skip session whenever the cooked recipe
+  // changes. useState inside useCookSession already resets on remount,
+  // so this only matters when the parent swaps the recipe prop without
+  // unmounting CookMode — but that path DOES exist (CreateMenu and
+  // Plan both keep CookMode alive across some transitions), and a
+  // stale session carrying butter→HWC overrides into a v2 where HWC
+  // is already canon would re-paint the v2 as "swapped" on first
+  // render. Keying on recipe.slug (stable across ingredient edits)
+  // rather than identity avoids spurious resets when the parent hands
+  // back a fresh object reference for the same recipe.
+  useEffect(() => {
+    resetSession();
+  }, [recipe?.slug, resetSession]);
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
   const [swapSearch, setSwapSearch] = useState("");
   const openSwapPicker = (idx) => { setSwapOpenIdx(idx); setSwapSearch(""); };
@@ -305,7 +329,28 @@ export default function CookMode({
   // Defensive: if no recipe was passed, render nothing. Parent owns selection.
   if (!recipe) return null;
 
-  const steps    = recipe.steps || [];
+  // Project the cook session's swaps/skips into an "effective" view of
+  // the recipe so step-level renders see what the overview swap UI
+  // already knows about. See src/lib/effectiveRecipe.js — pure
+  // derivation, never persisted. The original recipe prop stays
+  // untouched; only the explicit "save changes as new recipe" path
+  // in CookComplete materializes this into a user_recipes row.
+  const effectiveRecipe = applyCookSessionToRecipe(recipe, session, pantry);
+  const swapCount = countActiveSwaps(session);
+  // Recipe-wide swap list for the per-step prose banner + inline
+  // tokenizer. Built once per render; derived from
+  // effectiveRecipe.ingredients so every swap — even ones the AI
+  // omitted from step.uses — can surface in prose that mentions the
+  // original name.
+  const allSwaps = recipeSwapSummary(effectiveRecipe);
+  // Brand-upgrade rewrites — same-canonical pantry rows whose branded
+  // display name we lift into the recipe ("butter" → "Kerrygold
+  // Butter"). Applied to prose as a plain rename BEFORE the swap
+  // tokenizer runs, so branded replacements never collide with
+  // strike-through markup.
+  const allBrandUpgrades = recipeBrandUpgrades(effectiveRecipe);
+
+  const steps    = effectiveRecipe.steps || [];
   const step     = steps[activeStep];
   const AnimComp = AnimationMap[step?.animation];
   const progress = steps.length ? (completedSteps.size / steps.length) * 100 : 0;
@@ -322,18 +367,13 @@ export default function CookMode({
   // so brand/availability drift a month from now doesn't fossilize
   // a stale pair. Zipped by index into ingredientStatus.
   //
-  // cookSession.overrides[i].pantryItemId layers the user's per-row
-  // cook-time swap choices on top — stamping pantryItemId on the
-  // ingredient so the Tier 0 short-circuit in pairRecipeIngredients
-  // uses the exact row the user picked, even when the canonical
-  // doesn't match. CookComplete reads the same map so the swap
-  // carries through to the deduction flow.
-  const ingredientsForPairing = (recipe.ingredients || []).map((ing, i) => {
-    const swapId = session.overrides[i]?.pantryItemId;
-    if (!swapId) return ing;
-    return { ...ing, pantryItemId: swapId };
-  });
-  const ingredientPairings = pairRecipeIngredients(ingredientsForPairing, pantry || []);
+  // Swaps/skips are already baked into effectiveRecipe.ingredients
+  // (via applyCookSessionToRecipe) — swapped entries carry
+  // pantryItemId for the Tier 0 short-circuit in
+  // pairRecipeIngredients. Using effectiveRecipe here keeps the
+  // step renderer, pairing pass, and CookComplete all reading from
+  // the same derivation.
+  const ingredientPairings = pairRecipeIngredients(effectiveRecipe.ingredients || [], pantry || []);
   const missingIngs    = ingredientStatus.filter(s => s.status === "missing");
   const lowIngs        = ingredientStatus.filter(s => s.status === "low");
   const wrongStateIngs = ingredientStatus.filter(s => s.status === "wrong-state");
@@ -523,13 +563,28 @@ export default function CookMode({
         </div>
       )}
       <div style={{ marginTop:28 }}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, gap:10, flexWrap:"wrap" }}>
           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#666", letterSpacing:"0.12em" }}>INGREDIENTS</div>
-          {trackedCount > 0 && (
-            <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color: missingIngs.length===0?"#4ade80":"#f59e0b", letterSpacing:"0.12em" }}>
-              PANTRY {okCount}/{trackedCount}
-            </div>
-          )}
+          <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+            {/* Active-swap badge — reassurance chip. Tells the user the
+                ephemeral cook-session layer is doing its job: swaps/skips
+                are active on this cook but the saved recipe is still
+                intact. Hidden when no swaps, so the overview stays clean
+                for first-pass cooks. */}
+            {swapCount > 0 && (
+              <div
+                title="Your swaps only apply to this cook. The saved recipe is unchanged."
+                style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#b8a878", background:"#161310", border:"1px solid #2f2820", padding:"3px 8px", borderRadius:6, letterSpacing:"0.1em", fontWeight:600 }}
+              >
+                {swapCount} SWAP{swapCount === 1 ? "" : "S"} · ORIGINAL PRESERVED
+              </div>
+            )}
+            {trackedCount > 0 && (
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color: missingIngs.length===0?"#4ade80":"#f59e0b", letterSpacing:"0.12em" }}>
+                PANTRY {okCount}/{trackedCount}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Pantry availability summary */}
@@ -853,9 +908,16 @@ export default function CookMode({
           "nutty smell, sand-colored paste" are the signals that
           actually drive the cook. */}
       {(() => {
+        // Pull the ingredient list for THIS step from the effective recipe
+        // so any swap/skip the user made on the overview lands here too.
+        // effectiveRecipe.steps[i].uses has been projected through
+        // applyCookSessionToRecipe; entries that matched a swapped slot
+        // carry `_swappedFrom`, skipped ones carry `_skipped: true`.
+        // Fallback to effectiveRecipe.ingredients (same overrides applied)
+        // for older recipes without a structured uses[] array.
         const usesList = Array.isArray(step.uses) && step.uses.length > 0
           ? step.uses
-          : (recipe.ingredients || []);
+          : (effectiveRecipe.ingredients || []);
         if (!usesList.length && !step.heat && !step.doneCue) return null;
         const isFallback = !(Array.isArray(step.uses) && step.uses.length > 0);
         return (
@@ -877,17 +939,33 @@ export default function CookMode({
               )}
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
-              {usesList.map((ing, i) => (
-                <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#e8dfc8", lineHeight:1.5 }}>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878", minWidth:68, flexShrink:0 }}>
-                    {ing.amount || "—"}
-                  </span>
-                  <span style={{ flex:1 }}>
-                    {ing.item || ing.ingredientId || "ingredient"}
-                    {ing.state ? <span style={{ color:"#c7a8d4", fontSize:12 }}> · {ing.state}</span> : null}
-                  </span>
-                </div>
-              ))}
+              {usesList.map((ing, i) => {
+                const swappedFrom = ing._swappedFrom?.item || null;
+                const isSkipped   = !!ing._skipped;
+                return (
+                  <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color: isSkipped ? "#8a7a5a" : "#e8dfc8", lineHeight:1.5, opacity: isSkipped ? 0.7 : 1 }}>
+                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878", minWidth:68, flexShrink:0, textDecoration: isSkipped ? "line-through" : "none" }}>
+                      {ing.amount || "—"}
+                    </span>
+                    <span style={{ flex:1 }}>
+                      <span style={{ textDecoration: isSkipped ? "line-through" : "none" }}>
+                        {ing.item || ing.ingredientId || "ingredient"}
+                      </span>
+                      {ing.state ? <span style={{ color:"#c7a8d4", fontSize:12 }}> · {ing.state}</span> : null}
+                      {isSkipped && (
+                        <span style={{ marginLeft:8, fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700, letterSpacing:"0.08em", color:"#a8553a", background:"#2a1208", border:"1px solid #3a2010", padding:"2px 6px", borderRadius:6 }}>
+                          SKIPPED
+                        </span>
+                      )}
+                      {!isSkipped && swappedFrom && (
+                        <span style={{ marginLeft:8, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7a7060", fontStyle:"italic" }}>
+                          ↔ was: {swappedFrom}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
             {step.doneCue && (
               <div style={{ marginTop:10, padding:"8px 10px", background:"#0f180f", border:"1px solid #1a2e1a", borderRadius:8, display:"flex", gap:8 }}>
@@ -901,8 +979,74 @@ export default function CookMode({
         );
       })()}
 
+      {/* Per-step swap banner + inline prose rewrite.
+          Why the swap list comes from recipeSwapSummary, not
+          stepSwapSummary: step.uses is a CURATED subset of the
+          recipe — "FOR THIS STEP" — and bundled recipes routinely
+          omit ingredients the prose mentions (e.g. uses lists
+          butter/salt/pepper but the instruction reads "Add the
+          milk, pesto, and capers"). A step-scoped swap summary
+          would miss swaps on those prose-only mentions. Filtering
+          through relevantSwapsForStep keeps banner noise low —
+          only swaps that actually appear in this step's prose or
+          uses surface. The prose below is tokenized with the same
+          filtered list: word-boundary regex, deterministic, no AI
+          call. The banner is the backstop for cases regex can't
+          reach (plural / possessive forms the simple word-boundary
+          match misses). */}
+      {(() => {
+        const stepSwaps = relevantSwapsForStep(step, allSwaps);
+        if (stepSwaps.length === 0) return null;
+        return (
+          <div style={{ marginTop:12, padding:"10px 14px", background:"#161310", border:"1px solid #2f2820", borderRadius:10, display:"flex", gap:10, alignItems:"flex-start" }}>
+            <span style={{ fontSize:14, flexShrink:0, color:"#b8a878" }}>↔</span>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#b8a878", lineHeight:1.5 }}>
+              {stepSwaps.map((s, i) => (
+                <div key={i}>
+                  {s.skipped
+                    ? <>Skipping <strong>{s.from}</strong> for this step.</>
+                    : <>Using <strong>{s.to}</strong> instead of <strong>{s.from}</strong> for this step.</>}
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       <div style={{ marginTop:20, padding:"20px", background:"#141414", border:"1px solid #252525", borderRadius:14 }}>
-        <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>{step.instruction}</p>
+        <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>
+          {(() => {
+            // Unified tokenizer — handles both same-canonical brand
+            // upgrades (plain tan rewrite, no strikethrough) and
+            // different-canonical substitutes (strike + replacement).
+            // Brand upgrades surface MY ingredient's branded name
+            // inline in the recipe prose — "Kerrygold Butter" renders
+            // wherever "butter" was, colored tan so the provenance
+            // reads at a glance. Grammar caveat: word-boundary regex
+            // dodges "buttered" naturally but "butter the dish"
+            // becomes "Kerrygold Butter the dish" — slightly awkward,
+            // worth the tradeoff to carry branded names throughout.
+            const tokens = tokenizeSwappedInstruction(step.instruction, allSwaps, allBrandUpgrades);
+            if (tokens.length === 1 && tokens[0].text === step.instruction) {
+              return step.instruction;
+            }
+            return tokens.map((t, i) => {
+              if (t.text != null) return <span key={i}>{t.text}</span>;
+              if (t.brand != null) {
+                return <span key={i} style={{ color:"#b8a878", fontWeight:500 }}>{t.brand}</span>;
+              }
+              // Strike + replacement pair. `after: null` means skipped —
+              // render just the strikethrough so the cook knows that
+              // ingredient is out, with nothing in its place.
+              return (
+                <span key={i}>
+                  <s style={{ opacity:0.5, color:"#8a7a5a" }}>{t.strike}</s>
+                  {t.after ? <span style={{ color:"#b8a878" }}> {t.after}</span> : null}
+                </span>
+              );
+            });
+          })()}
+        </p>
         {step.timer && <Timer seconds={step.timer} />}
       </div>
       {step.tip && (
@@ -947,6 +1091,10 @@ export default function CookMode({
           // new hook calls on this path.
           ingredientInfo={ingredientInfo}
           brandNutrition={brandNutrition}
+          // Fork-to-new-recipe handler. When present AND the cook had
+          // active swaps/skips, CookComplete's celebrate phase shows
+          // "SAVE CHANGES AS NEW RECIPE". Null → action is hidden.
+          onForkRecipe={onForkRecipe}
           onFinish={() => {
             setCompleting(false);
             onDone?.();

@@ -7,6 +7,7 @@ import { sameCanonicalFamily, resolvesToSameCanonical, pairRecipeIngredients } f
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
+import { applyCookSessionToRecipe, canonicalizeEffectiveRecipe, countActiveSwaps } from "../lib/effectiveRecipe";
 import CookCompleteSummary from "./CookCompleteSummary";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
@@ -370,7 +371,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   return out;
 }
 
-export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish, cookSession = null }) {
+export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish, cookSession = null, onForkRecipe = null }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
   const [rating, setRating] = useState(null);
@@ -435,6 +436,67 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
   // still ask so "I made sriracha but knocked it over" stays expressible.
   // Copy varies so the yes/no screen doesn't read weird for compounds.
   const isCompoundProduce = recipe?.produces?.kind === "ingredient";
+
+  // Fork-to-new-recipe state. The user made one or more cook-time swaps
+  // and can choose to promote them into a new user_recipes row —
+  // "iterations or versions that progress" per the feature spec.
+  // Original recipe is left untouched (saveRecipe generates a unique
+  // slug when the current one is taken, so forking beef-wellington
+  // lands as beef-wellington-2, etc.). forkState drives the save
+  // button: idle → pending → saved | error.
+  const swapCount = countActiveSwaps(cookSession?.session);
+  const canOfferFork = !!onForkRecipe && swapCount > 0;
+  const [forkState, setForkState] = useState("idle");
+  const [forkName,  setForkName]  = useState(() => {
+    const base = String(recipe?.title || "Recipe").trim();
+    return `${base} v2`;
+  });
+  const [forkOpen,  setForkOpen]  = useState(false);
+  const [forkError, setForkError] = useState(null);
+  const handleForkSave = async () => {
+    if (!onForkRecipe) return;
+    setForkState("pending");
+    setForkError(null);
+    try {
+      // Materialize the ephemeral session into a concrete recipe
+      // object. This is the only place in the codebase that persists
+      // the derivation — everywhere else re-derives per render per
+      // the "pure derivation, never stored" principle in
+      // src/lib/effectiveRecipe.js. canonicalizeEffectiveRecipe strips
+      // the UI-only markers (_swappedFrom, _skipped, _extra) so the
+      // fork reads as clean canon on its next cook — no ghost
+      // strikethroughs or "Using X instead of Y" banners against
+      // ingredients that are already the new default.
+      const promoted = applyCookSessionToRecipe(recipe, cookSession?.session, pantry);
+      const canonical = canonicalizeEffectiveRecipe(promoted);
+      const forked = {
+        ...canonical,
+        title: forkName.trim() || `${recipe.title || "Recipe"} v2`,
+        // Mint a fresh slug base from the new title; saveRecipe
+        // will uniqueify it per-user. Dropping the old slug
+        // prevents accidental collisions when the parent slug is
+        // long and already has a -2 suffix.
+        slug:  undefined,
+        // Provenance so a future library-edit surface can trace
+        // "this recipe is a fork of X" without a schema migration.
+        forkedFrom: {
+          slug:   recipe?.slug || null,
+          title:  recipe?.title || null,
+          source: recipe?.source || null,
+        },
+      };
+      // source='custom' — the user authored this iteration, even if
+      // the parent was an AI draft. Matches the CreateMenu pattern
+      // and avoids awarding AI-authored XP on a user-curated fork.
+      await onForkRecipe(forked, "custom");
+      setForkState("saved");
+      setTimeout(() => setForkOpen(false), 1200);
+    } catch (e) {
+      console.error("[CookComplete] fork save failed:", e);
+      setForkError(e?.message || "Couldn't save");
+      setForkState("idle");
+    }
+  };
 
   // Step numbering helper. The flow is a variable-length sequence depending
   // on whether the recipe has ingredients (adds the pantry pair) and whether
@@ -855,7 +917,78 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
           >
             CONTINUE →
           </button>
+          {/* Fork-to-new-recipe affordance. Only surfaces when the user
+              actually made swaps or skips during this cook — otherwise
+              there's nothing to promote and offering the button would
+              clutter the celebration screen. Clicking opens a small
+              name prompt (defaulted "<title> v2"); saving writes a new
+              user_recipes row via onForkRecipe (wired by Plan /
+              CreateMenu to useUserRecipes.saveRecipe). The original
+              recipe is never touched — "recipe remains the golden
+              standard" principle from the feature spec. */}
+          {canOfferFork && (
+            <button
+              onClick={() => { setForkOpen(true); setForkError(null); }}
+              style={{ marginTop:12, width:"100%", maxWidth:320, padding:"13px", background:"transparent", color:"#f5c842", border:"1px solid #3a2f10", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer" }}
+            >
+              ↔ SAVE CHANGES AS NEW RECIPE
+            </button>
+          )}
         </div>
+        {forkOpen && (
+          <div
+            onClick={() => { if (forkState !== "pending") setForkOpen(false); }}
+            style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", display:"flex", alignItems:"center", justifyContent:"center", padding:20, zIndex:10 }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ width:"100%", maxWidth:380, background:"#161616", border:"1px solid #2a2a2a", borderRadius:16, padding:"22px 20px" }}
+            >
+              <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.15em", marginBottom:6 }}>
+                FORK RECIPE
+              </div>
+              <div style={{ fontFamily:"'Fraunces',serif", fontSize:22, fontWeight:300, color:"#f0ece4", marginBottom:6 }}>
+                Save {swapCount} swap{swapCount === 1 ? "" : "s"} as a new recipe
+              </div>
+              <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#888", marginBottom:16, lineHeight:1.5 }}>
+                The original "{recipe?.title}" stays as-is. This saves an iteration with your swaps baked in.
+              </div>
+              <label style={{ display:"block", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888", letterSpacing:"0.1em", marginBottom:6 }}>
+                NAME
+              </label>
+              <input
+                type="text"
+                value={forkName}
+                onChange={(e) => setForkName(e.target.value)}
+                disabled={forkState === "pending" || forkState === "saved"}
+                style={{ width:"100%", padding:"12px 14px", background:"#0f0f0f", border:"1px solid #2a2a2a", borderRadius:10, fontFamily:"'DM Sans',sans-serif", fontSize:15, color:"#f0ece4", boxSizing:"border-box" }}
+              />
+              {forkError && (
+                <div style={{ marginTop:10, fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#ef4444" }}>
+                  {forkError}
+                </div>
+              )}
+              <div style={{ display:"flex", gap:10, marginTop:18 }}>
+                <button
+                  onClick={() => setForkOpen(false)}
+                  disabled={forkState === "pending"}
+                  style={{ flex:1, padding:"12px", background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer" }}
+                >
+                  CANCEL
+                </button>
+                <button
+                  onClick={handleForkSave}
+                  disabled={forkState === "pending" || forkState === "saved" || !forkName.trim()}
+                  style={{ flex:2, padding:"12px", background: forkState === "saved" ? "#1a3a1a" : "#f5c842", color: forkState === "saved" ? "#4ade80" : "#111", border:"none", borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, letterSpacing:"0.08em", cursor: forkState === "pending" ? "wait" : "pointer" }}
+                >
+                  {forkState === "pending" ? "SAVING…"
+                    : forkState === "saved"  ? "✓ SAVED"
+                    : "SAVE AS NEW RECIPE"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </>
     );
   }

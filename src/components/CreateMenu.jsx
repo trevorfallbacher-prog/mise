@@ -226,6 +226,11 @@ export default function CreateMenu({
           userId={userId}
           family={family}
           friends={friends}
+          // Fork-to-new-recipe handler for CookComplete's "SAVE CHANGES
+          // AS NEW RECIPE" action. Wraps useUserRecipes.saveRecipe —
+          // the hook mints a unique slug so forking leaves the
+          // original recipe untouched.
+          onForkRecipe={saveRecipe}
         />
       </div>
     );
