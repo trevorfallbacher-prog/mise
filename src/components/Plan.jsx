@@ -577,7 +577,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // point at user_recipes rows (custom or AI recipes scheduled via
   // Quick Cook). Without this wired in, scheduled user recipes would
   // render as blank tiles on the calendar.
-  const { recipes: userRecipesList, findBySlug: findUserRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipesList, findBySlug: findUserRecipe, saveRecipe: saveUserRecipe } = useUserRecipes(userId);
 
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we
@@ -685,6 +685,11 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         userId={userId}
         family={family}
         friends={friends}
+        // Fork-to-new-recipe handler for CookComplete's "SAVE CHANGES
+        // AS NEW RECIPE" action. Wraps useUserRecipes.saveRecipe —
+        // unique-slug logic in that hook means forking beef-wellington
+        // lands as beef-wellington-2, leaving the original untouched.
+        onForkRecipe={saveUserRecipe}
       />
     );
   }
