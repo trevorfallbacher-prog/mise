@@ -574,7 +574,7 @@ export default function CookMode({
             {swapCount > 0 && (
               <div
                 title="Your swaps only apply to this cook. The saved recipe is unchanged."
-                style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", background:"#1a1608", border:"1px solid #3a2f10", padding:"3px 8px", borderRadius:6, letterSpacing:"0.1em", fontWeight:600 }}
+                style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#b8a878", background:"#161310", border:"1px solid #2f2820", padding:"3px 8px", borderRadius:6, letterSpacing:"0.1em", fontWeight:600 }}
               >
                 {swapCount} SWAP{swapCount === 1 ? "" : "S"} · ORIGINAL PRESERVED
               </div>
@@ -998,9 +998,9 @@ export default function CookMode({
         const stepSwaps = relevantSwapsForStep(step, allSwaps);
         if (stepSwaps.length === 0) return null;
         return (
-          <div style={{ marginTop:12, padding:"10px 14px", background:"#1a1608", border:"1px solid #3a2f10", borderRadius:10, display:"flex", gap:10, alignItems:"flex-start" }}>
-            <span style={{ fontSize:14, flexShrink:0 }}>↔</span>
-            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f5c842", lineHeight:1.5 }}>
+          <div style={{ marginTop:12, padding:"10px 14px", background:"#161310", border:"1px solid #2f2820", borderRadius:10, display:"flex", gap:10, alignItems:"flex-start" }}>
+            <span style={{ fontSize:14, flexShrink:0, color:"#b8a878" }}>↔</span>
+            <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#b8a878", lineHeight:1.5 }}>
               {stepSwaps.map((s, i) => (
                 <div key={i}>
                   {s.skipped
@@ -1032,7 +1032,7 @@ export default function CookMode({
               return (
                 <span key={i}>
                   <s style={{ opacity:0.5, color:"#8a7a5a" }}>{t.strike}</s>
-                  {t.after ? <span style={{ color:"#f5c842" }}> {t.after}</span> : null}
+                  {t.after ? <span style={{ color:"#b8a878" }}> {t.after}</span> : null}
                 </span>
               );
             });
