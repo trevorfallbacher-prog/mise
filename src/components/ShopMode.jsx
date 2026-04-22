@@ -29,6 +29,7 @@ import { useShopMode } from "../lib/useShopMode";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import { findIngredient } from "../data/ingredients";
 import { resolveCanonicalFromScan } from "../lib/canonicalResolver";
+import { findBarcodeCorrection } from "../lib/barcodeCorrections";
 import { supabase } from "../lib/supabase";
 
 const FLASH_COLORS = {
@@ -215,6 +216,30 @@ export default function ShopMode({
     }
 
     setLooking(true);
+
+    // Correction memory FIRST — global barcode_identity_corrections
+    // then family-scoped user_scan_corrections. findBarcodeCorrection
+    // walks both tiers in order and returns the first hit. A
+    // correction short-circuits the canonical resolution (highest
+    // confidence we have — someone already taught this exact UPC),
+    // but we still hit OFF below so brand / productName / nutrition
+    // come back fresh for brand_nutrition caching and the pair sheet
+    // display. Same pattern the main Scanner uses.
+    let correctionCanonicalId = null;
+    try {
+      const correction = await findBarcodeCorrection(upc);
+      if (correction?.canonicalId) {
+        correctionCanonicalId = correction.canonicalId;
+        console.log("[shop-mode] correction hit", {
+          upc,
+          canonicalId: correction.canonicalId,
+          source: correction.source, // 'global' | 'family'
+        });
+      }
+    } catch (e) {
+      console.warn("[shop-mode] findBarcodeCorrection failed:", e);
+    }
+
     let off = null;
     try {
       off = await lookupBarcode(upc, { brandNutritionRows });
@@ -243,20 +268,34 @@ export default function ShopMode({
         sourceId:      off.sourceId || null,
         offUrl:        off.offUrl || null,
       };
-      // Resolver — tier 1 (learned corrections) → tier 2 (fuzzy).
-      const match = resolveCanonicalFromScan({
-        brand:         off.brand,
-        productName:   off.productName,
-        categoryHints: off.categoryHints || [],
-        learnedTagLookup,
-        findIngredient,
-      });
-      if (match?.canonical?.id) {
-        canonicalId = match.canonical.id;
+      // Correction memory wins if it hit above — a UPC someone
+      // already taught us is higher confidence than the resolver's
+      // fuzzy guess. Otherwise fall through to the resolver's tier 1
+      // (learned tag map) + tier 2 (fuzzy) path.
+      if (correctionCanonicalId) {
+        canonicalId = correctionCanonicalId;
         flashColor = "green";
       } else {
-        flashColor = "yellow";
+        const match = resolveCanonicalFromScan({
+          brand:         off.brand,
+          productName:   off.productName,
+          categoryHints: off.categoryHints || [],
+          learnedTagLookup,
+          findIngredient,
+        });
+        if (match?.canonical?.id) {
+          canonicalId = match.canonical.id;
+          flashColor = "green";
+        } else {
+          flashColor = "yellow";
+        }
       }
+    } else if (correctionCanonicalId) {
+      // OFF miss but we have a taught canonical for this UPC —
+      // still green, even without OFF's brand/productName. The row
+      // commits with just the canonical; user can add brand later.
+      canonicalId = correctionCanonicalId;
+      flashColor = "green";
     }
 
     const scan = await upsertScan({
