@@ -114,11 +114,16 @@ export default function ShopMode({
   // rapid scans that don't re-render between each.
   const armedRef = useRef(null);
   useEffect(() => { armedRef.current = armedListItemId; }, [armedListItemId]);
-  // listTargets + already-paired-ids mirrored for handleDetected's
-  // closure (it's passed to BarcodeScanner.onDetected and so captures
-  // whatever refs/state existed at mount time otherwise).
+  // listTargets + already-paired-ids + scans mirrored for
+  // handleDetected's closure. BarcodeScanner captures its onDetected
+  // prop ONCE at mount (inside the polling tick closure), so a
+  // plain reference to `scans` from handleDetected would always
+  // read the empty-on-mount array — that's why duplicate-UPC
+  // detection was silently missing: the re-scan gate found nothing
+  // in an empty scans array. Refs are the way out.
   const listTargetsRef = useRef([]);
   const alreadyPairedListIdsRef = useRef(new Set());
+  const scansRef = useRef([]);
 
   useEffect(() => {
     return () => {
@@ -169,10 +174,11 @@ export default function ShopMode({
     return m;
   }, [scans]);
 
-  // Mirror listTargets + already-paired ids into refs so
+  // Mirror listTargets + already-paired ids + scans into refs so
   // handleDetected (a closure that's long-lived across scans) reads
   // the freshest values without needing to be re-bound on every tick.
   useEffect(() => { listTargetsRef.current = listTargets; }, [listTargets]);
+  useEffect(() => { scansRef.current = scans; }, [scans]);
   useEffect(() => {
     const s = new Set();
     for (const id of pairedByListId.keys()) s.add(id);
@@ -181,18 +187,24 @@ export default function ShopMode({
 
   async function handleDetected(upc) {
     if (!activeTrip?.id || !upc) return;
+    // Read via ref — BarcodeScanner captured handleDetected at mount
+    // time, so `scans` from the closure scope is always the initial
+    // empty array. scansRef.current stays in sync via the mirroring
+    // effect above.
+    const currentScans = scansRef.current || [];
     console.log("[shop-mode] handleDetected", {
       upc,
       upcType: typeof upc,
       upcLen: upc?.length,
-      existingOnTrip: scans.some(s => s.barcodeUpc === upc),
+      scansCount: currentScans.length,
+      existingOnTrip: currentScans.some(s => s.barcodeUpc === upc),
     });
     // Re-scan gate: if this UPC is already on the trip, DON'T silently
     // bump qty. Prompt the user — are you adding another identical
     // package to the cart, or was this a bumped-scanner dupe? Flash
     // fires so they see the recognition, then the add-another sheet
     // takes over until they answer.
-    const existing = scans.find(s => s.barcodeUpc === upc);
+    const existing = currentScans.find(s => s.barcodeUpc === upc);
     if (existing) {
       setAddAnotherPrompt({ scan: existing });
       setLastScan({ scan: existing, flashColor: existing.status });
