@@ -59,6 +59,7 @@ import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { useCanonicalOffTags } from "../lib/useCanonicalOffTags";
+import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
@@ -1295,15 +1296,37 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // registry could already answer. typeIdForCanonical
               // reads canonicalToType map; inferTileFromName falls
               // back to keyword heuristics when no explicit mapping.
-              const prefilledTypeId = canon?.id ? (typeIdForCanonical(canon.id) || null) : null;
+              //
+              // When no canonical resolved (brand-new UPC, cold
+              // resolver state), fall back to OFF's own categoryHint
+              // taxonomy via tagHintsToAxes — OFF already told us
+              // "this is a beverage / cola / carbonated drink", so
+              // the draft card can land with STORED IN=drinks and
+              // CATEGORY=beverage pre-selected instead of defaulting
+              // to "pantry / unset" and making the user fix both
+              // axes manually.
+              const hintAxes = tagHintsToAxes(res.categoryHints || []);
+              const prefilledTypeId = canon?.id
+                ? (typeIdForCanonical(canon.id) || null)
+                : (hintAxes.typeId || null);
               const rowName = res.productName || canon?.name || firstHintPretty || `Barcode ${barcode}`;
-              const prefilledTileId = inferTileFromName(rowName) || null;
+              const prefilledTileId = inferTileFromName(rowName)
+                || hintAxes.tileId
+                || null;
+              // Category priority: canonical wins → OFF-hint fallback
+              // → last-resort "pantry". Adding OFF-hint here also
+              // means defaultLocationForCategory downstream will
+              // route category="beverage" / "frozen" / etc. to the
+              // right location without any further work.
+              const prefilledCategory = canon?.category
+                || hintAxes.category
+                || "pantry";
               const row = {
                 id:            freshId,
                 name:          rowName,
                 emoji:         canon?.emoji || "🥫",
                 brand:         effectiveBrand || null,
-                category:      canon?.category || "pantry",
+                category:      prefilledCategory,
                 confidence:    match?.autoApply ? "high" : match ? "medium" : "low",
                 canonicalId:   canon?.id || null,
                 ingredientId:  canon?.id || null,
