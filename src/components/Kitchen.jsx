@@ -5209,6 +5209,15 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   useEffect(() => {
     if (draftItem) committingDraftRef.current = false;
   }, [draftItem]);
+  // Draft-stocking multiplier. When the user taps + in the draft
+  // ItemCard's STACKING card to say "I'm stocking 3 of these," STOCK
+  // IN PANTRY fans out to that many identical siblings. Resets to 1
+  // on every fresh draft so back-to-back scans don't inherit a
+  // stale count.
+  const [draftStockCount, setDraftStockCount] = useState(1);
+  useEffect(() => {
+    if (draftItem) setDraftStockCount(1);
+  }, [draftItem]);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -5878,7 +5887,13 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // pantryFormat so check-off + scan + manual add all agree on
         // what counts as "a physical package."
         let ex = null;
-        if (!isDiscreteInstance(s)) {
+        // _forceStackNew bypasses merge entirely — used by the draft
+        // STACKING card when stocking N identical siblings. Without
+        // this, three 8-oz wonton packages would collapse into one
+        // 24-oz row via sameIdentity() matching. Keeping them as
+        // siblings preserves per-package expiration, per-instance
+        // provenance, and the visual ×N stack in the Kitchen grid.
+        if (!isDiscreteInstance(s) && !s._forceStackNew) {
           if (s.ingredientId) {
             ex = next.find(p => p.ingredientId === s.ingredientId && sameIdentity(p, s));
           }
@@ -7711,6 +7726,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           isAdmin={isAdmin}
           familyIds={familyIds}
           isDraft
+          stockCount={draftStockCount}
+          onStockCountChange={(n) => setDraftStockCount(Math.max(1, Math.floor(Number(n) || 1)))}
           onUpdate={(patch) => setDraftItem(prev => prev ? { ...prev, ...patch } : prev)}
           onEditTags={() => setLinkingItem(draftItem)}
           onStock={(finalDraft) => {
@@ -7722,14 +7739,28 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             // draftItem lands (see useEffect above).
             if (committingDraftRef.current) return;
             committingDraftRef.current = true;
-            // Commit the draft as if it were a fresh scan row —
-            // reusing addScannedItems keeps the merge-on-existing,
-            // expiration-estimate, receipt-line-index, and toast
-            // paths all consistent with the pre-draft flow. No
-            // draftMode / autoOpenFirst this time so it actually
-            // lands in pantry.
+            const count = Math.max(1, Number(draftStockCount) || 1);
+            // Fan out to N identical siblings when the user set
+            // STACKING ×N on the draft. Each copy gets a fresh id
+            // and a _forceStackNew flag so the setPantry reducer
+            // skips its merge-into-existing search (otherwise every
+            // identical sibling would collapse into one row with
+            // amount = N × original). Discrete-count units still
+            // take the existing fan-out path inside addScannedItems
+            // for amount>1 — this flag only affects non-discrete
+            // multi-stock (the "3 identical 8oz packages of
+            // wontons" case).
+            const gen = () => (typeof crypto !== "undefined" && crypto.randomUUID)
+              ? crypto.randomUUID()
+              : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const copies = Array.from({ length: count }, (_, i) => ({
+              ...finalDraft,
+              id: i === 0 ? finalDraft.id : gen(),
+              ...(count > 1 ? { _forceStackNew: true } : {}),
+            }));
             setDraftItem(null);
-            addScannedItems([finalDraft], { store: null, date: null, totalCents: null });
+            setDraftStockCount(1);
+            addScannedItems(copies, { store: null, date: null, totalCents: null });
           }}
           onClose={() => setDraftItem(null)}
         />

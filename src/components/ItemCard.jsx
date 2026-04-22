@@ -151,7 +151,7 @@ const LOCATIONS = [
   { id: "freezer", emoji: "❄️", label: "Freezer" },
 ];
 
-export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose, isDraft = false, onStock }) {
+export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin = false, familyIds = [], onUpdate, onDelete, onDuplicate, onOpenProvenance, onEditTags, onClose, isDraft = false, onStock, stockCount, onStockCountChange }) {
   // Shell concerns (Escape-to-close, swipe-down-to-dismiss, backdrop,
   // drag handle, top-right ✕) are owned by ModalSheet; this component
   // only describes the card's content.
@@ -1751,9 +1751,19 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             );
           })()}
 
-          {/* + 1 PACKAGE — duplicate this row in place. The grid then
-              renders the pair as a stacked card (×2 + fan). Hidden
-              when no onDuplicate handler is wired (read-only embeds). */}
+          {/* STACKING — two modes depending on whether the row has
+              landed in the pantry yet:
+              (a) Live pantry row (onDuplicate wired): tapping + 1
+                  PACKAGE creates another identical sibling row
+                  immediately. The grid then renders the pair as a
+                  stacked tile (×2 + fan).
+              (b) Draft row from a fresh scan (isDraft + stockCount
+                  prop wired): tapping +/- adjusts a COMMIT-TIME
+                  multiplier. STOCK IN PANTRY then lands N identical
+                  rows in one go. Solves the "I just bought 3 of
+                  these" case without scan-stock-scan-stock-scan-
+                  stock. Kitchen owns the draftStockCount state and
+                  fans out to N identical copies on commit. */}
           {onDuplicate && (
             <div style={{
               display: "flex", alignItems: "center", gap: 10,
@@ -1790,6 +1800,72 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               >
                 + 1 PACKAGE
               </button>
+            </div>
+          )}
+          {isDraft && typeof onStockCountChange === "function" && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 12px", marginBottom: 12,
+              background: "#0f0f0f", border: "1px solid #1e1e1e",
+              borderRadius: 10,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#f5c842", letterSpacing: "0.08em",
+                }}>
+                  STACKING
+                </div>
+                <div style={{
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                  color: "#888", marginTop: 2,
+                }}>
+                  {(stockCount || 1) === 1
+                    ? `Stock ${(stockCount || 1)} package of ${item.name}`
+                    : `Stock ${stockCount} identical packages of ${item.name}`}
+                </div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                <button
+                  onClick={() => onStockCountChange(Math.max(1, (stockCount || 1) - 1))}
+                  disabled={(stockCount || 1) <= 1}
+                  aria-label="One fewer package"
+                  style={{
+                    width: 34, height: 34,
+                    background: "#1a1a1a",
+                    border: "1px solid #333",
+                    borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    color: "#aaa",
+                    cursor: (stockCount || 1) <= 1 ? "not-allowed" : "pointer",
+                    opacity: (stockCount || 1) <= 1 ? 0.4 : 1,
+                  }}
+                >
+                  −
+                </button>
+                <span style={{
+                  minWidth: 28, textAlign: "center",
+                  fontFamily: "'DM Mono',monospace", fontSize: 13,
+                  color: "#f5c842", letterSpacing: "0.04em",
+                }}>
+                  ×{stockCount || 1}
+                </span>
+                <button
+                  onClick={() => onStockCountChange((stockCount || 1) + 1)}
+                  aria-label="One more package"
+                  style={{
+                    width: 34, height: 34,
+                    background: "#1a1608",
+                    border: "1px solid #f5c84244",
+                    borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 14,
+                    color: "#f5c842",
+                    cursor: "pointer",
+                  }}
+                >
+                  +
+                </button>
+              </div>
             </div>
           )}
 
