@@ -51,7 +51,19 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
   const overrides = session?.overrides || {};
   const pantryById = new Map((pantry || []).map(p => [p.id, p]));
 
-  const origIngredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  // Sanitize residual UI markers off the input. Fork-to-new-recipe
+  // calls canonicalizeEffectiveRecipe on save, but v1 forks (before
+  // that path shipped) persisted _swappedFrom / _skipped into
+  // user_recipes — and without this guard, cooking one of those
+  // recipes re-renders the old strikethroughs even though the session
+  // is empty. Sanitizing on entry means every effectiveRecipe marker
+  // downstream originated from the CURRENT session, nothing inherited.
+  const stripMarkers = (obj) => {
+    if (!obj) return obj;
+    const { _swappedFrom, _skipped, _extra, ...rest } = obj;
+    return rest;
+  };
+  const origIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map(stripMarkers);
 
   // Keyed map from (ingredientId | normalized name) → replacement
   // metadata, so rewriting step.uses doesn't re-run the swap logic
@@ -90,7 +102,8 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
   const origSteps = Array.isArray(recipe.steps) ? recipe.steps : [];
   const effectiveSteps = origSteps.map(step => {
     if (!Array.isArray(step.uses) || step.uses.length === 0) return step;
-    const newUses = step.uses.map(use => {
+    const cleanedUses = step.uses.map(stripMarkers);
+    const newUses = cleanedUses.map(use => {
       let hit = null;
       if (use.ingredientId) hit = swappedKeys.get(`id:${use.ingredientId}`);
       if (!hit) {
@@ -210,6 +223,38 @@ export function relevantSwapsForStep(step, allSwaps) {
     }
   }
   return out;
+}
+
+// Freeze an effective recipe into a persistence-ready canonical shape.
+// applyCookSessionToRecipe stamps `_swappedFrom`, `_skipped`, and
+// `_extra` markers so the cook UI can render swap indicators,
+// strikethroughs, and "↔ was: <original>" annotations. Those markers
+// are UI state, NOT persistent data — if we write them through to
+// user_recipes, the next cook of the fork re-renders those old swaps
+// as if they were fresh session overrides ("Using tortillas instead
+// of crepes for this step" on a recipe where tortillas is already
+// the canon). Fork-to-new-recipe drops them, and also drops any
+// ingredient the user skipped this cook — the fork represents "this
+// is how I'm making it now," so skipped ingredients simply aren't
+// part of the new canon.
+export function canonicalizeEffectiveRecipe(recipe) {
+  if (!recipe) return recipe;
+  const strip = (obj) => {
+    if (!obj) return obj;
+    const { _swappedFrom, _skipped, _extra, ...rest } = obj;
+    return rest;
+  };
+  const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  const cleanIngredients = ingredients
+    .filter(ing => !ing?._skipped)
+    .map(strip);
+  const steps = Array.isArray(recipe.steps) ? recipe.steps : [];
+  const cleanSteps = steps.map(step => {
+    const uses = Array.isArray(step.uses) ? step.uses : [];
+    const cleanUses = uses.filter(u => !u?._skipped).map(strip);
+    return { ...step, uses: cleanUses };
+  });
+  return { ...recipe, ingredients: cleanIngredients, steps: cleanSteps };
 }
 
 // Render step.instruction prose with strikethrough+replacement applied

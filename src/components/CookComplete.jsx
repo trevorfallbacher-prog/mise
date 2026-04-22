@@ -7,7 +7,7 @@ import { sameCanonicalFamily, resolvesToSameCanonical, pairRecipeIngredients } f
 import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pantryComponents";
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
-import { applyCookSessionToRecipe, countActiveSwaps } from "../lib/effectiveRecipe";
+import { applyCookSessionToRecipe, canonicalizeEffectiveRecipe, countActiveSwaps } from "../lib/effectiveRecipe";
 import CookCompleteSummary from "./CookCompleteSummary";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
@@ -462,10 +462,15 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       // object. This is the only place in the codebase that persists
       // the derivation — everywhere else re-derives per render per
       // the "pure derivation, never stored" principle in
-      // src/lib/effectiveRecipe.js.
+      // src/lib/effectiveRecipe.js. canonicalizeEffectiveRecipe strips
+      // the UI-only markers (_swappedFrom, _skipped, _extra) so the
+      // fork reads as clean canon on its next cook — no ghost
+      // strikethroughs or "Using X instead of Y" banners against
+      // ingredients that are already the new default.
       const promoted = applyCookSessionToRecipe(recipe, cookSession?.session, pantry);
+      const canonical = canonicalizeEffectiveRecipe(promoted);
       const forked = {
-        ...promoted,
+        ...canonical,
         title: forkName.trim() || `${recipe.title || "Recipe"} v2`,
         // Mint a fresh slug base from the new title; saveRecipe
         // will uniqueify it per-user. Dropping the old slug
