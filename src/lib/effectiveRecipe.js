@@ -237,6 +237,15 @@ export function relevantSwapsForStep(step, allSwaps) {
 // ingredient the user skipped this cook — the fork represents "this
 // is how I'm making it now," so skipped ingredients simply aren't
 // part of the new canon.
+//
+// ALSO rewrites step prose (step.title, step.instruction, step.tip,
+// step.doneCue) and recipe title/subtitle using the swap map BEFORE
+// the markers are stripped. Without this, forking butter → Hiland
+// Heavy Whipping Cream saves an ingredient list that says "Hiland
+// HWC" but step prose that still reads "Pour into the buttered dish"
+// — the word "butter" stranded in the prose after _swappedFrom is
+// gone has no way to be struck through on the next cook because the
+// tokenizer can no longer see a mapping.
 export function canonicalizeEffectiveRecipe(recipe) {
   if (!recipe) return recipe;
   const strip = (obj) => {
@@ -244,7 +253,43 @@ export function canonicalizeEffectiveRecipe(recipe) {
     const { _swappedFrom, _skipped, _extra, ...rest } = obj;
     return rest;
   };
+
+  // Collect the swap map while markers are still present. Skipped
+  // ingredients don't generate a mapping — they're dropped, not
+  // renamed, so prose mentions are left intact for the cook to read
+  // around ("Season with salt and pepper to taste" stays legible
+  // when pepper is skipped; turning that into a replacement would
+  // paper over the choice the user made).
   const ingredients = Array.isArray(recipe.ingredients) ? recipe.ingredients : [];
+  const swaps = [];
+  const seen = new Set();
+  for (const ing of ingredients) {
+    if (!ing?._swappedFrom || ing._skipped) continue;
+    const from = ing._swappedFrom.item;
+    const to   = ing.item;
+    if (!from || !to) continue;
+    const key = from.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    swaps.push({ from, to });
+  }
+
+  // Longest-first so "heavy cream" rewrites before "cream" — avoids
+  // "heavy <new>" double-rewrites.
+  const ordered = [...swaps].sort((a, b) => b.from.length - a.from.length);
+  const rewriteProse = (text) => {
+    if (typeof text !== "string" || !text || ordered.length === 0) return text;
+    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(
+      `\\b(${ordered.map(s => escape(s.from)).join("|")})\\b`,
+      "gi",
+    );
+    return text.replace(pattern, (match) => {
+      const swap = ordered.find(s => s.from.toLowerCase() === match.toLowerCase());
+      return swap ? swap.to : match;
+    });
+  };
+
   const cleanIngredients = ingredients
     .filter(ing => !ing?._skipped)
     .map(strip);
@@ -252,9 +297,23 @@ export function canonicalizeEffectiveRecipe(recipe) {
   const cleanSteps = steps.map(step => {
     const uses = Array.isArray(step.uses) ? step.uses : [];
     const cleanUses = uses.filter(u => !u?._skipped).map(strip);
-    return { ...step, uses: cleanUses };
+    return {
+      ...step,
+      uses:        cleanUses,
+      title:       rewriteProse(step.title),
+      instruction: rewriteProse(step.instruction),
+      tip:         rewriteProse(step.tip),
+      doneCue:     rewriteProse(step.doneCue),
+    };
   });
-  return { ...recipe, ingredients: cleanIngredients, steps: cleanSteps };
+
+  return {
+    ...recipe,
+    title:    rewriteProse(recipe.title),
+    subtitle: rewriteProse(recipe.subtitle),
+    ingredients: cleanIngredients,
+    steps:       cleanSteps,
+  };
 }
 
 // Render step.instruction prose with strikethrough+replacement applied
