@@ -89,6 +89,13 @@ export default function ShopMode({
   // manually dismissed). Cleared on pair, on dismiss, or when the
   // user fires a new scan (the new scan takes precedence).
   const [pendingPairScanId, setPendingPairScanId] = useState(null);
+  // addAnotherPrompt — fires when the user re-scans a UPC that's
+  // already on the trip. We don't silently bump qty; the user
+  // explicitly confirms "+1" (another identical package in the
+  // cart) or skips (e.g. they bumped the scanner against the same
+  // item by accident). Null = no prompt. { scan } = the existing
+  // trip_scan to bump on confirm.
+  const [addAnotherPrompt, setAddAnotherPrompt] = useState(null);
   // armedRef mirrors armedListItemId so handleDetected (captured in
   // onDetected closure) always reads the freshest value even across
   // rapid scans that don't re-render between each.
@@ -145,6 +152,21 @@ export default function ShopMode({
 
   async function handleDetected(upc) {
     if (!activeTrip?.id || !upc) return;
+    // Re-scan gate: if this UPC is already on the trip, DON'T silently
+    // bump qty. Prompt the user — are you adding another identical
+    // package to the cart, or was this a bumped-scanner dupe? Flash
+    // fires so they see the recognition, then the add-another sheet
+    // takes over until they answer.
+    const existing = scans.find(s => s.barcodeUpc === upc);
+    if (existing) {
+      setAddAnotherPrompt({ scan: existing });
+      setLastScan({ scan: existing, flashColor: existing.status });
+      setFlashVisible(true);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashVisible(false), FLASH_MS);
+      return;
+    }
+
     setLooking(true);
     let off = null;
     try {
@@ -300,6 +322,20 @@ export default function ShopMode({
     await pairScanToList(scan.id, newItemId);
   }
 
+  // Re-scan prompt actions. +1 More bumps qty on the existing
+  // trip_scan; Skip just closes the prompt.
+  async function confirmAddAnother() {
+    const target = addAnotherPrompt?.scan;
+    if (!target?.id) { setAddAnotherPrompt(null); return; }
+    const nextQty = (target.qty || 1) + 1;
+    await adjustScanQty(target.id, nextQty);
+    setAddAnotherPrompt(null);
+  }
+
+  function dismissAddAnother() {
+    setAddAnotherPrompt(null);
+  }
+
   // Unified tap handler — two-way flow:
   //   * If a scan is pending (scan-first flow), bind it to the tapped
   //     list item (or run impulse-add for __impulse__).
@@ -447,11 +483,63 @@ export default function ShopMode({
           </div>
         )}
 
+        {/* Add-another prompt — fires when a UPC already on the trip
+            is re-scanned. Wins precedence over every other banner
+            since the user's mid-decision about qty. +1 bumps;
+            SKIP dismisses without change. */}
+        {addAnotherPrompt?.scan && !flashVisible && (() => {
+          const s = addAnotherPrompt.scan;
+          const statusBg = FLASH_COLORS[s.status]?.bg || "#444";
+          return (
+            <div style={{
+              position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 6,
+              padding: "10px 12px",
+              background: "rgba(22, 18, 10, 0.96)",
+              border: `1px solid #f5c842`,
+              borderRadius: 8,
+              display: "flex", alignItems: "center", gap: 10,
+              backdropFilter: "blur(4px)",
+            }}>
+              <span style={{ color: statusBg, fontSize: 18 }}>●</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
+                  ALREADY ON YOUR TRIP · ×{s.qty || 1}
+                </div>
+                <div style={{
+                  fontSize: 14, fontStyle: "italic", color: "#fff",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {s.productName || s.brand || `UPC ${s.barcodeUpc}`}
+                </div>
+              </div>
+              <button
+                onClick={confirmAddAnother}
+                style={{
+                  background: "#f5c842", color: "#111", border: "none",
+                  borderRadius: 6, padding: "6px 12px",
+                  fontSize: 12, fontWeight: 700, letterSpacing: 0.8,
+                  cursor: "pointer",
+                }}
+              >+1 MORE</button>
+              <button
+                onClick={dismissAddAnother}
+                style={{
+                  background: "transparent",
+                  color: "#aaa", border: "1px solid #333",
+                  borderRadius: 6, padding: "6px 10px",
+                  fontSize: 12, letterSpacing: 0.8,
+                  cursor: "pointer",
+                }}
+              >SKIP</button>
+            </div>
+          );
+        })()}
+
         {/* Pick-mode banner — "scan-first" branch. Last scan is
             waiting for a list-item tap. Wins precedence over the
             armed banner since, by definition, scan-first means
             nothing's armed. */}
-        {pendingPairScanId && !flashVisible && (() => {
+        {pendingPairScanId && !flashVisible && !addAnotherPrompt && (() => {
           const pending = scans.find(s => s.id === pendingPairScanId);
           if (!pending) return null;
           const statusBg = FLASH_COLORS[pending.status]?.bg || "#444";
@@ -495,7 +583,7 @@ export default function ShopMode({
             pinned at the bottom of the scanner half so it's close to
             the list (which is RIGHT below it). Sits above flash via
             its own zIndex. */}
-        {armedListItemId && !flashVisible && !pendingPairScanId && (() => {
+        {armedListItemId && !flashVisible && !pendingPairScanId && !addAnotherPrompt && (() => {
           const armedItem = armedListItemId === "__impulse__"
             ? { name: "Impulse buy (adds to list on scan)", emoji: "🛒" }
             : listTargets.find(i => i.id === armedListItemId);
