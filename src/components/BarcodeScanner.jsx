@@ -31,14 +31,22 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 // mode="rapid" keeps the stream open after each detect so Shop Mode
 // can fire item after item without closing / reopening the camera.
 // The caller is responsible for deciding when to unmount (e.g. when
-// the user taps DONE SHOPPING). A 1500ms same-UPC suppression window
-// prevents double-fires while the pair sheet is still up.
+// the user taps DONE SHOPPING). A 3000ms same-UPC suppression window
+// prevents double-fires on the same product; an 800ms GLOBAL cooldown
+// blocks any scan from firing too soon after any other scan (covers
+// camera focus jitter and sweeping across multiple items fast).
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
+const SAME_UPC_SUPPRESSION_MS = 3000;
+const GLOBAL_COOLDOWN_MS      = 800;
 
 export default function BarcodeScanner({ onDetected, onCancel, mode = "single", embedded = false, paused = false }) {
   const rapidMode = mode === "rapid";
+  // lastRapidRef tracks same-UPC suppression; lastAnyScanRef tracks
+  // the global cooldown across all UPCs (prevents double-scanning a
+  // different item if the user sweeps the camera quickly).
   const lastRapidRef = useRef({ upc: "", at: 0 });
+  const lastAnyScanRef = useRef(0);
   // pausedRef mirrors the `paused` prop so the polling loops (native
   // + zxing) can check a stable reference inside setTimeout
   // continuations without re-binding the loop on every re-render.
@@ -235,14 +243,19 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single", 
             const raw = String(codes[0].rawValue || "").trim();
             if (/^\d{8,14}$/.test(raw)) {
               if (rapidMode) {
-                // Suppress same-UPC re-fires within 1500ms so the pair
-                // sheet has time to appear and re-arm before the next
-                // scan, even if the same barcode is still in-frame.
+                // Suppress same-UPC re-fires within SAME_UPC_SUPPRESSION_MS
+                // and any scan within GLOBAL_COOLDOWN_MS. Covers the
+                // two common sources of duplicate bubbles: camera
+                // stayed on the same barcode after the pair sheet
+                // dismissed (same-UPC window) and user swept the
+                // scanner across two items too fast (global cooldown).
                 const now = Date.now();
-                const isDupe = raw === lastRapidRef.current.upc
-                  && (now - lastRapidRef.current.at) < 1500;
-                if (!isDupe) {
+                const sameUpcRecent = raw === lastRapidRef.current.upc
+                  && (now - lastRapidRef.current.at) < SAME_UPC_SUPPRESSION_MS;
+                const cooldownActive = (now - lastAnyScanRef.current) < GLOBAL_COOLDOWN_MS;
+                if (!sameUpcRecent && !cooldownActive) {
                   lastRapidRef.current = { upc: raw, at: now };
+                  lastAnyScanRef.current = now;
                   if (!cancelledRef.current) onDetected?.(raw);
                 }
                 // Keep scanning — don't stopStream in rapid mode.

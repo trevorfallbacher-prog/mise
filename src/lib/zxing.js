@@ -101,6 +101,11 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
   //                   alive so resume is instant. Stream stays up.
   const continuous = !!opts.continuous;
   const isPaused = typeof opts.isPaused === "function" ? opts.isPaused : () => false;
+  // Suppression windows for continuous mode — match the values used
+  // by the native BarcodeDetector path in BarcodeScanner.jsx so both
+  // live decoders behave identically across devices.
+  const SAME_UPC_SUPPRESSION_MS = 3000;
+  const GLOBAL_COOLDOWN_MS      = 800;
   let browser;
   try {
     browser = await loadReader();
@@ -113,6 +118,7 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
   let stopped = false;
   let lastText = "";
   let lastAt   = 0;
+  let lastAnyAt = 0;
   const tick = async () => {
     if (stopped) return;
     if (isPaused()) {
@@ -133,10 +139,14 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
       const text = (result?.getText?.() || "").trim();
       if (/^\d{8,14}$/.test(text)) {
         const now = Date.now();
-        const isDupe = continuous && text === lastText && (now - lastAt) < 1500;
-        if (!isDupe) {
+        const sameUpcRecent = continuous && text === lastText
+          && (now - lastAt) < SAME_UPC_SUPPRESSION_MS;
+        const cooldownActive = continuous
+          && (now - lastAnyAt) < GLOBAL_COOLDOWN_MS;
+        if (!sameUpcRecent && !cooldownActive) {
           lastText = text;
           lastAt   = now;
+          lastAnyAt = now;
           onDetected?.(text);
         }
         if (!continuous) {
