@@ -3,6 +3,7 @@ import ModalSheet from "./ModalSheet";
 import { Z } from "../lib/tokens";
 import { supabase } from "../lib/supabase";
 import { findIngredient, unitLabel } from "../data/ingredients";
+import { convertWithBridge } from "../lib/unitConvert";
 import { findRecipe } from "../data/recipes";
 import { formatReheatSummary } from "../data/recipes/schema";
 import { resolveNutrition, scaleFactor, formatMacros, effectiveCountWeightG } from "../lib/nutrition";
@@ -106,19 +107,27 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
     : (canonical?.units || [{ id: pantryRow?.unit || "unit", label: pantryRow?.unit || "unit" }]);
 
   // Default serving depends on the row type. Meal leftovers always
-  // start at 1 serving. Count-based items (eggs, apples) default to 1
-  // count; mass-based items default to the smallest convenient unit
-  // in the ladder (tsp > tbsp > g > oz > cup). Falls back to the
-  // pantry row's own unit when nothing else fits.
+  // start at 1 serving. Otherwise we lean on the canonical's own
+  // `defaultUnit` — the package axis the ingredient is naturally
+  // measured on (soda → "can", butter → "stick", eggs → "count"). We
+  // deliberately do NOT fall back to pantryRow.unit from the canonical
+  // branch: pantry rows created before a row was linked to its proper
+  // canonical often carry a stale unit from the initial scan (a soda
+  // pop mis-scanned as sugar keeps "g" on the row), and surfacing that
+  // unit here makes the sheet offer "how many grams of sugar did you
+  // drink" on confirm-time. Canonical intent wins.
   const defaultUnit = useMemo(() => {
     if (isMealRow) return "serving";
     if (!canonical) return pantryRow?.unit || "unit";
     const ids = (canonical.units || []).map(u => u.id);
+    if (canonical.defaultUnit && ids.includes(canonical.defaultUnit)) {
+      return canonical.defaultUnit;
+    }
     if (ids.includes("count")) return "count";
     for (const pref of ["serving", "slice", "clove", "piece", "tbsp", "oz", "cup", "g"]) {
       if (ids.includes(pref)) return pref;
     }
-    return ids[0] || pantryRow?.unit || "unit";
+    return ids[0] || "unit";
   }, [isMealRow, canonical, pantryRow?.unit]);
 
   const [amount,   setAmount]   = useState(1);
@@ -234,6 +243,54 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
     }
     return { macros, source, brand };
   }, [amount, unit, isMealRow, mealCookNutrition, canonical, pantryRow, brandNutrition, ingredientInfo]);
+
+  // Slider meter — how much is in the pantry right now, expressed in
+  // the currently selected unit, so the user can drag to say "I ate
+  // this chunk". Mirrors CookComplete's post-cook slider so the two
+  // "reduce pantry by X" flows share a visual vocabulary. Returns
+  // null (slider hidden) when:
+  //   - the row is an orphan with no canonical,
+  //   - the pantry row has no positive amount, or
+  //   - we can't convert pantry stock into the selected unit (e.g.
+  //     a soda row stuck on "g" while the soda canonical's ladder
+  //     is [can, bottle, fl_oz, ml]).
+  // packageAmount/packageUnit (migration 0087) drive the package-count
+  // reference — a 12-pack of soda reads "12 fl oz × 12 PACKS" on the
+  // bottom rail, so the user understands what fraction of a can they're
+  // about to log.
+  const meter = useMemo(() => {
+    if (isMealRow) {
+      const n = Number(pantryRow?.servingsRemaining);
+      if (!Number.isFinite(n) || n <= 0) return null;
+      return { pantryNow: n, meterMax: n, pkgInUsed: 0, packageCount: 0 };
+    }
+    if (!canonical || !unit) return null;
+    const toUsed = (qty) => {
+      if (!qty || !qty.unit || !Number.isFinite(Number(qty.amount))) return null;
+      if (qty.unit === unit) return Number(qty.amount);
+      const res = convertWithBridge(qty, unit, canonical, pantryRow);
+      return res.ok ? res.value : null;
+    };
+    const pantryNow = toUsed({ amount: Number(pantryRow?.amount), unit: pantryRow?.unit });
+    if (!(Number.isFinite(pantryNow) && pantryNow > 0)) return null;
+    const pkgQty = pantryRow?.packageAmount && pantryRow?.packageUnit
+      ? { amount: Number(pantryRow.packageAmount), unit: pantryRow.packageUnit }
+      : null;
+    const pkgInUsed = pkgQty ? toUsed(pkgQty) : null;
+    const maxN = Number(pantryRow?.max);
+    const originalInUsed = (Number.isFinite(maxN) && maxN > 0)
+      ? toUsed({ amount: maxN, unit: pantryRow?.unit })
+      : null;
+    const meterMax = Math.max(
+      pantryNow,
+      Number.isFinite(originalInUsed) && originalInUsed > 0 ? originalInUsed : 0,
+      Number.isFinite(pkgInUsed)      && pkgInUsed      > 0 ? pkgInUsed      : 0,
+    );
+    const packageCount = (pkgInUsed && pkgInUsed > 0)
+      ? Math.max(1, Math.round(meterMax / pkgInUsed))
+      : 0;
+    return { pantryNow, meterMax, pkgInUsed, packageCount };
+  }, [isMealRow, canonical, unit, pantryRow]);
 
   const pantryAmountDisplay = (() => {
     if (isMealRow) {
@@ -492,7 +549,13 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
               style={stepperBtnStyle}
             >+</button>
           </div>
-          {/* Unit chooser */}
+          {/* Unit chooser. Flipping the unit also live-converts the
+              current amount (0.5 sticks → 8 tbsp when butter switches
+              units), matching CookComplete's post-cook slider so the
+              number on screen always agrees with the label next to
+              it. Without this the user's typed 1 would silently mean
+              "1 tbsp" right after they picked tbsp, even though the
+              slider was calibrated in sticks the instant before. */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
             {availableUnits.map(u => {
               const active = u.id === unit;
@@ -500,7 +563,18 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
                 <button
                   key={u.id}
                   type="button"
-                  onClick={() => setUnit(u.id)}
+                  onClick={() => {
+                    if (u.id === unit) return;
+                    const curAmt = Number(amount);
+                    if (canonical && Number.isFinite(curAmt) && curAmt > 0) {
+                      const res = convertWithBridge(
+                        { amount: curAmt, unit },
+                        u.id, canonical, pantryRow,
+                      );
+                      if (res.ok) setAmount(Number(res.value.toFixed(3)));
+                    }
+                    setUnit(u.id);
+                  }}
                   style={{
                     padding: "6px 12px",
                     background: active ? "#f5c842" : "#1a1a1a",
@@ -517,6 +591,119 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
               );
             })}
           </div>
+
+          {/* Slider meter — ported from CookComplete's post-cook
+              "what did you use?" bar. Single horizontal bar split
+              into LEFT AFTER (solid, live-colored by ratio) and JUST
+              ATE (animated hatched tail). Dragging right → leftAfter
+              up → amount down. Hides cleanly when the meter context
+              is null (orphan row, empty stock, or untranslatable
+              pantry unit). */}
+          {meter && (() => {
+            const amtN = Number(amount);
+            const cur = Number.isFinite(amtN) && amtN > 0
+              ? Math.min(amtN, meter.pantryNow)
+              : 0;
+            const leftAfter = Math.max(0, meter.pantryNow - cur);
+            const step = meter.meterMax <= 10 ? 0.1
+                       : meter.meterMax <= 100 ? 1
+                       : meter.meterMax / 100;
+            const pct = (v) => Math.max(0, Math.min(100, (v / meter.meterMax) * 100));
+            const leftPct = pct(leftAfter);
+            const usedPct = pct(cur);
+            const leftRatio = meter.pantryNow > 0 ? leftAfter / meter.pantryNow : 0;
+            const leftColor = leftRatio >= 0.6  ? "#7ec87e"
+                            : leftRatio >= 0.25 ? "#c9a34e"
+                            :                     "#c05a44";
+            const fmt = (n) => n == null ? "—" : Number(n.toFixed(n >= 10 ? 1 : 2));
+            const unitTxt = isMealRow
+              ? (meter.pantryNow === 1 ? "serving" : "servings")
+              : (unitLabel(canonical, unit) || unit);
+            return (
+              <div style={{ width:"100%", display:"flex", flexDirection:"column", gap:6, marginTop: 12 }}>
+                <style>{`
+                  @keyframes iAteThisDelta {
+                    from { background-position: 0 0; }
+                    to   { background-position: 34px 0; }
+                  }
+                  @media (prefers-reduced-motion: reduce) {
+                    [style*="iAteThisDelta"] { animation: none !important; }
+                  }
+                `}</style>
+                <div style={{
+                  fontFamily:"'DM Mono',monospace", fontSize:9,
+                  letterSpacing:"0.04em", color: leftColor,
+                }}>
+                  {fmt(leftAfter)} {unitTxt} LEFT AFTER
+                </div>
+                <div style={{ position:"relative", width:"100%", height:22 }}>
+                  <div style={{
+                    position:"absolute", top:5, left:0, right:0, height:12,
+                    background:"#2a2a2a", borderRadius:6,
+                  }} />
+                  <div style={{
+                    position:"absolute", top:5, left:0, height:12,
+                    width:`${leftPct}%`,
+                    background: leftColor,
+                    borderRadius: leftPct >= 99.5 ? 6 : "6px 0 0 6px",
+                    transition:"width 0.08s linear, background 0.15s linear",
+                  }} />
+                  <div style={{
+                    position:"absolute", top:5, left:`${leftPct}%`, height:12,
+                    width:`${usedPct}%`,
+                    background: `repeating-linear-gradient(-45deg, ${leftColor}66 0px, ${leftColor}66 6px, ${leftColor}22 6px, ${leftColor}22 12px)`,
+                    backgroundSize: "17px 17px",
+                    animation: "iAteThisDelta 1.8s linear infinite",
+                    borderRadius:
+                      (leftPct + usedPct) >= 99.5 && leftPct < 0.5 ? 6
+                      : (leftPct + usedPct) >= 99.5 ? "0 6px 6px 0"
+                      : 0,
+                    transition:"width 0.08s linear, left 0.08s linear, background 0.15s linear",
+                  }} />
+                  <div style={{
+                    position:"absolute",
+                    top:2, left:`calc(${leftPct}% - 9px)`,
+                    width:18, height:18,
+                    background: leftColor,
+                    border:"3px solid #0a0a0a",
+                    borderRadius:"50%",
+                    pointerEvents:"none",
+                    boxShadow:`0 0 6px ${leftColor}66`,
+                    transition:"background 0.15s linear, box-shadow 0.15s linear, left 0.08s linear",
+                  }} />
+                  <input
+                    type="range"
+                    min="0" max={meter.pantryNow} step={step}
+                    value={leftAfter}
+                    onChange={e => {
+                      const nextLeft = Number(e.target.value);
+                      const nextUsed = Math.max(0, meter.pantryNow - nextLeft);
+                      setAmount(Number(nextUsed.toFixed(3)));
+                    }}
+                    aria-label="How much did you eat"
+                    style={{
+                      position:"absolute", inset:0,
+                      width: meter.meterMax > 0
+                        ? `${(meter.pantryNow / meter.meterMax) * 100}%`
+                        : "100%",
+                      margin:0, opacity:0.01, cursor:"pointer",
+                    }}
+                  />
+                </div>
+                <div style={{
+                  display:"flex", justifyContent:"space-between",
+                  fontFamily:"'DM Mono',monospace", fontSize:9,
+                  letterSpacing:"0.04em", color:"#666",
+                }}>
+                  <span style={{ color:"#7ec87e" }}>
+                    IN PANTRY: {(meter.pkgInUsed && meter.pkgInUsed > 0 && meter.packageCount > 1)
+                      ? `${fmt(meter.pkgInUsed)} ${unitTxt} × ${meter.packageCount} PACKS`
+                      : `${fmt(meter.pantryNow)} ${unitTxt}`}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         {/* Meal slot */}
