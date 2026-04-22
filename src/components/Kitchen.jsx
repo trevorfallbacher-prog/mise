@@ -7780,19 +7780,64 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                 >
                   − 1 PACKAGE
                 </button>
+                <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.06em" }}>
+                  ×{ordered.length}
+                </span>
+              </div>
+
+              {/* STACKING card — mirrors the ItemCard pattern
+                  (ItemCard.jsx:1754-1794) so the drilldown has the
+                  same visual weight as the single-item surface for
+                  "add another package." Previously the + 1 PACKAGE
+                  button was a small chip next to − 1 PACKAGE in the
+                  top row, which didn't read as an affordance for
+                  anyone who opened the drilldown to stock a fresh
+                  receipt's worth of the same item. Now it's a
+                  labeled card block with a description, matching
+                  ItemCard's stacking surface. Same underlying
+                  addStackInstance call — clones the top instance's
+                  shape (size, unit, location, category, etc.) so
+                  back-to-back stocks land as identical siblings. */}
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 12px",
+                background: "#0f0f0f", border: "1px solid #1e1e1e",
+                borderRadius: 10,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#f5c842", letterSpacing: "0.08em",
+                  }}>
+                    STACKING
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                    color: "#888", marginTop: 2,
+                  }}>
+                    Add another identical {top.name} to the stack
+                  </div>
+                </div>
                 <button
                   onClick={() => {
                     addStackInstance(setPantry, bucket);
                     pushToast(`Added 1 ${top.name}`, { emoji: top.emoji || "🛒", kind: "success", ttl: 2800 });
                   }}
-                  style={{ padding:"8px 14px", background:"#1a1608", border:"1px solid #f5c84244", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.06em", cursor:"pointer" }}
+                  aria-label={`Add another ${top.name}`}
+                  style={{
+                    padding: "8px 12px",
+                    background: "#1a1608",
+                    border: "1px solid #f5c84244",
+                    borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: "#f5c842", letterSpacing: "0.06em",
+                    cursor: "pointer", flexShrink: 0,
+                  }}
                 >
                   + 1 PACKAGE
                 </button>
-                <span style={{ marginLeft:"auto", fontFamily:"'DM Mono',monospace", fontSize:10, color:"#666", letterSpacing:"0.06em" }}>
-                  ×{ordered.length}
-                </span>
               </div>
+
               <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#7eb8d4", letterSpacing:"0.12em" }}>
                 INSTANCES · FIFO BY EXPIRATION
               </div>
