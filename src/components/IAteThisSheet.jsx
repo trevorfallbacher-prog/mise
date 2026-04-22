@@ -56,7 +56,20 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
 
   const canonicalId = pantryRow?.ingredientId || pantryRow?.canonicalId || null;
   const canonical = canonicalId ? findIngredient(canonicalId) : null;
-  const isMealRow = pantryRow?.kind === "meal";
+  // A "meal" in the CookComplete sense is a leftover portion tracked
+  // by servingsRemaining and measured in "serving" units — the sheet
+  // then renders the reheat walkthrough + servings stepper. But
+  // kind='meal' in the DB also catches COMPOSED ingredient rows
+  // (e.g. a rolled-oats pantry row tagged with composition
+  // [rolled_oats, oat_milk]) that are still measured in physical
+  // units like cups. For those, the sheet must behave like the
+  // ingredient path — show the canonical's unit ladder, the slider
+  // against package_amount, the real amount on the pantryRow — not
+  // force-offer "serving" as the only option. Gate on EITHER a cook-
+  // log provenance link OR an explicit serving unit so only genuine
+  // leftovers take the meal path.
+  const isMealRow = pantryRow?.kind === "meal" &&
+    (pantryRow?.sourceCookLogId != null || pantryRow?.unit === "serving");
   const sourceCookLogId = pantryRow?.sourceCookLogId || null;
   const sourceRecipeSlug = pantryRow?.sourceRecipeSlug || null;
 
