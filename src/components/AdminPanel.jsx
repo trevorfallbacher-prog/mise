@@ -844,12 +844,41 @@ function CanonicalsList({ viewerId }) {
   // slug wholesale, which is catastrophic when only one row is
   // mistagged (classic misfire: a "SUGAR FREE" Pepsi landed on the
   // sugar canonical, the other sugar rows are legit and must stay).
-  // Flow: admin types the new display name → slugify → if the target
-  // slug isn't already a bundled canonical or an approved synthetic,
-  // we upsert an ingredient_info stub (same pattern as approveCustom)
-  // so it reads as APPROVED immediately → update that single row's
-  // canonical_id → invalidate the cache for the old slug so the row
-  // drops out of the drilldown.
+  //
+  // "Completely drop the old identity" means every column on the
+  // pantry row that was populated from (or validated against) the old
+  // canonical gets cleared in the same UPDATE:
+  //   - canonical_id      → new slug
+  //   - ingredient_id     → new slug (legacy dual column — reading
+  //                          code still consults it as the primary
+  //                          scalar in some paths; out-of-sync here
+  //                          is how "ghost sugar" lingers).
+  //   - cut               → null    (meat-only axis; invalid unless
+  //                          the target canonical is also meat — we
+  //                          clear unconditionally so the admin can
+  //                          re-pick on the new canonical's
+  //                          vocabulary rather than carrying a stale
+  //                          "chicken breast" onto a beef row).
+  //   - state             → null    (per-canonical state vocab; a
+  //                          "SWEETENED / ZERO SUGAR" tag inherited
+  //                          from the sugar misfire has no meaning on
+  //                          a soda_pop row — clear and let the user
+  //                          re-tag from the new canonical's options).
+  //   - nutrition_override→ null    (tier-1 nutrition blob computed
+  //                          against the old canonical's per-unit
+  //                          shape; keeping it would leak old-
+  //                          canonical macros into the new identity's
+  //                          tally. Force a re-resolve.)
+  //   - components        → filter out the old slug if it appears
+  //                          there (composed rows that explicitly
+  //                          listed the wrong canonical in their
+  //                          composition stack — rare, but leaving it
+  //                          is a leak).
+  //
+  // Columns deliberately LEFT ALONE because they're orthogonal to
+  // canonical identity: brand, name, emoji, attributes, barcode_upc,
+  // package_amount/package_unit, count_weight_g, location, category.
+  // Those track the physical item, not the classification.
   async function rewireRow(pantryRow, oldSlug) {
     // eslint-disable-next-line no-alert
     const next = window.prompt(
@@ -857,7 +886,11 @@ function CanonicalsList({ viewerId }) {
         `Row: ${pantryRow.brand ? pantryRow.brand + " · " : ""}${pantryRow.name || "(unnamed)"}\n\n` +
         `Type the NEW canonical display name. If the slug doesn't exist ` +
         `yet, we'll create it as an approved synthetic so it stops reading ` +
-        `as PENDING.`
+        `as PENDING.\n\n` +
+        `Every canonical-tied field on this row (cut, state, ` +
+        `nutrition_override, ingredient_id, components entries on the ` +
+        `old slug) will be fully dropped — brand, name, emoji, and ` +
+        `package metadata stay.`
     );
     if (next === null) return;
     const trimmed = next.trim();
@@ -883,9 +916,37 @@ function CanonicalsList({ viewerId }) {
           .upsert({ ingredient_id: newSlug, info: stub }, { onConflict: "ingredient_id" });
         if (infoErr) throw infoErr;
       }
+      // Read the row's components so we can scrub any mention of the
+      // old slug before the UPDATE lands. Single read is cheap and
+      // avoids a race with whatever the client last wrote.
+      const { data: curRow, error: readErr } = await supabase
+        .from("pantry_items")
+        .select("components, ingredient_ids")
+        .eq("id", pantryRow.id)
+        .maybeSingle();
+      if (readErr) throw readErr;
+      const rawComponents = Array.isArray(curRow?.components)
+        ? curRow.components
+        : (Array.isArray(curRow?.ingredient_ids) ? curRow.ingredient_ids : null);
+      const scrubbed = rawComponents
+        ? rawComponents.filter(x => x && x !== oldSlug)
+        : null;
+      const componentsPatch = scrubbed == null
+        ? {}
+        : scrubbed.length === 0
+          ? { components: null }
+          : { components: scrubbed };
+
       const { error: upErr } = await supabase
         .from("pantry_items")
-        .update({ canonical_id: newSlug })
+        .update({
+          canonical_id:       newSlug,
+          ingredient_id:      newSlug,
+          cut:                null,
+          state:              null,
+          nutrition_override: null,
+          ...componentsPatch,
+        })
         .eq("id", pantryRow.id);
       if (upErr) throw upErr;
       setRowsCache(prev => {
