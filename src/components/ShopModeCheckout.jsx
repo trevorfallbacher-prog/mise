@@ -207,8 +207,38 @@ export default function ShopModeCheckout({
         }
       }
 
-      // 2. Create pantry_items from trip_scans (one row per scan,
-      //    amount = qty). trip_scans are the identity source here.
+      // 2a. Cache brand_nutrition rows for green scans so future
+      //     scans of the same (brand, canonical) hit the local cache
+      //     instead of round-tripping OFF. One row per unique
+      //     (brand, canonical) in this trip — upsert is keyed on
+      //     that pair so re-writes are safe.
+      const brandCacheSeen = new Set();
+      for (const scan of scans) {
+        if (!scan.canonicalId || !scan.brand) continue;
+        const off = scan.offPayload || {};
+        const nutrition = off.nutrition;
+        if (!nutrition || Object.keys(nutrition).length === 0) continue;
+        const key = `${scan.canonicalId}::${String(scan.brand).toLowerCase()}`;
+        if (brandCacheSeen.has(key)) continue;
+        brandCacheSeen.add(key);
+        try {
+          await supabase.from("brand_nutrition").upsert({
+            canonical_id:  scan.canonicalId,
+            brand:         String(scan.brand).trim().toLowerCase(),
+            display_brand: scan.brand,
+            nutrition,
+            barcode:       scan.barcodeUpc || null,
+            source:        off.source || "openfoodfacts",
+            source_id:     off.sourceId || null,
+            confidence:    80,
+          }, { onConflict: "canonical_id,brand" });
+        } catch (e) {
+          console.warn("[shop-checkout] brand_nutrition upsert skipped:", e?.message || e);
+        }
+      }
+
+      // 2b. Create pantry_items from trip_scans (one row per scan,
+      //     amount = qty). trip_scans are the identity source here.
       const nowIso = new Date().toISOString();
       const newPantryIds = new Map(); // scanId → pantry_items.id
       for (const scan of scans) {
@@ -226,8 +256,11 @@ export default function ShopModeCheckout({
           max:            null,
           category:       "pantry",
           low_threshold:  null,
+          // Composition array (migration 0056 renamed ingredient_ids
+          // → components). ingredient_id stays as the scalar mirror
+          // so legacy readers still resolve identity.
           ingredient_id:  scan.canonicalId || null,
-          ingredient_ids: scan.canonicalId ? [scan.canonicalId] : [],
+          components:     scan.canonicalId ? [scan.canonicalId] : null,
           canonical_id:   scan.canonicalId || null,
           brand:          scan.brand || null,
           barcode_upc:    scan.barcodeUpc || null,
