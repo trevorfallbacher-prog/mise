@@ -97,6 +97,11 @@ export default function ShopMode({
   // needs the freshest setter.
   const setShoppingListRef = useRef(setShoppingList);
   useEffect(() => { setShoppingListRef.current = setShoppingList; }, [setShoppingList]);
+  // listTargets + already-paired-ids mirrored for handleDetected's
+  // closure (it's passed to BarcodeScanner.onDetected and so captures
+  // whatever refs/state existed at mount time otherwise).
+  const listTargetsRef = useRef([]);
+  const alreadyPairedListIdsRef = useRef(new Set());
 
   useEffect(() => {
     return () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); };
@@ -130,6 +135,16 @@ export default function ShopMode({
     }
     return m;
   }, [scans]);
+
+  // Mirror listTargets + already-paired ids into refs so
+  // handleDetected (a closure that's long-lived across scans) reads
+  // the freshest values without needing to be re-bound on every tick.
+  useEffect(() => { listTargetsRef.current = listTargets; }, [listTargets]);
+  useEffect(() => {
+    const s = new Set();
+    for (const id of pairedByListId.keys()) s.add(id);
+    alreadyPairedListIdsRef.current = s;
+  }, [pairedByListId]);
 
   async function handleDetected(upc) {
     if (!activeTrip?.id || !upc) return;
@@ -187,25 +202,63 @@ export default function ShopMode({
       status: flashColor,
     });
 
-    // Pair routing — two flows supported, same end result:
-    //   A) Armed flow: user pre-tapped a list item, scan auto-pairs.
-    //      Armed stays on so 6 apples → tap "apples" once, scan 6×.
-    //   B) Scan-first flow: user scanned with nothing armed, we set
-    //      pendingPairScanId so the next list-item tap binds this
-    //      scan. The list dims non-tappable chrome to telegraph pick-
-    //      mode.
+    // Pair routing — three paths, in priority order:
+    //   A) Armed flow: user pre-tapped a list item, scan auto-pairs
+    //      to it. Wins over everything else so user intent is
+    //      respected. Armed stays on so 6 apples → tap "apples"
+    //      once, scan 6×.
+    //   B) Green auto-match: scan resolved a canonical, and there's
+    //      an unpaired list item that matches either by canonical
+    //      id or by a name-level fuzzy hit. Binds silently — no
+    //      reason to pester the user when the answer is unambiguous.
+    //   C) Scan-first fallback: set pendingPairScanId so the next
+    //      list-item tap binds this scan. Used when the scan was
+    //      yellow/red (no canonical to match) OR green without a
+    //      candidate on the list (impulse buy).
+    // If upsertScan just bumped qty on an already-paired trip_scan
+    // (user scanning apple #2, #3, …), respect the existing binding
+    // and skip all pair routing. Flash still fires so the user sees
+    // the status confirmation on every scan.
+    if (scan?.id && scan.pairedShoppingListItemId) {
+      setLastScan({ scan, flashColor });
+      setFlashVisible(true);
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = setTimeout(() => setFlashVisible(false), FLASH_MS);
+      return;
+    }
+
     const armed = armedRef.current;
+    let autoPairedTo = null;
     if (scan?.id && armed) {
       if (armed === "__impulse__") {
         await doImpulseAdd(scan);
+        autoPairedTo = "__impulse__";
       } else {
         await pairScanToList(scan.id, armed);
+        autoPairedTo = armed;
       }
-      // Armed flow completed — clear any stale pending from a prior
-      // scan-first miss so the list drops out of pick-mode.
       setPendingPairScanId(null);
+    } else if (scan?.id && (flashColor === "green" || flashColor === "yellow")) {
+      // Auto-match: green scans go through all three tiers
+      // (canonical → canonical-name → productName). Yellow scans
+      // skip the canonical tiers and fall straight to productName
+      // token overlap, which still catches the common "corn" on
+      // list + "Del Monte Sweet Corn" scan case.
+      const match = findListMatchForScan({
+        scan,
+        listItems: listTargetsRef.current || [],
+        alreadyPairedIds: alreadyPairedListIdsRef.current || new Set(),
+      });
+      if (match) {
+        await pairScanToList(scan.id, match);
+        autoPairedTo = match;
+        setPendingPairScanId(null);
+      } else {
+        // Nothing on the list looks like this — needs user decision.
+        setPendingPairScanId(scan.id);
+      }
     } else if (scan?.id) {
-      // Scan-first flow — enter pick-mode.
+      // Red — always fall through to pick-mode (no usable text).
       setPendingPairScanId(scan.id);
     }
 
@@ -711,6 +764,78 @@ function pairedCount(scans) {
 function nameForListId(list, id) {
   if (!id) return null;
   return (list || []).find(i => i.id === id)?.name || null;
+}
+
+// Find a list-item candidate for a scan. Tries multiple tiers
+// before giving up — green scans match via canonical, yellow scans
+// (OFF hit but no canonical) still get a shot via productName
+// overlap, red scans get nothing (no usable signal).
+//
+//   1. Canonical id exact match (list item added via picker).
+//   2. Canonical name/shortName normalized overlap with list name
+//      ("butter" on list, canonical=butter → match).
+//   3. OFF productName / brand token overlap with list name —
+//      covers the common case where canonicals don't exist ("corn"
+//      on list, scan productName="Del Monte Sweet Corn" → the list
+//      token 'corn' appears in the product name, match).
+//
+// Returns list item id or null. Skips items already bound to some
+// scan so two scans don't stack onto one list row unless the user
+// explicitly re-arms.
+function findListMatchForScan({ scan, listItems, alreadyPairedIds }) {
+  if (!scan) return null;
+  const unpaired = (listItems || []).filter(i => i.id && !alreadyPairedIds.has(i.id));
+  if (unpaired.length === 0) return null;
+
+  // Tier 1 — canonical id exact match.
+  if (scan.canonicalId) {
+    const byCanonical = unpaired.find(i => i.ingredientId === scan.canonicalId);
+    if (byCanonical) return byCanonical.id;
+  }
+
+  // Tier 2 — canonical name overlap.
+  if (scan.canonicalId) {
+    const ing = findIngredient(scan.canonicalId);
+    if (ing) {
+      const canonNorms = [ing.shortName, ing.name, ing.id.replace(/_/g, " ")]
+        .filter(Boolean)
+        .map(normalizeName);
+      for (const item of unpaired) {
+        const itemNorm = normalizeName(item.name);
+        if (!itemNorm) continue;
+        for (const c of canonNorms) {
+          if (!c) continue;
+          if (itemNorm === c || itemNorm.includes(c) || c.includes(itemNorm)) {
+            return item.id;
+          }
+        }
+      }
+    }
+  }
+
+  // Tier 3 — productName / brand token overlap. The single-best
+  // fallback when canonicals don't bridge. Splits both the list
+  // item name and the scan text into tokens, requires a shared
+  // non-trivial token (length >= 3 to skip "of", "to", etc.).
+  const scanText = [scan.productName, scan.brand].filter(Boolean).join(" ");
+  const scanTokens = new Set(
+    normalizeName(scanText).split(" ").filter(t => t.length >= 3),
+  );
+  if (scanTokens.size === 0) return null;
+  for (const item of unpaired) {
+    const itemTokens = normalizeName(item.name).split(" ").filter(t => t.length >= 3);
+    if (itemTokens.some(t => scanTokens.has(t))) return item.id;
+  }
+
+  return null;
+}
+
+function normalizeName(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function ScanChip({ scan, listName, onAdjust, onUnpair }) {
