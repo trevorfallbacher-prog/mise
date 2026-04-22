@@ -82,6 +82,12 @@ export default function ShopMode({
   const flashTimerRef = useRef(null);
   const [looking, setLooking] = useState(false);
   const [armedListItemId, setArmedListItemId] = useState(null);
+  // pendingPairScanId — when the user scanned WITHOUT arming first,
+  // this holds the scan id waiting for a list-item tap to bind it.
+  // Null when the last scan was already handled (armed auto-pair, or
+  // manually dismissed). Cleared on pair, on dismiss, or when the
+  // user fires a new scan (the new scan takes precedence).
+  const [pendingPairScanId, setPendingPairScanId] = useState(null);
   // armedRef mirrors armedListItemId so handleDetected (captured in
   // onDetected closure) always reads the freshest value even across
   // rapid scans that don't re-render between each.
@@ -96,15 +102,21 @@ export default function ShopMode({
     return () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); };
   }, []);
 
+  // Search filter — live-narrow the list as the user types. Cheap
+  // substring match on name (case-insensitive). Empty = pass-through.
+  const [search, setSearch] = useState("");
+
   // Unpurchased list items sorted by the order they were added, with
   // the most-recently-added on top so fresh entries ("I just remembered
-  // we need butter") don't get buried.
+  // we need butter") don't get buried. Filtered by search.
   const listTargets = useMemo(() => {
+    const q = search.trim().toLowerCase();
     return (shoppingList || [])
       .filter(item => !item.purchasedAt)
+      .filter(item => !q || String(item.name || "").toLowerCase().includes(q))
       .slice()
       .reverse();
-  }, [shoppingList]);
+  }, [shoppingList, search]);
 
   // Pairing map keyed by list item id → array of trip_scans that
   // bound to it. Used to render the purple "paired" chip on each
@@ -175,11 +187,13 @@ export default function ShopMode({
       status: flashColor,
     });
 
-    // Tap-ahead pair. If the user pre-armed a list item, the scan
-    // auto-pairs to it immediately — no sheet, no extra tap. Armed
-    // stays on (so 6 apple scans all pair to "apples" without re-
-    // tapping). The special 'impulse' sentinel routes through the
-    // silent-list-add path instead.
+    // Pair routing — two flows supported, same end result:
+    //   A) Armed flow: user pre-tapped a list item, scan auto-pairs.
+    //      Armed stays on so 6 apples → tap "apples" once, scan 6×.
+    //   B) Scan-first flow: user scanned with nothing armed, we set
+    //      pendingPairScanId so the next list-item tap binds this
+    //      scan. The list dims non-tappable chrome to telegraph pick-
+    //      mode.
     const armed = armedRef.current;
     if (scan?.id && armed) {
       if (armed === "__impulse__") {
@@ -187,9 +201,16 @@ export default function ShopMode({
       } else {
         await pairScanToList(scan.id, armed);
       }
+      // Armed flow completed — clear any stale pending from a prior
+      // scan-first miss so the list drops out of pick-mode.
+      setPendingPairScanId(null);
+    } else if (scan?.id) {
+      // Scan-first flow — enter pick-mode.
+      setPendingPairScanId(scan.id);
     }
 
-    // Flash banner — always fires; confirms the pair status.
+    // Flash banner — always fires; confirms the status regardless of
+    // whether a pair landed.
     setLastScan({ scan, flashColor });
     setFlashVisible(true);
     if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
@@ -225,9 +246,29 @@ export default function ShopMode({
     await pairScanToList(scan.id, newItemId);
   }
 
-  // Tap a list item to arm it as the pair target for the next scan.
-  // Same item tapped again disarms; different item re-arms.
-  function toggleArm(listItemId) {
+  // Unified tap handler — two-way flow:
+  //   * If a scan is pending (scan-first flow), bind it to the tapped
+  //     list item (or run impulse-add for __impulse__).
+  //   * Otherwise, toggle ARM on the tapped item (tap-first flow).
+  async function handleListTap(listItemId) {
+    if (!listItemId) {
+      console.warn("[shop-mode] handleListTap: ignoring tap on id-less list item");
+      return;
+    }
+    // Scan-first flow — pair the pending scan.
+    if (pendingPairScanId) {
+      const pending = scans.find(s => s.id === pendingPairScanId);
+      if (pending) {
+        if (listItemId === "__impulse__") {
+          await doImpulseAdd(pending);
+        } else {
+          await pairScanToList(pending.id, listItemId);
+        }
+      }
+      setPendingPairScanId(null);
+      return;
+    }
+    // Tap-first flow — arm / disarm.
     setArmedListItemId(prev => (prev === listItemId ? null : listItemId));
   }
 
@@ -352,12 +393,55 @@ export default function ShopMode({
           </div>
         )}
 
+        {/* Pick-mode banner — "scan-first" branch. Last scan is
+            waiting for a list-item tap. Wins precedence over the
+            armed banner since, by definition, scan-first means
+            nothing's armed. */}
+        {pendingPairScanId && !flashVisible && (() => {
+          const pending = scans.find(s => s.id === pendingPairScanId);
+          if (!pending) return null;
+          const statusBg = FLASH_COLORS[pending.status]?.bg || "#444";
+          return (
+            <div style={{
+              position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 5,
+              padding: "10px 12px",
+              background: "rgba(14, 10, 22, 0.94)",
+              border: `1px solid ${statusBg}`,
+              borderRadius: 8,
+              display: "flex", alignItems: "center", gap: 10,
+              backdropFilter: "blur(4px)",
+            }}>
+              <span style={{ color: statusBg, fontSize: 18 }}>●</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#c7a8d4" }}>
+                  PICK WHICH LIST ITEM THIS IS
+                </div>
+                <div style={{
+                  fontSize: 14, fontStyle: "italic", color: "#fff",
+                  whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                }}>
+                  {pending.productName || pending.brand || `UPC ${pending.barcodeUpc}`}
+                </div>
+              </div>
+              <button
+                onClick={() => setPendingPairScanId(null)}
+                style={{
+                  background: "transparent", border: "none",
+                  color: "#888", fontSize: 18, cursor: "pointer",
+                  padding: "0 4px",
+                }}
+                aria-label="Skip"
+              >✕</button>
+            </div>
+          );
+        })()}
+
         {/* Armed banner — shows the user what their next scan will
             pair to, so they can confidently fire the scanner. Sits
             pinned at the bottom of the scanner half so it's close to
             the list (which is RIGHT below it). Sits above flash via
             its own zIndex. */}
-        {armedListItemId && !flashVisible && (() => {
+        {armedListItemId && !flashVisible && !pendingPairScanId && (() => {
           const armedItem = armedListItemId === "__impulse__"
             ? { name: "Impulse buy (adds to list on scan)", emoji: "🛒" }
             : listTargets.find(i => i.id === armedListItemId);
@@ -444,15 +528,101 @@ export default function ShopMode({
 
         {/* Scrollable list body */}
         <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 10px 12px" }}>
+          {/* Search bar — pinned above the list. Narrow by name as
+              the user types. Sticky so it stays visible while
+              scrolling a long list. */}
+          <div style={{
+            position: "sticky", top: 0, zIndex: 2,
+            background: "#0b0b0b",
+            padding: "4px 0 8px",
+            marginBottom: 4,
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "8px 12px",
+              background: "#141414",
+              border: "1px solid #242424",
+              borderRadius: 10,
+            }}>
+              <span style={{ fontSize: 13, color: "#666" }}>🔍</span>
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Find a list item…"
+                style={{
+                  flex: 1,
+                  background: "transparent", border: "none", outline: "none",
+                  color: "#f0ece4",
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                }}
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                  style={{
+                    background: "transparent", border: "none",
+                    color: "#666", fontSize: 13, cursor: "pointer",
+                  }}
+                >✕</button>
+              )}
+            </div>
+          </div>
+
+          {/* IMPULSE BUY — pinned near the top so a first-time user
+              doesn't have to scroll past the whole list to discover
+              it. Same tap-to-arm model as list items; when pick-mode
+              is active (pendingPairScanId set), tapping here routes
+              to impulse-add for the pending scan. */}
+          {(() => {
+            const isArmedImpulse = armedListItemId === "__impulse__";
+            const isPickMode = !!pendingPairScanId;
+            return (
+              <button
+                onClick={() => handleListTap("__impulse__")}
+                style={{
+                  display: "flex", width: "100%", alignItems: "center", gap: 10,
+                  padding: "10px 12px",
+                  background: isArmedImpulse ? "#2a2410" : "#141414",
+                  border: `${isArmedImpulse ? 2 : 1}px ${isArmedImpulse ? "solid" : "dashed"} ${isArmedImpulse ? "#f5c842" : "#555"}`,
+                  color: "#ddd",
+                  borderRadius: 10,
+                  marginBottom: 8,
+                  cursor: "pointer",
+                  fontSize: 13,
+                  letterSpacing: 0.6,
+                  textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 18 }}>🛒</span>
+                <span style={{ flex: 1 }}>
+                  {isPickMode
+                    ? "IMPULSE BUY — tap here to add this scan as a new entry"
+                    : "IMPULSE BUY — arm, then scan anything off-list"}
+                </span>
+                {isArmedImpulse && (
+                  <span style={{ fontSize: 10, color: "#f5c842", letterSpacing: 1.2 }}>ARMED</span>
+                )}
+              </button>
+            );
+          })()}
+
           {listTargets.length === 0 && (
             <div style={{ padding: 20, color: "#666", fontSize: 13, fontStyle: "italic", textAlign: "center" }}>
-              Your list is empty. Arm IMPULSE BUY below and every scan becomes a new entry.
+              {search
+                ? `No list items match “${search}”.`
+                : "Your list is empty. Arm IMPULSE BUY above and every scan becomes a new entry."}
             </div>
           )}
           {listTargets.map(item => {
             const status = statusByListId.get(item.id);         // "green" | "yellow" | "red" | undefined
             const paired = pairedByListId.get(item.id) || [];
-            const isArmed = armedListItemId === item.id;
+            // isArmed requires BOTH sides to have a concrete id — an
+            // id-less item can't match armedListItemId=null (both ===
+            // null would wrongly mark every id-less row armed).
+            const isArmed = !!item.id && armedListItemId === item.id;
+            const isPickMode = !!pendingPairScanId;
             const bg = isArmed
               ? "#2a2410"
               : status
@@ -466,7 +636,7 @@ export default function ShopMode({
             return (
               <button
                 key={item.id}
-                onClick={() => toggleArm(item.id)}
+                onClick={() => handleListTap(item.id)}
                 style={{
                   display: "flex", width: "100%", alignItems: "center", gap: 10,
                   padding: "10px 12px",
@@ -477,6 +647,11 @@ export default function ShopMode({
                   textAlign: "left",
                   cursor: "pointer",
                   transition: "border-color 0.15s, background 0.15s",
+                  // Pick-mode: dim all rows slightly so the user's
+                  // attention goes to the callout telling them to
+                  // pick one. Armed rows stay bright since they're
+                  // the active focus.
+                  opacity: isPickMode && !isArmed ? 0.78 : 1,
                 }}
               >
                 <div style={{ fontSize: 20 }}>{item.emoji || "🛒"}</div>
@@ -493,36 +668,14 @@ export default function ShopMode({
                     ARMED
                   </div>
                 )}
+                {isPickMode && !isArmed && (
+                  <div style={{ fontSize: 10, color: "#c7a8d4", letterSpacing: 1.2 }}>
+                    PICK →
+                  </div>
+                )}
               </button>
             );
           })}
-
-          {/* IMPULSE BUY arm — always available. Armed → next scan
-              silently appends a new list row for the scanned item. */}
-          <button
-            onClick={() => toggleArm("__impulse__")}
-            style={{
-              display: "flex", width: "100%", alignItems: "center", gap: 10,
-              padding: "10px 12px",
-              background: armedListItemId === "__impulse__" ? "#2a2410" : "#141414",
-              border: `${armedListItemId === "__impulse__" ? 2 : 1}px ${armedListItemId === "__impulse__" ? "solid" : "dashed"} ${armedListItemId === "__impulse__" ? "#f5c842" : "#555"}`,
-              color: "#ddd",
-              borderRadius: 10,
-              marginTop: 4,
-              cursor: "pointer",
-              fontSize: 13,
-              letterSpacing: 0.6,
-              textAlign: "left",
-            }}
-          >
-            <span style={{ fontSize: 18 }}>🛒</span>
-            <span style={{ flex: 1 }}>
-              IMPULSE BUY — next scan adds as a new list entry
-            </span>
-            {armedListItemId === "__impulse__" && (
-              <span style={{ fontSize: 10, color: "#f5c842", letterSpacing: 1.2 }}>ARMED</span>
-            )}
-          </button>
 
           {/* Scan history — stacked at the bottom of the list body so
               users can scroll down to review/adjust qty without a

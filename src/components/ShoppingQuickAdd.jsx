@@ -25,7 +25,16 @@ export default function ShoppingQuickAdd({ onClose, onAdd }) {
   function submit() {
     const cleaned = name.trim();
     if (!cleaned) return;
+    // Generate a client-side id. useSyncedList requires it (persist
+    // diff builds a Map keyed by id; id-less rows collapse into one
+    // slot and every subsequent tap compares equal downstream —
+    // that's what made Shop Mode's ARM highlight light up every row
+    // at once).
+    const id = (typeof crypto !== "undefined" && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     onAdd?.({
+      id,
       name: cleaned,
       emoji: "🛒",
       amount: qty,
