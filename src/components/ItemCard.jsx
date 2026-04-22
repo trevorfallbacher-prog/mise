@@ -28,7 +28,9 @@ import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
 import IAteThisSheet from "./IAteThisSheet";
 import ScheduleEatingSheet from "./ScheduleEatingSheet";
+import CookInstructionsSheet from "./CookInstructionsSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
+import { formatReheatSummary } from "./../data/recipes/schema";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
@@ -173,6 +175,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // band.
   const [iAteOpen, setIAteOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [cookInstructionsOpen, setCookInstructionsOpen] = useState(false);
   const item = useMemo(
     () => ({ ...(itemProp || {}), ...pendingChanges }),
     [itemProp, pendingChanges],
@@ -1258,6 +1261,75 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             getBrandNutrition={getBrandNutrition}
             onUpdate={onUpdate}
           />
+
+          {/* COOK INSTRUCTIONS — mini-recipe carried on the pantry row
+              itself. Empty state is a dashed "+ ADD COOK INSTRUCTIONS"
+              button; filled state reads like a CookMode header with
+              method · temp · time. Tapping opens the editor
+              (CookInstructionsSheet). When set, IAteThisSheet opens on
+              a reheat walkthrough phase before the log step so the
+              user actually heats the food before declaring they ate
+              it. Shape mirrors recipes.reheat so the same UI renders
+              both pantry cooks and recipe reheats. */}
+          {!isDraft && (() => {
+            const block = item?.cookInstructions?.primary || null;
+            if (!block) {
+              return (
+                <button
+                  type="button"
+                  onClick={() => setCookInstructionsOpen(true)}
+                  style={{
+                    width: "100%", padding: "10px 12px", marginBottom: 14,
+                    background: "#141414", border: "1px dashed #2a2a2a",
+                    borderRadius: 10,
+                    display: "flex", alignItems: "center", gap: 10,
+                    cursor: "pointer", textAlign: "left",
+                  }}
+                >
+                  <span style={{ fontSize: 16, opacity: 0.6 }}>♨</span>
+                  <span style={{
+                    flex: 1,
+                    fontFamily: "'DM Mono',monospace", fontSize: 11,
+                    color: "#888", letterSpacing: "0.08em",
+                  }}>
+                    TAP TO ADD COOK INSTRUCTIONS
+                  </span>
+                  <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>+</span>
+                </button>
+              );
+            }
+            return (
+              <button
+                type="button"
+                onClick={() => setCookInstructionsOpen(true)}
+                style={{
+                  width: "100%", padding: "10px 12px", marginBottom: 14,
+                  background: "#1a1608", border: "1px solid #3a2f10",
+                  borderRadius: 10,
+                  display: "flex", alignItems: "center", gap: 10,
+                  cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 16 }}>♨</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#f5c842", letterSpacing: "0.14em",
+                  }}>
+                    COOK INSTRUCTIONS
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                    color: "#f0ece4", marginTop: 2,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {formatReheatSummary(item.cookInstructions) || "Custom cook"}
+                  </div>
+                </div>
+                <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>✎</span>
+              </button>
+            );
+          })()}
 
           {/* "I ate this" + "Schedule" — paired consumption affordances.
               LEFT button logs a consumption NOW (opens IAteThisSheet);
@@ -3060,6 +3132,18 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           userId={userId}
           onClose={() => setScheduleOpen(false)}
           onDone={() => setScheduleOpen(false)}
+        />
+      )}
+
+      {/* Cook-instructions editor. Persists to pantry_items.cook_instructions
+          (migration 0125) via the same onUpdate commit path every other
+          field uses — pendingChanges merge → apply → realtime reconcile.
+          null argument clears the block. */}
+      {cookInstructionsOpen && (
+        <CookInstructionsSheet
+          item={item}
+          onClose={() => setCookInstructionsOpen(false)}
+          onSave={async (block) => { onUpdate?.({ cookInstructions: block }); }}
         />
       )}
 

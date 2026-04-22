@@ -40,7 +40,7 @@ import { useCallback, useState } from "react";
 import { supabase } from "./supabase";
 import { findIngredient } from "../data/ingredients";
 import { resolveNutrition, scaleFactor, validateNutrition, effectiveCountWeightG } from "./nutrition";
-import { decrementRow } from "./unitConvert";
+import { convertWithBridge } from "./unitConvert";
 
 // Hour → default meal slot. Lets the sheet pre-select the most likely
 // slot for the user's time of day without forcing them into it.
@@ -177,95 +177,145 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
       // translate the consumed unit into the row's own unit).
       // Clamped at 0 either way — never drive inventory negative.
       if (isMealRow) {
+        let mealWarning = null;
         const currentServings = Number(pantryRow.servingsRemaining);
         if (Number.isFinite(currentServings)) {
           const nextServings = Math.max(0, Number((currentServings - amt).toFixed(4)));
           if (nextServings <= 0) {
             // All servings consumed — delete the pantry row outright
-            // so the Kitchen tile disappears. The consumption_logs
-            // row we just inserted preserves the history (and keeps
-            // source_cook_log_id so analytics don't lose the trail).
-            // ON DELETE SET NULL on consumption_logs.pantry_row_id
-            // nulls the fk cleanly when the row goes.
+            // so the Kitchen tile disappears. consumption_logs
+            // preserves history via source_cook_log_id; ON DELETE SET
+            // NULL on pantry_row_id nulls the fk cleanly.
             const { error: delErr } = await supabase
               .from("pantry_items")
               .delete()
-              .eq("id", pantryRow.id);
+              .eq("id", pantryRow.id)
+              .select();
             if (delErr) {
-              console.warn("[consumption_logs] meal delete (fully consumed) failed:", delErr.message);
+              mealWarning = `meal delete failed: ${delErr.message}`;
+              console.warn(`[consumption_logs] ${mealWarning}`);
             }
           } else if (nextServings !== currentServings) {
-            const { error: updErr } = await supabase
+            const { data: updated, error: updErr } = await supabase
               .from("pantry_items")
               .update({ servings_remaining: nextServings })
-              .eq("id", pantryRow.id);
+              .eq("id", pantryRow.id)
+              .select();
             if (updErr) {
-              console.warn("[consumption_logs] meal decrement failed:", updErr.message);
+              mealWarning = `meal decrement failed: ${updErr.message}`;
+              console.warn(`[consumption_logs] ${mealWarning}`);
+            } else if (!updated || updated.length === 0) {
+              mealWarning = "meal decrement matched no rows (RLS or row deleted)";
+              console.warn(`[consumption_logs] ${mealWarning}`);
             }
           }
+        }
+        if (mealWarning) {
+          return { ok: true, consumption: row, inventoryWarning: mealWarning };
         }
       } else {
-        // Ingredient-row decrement. This path runs for BOTH canonical-
-        // linked rows (canon != null) and orphan rows (canon == null).
-        // Before: we gated the whole block on `canon`, which meant
-        // orphans (or rows tagged to the wrong canonical whose ladder
-        // couldn't bridge to the row's unit) silently skipped the
-        // decrement — "I ate this" logged the event but inventory
-        // stayed at 12 fl oz. Now we try the canonical-aware
-        // decrement first, then fall back to a direct same-unit
-        // subtraction when the conversion path can't be found.
-        let next = canon ? decrementRow(pantryRow, { amount: amt, unit }, canon) : null;
-        if (next == null && unit === pantryRow.unit) {
-          // Same unit as the row, no conversion needed. Happens when
-          // a Pepsi row tagged to "sugar" is eaten in fl oz: sugar's
-          // ladder doesn't carry fl oz, so decrementRow returns null,
-          // but the arithmetic is trivial — amount minus amount in
-          // the same unit. Catches the common "wrong canonical, right
-          // unit" shape.
-          next = Math.max(0, Number((Number(pantryRow.amount) - amt).toFixed(4)));
+        // Ingredient-row decrement. Runs for both canonical-linked rows
+        // and orphan rows. Three-tier resolution:
+        //   1. convertWithBridge — preferred. Handles same-ladder AND
+        //      cross-family bridges via row.countWeightG /
+        //      packageAmount/packageUnit (migration 0121 / 0054). This
+        //      unlocks cases the old raw convert() couldn't reach:
+        //      chicken breast row calibrated to 225g/count, or Pepsi
+        //      packaged in fl oz eaten by "can" where the canonical's
+        //      ladder doesn't carry both.
+        //   2. Same-unit subtraction — fallback for orphan rows (no
+        //      canonical) or rows tagged to a canonical whose ladder
+        //      can't reach the eaten unit even with a bridge.
+        //   3. Report failure back to the caller as inventoryWarning
+        //      so the sheet can surface it instead of silently leaving
+        //      the row at its original amount.
+        let next = null;
+        let decrementReason = null;
+        if (canon) {
+          const conv = convertWithBridge(
+            { amount: amt, unit },
+            pantryRow.unit,
+            canon,
+            pantryRow,
+          );
+          if (conv.ok && Number.isFinite(conv.value)) {
+            next = Math.max(0, Number((Number(pantryRow.amount) - conv.value).toFixed(4)));
+          } else {
+            decrementReason = conv.reason || "conversion-failed";
+          }
         }
-        if (next != null && next !== Number(pantryRow.amount)) {
+        if (next == null && unit === pantryRow.unit) {
+          next = Math.max(0, Number((Number(pantryRow.amount) - amt).toFixed(4)));
+          decrementReason = null;
+        }
+
+        let inventoryWarning = null;
+        if (next == null) {
+          inventoryWarning = `couldn't reduce inventory — no conversion from ${unit} to ${pantryRow.unit}${decrementReason ? ` (${decrementReason})` : ""}`;
+          console.warn(`[consumption_logs] ${inventoryWarning}`);
+        } else if (next === Number(pantryRow.amount)) {
+          // Guard against no-op updates: if the computed next equals
+          // current amount (rounding hit zero, amt was too small to
+          // register at the configured precision) we still want to
+          // flag it — the user pressed LOG IT expecting a decrement.
+          if (amt > 0) {
+            inventoryWarning = `amount too small to register (ate ${amt} ${unit}, row is ${pantryRow.amount} ${pantryRow.unit})`;
+            console.warn(`[consumption_logs] ${inventoryWarning}`);
+          }
+        } else if (next <= 0) {
           // Zero-amount cleanup. Mirrors CookComplete's post-cook
-          // pop-or-delete behavior so the two "reduce pantry by X"
-          // flows end the same way: either pop the next sealed pack
-          // (migration 0054 reserves) or drop the row outright so the
-          // Kitchen tile disappears instead of lingering as an empty
-          // ghost. consumption_logs.pantry_row_id is ON DELETE SET
-          // NULL, so the log we just inserted stays intact.
-          if (next <= 0) {
-            const reserves = Number(pantryRow.reserveCount);
-            const packAmt  = Number(pantryRow.packageAmount);
-            if (Number.isFinite(reserves) && reserves > 0 &&
-                Number.isFinite(packAmt)  && packAmt  > 0) {
-              const { error: popErr } = await supabase
-                .from("pantry_items")
-                .update({ amount: packAmt, reserve_count: reserves - 1 })
-                .eq("id", pantryRow.id);
-              if (popErr) {
-                console.warn("[consumption_logs] reserve-pop failed:", popErr.message);
-              }
-            } else {
-              const { error: delErr } = await supabase
-                .from("pantry_items")
-                .delete()
-                .eq("id", pantryRow.id);
-              if (delErr) {
-                console.warn("[consumption_logs] empty-row delete failed:", delErr.message);
-              }
+          // pop-or-delete behavior: pop the next sealed pack if one
+          // exists, else drop the row so the Kitchen tile doesn't
+          // linger as an empty ghost. consumption_logs.pantry_row_id
+          // is ON DELETE SET NULL, so the just-inserted log stays.
+          const reserves = Number(pantryRow.reserveCount);
+          const packAmt  = Number(pantryRow.packageAmount);
+          if (Number.isFinite(reserves) && reserves > 0 &&
+              Number.isFinite(packAmt)  && packAmt  > 0) {
+            const { data: popped, error: popErr } = await supabase
+              .from("pantry_items")
+              .update({ amount: packAmt, reserve_count: reserves - 1 })
+              .eq("id", pantryRow.id)
+              .select();
+            if (popErr) {
+              inventoryWarning = `reserve-pop failed: ${popErr.message}`;
+              console.warn(`[consumption_logs] ${inventoryWarning}`);
+            } else if (!popped || popped.length === 0) {
+              inventoryWarning = "reserve-pop matched no rows (RLS or race)";
+              console.warn(`[consumption_logs] ${inventoryWarning}`);
             }
           } else {
-            const { error: updErr } = await supabase
+            const { error: delErr } = await supabase
               .from("pantry_items")
-              .update({ amount: next })
-              .eq("id", pantryRow.id);
-            if (updErr) {
-              // Non-fatal. The consumption_logs row already landed,
-              // so the dashboard tally is correct; inventory just
-              // didn't decrement. Warn so we see drift in logs rather
-              // than ignoring it silently.
-              console.warn("[consumption_logs] pantry decrement failed:", updErr.message);
+              .delete()
+              .eq("id", pantryRow.id)
+              .select();
+            if (delErr) {
+              inventoryWarning = `empty-row delete failed: ${delErr.message}`;
+              console.warn(`[consumption_logs] ${inventoryWarning}`);
             }
           }
+        } else {
+          const { data: updated, error: updErr } = await supabase
+            .from("pantry_items")
+            .update({ amount: next })
+            .eq("id", pantryRow.id)
+            .select();
+          if (updErr) {
+            inventoryWarning = `decrement failed: ${updErr.message}`;
+            console.warn(`[consumption_logs] ${inventoryWarning}`);
+          } else if (!updated || updated.length === 0) {
+            // Surface silent-no-op cases: UPDATE with no matched rows
+            // means RLS blocked it, the row was just deleted, or the
+            // id mismatches. Previously this was invisible — the
+            // event logged but inventory stayed put with no feedback.
+            inventoryWarning = "decrement matched no rows (RLS or row deleted)";
+            console.warn(`[consumption_logs] ${inventoryWarning}`);
+          }
+        }
+
+        if (inventoryWarning) {
+          return { ok: true, consumption: row, inventoryWarning };
         }
       }
 

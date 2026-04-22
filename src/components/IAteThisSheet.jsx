@@ -11,6 +11,7 @@ import { useConsumptionLogs, inferMealSlot } from "../lib/useConsumptionLogs";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { useToast } from "../lib/toast";
 
 /**
  * IAteThisSheet — "I just ate this" declaration flow.
@@ -48,6 +49,7 @@ const MEAL_SLOTS = [
 export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const ingredientInfo = useIngredientInfo();
   const brandNutrition = useBrandNutrition();
+  const { push: pushToast } = useToast();
   const { logConsumption, loading } = useConsumptionLogs({
     userId,
     brandNutrition,
@@ -73,16 +75,24 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const sourceCookLogId = pantryRow?.sourceCookLogId || null;
   const sourceRecipeSlug = pantryRow?.sourceRecipeSlug || null;
 
-  // Look up the source recipe for reheat instructions. Meal rows
-  // carry sourceRecipeSlug from CookComplete, which resolves against
-  // either bundled recipes or user_recipes. Null when the row is an
-  // ingredient, the slug is missing, or the recipe has no reheat
-  // block authored yet — all of which render as "no reheat tip".
+  // Reheat / cook-instructions lookup. Two tiers, pantry-row wins:
+  //   1. pantryRow.cookInstructions (migration 0125) — per-item
+  //      mini-recipe the user authored on the ItemCard. Covers raw
+  //      ingredient rows (a fresh chicken breast the user plans to
+  //      pan-sear, a frozen burrito with microwave directions) that
+  //      have no source recipe.
+  //   2. source recipe's `reheat` block — meal-kind leftover rows
+  //      (migration 0026) with a cook log. Inherited from whatever
+  //      recipe was cooked, via findRecipe → bundled or user_recipes.
+  // Second argument falls through only when the pantry row itself
+  // has no instructions, so per-row authored notes always win over
+  // the generic recipe reheat (the jar of Grandma's chili knows
+  // itself better than the recipe template does).
   const { findBySlug: findUserRecipe } = useUserRecipes(userId);
   const sourceRecipe = (isMealRow && sourceRecipeSlug)
     ? findRecipe(sourceRecipeSlug, findUserRecipe)
     : null;
-  const reheat = sourceRecipe?.reheat || null;
+  const reheat = pantryRow?.cookInstructions || sourceRecipe?.reheat || null;
 
   // Meal-kind leftovers don't have a canonical; their nutrition lives
   // on cook_logs.nutrition (per-serving blob stamped at cook-time).
@@ -176,17 +186,18 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const [note,     setNote]     = useState("");
   const [error,    setError]    = useState(null);
 
-  // Two-phase walkthrough for meal leftovers with reheat data:
+  // Two-phase walkthrough for any row carrying reheat / cook-instructions
+  // data (either per-item cookInstructions from migration 0125 OR the
+  // source recipe's reheat block for meal leftovers):
   //   phase="reheat" — cook-style walkthrough with method + optional
   //                    countdown + "READY" CTA. Gives the user a
   //                    moment to actually heat the food before
   //                    logging, rather than treating the sheet as a
   //                    data-entry form.
   //   phase="amount" — existing stepper + meal slot + confirm.
-  // Ingredient rows (no canonical reheat) skip straight to amount.
-  const [phase, setPhase] = useState(
-    (isMealRow && reheat) ? "reheat" : "amount"
-  );
+  // Rows with no reheat block (raw produce, dry goods, drinks) skip
+  // straight to amount.
+  const [phase, setPhase] = useState(reheat ? "reheat" : "amount");
 
   // Unified method list: primary first, then any alternatives the
   // recipe author supplied. User picks which one they're actually
@@ -381,6 +392,14 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
       setError(result.error || "Couldn't log that — try again.");
       return;
     }
+    // Inventory-decrement fell through silently — the consumption
+    // logged and the dashboard tally is correct, but the pantry row
+    // didn't decrement (RLS, unit can't bridge, row vanished mid-
+    // flight, etc.). Surface the reason as a toast so the user sees
+    // the drift instead of having to notice it later on the shelf.
+    if (result.inventoryWarning) {
+      pushToast?.(`Logged, but ${result.inventoryWarning}`, { emoji: "⚠️", kind: "warn", ttl: 6000 });
+    }
     onDone?.(result.consumption);
     onClose?.();
   };
@@ -564,8 +583,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           <>
         {/* Compact reheat summary still surfaces on the amount phase
             for quick reference — collapsed version of step 1 so the
-            user doesn't lose the context while dialing servings. */}
-        {isMealRow && reheat && (
+            user doesn't lose the context while dialing servings.
+            Fires for both meal leftovers and ingredient rows with
+            their own cookInstructions block. */}
+        {reheat && (
           <div style={{
             padding: "8px 12px",
             background: "#1a1608",
@@ -858,8 +879,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
         )}
 
         <div style={{ display: "flex", gap: 8 }}>
-          {/* Back to reheat phase — only visible when we started there. */}
-          {isMealRow && reheat && (
+          {/* Back to reheat phase — visible whenever we have reheat
+              data to return to (meal leftover OR per-item cook
+              instructions). */}
+          {reheat && (
             <button
               type="button"
               onClick={() => setPhase("reheat")}
@@ -879,7 +902,7 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
             onClick={confirm}
             disabled={loading || !(Number(amount) > 0)}
             style={{
-              flex: isMealRow && reheat ? 2 : 1,
+              flex: reheat ? 2 : 1,
               padding: "14px",
               background: loading || !(Number(amount) > 0) ? "#1a1a1a" : "#f5c842",
               border: "none", borderRadius: 12,
