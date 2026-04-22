@@ -132,8 +132,22 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single", 
         const caps = track.getCapabilities();
         if (caps?.zoom && typeof caps.zoom.min === "number") {
           setZoomCaps({ min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
-          setZoomValue(caps.zoom.min);
+          // Default to 1.5x (clamped into the supported range) so
+          // products land at a natural framing — at 1x, the wide-
+          // angle phone lens flattens perspective enough that small
+          // UPCs can read as low-contrast smudges. 1.5x gives the
+          // decoder more pixels per bar without forcing the user
+          // to fiddle with the slider.
+          const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 1.5));
+          setZoomValue(target);
           videoTrackRef.current = track;
+          // Apply the constraint so the stream actually shifts. Do
+          // this inline rather than going through applyZoom() — the
+          // component's zoomCaps / videoTrackRef state hasn't been
+          // committed yet (setState is async), so applyZoom would
+          // early-return.
+          track.applyConstraints({ advanced: [{ zoom: target }] })
+            .catch(e => console.warn("[barcode] initial zoom apply failed:", e));
         }
         if (caps?.torch) {
           setTorchSupported(true);
