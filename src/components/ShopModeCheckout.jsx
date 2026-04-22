@@ -19,7 +19,7 @@
 // Skip-receipt path is always available — pantry rows still land with
 // full identity, just without prices.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { compressImage } from "../lib/compressImage";
 
@@ -81,7 +81,7 @@ async function fileToBase64(file) {
 
 export default function ShopModeCheckout({
   trip,
-  scans = [],
+  scans: initialScans = [],
   userId,
   shoppingList = [],
   setShoppingList,
@@ -96,6 +96,14 @@ export default function ShopModeCheckout({
   // Map<scanId, { priceCents, lineIndex }> — which receipt line
   // each scan paired to, and what price to stamp on the pantry row.
   const [priceByScan, setPriceByScan] = useState(new Map());
+  // Local editable copy of the scans array. Edits in the summary
+  // phase (name, brand, qty, unpair, delete) write through to DB
+  // AND mutate this state so the commit pass + re-renders pick up
+  // the fresh values. Initialized once from the snapshot Kitchen
+  // handed us when the user tapped DONE in ShopMode.
+  const [scans, setScans] = useState(initialScans);
+  // Which scan, if any, has its inline editor open. null = closed.
+  const [editingScanId, setEditingScanId] = useState(null);
 
   async function handlePhotoSelect(e) {
     const file = e?.target?.files?.[0];
@@ -337,6 +345,35 @@ export default function ShopModeCheckout({
     }
   }
 
+  // Edit handlers — write through to DB first, then mutate local
+  // state. On error, local state is untouched so the user can retry.
+  async function patchScan(scanId, patch) {
+    const { data, error: e } = await supabase
+      .from("trip_scans")
+      .update(patch)
+      .eq("id", scanId)
+      .select("*")
+      .single();
+    if (e) {
+      console.warn("[shop-checkout] patchScan failed:", e.message, patch);
+      return false;
+    }
+    setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...remapFromDb(data) } : s));
+    return true;
+  }
+
+  async function deleteScan(scanId) {
+    const ok = window.confirm("Remove this scan from the trip? It won't be stocked on commit.");
+    if (!ok) return;
+    const { error: e } = await supabase.from("trip_scans").delete().eq("id", scanId);
+    if (e) {
+      console.warn("[shop-checkout] deleteScan failed:", e.message);
+      return;
+    }
+    setScans(prev => prev.filter(s => s.id !== scanId));
+    setEditingScanId(prev => prev === scanId ? null : prev);
+  }
+
   const pairedCount = scans.filter(s => s.pairedShoppingListItemId).length;
   const totalQty    = scans.reduce((n, s) => n + (s.qty || 1), 0);
 
@@ -358,14 +395,23 @@ export default function ShopModeCheckout({
             YOUR TRIP · {scans.length} UNIQUE ITEM{scans.length === 1 ? "" : "S"} · {totalQty} TOTAL
           </div>
           <div style={{ color: "#aaa", fontSize: 13, marginBottom: 16 }}>
-            {pairedCount} of {scans.length} paired to your list. Attach a receipt
-            to stamp prices on every row — or skip and commit without prices.
+            {pairedCount} of {scans.length} paired to your list.
+            Tap any row to fix the name or brand, adjust qty, or drop it
+            from the trip. Then attach a receipt for prices — or skip.
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {scans.map(s => (
-              <TripScanLine key={s.id} scan={s}
-                listName={nameForListId(shoppingList, s.pairedShoppingListItemId)} />
+              <EditableScanLine
+                key={s.id}
+                scan={s}
+                listName={nameForListId(shoppingList, s.pairedShoppingListItemId)}
+                isOpen={editingScanId === s.id}
+                onToggle={() => setEditingScanId(prev => prev === s.id ? null : s.id)}
+                onPatch={(patch) => patchScan(s.id, patch)}
+                onDelete={() => deleteScan(s.id)}
+                onUnpair={() => patchScan(s.id, { paired_shopping_list_item_id: null })}
+              />
             ))}
           </div>
 
@@ -486,6 +532,169 @@ function nameForListId(list, id) {
   if (!id) return null;
   return (list || []).find(i => i.id === id)?.name || null;
 }
+
+// DB → in-memory scan shape. Mirrors the one in useShopMode but
+// local since checkout doesn't import that hook.
+function remapFromDb(row) {
+  return {
+    id:                       row.id,
+    tripId:                   row.trip_id,
+    userId:                   row.user_id,
+    scannedAt:                row.scanned_at,
+    barcodeUpc:               row.barcode_upc,
+    offPayload:               row.off_payload || null,
+    status:                   row.status,
+    canonicalId:              row.canonical_id,
+    brand:                    row.brand,
+    productName:              row.product_name,
+    qty:                      row.qty ?? 1,
+    pairedShoppingListItemId: row.paired_shopping_list_item_id,
+    pairedPantryItemId:       row.paired_pantry_item_id,
+    pairedReceiptLineIndex:   row.paired_receipt_line_index,
+  };
+}
+
+// Inline-editable scan row for the checkout summary. Collapsed
+// state = same single-line read view as TripScanLine. Expanded
+// state = name + brand text inputs, qty stepper, unpair + delete
+// actions. Edits write through to the DB; parent updates local
+// state on success.
+function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair }) {
+  const [name, setName]   = useState(scan.productName || "");
+  const [brand, setBrand] = useState(scan.brand || "");
+
+  // Reset the text fields when the scan identity changes under us
+  // (realtime tick from a different client, for instance).
+  useEffect(() => { setName(scan.productName || ""); setBrand(scan.brand || ""); }, [scan.productName, scan.brand]);
+
+  const color = FLASH_COLORS[scan.status]?.bg || "#444";
+  const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
+
+  async function saveTextFields() {
+    const patch = {};
+    if ((name || "") !== (scan.productName || "")) patch.product_name = name.trim() || null;
+    if ((brand || "") !== (scan.brand || ""))     patch.brand        = brand.trim() || null;
+    if (Object.keys(patch).length === 0) return;
+    await onPatch(patch);
+  }
+
+  async function bumpQty(delta) {
+    const next = Math.max(1, (scan.qty || 1) + delta);
+    if (next === scan.qty) return;
+    await onPatch({ qty: next });
+  }
+
+  return (
+    <div style={{
+      background: "#141414",
+      border: `1px solid ${color}55`,
+      borderRadius: 10,
+      overflow: "hidden",
+    }}>
+      <button
+        onClick={onToggle}
+        style={{
+          display: "flex", width: "100%", alignItems: "center", gap: 10,
+          padding: "10px 12px",
+          background: "transparent", border: "none",
+          color: "#f0ece4", cursor: "pointer", textAlign: "left",
+        }}
+      >
+        <span style={{ color, fontSize: 14 }}>●</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {label}{scan.qty > 1 ? `  ×${scan.qty}` : ""}
+          </div>
+          <div style={{ color: "#888", fontSize: 11, marginTop: 2 }}>
+            {listName ? `→ ${listName}` : "unpaired"}
+            {scan.brand && scan.productName ? ` · ${scan.brand}` : ""}
+          </div>
+        </div>
+        <span style={{ color: "#666", fontSize: 11 }}>{isOpen ? "▲" : "EDIT ▼"}</span>
+      </button>
+
+      {isOpen && (
+        <div style={{
+          padding: "4px 12px 12px",
+          borderTop: "1px solid #222",
+          display: "flex", flexDirection: "column", gap: 8,
+        }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>NAME</span>
+            <input
+              type="text"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              onBlur={saveTextFields}
+              placeholder="What is it?"
+              style={textInput}
+            />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>BRAND</span>
+            <input
+              type="text"
+              value={brand}
+              onChange={e => setBrand(e.target.value)}
+              onBlur={saveTextFields}
+              placeholder="Brand (optional)"
+              style={textInput}
+            />
+          </label>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 2 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888", flex: 1 }}>QTY</span>
+            <button onClick={() => bumpQty(-1)} style={qtyBtn} aria-label="Decrease">−</button>
+            <span style={{ minWidth: 30, textAlign: "center", color: "#f0ece4", fontSize: 15 }}>×{scan.qty || 1}</span>
+            <button onClick={() => bumpQty(1)} style={qtyBtn} aria-label="Increase">+</button>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            {scan.pairedShoppingListItemId && (
+              <button onClick={onUnpair} style={editBtn}>UNPAIR FROM LIST</button>
+            )}
+            <button onClick={onDelete} style={{ ...editBtn, color: "#f8c7c7", borderColor: "#5a2a2a" }}>
+              DELETE SCAN
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const textInput = {
+  background: "#0d0d0d",
+  border: "1px solid #2a2a2a",
+  color: "#f0ece4",
+  borderRadius: 8,
+  padding: "8px 10px",
+  fontSize: 14,
+  outline: "none",
+  fontFamily: "'DM Sans',sans-serif",
+};
+
+const qtyBtn = {
+  width: 30, height: 30,
+  background: "#0d0d0d",
+  border: "1px solid #2a2a2a",
+  color: "#f0ece4",
+  borderRadius: 6,
+  fontSize: 16,
+  cursor: "pointer",
+};
+
+const editBtn = {
+  flex: 1,
+  padding: "8px 10px",
+  background: "transparent",
+  border: "1px solid #333",
+  color: "#aaa",
+  borderRadius: 8,
+  fontSize: 11,
+  letterSpacing: 1,
+  cursor: "pointer",
+};
 
 function TripScanLine({ scan, listName, priceCents }) {
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
