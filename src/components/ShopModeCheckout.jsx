@@ -41,13 +41,31 @@ function tokens(s) {
   return new Set(normalizeName(s).split(" ").filter(t => t.length >= 3));
 }
 
-// Match a trip_scan to a receipt line. UPC direct match wins; else
-// productName/brand ↔ rawText token overlap.
+// Normalize barcodes to a pure digit string so leading zeros, spaces,
+// or hyphens from OCR don't prevent equality matches. "00070038000563"
+// vs "70038000563" compare equal after normalization (strip leading
+// zeros after the length check — UPC-A is 12 digits, EAN-13 is 13, an
+// 8-digit EAN-8 is 8; receipts sometimes pad with leading zeros).
+function normalizeBarcode(b) {
+  const digits = String(b || "").replace(/\D+/g, "");
+  if (digits.length < 8 || digits.length > 14) return "";
+  // Align UPC-A ↔ EAN-13 — EAN-13 is just a country-code-prefixed
+  // UPC-A. Stripping a leading "0" from a 13-digit code yields the
+  // UPC-A representation of the same product.
+  if (digits.length === 13 && digits.startsWith("0")) return digits.slice(1);
+  return digits;
+}
+
+// Match a trip_scan to a receipt line. UPC direct match wins (the
+// receipt prompt now asks the model to pluck the UPC off each line,
+// typically printed between the item text and the price on US
+// receipts). Falls through to productName/brand ↔ rawText token
+// overlap for lines where the UPC wasn't printed or wasn't read.
 function matchScanToReceiptLine(scan, receiptLines, claimed) {
-  // UPC first — some US receipts (Costco, Target) DO include UPCs.
-  if (scan.barcodeUpc) {
+  const scanUpc = normalizeBarcode(scan.barcodeUpc);
+  if (scanUpc) {
     const byUpc = receiptLines.findIndex(
-      (line, i) => !claimed.has(i) && line?.barcode === scan.barcodeUpc,
+      (line, i) => !claimed.has(i) && normalizeBarcode(line?.barcode) === scanUpc,
     );
     if (byUpc >= 0) return byUpc;
   }
