@@ -22,6 +22,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { compressImage } from "../lib/compressImage";
+import { findIngredient } from "../data/ingredients";
+import LinkIngredient from "./LinkIngredient";
 
 const FLASH_COLORS = {
   green:  { bg: "#1f6b3a", label: "MATCHED" },
@@ -580,6 +582,10 @@ function remapFromDb(row) {
 function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair }) {
   const [name, setName]   = useState(scan.productName || "");
   const [brand, setBrand] = useState(scan.brand || "");
+  // LinkIngredient picker — embedded as a full-screen modal on tap.
+  // Covers bundled fuzzy match + admin-approved synthetics + the
+  // ⭐ create-new-canonical flow. Picked id writes to trip_scans.canonical_id.
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // Reset the text fields when the scan identity changes under us
   // (realtime tick from a different client, for instance).
@@ -587,6 +593,16 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
 
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
   const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
+
+  // Resolve the current canonical for display. findIngredient covers
+  // bundled; for synthetic (admin-approved user slugs) we degrade to
+  // showing the raw slug — LinkIngredient handles the full lookup.
+  const currentCanonical = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
+  const canonicalLabel = currentCanonical
+    ? `${currentCanonical.emoji || ""} ${currentCanonical.shortName || currentCanonical.name}`
+    : scan.canonicalId
+      ? scan.canonicalId
+      : null;
 
   async function saveTextFields() {
     const patch = {};
@@ -600,6 +616,21 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
     const next = Math.max(1, (scan.qty || 1) + delta);
     if (next === scan.qty) return;
     await onPatch({ qty: next });
+  }
+
+  // LinkIngredient picked a canonical (single-mode → first id is the
+  // pick). Write it + re-classify status: if we now have a canonical,
+  // status goes green; cleared canonical demotes to yellow (unless
+  // there was never OFF data — stays red).
+  async function onCanonicalPicked(ids) {
+    const next = Array.isArray(ids) && ids.length ? ids[0] : null;
+    const patch = {
+      canonical_id: next,
+    };
+    if (next) patch.status = "green";
+    else if (scan.offPayload) patch.status = "yellow";
+    await onPatch(patch);
+    setPickerOpen(false);
   }
 
   return (
@@ -626,6 +657,7 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
           <div style={{ color: "#888", fontSize: 11, marginTop: 2 }}>
             {listName ? `→ ${listName}` : "unpaired"}
             {scan.brand && scan.productName ? ` · ${scan.brand}` : ""}
+            {canonicalLabel ? ` · ${canonicalLabel}` : ""}
           </div>
         </div>
         <span style={{ color: "#666", fontSize: 11 }}>{isOpen ? "▲" : "EDIT ▼"}</span>
@@ -638,16 +670,47 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
           display: "flex", flexDirection: "column", gap: 8,
         }}>
           <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>NAME</span>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>WHAT IS IT? (NAME)</span>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
               onBlur={saveTextFields}
-              placeholder="What is it?"
+              placeholder="Display name"
               style={textInput}
             />
           </label>
+
+          {/* Canonical picker — tan chip to match the CANONICAL axis
+              color (CLAUDE.md). Tapping opens LinkIngredient in
+              single mode: bundled fuzzy + admin synthetics + ⭐
+              create-new, same picker every other scan correction
+              surface uses. */}
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#b8a878" }}>CANONICAL</span>
+            <button
+              type="button"
+              onClick={() => setPickerOpen(true)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "8px 10px",
+                background: canonicalLabel ? "#1a1710" : "#0d0d0d",
+                border: `1px ${canonicalLabel ? "solid" : "dashed"} #b8a87888`,
+                borderRadius: 8,
+                color: canonicalLabel ? "#b8a878" : "#888",
+                fontSize: 13, fontStyle: "italic",
+                cursor: "pointer", textAlign: "left",
+              }}
+            >
+              <span style={{ flex: 1 }}>
+                {canonicalLabel || "Tap to link a canonical or ⭐ create new"}
+              </span>
+              <span style={{ fontSize: 11, opacity: 0.7 }}>
+                {canonicalLabel ? "CHANGE ▶" : "PICK ▶"}
+              </span>
+            </button>
+          </label>
+
           <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>BRAND</span>
             <input
@@ -676,6 +739,19 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
             </button>
           </div>
         </div>
+      )}
+
+      {pickerOpen && (
+        <LinkIngredient
+          item={{
+            name:  scan.productName || scan.brand || "",
+            emoji: "🛒",
+            ingredientIds: scan.canonicalId ? [scan.canonicalId] : [],
+          }}
+          mode="single"
+          onLink={onCanonicalPicked}
+          onClose={() => setPickerOpen(false)}
+        />
       )}
     </div>
   );
