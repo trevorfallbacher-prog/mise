@@ -1082,10 +1082,68 @@ Deno.serve(async (req) => {
     aiRationale: typeof recipe.aiRationale === "string"
       ? String(recipe.aiRationale).slice(0, 400).trim() || null
       : null,
+    // Reheat block — passed through from Claude's output when the
+    // shape is valid. Stored on user_recipes.recipe so leftover
+    // pantry rows can look up the reheat walkthrough via
+    // findBySlug(sourceRecipeSlug) at read time, per the
+    // "single source of truth" pattern called out in the recipe
+    // schema header. Previously this was silently dropped during
+    // normalization, which broke the I-ATE-THIS reheat flow for
+    // every AI-drafted leftover.
+    reheat:     normalizeReheat(recipe.reheat),
   };
 
   return new Response(JSON.stringify({ recipe: finalRecipe }), { headers: JSON_HEADERS });
 });
+
+// Reheat-block normalizer. Validates method enum, drops a block
+// missing a required tempF (oven/air_fryer/toaster_oven), coerces
+// bad alt-array entries to just skip them, and trims stray tips
+// strings. Returns null when the model either omitted reheat or
+// produced something the client resolver couldn't render — null is
+// the honest "eaten fresh, no reheat" signal (vinaigrettes, tartares,
+// whipped dishes). The client's reheatToCookInstructions helper is
+// what consumes this downstream.
+const REHEAT_METHODS = new Set([
+  "oven", "microwave", "stovetop", "air_fryer", "toaster_oven", "cold",
+]);
+function normalizeReheatBlock(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const b = raw as Record<string, unknown>;
+  const method = typeof b.method === "string" ? b.method : "";
+  if (!REHEAT_METHODS.has(method)) return null;
+  const needsTemp = method === "oven" || method === "air_fryer" || method === "toaster_oven";
+  const temp = Number(b.tempF);
+  const tempF: number | null = Number.isFinite(temp) && temp > 0 ? Math.round(temp) : null;
+  if (needsTemp && tempF == null) return null;
+  const time = Number(b.timeMin);
+  if (!Number.isFinite(time) || time <= 0) return null;
+  const covered = b.covered === true ? true : b.covered === false ? false : null;
+  const tips = typeof b.tips === "string" ? b.tips.trim() : "";
+  return {
+    method,
+    tempF,
+    timeMin: Math.round(time * 10) / 10,
+    covered,
+    tips: tips || null,
+  };
+}
+function normalizeReheat(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const primary = normalizeReheatBlock(r.primary);
+  if (!primary) return null;
+  const altRaw = Array.isArray(r.alt) ? r.alt : [];
+  const alt = altRaw
+    .map((b) => normalizeReheatBlock(b))
+    .filter((b): b is Record<string, unknown> => !!b);
+  const note = typeof r.note === "string" ? r.note.trim() : "";
+  return {
+    primary,
+    ...(alt.length ? { alt } : {}),
+    ...(note ? { note } : {}),
+  };
+}
 
 // Repair a JSON string that was truncated mid-output. Walks the
 // text closing any open string / array / object, discards a trailing

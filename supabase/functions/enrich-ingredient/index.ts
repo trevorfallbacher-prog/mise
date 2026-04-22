@@ -139,7 +139,7 @@ omitted when not applicable. Every other field is REQUIRED.
   // turkey). Map of anatomical cut → per-100g nutrition block. Same
   // shape as "nutrition" above (each value must validate the same
   // per/serving_g rules). The client resolver prefers this over the
-  // generic "nutrition" block when the pantry row has a `cut` tag
+  // generic "nutrition" block when the pantry row has a 'cut' tag
   // set, so "chicken + cut=thigh" gets thigh-specific macros (209 kcal)
   // instead of the hub default (breast, 165 kcal). Keys should be the
   // cut slugs used by CUT_WEIGHTS_G (breast, thigh, leg, wing, ribeye,
@@ -256,12 +256,47 @@ omitted when not applicable. Every other field is REQUIRED.
     "thai" | "indian" | "middle_eastern" | "mediterranean" | "american" |
     "southern_us" | "cajun" | "bbq" | "greek" | "vietnamese" | "filipino" |
     "latin_american" | "caribbean" | "ethiopian" | "moroccan" | "other"
-  ]
+  ],
+
+  // ── Mini reheat / cook walkthrough. Renders as the ReheatMode
+  //    cook-screen when the user taps "I ATE THIS" on a pantry row
+  //    tagged to this canonical. Canonical-level — every pantry row
+  //    with this ingredient_id inherits it until the user overrides
+  //    per-row from the ItemCard. Omit the field entirely when the
+  //    ingredient genuinely never needs heating (water, fresh fruit,
+  //    leafy salad greens, bottled condiments, raw honey).
+  "cookInstructions": {                  // OPTIONAL
+    "title":   "<4-6 word action title — 'Reheat leftover lasagna', 'Sear chicken breast'>",
+    "emoji":   "<one relevant food emoji>",
+    "summary": "<one-line method + time summary for the item-card pill — 'Oven 350°F · 15 min', 'Stovetop · 5 min · medium heat'>",
+    "reheat": {
+      "primary": {
+        "method":  "oven" | "microwave" | "stovetop" | "air_fryer" | "toaster_oven" | "cold",
+        "tempF":   <number REQUIRED for oven/air_fryer/toaster_oven, null otherwise>,
+        "timeMin": <number — single total active minutes>,
+        "covered": <true | false | null when N/A>,
+        "tips":    "<1 sentence top-level tip or null>"
+      }
+    },
+    "steps": [                          // 2-5 steps, ONE action per step
+      {
+        "id":          "step1",
+        "title":       "<3-5 word step title>",
+        "instruction": "<1-2 sentence plain second-person instruction>",
+        "icon":        "<one emoji>",
+        "timer":       <seconds (NOT minutes) or null — null for prep/plating, required on heating step>,
+        "tip":         "<optional specific aside or null>",
+        "heat":        "<'low'|'medium-low'|'medium'|'medium-high'|'high' for stovetop; null otherwise>",
+        "doneCue":     "<qualitative ready-signal ('steam rises steadily', 'edges start to brown') or null>"
+      }
+    ]
+  }
 }
 
 Guidance:
 - Be specific and culinary-accurate. "Umami: 5" means intensely savory (parmesan, anchovy, nori). "Umami: 0" means none (sugar, water).
 - Substitution ids should be reasonable slugs (e.g. "dulse", "dashi_powder"). Admin review will normalize them.
+- cookInstructions method heuristics — pick for THIS ingredient, not a default: pizza/stovetop-cast-iron, lasagna/oven, soup/stovetop, fried/air_fryer, egg dishes/toaster_oven, frozen meals/microwave, breads/toaster_oven, raw produce & dairy/cold. Omit the field for items that never need heating.
 - If the ingredient name is too ambiguous to generate a meaningful record, return exactly: {"error": "ambiguous_name", "reason": "…"}.`;
 }
 
@@ -495,6 +530,73 @@ Deno.serve(async (req) => {
       delete parsed.nutrition;
     }
   }
+  // ── cookInstructions sanity check ──
+  // ReheatMode renders a step-by-step walkthrough directly off this
+  // block, so a malformed shape would crash the cook screen instead
+  // of "tap to add". Validation mirrors suggest-cook-instructions:
+  //   - primary.method must be in the enum
+  //   - oven/air_fryer/toaster_oven require a positive tempF
+  //   - timeMin must be positive
+  //   - at least one step with a title + instruction
+  //   - steps cap at 6 to keep the walkthrough tight
+  // Drop the whole block when any top-level check fails; drop
+  // individual malformed steps but keep the rest.
+  const METHODS = new Set([
+    "oven", "microwave", "stovetop", "air_fryer", "toaster_oven", "cold",
+  ]);
+  const HEATS = new Set([
+    "low", "medium-low", "medium", "medium-high", "high", "off",
+  ]);
+  if (parsed && typeof parsed === "object" && parsed.cookInstructions && typeof parsed.cookInstructions === "object") {
+    const ci = parsed.cookInstructions as Record<string, unknown>;
+    let keep = true;
+    const title = typeof ci.title === "string" ? ci.title.trim() : "";
+    if (!title) keep = false;
+    const primary = ci.reheat && typeof ci.reheat === "object"
+      ? (ci.reheat as Record<string, unknown>).primary
+      : null;
+    if (!primary || typeof primary !== "object") keep = false;
+    if (keep) {
+      const p = primary as Record<string, unknown>;
+      const method = typeof p.method === "string" ? p.method : "";
+      if (!METHODS.has(method)) keep = false;
+      const needsTemp = method === "oven" || method === "air_fryer" || method === "toaster_oven";
+      const temp = Number(p.tempF);
+      if (needsTemp && !(Number.isFinite(temp) && temp > 0)) keep = false;
+      const time = Number(p.timeMin);
+      if (!Number.isFinite(time) || time <= 0) keep = false;
+    }
+    if (keep) {
+      const rawSteps = Array.isArray(ci.steps) ? ci.steps : [];
+      const cleanSteps: Record<string, unknown>[] = [];
+      rawSteps.forEach((s, i) => {
+        if (!s || typeof s !== "object") return;
+        const step = s as Record<string, unknown>;
+        const t = typeof step.title === "string" ? step.title.trim() : "";
+        const instr = typeof step.instruction === "string" ? step.instruction.trim() : "";
+        if (!t || !instr) return;
+        const timer = typeof step.timer === "number" && Number.isFinite(step.timer) && step.timer > 0
+          ? Math.round(step.timer) : null;
+        const heat = typeof step.heat === "string" && HEATS.has(step.heat) ? step.heat : null;
+        const icon = typeof step.icon === "string" && step.icon.trim() ? step.icon.trim() : "👨‍🍳";
+        const tip = typeof step.tip === "string" && step.tip.trim() ? step.tip.trim() : null;
+        const doneCue = typeof step.doneCue === "string" && step.doneCue.trim() ? step.doneCue.trim() : null;
+        const id = typeof step.id === "string" && step.id.trim() ? step.id.trim() : `step${i + 1}`;
+        cleanSteps.push({ id, title: t, instruction: instr, icon, timer, tip, heat, doneCue });
+      });
+      if (cleanSteps.length === 0) {
+        keep = false;
+      } else {
+        if (cleanSteps.length > 6) cleanSteps.length = 6;
+        ci.steps = cleanSteps;
+      }
+    }
+    if (!keep) {
+      console.warn(`[enrich-ingredient] dropping malformed cookInstructions for ${slug}`);
+      delete parsed.cookInstructions;
+    }
+  }
+
   // Scrub individual entries in cutNutrition / stateNutrition maps.
   // If an entry is malformed drop that entry only — keep the rest.
   // If the whole map empties, delete the property so it doesn't

@@ -128,6 +128,12 @@ function fromDb(row) {
   // from the DB = column not present = toDb skips the field so
   // pre-0065 environments don't 400.
   if (row.nutrition_override !== undefined) item.nutritionOverride = row.nutrition_override || null;
+  // cook_instructions (migration 0125) — per-item reheat/cook block
+  // in the same shape recipes.reheat uses (primary + alt[] + note).
+  // IAteThisSheet surfaces this as a walkthrough phase before the
+  // log step so the user reheats the pantry item first, then
+  // confirms what they actually ate.
+  if (row.cook_instructions !== undefined) item.cookInstructions = row.cook_instructions || null;
   // protected (migration 0044) — sentimental / keepsake rows that
   // shouldn't be ✕-deletable. DB enforces via the delete policy;
   // this mapping just lets the UI know so it can hide the delete
@@ -222,6 +228,7 @@ function toDb(item) {
     ...(item.barcodeUpc        !== undefined ? { barcode_upc: item.barcodeUpc || null } : {}),
     ...(item.attributes        !== undefined ? { attributes: item.attributes || null } : {}),
     ...(item.nutritionOverride !== undefined ? { nutrition_override: item.nutritionOverride || null } : {}),
+    ...(item.cookInstructions  !== undefined ? { cook_instructions: item.cookInstructions || null } : {}),
     ...(item.protected         !== undefined ? { protected: !!item.protected } : {}),
     // Packaging + reserves (migration 0054). Passthrough only when the
     // caller set them — older code paths that don't know about

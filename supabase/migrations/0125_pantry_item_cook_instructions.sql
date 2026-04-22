@@ -1,0 +1,33 @@
+-- 0125_pantry_item_cook_instructions.sql
+--
+-- Per-item cook / reheat instructions. Lets a pantry row carry its
+-- own mini-recipe — method + temp + time + tips — so when the user
+-- taps "I ATE THIS" on (say) yesterday's pan-seared chicken breast,
+-- the sheet walks them through how to reheat it before decrementing
+-- inventory. Previously this worked only for meal-kind leftovers
+-- that were cooked from a recipe with an authored `reheat` block;
+-- ingredient rows (bought + eaten) had no path to carry cooking
+-- guidance.
+--
+-- Schema mirrors recipes.reheat (src/data/recipes/schema.js) so the
+-- same IAteThisSheet UI that renders recipe reheats also renders
+-- pantry-item cooks without a second template:
+--
+--   {
+--     primary: {
+--       method:  "oven"|"microwave"|"stovetop"|"air_fryer"|"toaster_oven"|"cold",
+--       tempF:   number | null,
+--       timeMin: number,
+--       covered: boolean | null,
+--       tips:    string | null,
+--     },
+--     alt?: [...same shape],   -- 0-2 alternates
+--     note?: string | null,    -- safety / quality caveat
+--   }
+--
+-- Nullable — most pantry rows don't need instructions (raw produce,
+-- dry goods). When set, ItemCard surfaces a "♨ COOK INSTRUCTIONS"
+-- row and IAteThisSheet opens on a reheat walkthrough phase.
+
+alter table public.pantry_items
+  add column if not exists cook_instructions jsonb;

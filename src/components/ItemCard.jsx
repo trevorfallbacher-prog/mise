@@ -27,7 +27,16 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import EnrichmentButton from "./EnrichmentButton";
 import IAteThisSheet from "./IAteThisSheet";
+import ScheduleEatingSheet from "./ScheduleEatingSheet";
+import CookInstructionsSheet from "./CookInstructionsSheet";
+import ReheatMode from "./ReheatMode";
+import EatIntentSheet from "./EatIntentSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
+import { suggestCookInstructions } from "../lib/suggestCookInstructions";
+import { findRecipe } from "../data/recipes";
+import { useUserRecipes } from "../lib/useUserRecipes";
+import { reheatToCookInstructions } from "../lib/reheatToCookInstructions";
+import { formatReheatSummary } from "./../data/recipes/schema";
 import { Z } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
@@ -171,6 +180,25 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // level and doesn't inherit layout constraints from the nutrition
   // band.
   const [iAteOpen, setIAteOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [cookInstructionsOpen, setCookInstructionsOpen] = useState(false);
+  // Reheat walkthrough. Opens when the user picks REHEAT FIRST from
+  // the EAT intent sheet; chains to the iAte sheet on FINISH so the
+  // two screens read as one flow.
+  const [reheatOpen, setReheatOpen] = useState(false);
+  // EAT intent picker. Shown after the user taps EAT on a row that
+  // has reheat instructions available — lets them choose between
+  // REHEAT FIRST (launches walkthrough) and ALREADY ATE IT (skips
+  // straight to log). Rows with no reheat data bypass this and open
+  // IAteThisSheet directly.
+  const [eatIntentOpen, setEatIntentOpen] = useState(false);
+  // Resolved-for-display reheat/cook block. Computed below after
+  // useIngredientInfo so the canonical-level enrichment fallback is
+  // available. Shared between the cook-instructions pill, the
+  // I-ATE-THIS button label + routing, and the ReheatMode render —
+  // reading the same source prevents the pill showing "3 STEPS" while
+  // the button says "I ATE THIS" because one resolved the fallback
+  // and the other didn't.
   const item = useMemo(
     () => ({ ...(itemProp || {}), ...pendingChanges }),
     [itemProp, pendingChanges],
@@ -341,6 +369,57 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // the deep-dive already shows the same info.
   const { getInfo: getDbInfo, getPendingInfo, refreshDb } = useIngredientInfo();
   const { get: getBrandNutrition, upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  // User-recipe resolver — feeds findRecipe() below so meal leftovers
+  // cooked from AI-drafted user recipes resolve their sourceRecipeSlug
+  // the same way bundled recipes do.
+  const { findBySlug: findUserRecipe } = useUserRecipes(userId);
+  // Effective cook/reheat instructions. Three-tier resolution:
+  //   1. item.cookInstructions — per-row override the user authored
+  //      or a prior SUGGEST call wrote. Always wins.
+  //   2. ingredient_info.info.cookInstructions — canonical-level
+  //      autofill from the enrich-ingredient edge function. Shared
+  //      across all pantry rows tagged to this canonical.
+  //   3. sourceRecipe.reheat — for meal leftovers (kind="meal" with
+  //      a sourceRecipeSlug), synthesize a walkthrough on the fly
+  //      from the recipe's reheat.primary block. This is why your
+  //      leftover spaghetti shows REHEAT steps even though it has no
+  //      canonical and you never tapped SUGGEST — the recipe it was
+  //      cooked from carries the method + time + temp + tips, and
+  //      reheatToCookInstructions turns those into 1–2 tight steps.
+  // Memoized on every axis that can change the result so the pill /
+  // button / ReheatMode render all read the same resolved value.
+  const effectiveCookInstructions = useMemo(() => {
+    const own = item?.cookInstructions;
+    if (own && Array.isArray(own.steps) && own.steps.length > 0) {
+      return { ci: own, source: "row" };
+    }
+    const id = item?.ingredientId || item?.canonicalId;
+    if (id && typeof getDbInfo === "function") {
+      const info = getDbInfo(id);
+      const ci = info?.cookInstructions;
+      if (ci && Array.isArray(ci.steps) && ci.steps.length > 0) {
+        return { ci, source: "canonical" };
+      }
+    }
+    if (item?.sourceRecipeSlug) {
+      const rec = findRecipe(item.sourceRecipeSlug, findUserRecipe);
+      const synth = reheatToCookInstructions(rec);
+      if (synth && Array.isArray(synth.steps) && synth.steps.length > 0) {
+        return { ci: synth, source: "recipe" };
+      }
+    }
+    return { ci: null, source: null };
+  }, [item?.cookInstructions, item?.ingredientId, item?.canonicalId, item?.sourceRecipeSlug, getDbInfo, findUserRecipe]);
+  const cookInstructionsSource = effectiveCookInstructions.source;
+  // Back-compat binding so older render sites keep reading just the
+  // block. Renamed uses below read .ci directly.
+  const cookInstructionsFromCanonical = cookInstructionsSource === "canonical";
+  // Cooked leftovers speak a different dialect than raw ingredients —
+  // the label should say REHEAT, not COOK, so "TAP TO ADD COOK
+  // INSTRUCTIONS" on a jar of spaghetti doesn't read as "I'm
+  // starting from scratch."
+  const isMealLeftover = item?.kind === "meal";
+  const cookVerb = isMealLeftover ? "REHEAT" : "COOK";
   const { push: pushToast } = useToast();
   const rolledFlavor = useMemo(() => {
     if (tags.length < 2) return null;
@@ -1257,28 +1336,148 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             onUpdate={onUpdate}
           />
 
-          {/* "I ate this" — one-tap consumption log. Hidden on draft
-              rows (nothing's in the pantry yet to eat) and on rows
-              with zero amount (the button would decrement below zero
-              which we clamp, but the UX of tapping an empty row to
-              "eat it" is just confusing). Writes a consumption_logs
-              row + decrements pantry_items.amount; the nutrition
-              dashboard picks up the event via realtime. */}
-          {!isDraft && Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId) && (
-            <button
-              type="button"
-              onClick={() => setIAteOpen(true)}
-              style={{
-                width: "100%", padding: "12px 14px", marginBottom: 14,
-                background: "#0f1a0f", border: "1px solid #1e3a1e",
-                color: "#7ec87e", borderRadius: 10,
-                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
-                letterSpacing: "0.08em", cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-              }}
-            >
-              <span style={{ fontSize: 16 }}>🍽️</span> I ATE THIS
-            </button>
+          {/* COOK INSTRUCTIONS — mini recipe carried on the pantry row.
+              Shape is recipe-like (title, emoji, steps[], reheat
+              summary) so the ReheatMode walkthrough renders through
+              the same CookMode visual vocabulary — progress bar, step
+              card, per-step timer. Empty state offers the AI-autofill
+              entry; filled state reads like a recipe chip with title
+              and step count. Tap opens the editor
+              (CookInstructionsSheet) to regenerate or clear.
+
+              Resolution precedence:
+                1. item.cookInstructions — per-row override the user
+                   authored (or a previous SUGGEST wrote).
+                2. ingredient_info.info.cookInstructions — canonical-
+                   level fallback written by the enrich-ingredient
+                   edge function's cookInstructions section. Shared
+                   across every pantry row tagged to this canonical
+                   so a single enrichment hydrates the reheat flow
+                   for all of them.
+              Per-row wins because an explicit override is the user
+              saying "this jar is different from the generic canon." */}
+          {!isDraft && (() => {
+            const ci = effectiveCookInstructions.ci;
+            const source = effectiveCookInstructions.source;
+            const stepCount = Array.isArray(ci?.steps) ? ci.steps.length : 0;
+            const fromKicker =
+              source === "canonical" ? "· FROM ENRICHMENT"
+              : source === "recipe"  ? "· FROM RECIPE"
+              : "";
+            // Hide when there's nothing to preview. Empty state is
+            // intentionally absent — AI generation lives only on the
+            // EAT button flow (EAT → GENERATE REHEAT WITH AI), so a
+            // standalone "+ ADD" pill here has no purpose. When the
+            // row has cookInstructions (stamped at cook-complete,
+            // inherited from canonical enrichment, or generated via
+            // EAT), the filled pill below renders.
+            if (!ci || stepCount === 0) return null;
+            // Prefer the AI-written one-line summary; fall back to
+            // the old reheat-block formatter for legacy rows written
+            // under the pre-pivot (primary-only) shape.
+            const summary = ci.summary
+              || formatReheatSummary(ci.reheat)
+              || formatReheatSummary(ci)
+              || `${stepCount} step${stepCount === 1 ? "" : "s"}`;
+            return (
+              <button
+                type="button"
+                onClick={() => setCookInstructionsOpen(true)}
+                style={{
+                  width: "100%", padding: "10px 12px", marginBottom: 14,
+                  background: "#1a1608", border: "1px solid #3a2f10",
+                  borderRadius: 10,
+                  display: "flex", alignItems: "center", gap: 10,
+                  cursor: "pointer", textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 16 }}>{ci.emoji || "♨"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    color: "#f5c842", letterSpacing: "0.14em",
+                  }}>
+                    {cookVerb} · {stepCount} STEP{stepCount === 1 ? "" : "S"}
+                    {fromKicker && (
+                      <span style={{ marginLeft: 8, color: "#a99870" }}>
+                        {fromKicker}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                    color: "#f0ece4", marginTop: 2,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>
+                    {ci.title || summary}
+                  </div>
+                </div>
+                <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>✎</span>
+              </button>
+            );
+          })()}
+
+          {/* "I ate this" + "Schedule" — paired consumption affordances.
+              LEFT button logs a consumption NOW (opens IAteThisSheet);
+              RIGHT button schedules it for later (opens
+              ScheduleEatingSheet → scheduled_meals row with
+              from_pantry_row_id). Both hidden on draft rows (nothing's
+              in the pantry yet to eat) and on zero-amount rows where
+              eat-now would clamp to empty; scheduling a row that's
+              currently empty is ALSO hidden because it'll just frustrate
+              the user at slot-fire time. */}
+          {/* Eat / schedule gate. Two shapes qualify:
+                - ingredient row: positive amount AND a canonical (so
+                  nutrition / decrement math works)
+                - meal leftover: kind="meal" with a positive
+                  servingsRemaining, no canonical needed since
+                  identity lives on sourceCookLogId / sourceRecipeSlug
+              Previously the meal branch was silently hidden because
+              the gate required a canonical; users couldn't log or
+              schedule a bite of their own leftovers. */}
+          {!isDraft && (
+            (item?.kind === "meal" && Number(item?.servingsRemaining) > 0) ||
+            (Number(item?.amount) > 0 && (item?.ingredientId || item?.canonicalId))
+          ) && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  // Always-on EAT button — opens the intent sheet
+                  // every time so the user picks the path. The sheet
+                  // itself decides whether to offer REHEAT FIRST
+                  // (when reheat already exists) or GENERATE REHEAT
+                  // WITH AI (when none does), alongside the always-
+                  // present ALREADY ATE IT escape hatch.
+                  setEatIntentOpen(true);
+                }}
+                style={{
+                  flex: 1, padding: "12px 14px",
+                  background: "#0f1a0f", border: "1px solid #1e3a1e",
+                  color: "#7ec87e", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>🍽️</span>
+                EAT
+              </button>
+              <button
+                type="button"
+                onClick={() => setScheduleOpen(true)}
+                style={{
+                  flex: 1, padding: "12px 14px",
+                  background: "#141414", border: "1px solid #2a2a2a",
+                  color: "#f5c842", borderRadius: 10,
+                  fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 600,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>📅</span> SCHEDULE
+              </button>
+            </div>
           )}
 
           {/* Quantity / Location / Expiration. Tap any card to edit inline.
@@ -3030,6 +3229,102 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         />
       )}
 
+      {/* EAT intent picker — opens when the user taps EAT on a row
+          with reheat data. Two paths: REHEAT FIRST (launch the
+          walkthrough) or ALREADY ATE IT (skip to log). */}
+      {eatIntentOpen && (
+        <EatIntentSheet
+          item={item}
+          hasReheat={!!effectiveCookInstructions.ci?.steps?.length}
+          summary={effectiveCookInstructions.ci?.summary || formatReheatSummary(effectiveCookInstructions.ci?.reheat) || null}
+          onReheat={() => {
+            setEatIntentOpen(false);
+            setReheatOpen(true);
+          }}
+          onGenerate={async () => {
+            // Fire the AI suggest, save to the row (per-row
+            // override, not canonical), then close ourselves and
+            // open ReheatMode on the freshly written walkthrough.
+            // Item won't have the new block yet on this render
+            // pass — onUpdate commits through the pending-changes
+            // path — so pass the fresh block directly to ReheatMode
+            // via state below instead of re-resolving effective.
+            const { cookInstructions, error } = await suggestCookInstructions({
+              name:        item?.name,
+              canonicalId: item?.ingredientId || item?.canonicalId,
+              brand:       item?.brand,
+              state:       item?.state,
+              cut:         item?.cut,
+              category:    item?.category,
+            });
+            if (error || !cookInstructions?.steps?.length) {
+              throw new Error(error || "Claude didn't return a usable walkthrough.");
+            }
+            await onUpdate?.({ cookInstructions });
+            setEatIntentOpen(false);
+            setReheatOpen(true);
+          }}
+          onJustLog={() => {
+            setEatIntentOpen(false);
+            setIAteOpen(true);
+          }}
+          onClose={() => setEatIntentOpen(false)}
+        />
+      )}
+
+      {/* Reheat walkthrough. Full-screen CookMode-visual-vocabulary
+          component driven by the effective cookInstructions — per-row
+          override wins, canonical enrichment next, source recipe's
+          reheat block synthesizes last. FINISH chains into
+          IAteThisSheet (amount + log); EXIT cancels without
+          decrementing. */}
+      {reheatOpen && effectiveCookInstructions.ci?.steps?.length > 0 && (
+        <ReheatMode
+          recipe={effectiveCookInstructions.ci}
+          emoji={item.emoji}
+          onFinish={() => {
+            setReheatOpen(false);
+            setIAteOpen(true);
+          }}
+          onExit={() => setReheatOpen(false)}
+        />
+      )}
+
+      {/* Schedule-to-eat overlay. Same layering vocabulary as
+          IAteThisSheet (Z.picker, ModalSheet). Writes scheduled_meals
+          with from_pantry_row_id so the Plan calendar surfaces the
+          slot and routes tap → IAteThisSheet when the time arrives. */}
+      {scheduleOpen && (
+        <ScheduleEatingSheet
+          pantryRow={item}
+          userId={userId}
+          onClose={() => setScheduleOpen(false)}
+          onDone={() => setScheduleOpen(false)}
+        />
+      )}
+
+      {/* Cook-instructions editor. Persists to pantry_items.cook_instructions
+          (migration 0125) via the same onUpdate commit path every other
+          field uses — pendingChanges merge → apply → realtime reconcile.
+          null argument clears the block. */}
+      {cookInstructionsOpen && (
+        <CookInstructionsSheet
+          // Synthetic "effective" item — the sheet reads
+          // cookInstructions off the row directly, so we hydrate it
+          // with whichever fallback tier resolved (canonical
+          // enrichment or source-recipe reheat). SAVE always persists
+          // a per-row cookInstructions via onUpdate — writing to
+          // pantry_items, not ingredient_info — so users tweak one
+          // jar without mutating the canonical for every other row.
+          item={{ ...item, cookInstructions: effectiveCookInstructions.ci || item?.cookInstructions || null }}
+          fromCanonical={cookInstructionsSource === "canonical"}
+          fromRecipe={cookInstructionsSource === "recipe"}
+          verb={cookVerb}
+          onClose={() => setCookInstructionsOpen(false)}
+          onSave={async (block) => { onUpdate?.({ cookInstructions: block }); }}
+        />
+      )}
+
       {/* Full-screen success after UPDATE commits. Lists every field
           that changed so the user confirms what they just approved
           was actually what they meant. Tap DONE to dismiss. */}
@@ -3524,11 +3819,20 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
+  // Pass the full identity slice (including state + cut) so the
+  // resolver's state/cut-specific tiers fire — chicken row tagged
+  // cut="breast" resolves to breast-specific numbers, not the hub
+  // default. Without these axes the chip silently showed the wrong
+  // fallback, and the I-ATE-THIS sheet (which passes the full row)
+  // would surface different numbers than the card above it.
   const { nutrition, source, brand } = pantryItemNutrition(
     {
       ingredientId: item?.ingredientId || item?.canonicalId || null,
+      canonicalId: item?.canonicalId || null,
       brand: item?.brand || null,
       nutritionOverride: item?.nutritionOverride || null,
+      state: item?.state || null,
+      cut: item?.cut || null,
     },
     { getInfo, brandNutrition: brandNutritionMap },
   );

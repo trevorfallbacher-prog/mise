@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { generateRecipe } from "../lib/generateRecipe";
+import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 import {
@@ -683,9 +684,51 @@ export default function AIRecipe({
             }),
           }
         : withPantry;
-      setRecipe(claimed);
+      // Chained reheat upgrade. generate-recipe produces a reheat
+      // block as ONE field in a ~40-field schema; Claude's attention
+      // is spread thin and the steps are often flat. A second, focused
+      // call through suggest-cook-instructions — same input budget,
+      // purpose-built prompt — produces dramatically richer steps
+      // with heat badges, doneCues, per-step timers and tips. We
+      // merge the focused result onto recipe.reheat so the leftover
+      // pantry row inherits the good walkthrough without a manual
+      // SUGGEST tap downstream.
+      //
+      // Failure is non-fatal — if Claude rate-limits or the shape
+      // fails, we fall back to whatever reheat generate-recipe
+      // authored. The leftover then still gets a walkthrough via
+      // reheatToCookInstructions' synthesis path.
+      let enriched = claimed;
       if (claimed?.title) {
-        setPreviousTitles(prev => (prev.includes(claimed.title) ? prev : [...prev, claimed.title]));
+        try {
+          const { cookInstructions } = await suggestCookInstructions({
+            name:     claimed.title,
+            category: claimed.category,
+          });
+          if (cookInstructions?.steps?.length > 0) {
+            enriched = {
+              ...claimed,
+              reheat: {
+                // Focused call always wins on primary since its
+                // method/time/temp are derived from the same prompt
+                // that wrote the walkthrough — guaranteed internally
+                // consistent with the steps.
+                primary: cookInstructions.reheat?.primary || claimed?.reheat?.primary || null,
+                // Stash the full step array on reheat so the leftover
+                // row's walkthrough reads them directly instead of
+                // synthesizing from primary.
+                steps: cookInstructions.steps,
+                // Preserve any top-level note generate-recipe might
+                // have authored ("eggs scramble if microwaved").
+                ...(claimed?.reheat?.note ? { note: claimed.reheat.note } : {}),
+              },
+            };
+          }
+        } catch (_) { /* non-fatal, fall through with the first-pass reheat */ }
+      }
+      setRecipe(enriched);
+      if (enriched?.title) {
+        setPreviousTitles(prev => (prev.includes(enriched.title) ? prev : [...prev, enriched.title]));
       }
       // Push shopping-source locked items into the parent's shopping
       // list. Happens only after the final cook actually lands so a

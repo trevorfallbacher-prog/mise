@@ -11,6 +11,7 @@ import { useConsumptionLogs, inferMealSlot } from "../lib/useConsumptionLogs";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { useToast } from "../lib/toast";
 
 /**
  * IAteThisSheet — "I just ate this" declaration flow.
@@ -48,6 +49,7 @@ const MEAL_SLOTS = [
 export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const ingredientInfo = useIngredientInfo();
   const brandNutrition = useBrandNutrition();
+  const { push: pushToast } = useToast();
   const { logConsumption, loading } = useConsumptionLogs({
     userId,
     brandNutrition,
@@ -73,11 +75,13 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const sourceCookLogId = pantryRow?.sourceCookLogId || null;
   const sourceRecipeSlug = pantryRow?.sourceRecipeSlug || null;
 
-  // Look up the source recipe for reheat instructions. Meal rows
-  // carry sourceRecipeSlug from CookComplete, which resolves against
-  // either bundled recipes or user_recipes. Null when the row is an
-  // ingredient, the slug is missing, or the recipe has no reheat
-  // block authored yet — all of which render as "no reheat tip".
+  // Reheat lookup for meal leftovers. Only fires when the pantry row
+  // is a meal-kind leftover (migration 0026) with a source recipe
+  // that has an authored `reheat` block. Pantry-item cookInstructions
+  // are NOT surfaced here — ReheatMode owns that walkthrough
+  // full-screen before this sheet opens (ItemCard routes
+  // I-ATE-THIS → ReheatMode → onFinish → IAteThisSheet), so by the
+  // time we render the user has already completed their cook.
   const { findBySlug: findUserRecipe } = useUserRecipes(userId);
   const sourceRecipe = (isMealRow && sourceRecipeSlug)
     ? findRecipe(sourceRecipeSlug, findUserRecipe)
@@ -176,17 +180,18 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
   const [note,     setNote]     = useState("");
   const [error,    setError]    = useState(null);
 
-  // Two-phase walkthrough for meal leftovers with reheat data:
+  // Two-phase walkthrough for any row carrying reheat / cook-instructions
+  // data (either per-item cookInstructions from migration 0125 OR the
+  // source recipe's reheat block for meal leftovers):
   //   phase="reheat" — cook-style walkthrough with method + optional
   //                    countdown + "READY" CTA. Gives the user a
   //                    moment to actually heat the food before
   //                    logging, rather than treating the sheet as a
   //                    data-entry form.
   //   phase="amount" — existing stepper + meal slot + confirm.
-  // Ingredient rows (no canonical reheat) skip straight to amount.
-  const [phase, setPhase] = useState(
-    (isMealRow && reheat) ? "reheat" : "amount"
-  );
+  // Rows with no reheat block (raw produce, dry goods, drinks) skip
+  // straight to amount.
+  const [phase, setPhase] = useState(reheat ? "reheat" : "amount");
 
   // Unified method list: primary first, then any alternatives the
   // recipe author supplied. User picks which one they're actually
@@ -251,10 +256,20 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
 
   // Live macro preview. Re-resolves on every amount/unit tick so the
   // number on the confirm button matches exactly what the tally will
-  // receive. Null when we can't compute (no canonical / cook_log
-  // nutrition, no nutrition, or unit not in the ladder) — in that
-  // case we still let them log for inventory purposes but tell them
-  // up front the macros are skipped.
+  // receive.
+  //
+  // Three-tier computation:
+  //   1. Scaled — scaleFactor converts the user's (amount, unit) into
+  //      a multiplier against the resolved nutrition's `per` axis.
+  //      Preferred path when the unit is in the canonical's ladder.
+  //   2. Approximate — nutrition resolved but scaleFactor failed
+  //      (e.g. soda row tagged to sugar canonical, user picked fl oz
+  //      which isn't in sugar's ladder). We surface the base block
+  //      from the resolver at amount=1 so the preview still reads
+  //      like the ItemCard chip, with an "approximate" note. Prevents
+  //      the "chip shows 310 kcal but sheet says no nutrition"
+  //      discrepancy users reported.
+  //   3. Empty — no nutrition resolved at all (coverage gap).
   const preview = useMemo(() => {
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) return { macros: null, source: null };
@@ -268,20 +283,31 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
       }
       return { macros, source: "cook" };
     }
-    if (!canonical) return null;
     const { nutrition, source, brand } = resolveNutrition(pantryRow, {
       brandNutrition,
       getInfo: ingredientInfo?.getInfo,
     });
     if (!nutrition) return { macros: null, source: null };
-    const countWeightG = effectiveCountWeightG(pantryRow, canonical);
-    const f = scaleFactor({ amount: amt, unit }, canonical, nutrition, { countWeightG });
-    if (f == null || !Number.isFinite(f)) return { macros: null, source };
+    const countWeightG = canonical ? effectiveCountWeightG(pantryRow, canonical) : null;
+    const f = canonical
+      ? scaleFactor({ amount: amt, unit }, canonical, nutrition, { countWeightG })
+      : null;
+    if (f != null && Number.isFinite(f)) {
+      const macros = {};
+      for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
+        if (typeof nutrition[k] === "number") macros[k] = nutrition[k] * f;
+      }
+      return { macros, source, brand };
+    }
+    // Approximate fallback — surface the base nutrition unscaled so
+    // the user sees the same numbers the ItemCard chip shows. Flag it
+    // so the UI can label the row clearly rather than silently
+    // pretending the conversion worked.
     const macros = {};
     for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sodium_mg", "sugar_g"]) {
-      if (typeof nutrition[k] === "number") macros[k] = nutrition[k] * f;
+      if (typeof nutrition[k] === "number") macros[k] = nutrition[k];
     }
-    return { macros, source, brand };
+    return { macros, source, brand, approx: true, per: nutrition.per, serving_g: nutrition.serving_g };
   }, [amount, unit, isMealRow, mealCookNutrition, canonical, pantryRow, brandNutrition, ingredientInfo]);
 
   // Slider meter — how much is in the pantry right now, expressed in
@@ -359,6 +385,14 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
     if (!result.ok) {
       setError(result.error || "Couldn't log that — try again.");
       return;
+    }
+    // Inventory-decrement fell through silently — the consumption
+    // logged and the dashboard tally is correct, but the pantry row
+    // didn't decrement (RLS, unit can't bridge, row vanished mid-
+    // flight, etc.). Surface the reason as a toast so the user sees
+    // the drift instead of having to notice it later on the shelf.
+    if (result.inventoryWarning) {
+      pushToast?.(`Logged, but ${result.inventoryWarning}`, { emoji: "⚠️", kind: "warn", ttl: 6000 });
     }
     onDone?.(result.consumption);
     onClose?.();
@@ -543,8 +577,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           <>
         {/* Compact reheat summary still surfaces on the amount phase
             for quick reference — collapsed version of step 1 so the
-            user doesn't lose the context while dialing servings. */}
-        {isMealRow && reheat && (
+            user doesn't lose the context while dialing servings.
+            Fires for both meal leftovers and ingredient rows with
+            their own cookInstructions block. */}
+        {reheat && (
           <div style={{
             padding: "8px 12px",
             background: "#1a1608",
@@ -778,11 +814,21 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
           </div>
         </div>
 
-        {/* Macro preview */}
+        {/* Macro preview. Three visual states:
+            - Scaled (green bg) — macros reflect the user's amount+unit.
+            - Approximate (amber bg) — scaleFactor couldn't translate
+              the unit into the nutrition's axis; we render the base
+              block unscaled so the user still sees the chip's numbers
+              instead of a silent blank.
+            - Empty (grey bg) — no nutrition at all in any tier. */}
         <div style={{
           padding: "12px 14px",
-          background: preview?.macros ? "#0f1a0f" : "#141414",
-          border: `1px solid ${preview?.macros ? "#1e3a1e" : "#2a2a2a"}`,
+          background: preview?.macros
+            ? (preview.approx ? "#1a1608" : "#0f1a0f")
+            : "#141414",
+          border: `1px solid ${preview?.macros
+            ? (preview.approx ? "#3a2f10" : "#1e3a1e")
+            : "#2a2a2a"}`,
           borderRadius: 10,
           marginBottom: 14,
         }}>
@@ -791,8 +837,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#f0ece4" }}>
                 ~ {formatMacros(preview.macros, { verbose: true })}
               </div>
-              <div style={{ marginTop: 4, fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.08em" }}>
-                {preview.source === "brand" && preview.brand
+              <div style={{ marginTop: 4, fontFamily: "'DM Mono',monospace", fontSize: 9, color: preview.approx ? "#e0a868" : "#666", letterSpacing: "0.08em" }}>
+                {preview.approx
+                  ? `PER ${preview.per === "serving" && preview.serving_g ? `${preview.serving_g}G SERVING` : String(preview.per || "").toUpperCase()} · UNIT NOT IN LADDER`
+                  : preview.source === "brand" && preview.brand
                   ? `FROM BRAND · ${String(preview.brand).toUpperCase()}`
                   : `FROM ${String(preview.source || "").toUpperCase()}`}
               </div>
@@ -825,8 +873,10 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
         )}
 
         <div style={{ display: "flex", gap: 8 }}>
-          {/* Back to reheat phase — only visible when we started there. */}
-          {isMealRow && reheat && (
+          {/* Back to reheat phase — visible whenever we have reheat
+              data to return to (meal leftover OR per-item cook
+              instructions). */}
+          {reheat && (
             <button
               type="button"
               onClick={() => setPhase("reheat")}
@@ -846,7 +896,7 @@ export default function IAteThisSheet({ pantryRow, userId, onClose, onDone }) {
             onClick={confirm}
             disabled={loading || !(Number(amount) > 0)}
             style={{
-              flex: isMealRow && reheat ? 2 : 1,
+              flex: reheat ? 2 : 1,
               padding: "14px",
               background: loading || !(Number(amount) > 0) ? "#1a1a1a" : "#f5c842",
               border: "none", borderRadius: 12,
