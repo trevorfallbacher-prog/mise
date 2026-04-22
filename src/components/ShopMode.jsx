@@ -101,6 +101,14 @@ export default function ShopMode({
   // before the pair goes through so dead-end rows don't stock as
   // "UPC 1234" gibberish.
   const [redNameDraft, setRedNameDraft] = useState("");
+  // recentScanId — short (4s) correction window after ANY scan. The
+  // next list-item tap within the window re-pairs that scan to the
+  // tapped item (moving a wrong auto-pair, or pairing if the scan
+  // hadn't auto-matched). Without this, taps after an auto-paired
+  // scan would arm the list item instead of correcting the pair —
+  // classic fat-finger surprise.
+  const [recentScanId, setRecentScanId] = useState(null);
+  const recentScanTimerRef = useRef(null);
   // armedRef mirrors armedListItemId so handleDetected (captured in
   // onDetected closure) always reads the freshest value even across
   // rapid scans that don't re-render between each.
@@ -113,8 +121,24 @@ export default function ShopMode({
   const alreadyPairedListIdsRef = useRef(new Set());
 
   useEffect(() => {
-    return () => { if (flashTimerRef.current) clearTimeout(flashTimerRef.current); };
+    return () => {
+      if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+      if (recentScanTimerRef.current) clearTimeout(recentScanTimerRef.current);
+    };
   }, []);
+
+  // Mark the scan that JUST landed so the next list-item tap within
+  // 4s re-pairs it (even if it already auto-paired — this is the
+  // "oh wait, wrong list item" correction window). A fresh scan
+  // resets the timer to point at the new scan.
+  function markRecentScan(scanId) {
+    setRecentScanId(scanId || null);
+    if (recentScanTimerRef.current) clearTimeout(recentScanTimerRef.current);
+    if (!scanId) return;
+    recentScanTimerRef.current = setTimeout(() => {
+      setRecentScanId(null);
+    }, 4000);
+  }
 
   // Search filter — live-narrow the list as the user types. Cheap
   // substring match on name (case-insensitive). Empty = pass-through.
@@ -274,6 +298,7 @@ export default function ShopMode({
       // detection + the "+1 MORE" prompt covers the 6-apples case.
       setArmedListItemId(null);
       setPendingPairScanId(null);
+      markRecentScan(scan.id);
     } else if (scan?.id && (flashColor === "green" || flashColor === "yellow")) {
       // Auto-match: green scans go through all three tiers
       // (canonical → canonical-name → productName). Yellow scans
@@ -293,9 +318,11 @@ export default function ShopMode({
         // Nothing on the list looks like this — needs user decision.
         setPendingPairScanId(scan.id);
       }
+      markRecentScan(scan.id);
     } else if (scan?.id) {
       // Red — always fall through to pick-mode (no usable text).
       setPendingPairScanId(scan.id);
+      markRecentScan(scan.id);
     }
 
     // Flash banner — always fires; confirms the status regardless of
@@ -366,21 +393,32 @@ export default function ShopMode({
     if (pendingPairScanId) {
       const pending = scans.find(s => s.id === pendingPairScanId);
       if (pending) {
-        // Red scans require a name before pair goes through. Gate
-        // the tap and leave the prompt up so the user gets the
-        // hint about why nothing happened.
-        if (pending.status === "red" && !redNameDraft.trim()) {
-          console.log("[shop-mode] red scan needs a name first");
+        // Red scans need SOME identity before the pair fires — else
+        // the pantry row commits as "UPC 34567". Two ways to supply it:
+        //   * User typed a name in the pick-mode field (redNameDraft)
+        //   * User tapped a real list item — we pull its name down
+        // Only IMPULSE without a typed name fails the gate, since
+        // impulse has no list target to borrow a name from.
+        const isRed = pending.status === "red";
+        const typedName = redNameDraft.trim();
+        const targetListItem = listItemId === "__impulse__"
+          ? null
+          : (shoppingList || []).find(i => i.id === listItemId);
+        const resolvedName = typedName
+          || targetListItem?.name
+          || "";
+        if (isRed && !resolvedName) {
+          // Only way to hit this: IMPULSE tap with no typed name.
+          console.log("[shop-mode] red impulse scan still needs a name");
           return;
         }
-        // For red scans, stamp the typed name onto the trip_scan
-        // before we pair — that way the committed pantry row reads
-        // as "Sriracha" instead of "UPC 34567".
-        if (pending.status === "red" && redNameDraft.trim()) {
+        // Stamp the resolved name onto trip_scans so the commit pass
+        // reads it as the pantry row's display name.
+        if (isRed && resolvedName && resolvedName !== pending.productName) {
           try {
             await supabase
               .from("trip_scans")
-              .update({ product_name: redNameDraft.trim() })
+              .update({ product_name: resolvedName })
               .eq("id", pending.id);
           } catch (e) {
             console.warn("[shop-mode] red-scan name write failed:", e);
@@ -394,7 +432,26 @@ export default function ShopMode({
       }
       setPendingPairScanId(null);
       setRedNameDraft("");
+      markRecentScan(null);
       return;
+    }
+    // Post-scan correction window — if a scan landed within the
+    // last 4s, this tap re-pairs it instead of arming. Covers the
+    // "wrong auto-pair, move it" case + the "I want this tap to
+    // pair, not arm" user expectation right after any scan.
+    if (recentScanId) {
+      const recent = scans.find(s => s.id === recentScanId);
+      if (recent) {
+        if (listItemId === "__impulse__") {
+          await doImpulseAdd(recent);
+        } else {
+          await pairScanToList(recent.id, listItemId);
+        }
+        markRecentScan(null);
+        return;
+      }
+      // recent scan gone (deleted?) — fall through to arm.
+      markRecentScan(null);
     }
     // Tap-first flow — arm / disarm.
     setArmedListItemId(prev => (prev === listItemId ? null : listItemId));
@@ -679,7 +736,7 @@ export default function ShopMode({
                 <span style={{ color: statusBg, fontSize: 18 }}>●</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 10, letterSpacing: 1.2, color: isRed ? "#f8c7c7" : "#c7a8d4" }}>
-                    {isRed ? "NO DATA — NAME IT, THEN PAIR" : "PICK WHICH LIST ITEM THIS IS"}
+                    {isRed ? "NO DATA — TAP A LIST ITEM OR NAME IT" : "PICK WHICH LIST ITEM THIS IS"}
                   </div>
                   <div style={{
                     fontSize: 14, fontStyle: "italic", color: "#fff",
@@ -698,16 +755,16 @@ export default function ShopMode({
                   aria-label="Skip"
                 >✕</button>
               </div>
-              {/* Required name field for red scans — the pick can't
-                  fire until this is filled. Dims the list row taps
-                  visually via the outer scannerBlocked overlay. */}
+              {/* Optional name field for red scans — NOT required if
+                  the user taps a list item (we pull the name from
+                  that). Only required for an IMPULSE tap (no list
+                  target to borrow a name from). */}
               {isRed && (
                 <input
                   type="text"
                   value={redNameDraft}
                   onChange={e => setRedNameDraft(e.target.value)}
-                  placeholder="What is this? (e.g. sriracha, beans, feta)"
-                  autoFocus
+                  placeholder="Or type it here (needed for impulse buys)"
                   style={{
                     width: "100%",
                     padding: "10px 12px",
@@ -739,15 +796,15 @@ export default function ShopMode({
             <div style={{
               position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 5,
               padding: "10px 12px",
-              background: "rgba(20, 16, 8, 0.94)",
-              border: "1px solid #f5c842",
+              background: "rgba(12, 22, 30, 0.94)",
+              border: "1px solid #7eb8d4",
               borderRadius: 8,
               display: "flex", alignItems: "center", gap: 10,
               backdropFilter: "blur(4px)",
             }}>
               <span style={{ fontSize: 18 }}>{armedItem.emoji || "🛒"}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
+                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#7eb8d4" }}>
                   NEXT SCAN → {armedListItemId === "__impulse__" ? "IMPULSE ADD" : "PAIRS TO"}
                 </div>
                 <div style={{
@@ -873,8 +930,8 @@ export default function ShopMode({
                 style={{
                   display: "flex", width: "100%", alignItems: "center", gap: 10,
                   padding: "10px 12px",
-                  background: isArmedImpulse ? "#2a2410" : "#141414",
-                  border: `${isArmedImpulse ? 2 : 1}px ${isArmedImpulse ? "solid" : "dashed"} ${isArmedImpulse ? "#f5c842" : "#555"}`,
+                  background: isArmedImpulse ? "#10202a" : "#141414",
+                  border: `${isArmedImpulse ? 2 : 1}px ${isArmedImpulse ? "solid" : "dashed"} ${isArmedImpulse ? "#7eb8d4" : "#555"}`,
                   color: "#ddd",
                   borderRadius: 10,
                   marginBottom: 8,
@@ -891,7 +948,7 @@ export default function ShopMode({
                     : "IMPULSE BUY — arm, then scan anything off-list"}
                 </span>
                 {isArmedImpulse && (
-                  <span style={{ fontSize: 10, color: "#f5c842", letterSpacing: 1.2 }}>ARMED</span>
+                  <span style={{ fontSize: 10, color: "#7eb8d4", letterSpacing: 1.2 }}>ARMED</span>
                 )}
               </button>
             );
@@ -913,12 +970,12 @@ export default function ShopMode({
             const isArmed = !!item.id && armedListItemId === item.id;
             const isPickMode = !!pendingPairScanId;
             const bg = isArmed
-              ? "#2a2410"
+              ? "#10202a"
               : status
                 ? STATUS_TILE_BG[status]
                 : "#141414";
             const border = isArmed
-              ? "#f5c842"
+              ? "#7eb8d4"
               : status
                 ? FLASH_COLORS[status].bg
                 : "#1e1e1e";
@@ -953,7 +1010,7 @@ export default function ShopMode({
                   )}
                 </div>
                 {isArmed && (
-                  <div style={{ fontSize: 10, color: "#f5c842", letterSpacing: 1.2 }}>
+                  <div style={{ fontSize: 10, color: "#7eb8d4", letterSpacing: 1.2 }}>
                     ARMED
                   </div>
                 )}
