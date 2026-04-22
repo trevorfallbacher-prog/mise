@@ -2178,6 +2178,9 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
                   <div>canonical: {row.canonicalId || "(none)"}{row.canonical ? ` → ${row.canonical}` : ""}</div>
                   <div>amount: {row.amount || "(none)"} {row.parsedQty ? `→ ${row.parsedQty.amount} ${row.parsedQty.unit}` : ""}</div>
                   <div>nutrition source: {row.source || "(none)"}{row.brand ? ` · brand=${row.brand}` : ""}{row.nutrition?.per ? ` · per=${row.nutrition.per}` : ""}</div>
+                  {row.parsedQty?.unit === "count" && (
+                    <div>grams/count: {Number.isFinite(row.countWeightG) && row.countWeightG > 0 ? `${Math.round(row.countWeightG)}g` : "(unset)"}</div>
+                  )}
                   <div>factor: {row.factor == null ? "null" : row.factor.toFixed(3)}</div>
                   {row.reason && (
                     <div style={{ color:"#f87171", marginTop:2 }}>× {row.reason}</div>

@@ -135,6 +135,51 @@ omitted when not applicable. Every other field is REQUIRED.
     "sodium_mg": number                  // OPTIONAL
   },
 
+  // OPTIONAL — emit ONLY for meat-hub canonicals (chicken, beef, pork,
+  // turkey). Map of anatomical cut → per-100g nutrition block. Same
+  // shape as "nutrition" above (each value must validate the same
+  // per/serving_g rules). The client resolver prefers this over the
+  // generic "nutrition" block when the pantry row has a `cut` tag
+  // set, so "chicken + cut=thigh" gets thigh-specific macros (209 kcal)
+  // instead of the hub default (breast, 165 kcal). Keys should be the
+  // cut slugs used by CUT_WEIGHTS_G (breast, thigh, leg, wing, ribeye,
+  // brisket, chop, shoulder, etc.). Skip for every non-meat canonical.
+  "cutNutrition": {
+    "<cut_slug>": {                      // e.g. "breast", "thigh", "ribeye"
+      "per": "100g" | "count" | "serving",
+      "serving_g": number,
+      "kcal": number,
+      "protein_g": number,
+      "fat_g": number,
+      "carb_g": number,
+      "fiber_g": number,
+      "sodium_mg": number
+    }
+    // ... one entry per commonly-purchased cut for this hub
+  },
+
+  // OPTIONAL — emit ONLY for meat-hub canonicals where the state is
+  // nutritionally distinct from the raw cut. Today the only such
+  // state is "ground": ground beef (85/15 ≈ 250 kcal/100g), ground
+  // chicken (≈143), ground pork (≈263), ground turkey (≈148). The
+  // client resolver prefers this over cutNutrition because grinding
+  // erases the cut axis. Same value shape as "nutrition". Skip for
+  // non-meat canonicals and for states that don't change macros
+  // (diced, sliced, minced — those are physical transformations
+  // only).
+  "stateNutrition": {
+    "<state_slug>": {                    // e.g. "ground"
+      "per": "100g" | "count" | "serving",
+      "serving_g": number,
+      "kcal": number,
+      "protein_g": number,
+      "fat_g": number,
+      "carb_g": number,
+      "fiber_g": number,
+      "sodium_mg": number
+    }
+  },
+
   "density": {                           // REQUIRED for anything measured in tsp/tbsp/cup
     // Grams per volume unit. Provide whichever of these make sense
     // (spices/leaveners/extracts need g_per_tsp; flours/oats need
@@ -429,17 +474,46 @@ Deno.serve(async (req) => {
   // when the shape is wrong — a missing block degrades to "tap to
   // add" in the UI, which is honest. A malformed block would persist
   // as usable-looking data that the resolver silently ignored.
-  if (parsed && typeof parsed === "object" && parsed.nutrition && typeof parsed.nutrition === "object") {
-    const n = parsed.nutrition as Record<string, unknown>;
+  // Same shape check applies to every nutrition block the model can
+  // emit — the main one plus each entry of cutNutrition / stateNutrition.
+  // Malformed per= values silently produce null scale factors downstream,
+  // so drop offenders at the boundary instead of persisting decorative
+  // data the resolver can't use.
+  const isValidNutritionBlock = (n: Record<string, unknown>): boolean => {
     const per = n.per;
     const allowed = per === "100g" || per === "count" || per === "serving";
     const servingOk = per !== "serving" || typeof n.serving_g === "number";
-    if (!allowed || !servingOk) {
+    return allowed && servingOk;
+  };
+  if (parsed && typeof parsed === "object" && parsed.nutrition && typeof parsed.nutrition === "object") {
+    const n = parsed.nutrition as Record<string, unknown>;
+    if (!isValidNutritionBlock(n)) {
       console.warn(
         `[enrich-ingredient] dropping malformed nutrition for ${slug}: ` +
-          `per=${JSON.stringify(per)} serving_g=${JSON.stringify(n.serving_g)}`,
+          `per=${JSON.stringify(n.per)} serving_g=${JSON.stringify(n.serving_g)}`,
       );
       delete parsed.nutrition;
+    }
+  }
+  // Scrub individual entries in cutNutrition / stateNutrition maps.
+  // If an entry is malformed drop that entry only — keep the rest.
+  // If the whole map empties, delete the property so it doesn't
+  // persist as an empty object in ingredient_info.
+  for (const field of ["cutNutrition", "stateNutrition"] as const) {
+    if (parsed && typeof parsed === "object" && parsed[field] && typeof parsed[field] === "object") {
+      const map = parsed[field] as Record<string, Record<string, unknown>>;
+      for (const [key, block] of Object.entries(map)) {
+        if (!block || typeof block !== "object" || !isValidNutritionBlock(block)) {
+          console.warn(
+            `[enrich-ingredient] dropping malformed ${field}.${key} for ${slug}: ` +
+              `per=${JSON.stringify(block?.per)} serving_g=${JSON.stringify(block?.serving_g)}`,
+          );
+          delete map[key];
+        }
+      }
+      if (Object.keys(map).length === 0) {
+        delete parsed[field];
+      }
     }
   }
 

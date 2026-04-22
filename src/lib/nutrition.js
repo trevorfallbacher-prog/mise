@@ -20,7 +20,7 @@
 //   "count"   → each item carries the nutrition (eggs, apples).
 //   "serving" → use nutrition.serving_g to scale grams.
 
-import { findIngredient } from "../data/ingredients";
+import { findIngredient, CUT_NUTRITION, STATE_NUTRITION, DEFAULT_CUT_PER_HUB, CANONICAL_ALIASES } from "../data/ingredients";
 import { convertWithBridge, effectiveCountWeightG, isMassLadder } from "./unitConvert";
 
 // Resolve the best available nutrition for a pantry row. Phase 1 only
@@ -66,20 +66,61 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
       return { nutrition: hit.nutrition, source: "brand", brand: hit.displayBrand || pantryRow.brand };
     }
   }
-  // 3. ingredient_info.nutrition — the admin-approved canonical average.
+  // Resolve axes once for the remaining meat-hub-aware tiers. canon
+  // walks CANONICAL_ALIASES so "chicken_breast" → chicken; hubId is
+  // the hub canonical id for table lookups; state/cut come from the
+  // new-model pantry row first, then from the alias entry for legacy
+  // compound slugs (ground_beef, chicken_breast, ribeye).
+  const canon = canonId ? findIngredient(canonId) : null;
+  const aliasEntry = canonId ? CANONICAL_ALIASES[canonId] : null;
+  const hubId = canon?.id || aliasEntry?.base || canonId;
+  const rowState = pantryRow.state || aliasEntry?.state || null;
+  const rowCut   = pantryRow.cut   || aliasEntry?.cut   || null;
+
+  // 3. ingredient_info — admin-approved per canonical. Prefer cut- or
+  //    state-specific blocks when the info row supplies them (emitted
+  //    by the enrich-ingredient edge function for meat hubs). State
+  //    wins over cut because grinding homogenizes the animal.
   if (canonId && typeof getInfo === "function") {
     const info = getInfo(canonId);
-    if (info?.nutrition && acceptableForResolve(info.nutrition)) {
-      return { nutrition: info.nutrition, source: "canonical" };
+    if (info) {
+      if (rowState && info.stateNutrition?.[rowState]
+          && acceptableForResolve(info.stateNutrition[rowState])) {
+        return { nutrition: info.stateNutrition[rowState], source: "state" };
+      }
+      if (rowCut && info.cutNutrition?.[rowCut]
+          && acceptableForResolve(info.cutNutrition[rowCut])) {
+        return { nutrition: info.cutNutrition[rowCut], source: "cut" };
+      }
+      if (info.nutrition && acceptableForResolve(info.nutrition)) {
+        return { nutrition: info.nutrition, source: "canonical" };
+      }
     }
   }
-  // 4. In-code registry fallback — fires when ingredient_info hasn't
-  //    been seeded for this canonical yet.
-  if (canonId) {
-    const canon = findIngredient(canonId);
-    if (canon?.nutrition && acceptableForResolve(canon.nutrition)) {
-      return { nutrition: canon.nutrition, source: "default" };
+  // 4a. State-specific registry lookup (ground beef / chicken / pork /
+  //     turkey). Grinding erases the cut axis so this tier fires
+  //     before cut-specific lookup.
+  if (hubId && STATE_NUTRITION[hubId] && rowState) {
+    const stateN = STATE_NUTRITION[hubId][rowState];
+    if (stateN && acceptableForResolve(stateN)) {
+      return { nutrition: stateN, source: "state" };
     }
+  }
+  // 4b. Cut-specific registry lookup. Falls back to DEFAULT_CUT_PER_HUB
+  //     when the pantry row is an untagged hub canonical — chicken
+  //     without a cut defaults to breast, matching count.toBase=200g.
+  if (hubId && CUT_NUTRITION[hubId]) {
+    const cut = rowCut || DEFAULT_CUT_PER_HUB[hubId] || null;
+    const cutN = cut ? CUT_NUTRITION[hubId][cut] : null;
+    if (cutN && acceptableForResolve(cutN)) {
+      return { nutrition: cutN, source: "cut" };
+    }
+  }
+  // 5. In-code registry fallback — fires when ingredient_info hasn't
+  //    been seeded for this canonical yet. Reuses `canon` resolved
+  //    above so we don't double-walk the alias map.
+  if (canon?.nutrition && acceptableForResolve(canon.nutrition)) {
+    return { nutrition: canon.nutrition, source: "default" };
   }
   return { nutrition: null, source: null };
 }
@@ -178,12 +219,17 @@ export function validateNutrition(n) {
 // declare `toBase=1` per count. The nutrition.per value picks which axis
 // we're scaling along.
 //
-// opts.countWeightG (optional) — per-row override of the canonical's
-// count-unit toBase. When the qty is counted (qty.unit === "count"),
-// we use countWeightG * amount as the base grams instead of
-// fromEntry.toBase * amount. Lets a pantry row say "each breast in
-// THIS pack is 170g" and have all downstream math reflect that
-// calibration without rewriting the canonical for everyone.
+// opts.countWeightG (optional) — per-row grams-per-count. Two distinct
+// roles depending on the canonical's ladder shape:
+//   - Mass ladder (chicken_breast, sausage): overrides the canonical's
+//     default count.toBase so "each breast in THIS pack is 170g"
+//     calibrates downstream math. Delegated to convertWithBridge via
+//     the synthetic row so the same override logic powers CookComplete.
+//   - Count-only ladder (tortillas, bread_slice): acts as the MISSING
+//     grams anchor. The canonical has no `g:1` entry so convertWithBridge's
+//     pure-bridge path can't resolve count→g (the mass-side unit isn't
+//     in the ladder). Compute grams directly from counts × override.
+//     Without the override we still bail — no grams axis to scale along.
 export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   if (!qty || !canonical || !nutrition) return null;
 
@@ -196,25 +242,37 @@ export function scaleFactor(qty, canonical, nutrition, opts = {}) {
   const per = coercePer(nutrition);
   if (!per) return null;
 
-  // qty → base amount math delegates to convertWithBridge so the
-  // count↔mass override logic stays in one place (shared with
-  // CookComplete's conversion UI). Per-row override of grams-per-count
-  // still only applies to mass ladders — pure-count ladders (banana
-  // with per="count", count.toBase=1) have no gram axis and the
-  // override would poison the math. Gated by stripping countWeightG
-  // from the synthetic row when the canonical isn't mass-based.
-  const applyOverride =
-    qty.unit === "count" &&
-    Number.isFinite(Number(opts.countWeightG)) &&
-    Number(opts.countWeightG) > 0 &&
-    isMassLadder(canonical);
-  const synthRow = applyOverride
-    ? { countWeightG: Number(opts.countWeightG) }
+  const rowGramsPerCount = Number(opts.countWeightG);
+  const haveOverride = Number.isFinite(rowGramsPerCount) && rowGramsPerCount > 0;
+  const massLadder = isMassLadder(canonical);
+
+  // Mass-ladder path: delegate qty→grams to convertWithBridge. Pass
+  // the override through synthRow on count units so the row's
+  // calibrated weight wins over the canonical's baked-in count.toBase.
+  const synthRow = haveOverride && massLadder && qty.unit === "count"
+    ? { countWeightG: rowGramsPerCount }
     : null;
+
+  // Count-only ladder + override: roll qty up to counts via the
+  // canonical's own ladder (pack.toBase=10 counts, count.toBase=1),
+  // then multiply by grams-per-count to land on grams.
+  // convertWithBridge's pure-bridge path can't do this because it
+  // requires the mass-side unit to exist in the canonical's ladder,
+  // which tortillas / bread_slice don't declare.
+  let countOnlyGrams = null;
+  if (haveOverride && !massLadder) {
+    const fromEntry = canonical.units?.find(u => u.id === qty.unit);
+    const countEntry = canonical.units?.find(u => u.id === "count");
+    if (fromEntry && countEntry) {
+      const counts = Number(qty.amount) * Number(fromEntry.toBase) / Number(countEntry.toBase);
+      if (Number.isFinite(counts)) countOnlyGrams = counts * rowGramsPerCount;
+    }
+  }
 
   switch (per.kind) {
     case "100g": {
-      if (!isMassLadder(canonical)) return null;
+      if (countOnlyGrams != null) return countOnlyGrams / 100;
+      if (!massLadder) return null;
       const res = convertWithBridge(qty, "g", canonical, synthRow);
       return res.ok ? res.value / 100 : null;
     }
@@ -223,9 +281,10 @@ export function scaleFactor(qty, canonical, nutrition, opts = {}) {
       return res.ok ? res.value : null;
     }
     case "serving": {
-      if (!isMassLadder(canonical)) return null;
       const g = per.serving_g;
       if (!Number.isFinite(g) || g <= 0) return null;
+      if (countOnlyGrams != null) return countOnlyGrams / g;
+      if (!massLadder) return null;
       const res = convertWithBridge(qty, "g", canonical, synthRow);
       return res.ok ? res.value / g : null;
     }
@@ -365,7 +424,8 @@ export function recipeNutrition(recipe, { pantry = [], brandNutrition, getInfo }
     // `amount`.
     const qty = ing.qty || parseAmountString(ing.amount, canon);
     if (!qty) continue;
-    const factor = scaleFactor(qty, canon, nutrition);
+    const countWeightG = effectiveCountWeightG(pantryRow, canon);
+    const factor = scaleFactor(qty, canon, nutrition, { countWeightG });
     if (factor == null) continue;
     for (const key of Object.keys(totals)) {
       if (typeof nutrition[key] === "number") totals[key] += nutrition[key] * factor;
@@ -424,10 +484,18 @@ export function recipeNutritionBreakdown(recipe, { pantry = [], brandNutrition, 
     const parsed = ing.qty || parseAmountString(ing.amount, canon);
     row.parsedQty = parsed;
     if (!parsed) { row.reason = `could not parse amount "${ing.amount}"`; items.push(row); continue; }
-    const factor = scaleFactor(parsed, canon, nutrition);
+    const countWeightG = effectiveCountWeightG(pantryRow, canon);
+    row.countWeightG = countWeightG;
+    const factor = scaleFactor(parsed, canon, nutrition, { countWeightG });
     row.factor = factor;
     if (factor == null) {
-      row.reason = `scaleFactor returned null (per="${nutrition.per}", unit="${parsed.unit}")`;
+      const missingGrams =
+        (nutrition.per === "100g" || nutrition.per === "serving") &&
+        parsed.unit === "count" &&
+        !(Number.isFinite(countWeightG) && countWeightG > 0);
+      row.reason = missingGrams
+        ? `per="${nutrition.per}" needs grams-per-count — set "each ~g" on the pantry row`
+        : `scaleFactor returned null (per="${nutrition.per}", unit="${parsed.unit}")`;
       items.push(row);
       continue;
     }
@@ -531,6 +599,8 @@ export function sourceBadge(source) {
     case "pantry":    return { label: "YOU",      color: "#7ec87e" };
     case "brand":     return { label: "BRAND",    color: "#c7a8d4" };
     case "canonical": return { label: "CANONICAL", color: "#b8a878" };
+    case "cut":       return { label: "CUT",      color: "#a8553a" };
+    case "state":     return { label: "STATE",    color: "#c7a8d4" };
     case "default":   return { label: "EST.",     color: "#888"    };
     default:          return { label: "",         color: "#555"    };
   }

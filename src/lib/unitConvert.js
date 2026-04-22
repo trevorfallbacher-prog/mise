@@ -23,7 +23,7 @@
 // complete flow to resolve "used 2 tbsp butter" → "decrement the
 // pantry's 1.5-stick row by 28.4 g → 1.25 sticks remaining".
 
-import { toBase, CUT_WEIGHTS_G, CANONICAL_ALIASES, INGREDIENT_DENSITY_G_PER_ML } from "../data/ingredients";
+import { toBase, CUT_WEIGHTS_G, COUNT_WEIGHTS_G, CANONICAL_ALIASES, INGREDIENT_DENSITY_G_PER_ML } from "../data/ingredients";
 
 // Universal mass / volume conversion factors. These are PHYSICS, not
 // ingredient-specific — 1 lb is always 453.6 g whether we're weighing
@@ -151,20 +151,27 @@ export function effectiveCountWeightG(pantryRow, canonical) {
   const explicit = Number(pantryRow?.countWeightG);
   if (Number.isFinite(explicit) && explicit > 0) return explicit;
 
-  // 2. derived from package metadata
-  const pkgAmt  = Number(pantryRow?.packageAmount);
-  const pkgUnit = pantryRow?.packageUnit;
-  const maxCount = Number(pantryRow?.max);
-  const count = (Number.isFinite(maxCount) && maxCount > 0)
-    ? maxCount
-    : Number(pantryRow?.amount);
-  if (Number.isFinite(pkgAmt) && pkgAmt > 0 &&
-      Number.isFinite(count)  && count  > 0 &&
-      pkgUnit && pkgUnit !== "count") {
-    const entry = canonical.units?.find(u => u.id === pkgUnit);
-    if (entry) {
-      const g = pkgAmt * Number(entry.toBase);
-      if (Number.isFinite(g) && g > 0) return g / count;
+  // 2. derived from package metadata. Only meaningful on mass ladders:
+  // a mass-ladder canonical has every unit's toBase in grams, so
+  // pkgAmt × entry.toBase = grams. On a count-only ladder (tortillas,
+  // bread_slice) pack.toBase=10 is counts, not grams, and the math
+  // would return garbage. Bail; path #3 (cut weights) and explicit
+  // overrides still apply.
+  if (isMassLadder(canonical)) {
+    const pkgAmt  = Number(pantryRow?.packageAmount);
+    const pkgUnit = pantryRow?.packageUnit;
+    const maxCount = Number(pantryRow?.max);
+    const count = (Number.isFinite(maxCount) && maxCount > 0)
+      ? maxCount
+      : Number(pantryRow?.amount);
+    if (Number.isFinite(pkgAmt) && pkgAmt > 0 &&
+        Number.isFinite(count)  && count  > 0 &&
+        pkgUnit && pkgUnit !== "count") {
+      const entry = canonical.units?.find(u => u.id === pkgUnit);
+      if (entry) {
+        const g = pkgAmt * Number(entry.toBase);
+        if (Number.isFinite(g) && g > 0) return g / count;
+      }
     }
   }
 
@@ -180,6 +187,14 @@ export function effectiveCountWeightG(pantryRow, canonical) {
     const g = baseId ? CUT_WEIGHTS_G[baseId]?.[cut] : null;
     if (Number.isFinite(g) && g > 0) return g;
   }
+
+  // 4. canonical-level default for count-only ladders (tortillas,
+  // bagel, bread_slice). Ships as last-resort so brand per="100g"
+  // nutrition resolves out-of-the-box without the user having to
+  // hand-calibrate every pantry row. Explicit overrides still win.
+  const countDefault = Number(COUNT_WEIGHTS_G[canonical.id]);
+  if (Number.isFinite(countDefault) && countDefault > 0) return countDefault;
+
   return null;
 }
 
