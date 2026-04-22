@@ -187,65 +187,100 @@ function sanitizeStep(raw: unknown, i: number): Record<string, unknown> | null {
   return { id, title, instruction, icon, timer, tip, heat, doneCue };
 }
 
-function sanitize(raw: unknown): Record<string, unknown> | null {
-  if (!raw || typeof raw !== "object") return null;
+// Sanitize + rehydrate Claude's response. Tolerant by design — a
+// partially valid response with usable steps is still worth
+// surfacing to the user instead of bouncing to a 502. Returns
+// [block, reason] where block is null and reason is a short debug
+// string when we genuinely can't salvage anything. Reason flows
+// back to the client in the 502 detail so the user can tell
+// whether the model refused, truncated, or deviated from the shape.
+function sanitize(raw: unknown): [Record<string, unknown> | null, string | null] {
+  if (!raw || typeof raw !== "object") return [null, "response was not a JSON object"];
   const obj = raw as Record<string, unknown>;
 
-  const title = typeof obj.title === "string" ? obj.title.trim() : "";
-  if (!title) return null;
+  // Steps are the load-bearing field — without at least one
+  // rendered step, ReheatMode has nothing to show. Everything else
+  // (title, emoji, reheat summary) we can fill in defensively.
+  const stepsRaw = Array.isArray(obj.steps) ? obj.steps : [];
+  const steps = stepsRaw
+    .map((s, i) => sanitizeStep(s, i))
+    .filter((s): s is Record<string, unknown> => !!s);
+  if (steps.length === 0) return [null, "no valid steps in response"];
+  if (steps.length > 6) steps.length = 6;
 
-  const emoji = typeof obj.emoji === "string" && obj.emoji.trim() ? obj.emoji.trim() : "♨";
+  const title = typeof obj.title === "string" && obj.title.trim()
+    ? obj.title.trim()
+    : "Reheat";
+  const emoji = typeof obj.emoji === "string" && obj.emoji.trim()
+    ? obj.emoji.trim()
+    : "♨";
   const summary = typeof obj.summary === "string" ? obj.summary.trim() : "";
 
-  // Reheat block — validated like the pre-pivot version so the
-  // ItemCard pill always reads consistently.
+  // Reheat primary — best-effort reconstruction. When the model
+  // skipped it OR validation rejects it, we synthesize one from
+  // the first timed step so the ItemCard pill still has a summary
+  // pill to display.
+  let primary: Record<string, unknown> | null = null;
   const reheatRaw = obj.reheat && typeof obj.reheat === "object"
     ? obj.reheat as Record<string, unknown>
     : null;
   const primaryRaw = reheatRaw?.primary && typeof reheatRaw.primary === "object"
     ? reheatRaw.primary as Record<string, unknown>
     : null;
-  if (!primaryRaw) return null;
-
-  const method = typeof primaryRaw.method === "string" ? primaryRaw.method : "";
-  if (!METHODS.has(method)) return null;
-  const needsTemp = method === "oven" || method === "air_fryer" || method === "toaster_oven";
-  let tempF: number | null = null;
-  if (needsTemp) {
-    const t = Number(primaryRaw.tempF);
-    tempF = Number.isFinite(t) && t > 0 ? Math.round(t) : null;
-    if (tempF == null) return null;
+  if (primaryRaw) {
+    const method = typeof primaryRaw.method === "string" ? primaryRaw.method : "";
+    if (METHODS.has(method)) {
+      const needsTemp = method === "oven" || method === "air_fryer" || method === "toaster_oven";
+      const t = Number(primaryRaw.tempF);
+      const tempF = Number.isFinite(t) && t > 0 ? Math.round(t) : null;
+      const timeRaw = Number(primaryRaw.timeMin);
+      const timeMin = Number.isFinite(timeRaw) && timeRaw > 0
+        ? Math.round(timeRaw * 10) / 10
+        : null;
+      // Reject the primary only when BOTH of its load-bearing
+      // fields are missing — needs-temp methods still salvage with
+      // a default of 350°F and we log the patch. Otherwise fall
+      // through to the step-based synthesis below.
+      if (timeMin != null || steps.some(s => typeof s.timer === "number" && s.timer)) {
+        const covered = primaryRaw.covered === true ? true
+                      : primaryRaw.covered === false ? false
+                      : null;
+        const tips = typeof primaryRaw.tips === "string" ? primaryRaw.tips.trim() : "";
+        primary = {
+          method,
+          tempF: needsTemp && tempF == null ? 350 : tempF,
+          timeMin: timeMin != null
+            ? timeMin
+            : Math.round((steps.reduce((m, s) => m + (Number(s.timer) || 0), 0) / 60) * 10) / 10 || 5,
+          covered,
+          tips: tips || null,
+        };
+      }
+    }
   }
-  const timeRaw = Number(primaryRaw.timeMin);
-  if (!Number.isFinite(timeRaw) || timeRaw <= 0) return null;
-  const timeMin = Math.round(timeRaw * 10) / 10;
-  const covered = primaryRaw.covered === true ? true
-                : primaryRaw.covered === false ? false
-                : null;
-  const tips = typeof primaryRaw.tips === "string" ? primaryRaw.tips.trim() : "";
+  if (!primary) {
+    // Synthesize from the first step that has a timer. Covers the
+    // "Claude forgot reheat.primary entirely" case without
+    // punishing the user with a 502.
+    const firstTimed = steps.find(s => typeof s.timer === "number" && Number(s.timer) > 0);
+    const totalSec = steps.reduce((m, s) => m + (Number(s.timer) || 0), 0);
+    const minutes = Math.max(1, Math.round((totalSec || 300) / 60));
+    primary = {
+      method: "stovetop",
+      tempF: null,
+      timeMin: minutes,
+      covered: null,
+      tips: firstTimed && typeof firstTimed.tip === "string" ? firstTimed.tip : null,
+    };
+  }
 
-  const stepsRaw = Array.isArray(obj.steps) ? obj.steps : [];
-  const steps = stepsRaw
-    .map((s, i) => sanitizeStep(s, i))
-    .filter((s): s is Record<string, unknown> => !!s);
-  if (steps.length === 0) return null;
-  if (steps.length > 6) steps.length = 6;
-
-  return {
+  return [{
     title,
     emoji,
     summary: summary || null,
-    reheat: {
-      primary: {
-        method,
-        tempF,
-        timeMin,
-        covered,
-        tips: tips || null,
-      },
-    },
+    reheat: { primary },
     steps,
-  };
+  }, null];
 }
 
 Deno.serve(async (req) => {
@@ -363,12 +398,12 @@ Deno.serve(async (req) => {
     );
   }
 
-  const block = sanitize(parsed);
+  const [block, reason] = sanitize(parsed);
   if (!block) {
     return new Response(
       JSON.stringify({
-        error: "model response failed shape validation",
-        raw: text.slice(0, 400),
+        error: `cook-instructions validation failed: ${reason || "unknown"}`,
+        raw: text.slice(0, 600),
       }),
       { status: 502, headers: JSON_HEADERS },
     );

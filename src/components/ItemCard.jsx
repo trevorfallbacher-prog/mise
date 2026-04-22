@@ -32,6 +32,7 @@ import CookInstructionsSheet from "./CookInstructionsSheet";
 import ReheatMode from "./ReheatMode";
 import EatIntentSheet from "./EatIntentSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
+import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { findRecipe } from "../data/recipes";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { reheatToCookInstructions } from "../lib/reheatToCookInstructions";
@@ -1459,17 +1460,13 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               <button
                 type="button"
                 onClick={() => {
-                  // Always-on EAT button. Two-path routing:
-                  //   reheat available → open the intent sheet so the
-                  //     user picks REHEAT FIRST vs ALREADY ATE IT on
-                  //     each tap (they may have eaten it cold).
-                  //   no reheat        → go straight to log (no point
-                  //     asking — there's only one path).
-                  if (effectiveCookInstructions.ci?.steps?.length) {
-                    setEatIntentOpen(true);
-                  } else {
-                    setIAteOpen(true);
-                  }
+                  // Always-on EAT button — opens the intent sheet
+                  // every time so the user picks the path. The sheet
+                  // itself decides whether to offer REHEAT FIRST
+                  // (when reheat already exists) or GENERATE REHEAT
+                  // WITH AI (when none does), alongside the always-
+                  // present ALREADY ATE IT escape hatch.
+                  setEatIntentOpen(true);
                 }}
                 style={{
                   flex: 1, padding: "12px 14px",
@@ -3255,8 +3252,32 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
       {eatIntentOpen && (
         <EatIntentSheet
           item={item}
+          hasReheat={!!effectiveCookInstructions.ci?.steps?.length}
           summary={effectiveCookInstructions.ci?.summary || formatReheatSummary(effectiveCookInstructions.ci?.reheat) || null}
           onReheat={() => {
+            setEatIntentOpen(false);
+            setReheatOpen(true);
+          }}
+          onGenerate={async () => {
+            // Fire the AI suggest, save to the row (per-row
+            // override, not canonical), then close ourselves and
+            // open ReheatMode on the freshly written walkthrough.
+            // Item won't have the new block yet on this render
+            // pass — onUpdate commits through the pending-changes
+            // path — so pass the fresh block directly to ReheatMode
+            // via state below instead of re-resolving effective.
+            const { cookInstructions, error } = await suggestCookInstructions({
+              name:        item?.name,
+              canonicalId: item?.ingredientId || item?.canonicalId,
+              brand:       item?.brand,
+              state:       item?.state,
+              cut:         item?.cut,
+              category:    item?.category,
+            });
+            if (error || !cookInstructions?.steps?.length) {
+              throw new Error(error || "Claude didn't return a usable walkthrough.");
+            }
+            await onUpdate?.({ cookInstructions });
             setEatIntentOpen(false);
             setReheatOpen(true);
           }}

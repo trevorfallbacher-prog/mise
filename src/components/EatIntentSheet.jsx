@@ -1,28 +1,54 @@
+import { useState } from "react";
 import ModalSheet from "./ModalSheet";
 import { Z } from "../lib/tokens";
 
 /**
  * EatIntentSheet — intercept between the EAT button and the actual
- * walkthrough / log flow. Asks "what did you just do?" rather than
- * inferring from state, so the user controls the path each time:
- *   REHEAT FIRST  — launch the full-screen ReheatMode walkthrough,
- *                   then chain into the amount-and-log sheet.
- *   ALREADY ATE IT — skip straight to the amount-and-log sheet.
+ * walkthrough / log flow. Asks "what did you just do?" each time so
+ * the user picks the path. Three states:
  *
- * Opens ONLY when reheat instructions exist for the row (per-row
- * cookInstructions, canonical enrichment, or source-recipe synth).
- * When there's nothing to reheat, ItemCard bypasses this sheet and
- * opens IAteThisSheet directly — no need to ask.
+ *   hasReheat=true  → REHEAT FIRST + ALREADY ATE IT
+ *   hasReheat=false → GENERATE REHEAT WITH AI + ALREADY ATE IT
+ *
+ * The GENERATE path fires a single AI call (via the generate prop
+ * supplied by the parent), persists the result as the row's new
+ * cookInstructions, then hands control back to ItemCard which opens
+ * ReheatMode on the freshly generated walkthrough. Loading and
+ * error states render inline — no secondary modal to manage.
  *
  * Props:
- *   item         — pantry row (for header context: emoji, name).
- *   summary      — short method+time string for the REHEAT option
- *                  subtitle ("Oven 350°F · 15 min"). Optional.
- *   onReheat()   — user picked REHEAT FIRST.
- *   onJustLog()  — user picked ALREADY ATE IT.
- *   onClose()    — user dismissed the sheet.
+ *   item       — pantry row (header context: emoji, name).
+ *   hasReheat  — bool; whether effectiveCookInstructions has steps.
+ *   summary    — short method+time string for the REHEAT option
+ *                subtitle (e.g. "Oven 350°F · 15 min"). Optional.
+ *   onReheat() — user picked REHEAT FIRST. Only when hasReheat.
+ *   onGenerate() — async. Parent runs the AI call + save; when the
+ *                  promise resolves the parent closes this sheet and
+ *                  opens ReheatMode on the fresh recipe.
+ *   onJustLog() — user picked ALREADY ATE IT.
+ *   onClose() — dismiss.
  */
-export default function EatIntentSheet({ item, summary, onReheat, onJustLog, onClose }) {
+export default function EatIntentSheet({
+  item, hasReheat, summary,
+  onReheat, onGenerate, onJustLog, onClose,
+}) {
+  const [generating, setGenerating] = useState(false);
+  const [error,      setError]      = useState(null);
+
+  const handleGenerate = async () => {
+    setError(null);
+    setGenerating(true);
+    try {
+      await onGenerate?.();
+      // parent closes us + opens ReheatMode on success
+    } catch (e) {
+      setError(e?.message || "Couldn't generate — try again.");
+      setGenerating(false);
+    }
+  };
+
+  const primaryDisabled = generating;
+
   return (
     <ModalSheet onClose={onClose} zIndex={Z.picker} label="EAT">
       <div style={{ padding: "4px 22px 24px" }}>
@@ -42,51 +68,92 @@ export default function EatIntentSheet({ item, summary, onReheat, onJustLog, onC
           </div>
         </div>
 
-        {/* Primary option — REHEAT FIRST. Gold-on-dark palette matches
-            the rest of the cook-walkthrough surfaces so the user
-            learns one vocabulary. Subtitle shows the method + time
-            so the user knows what they're about to do before tapping. */}
-        <button
-          type="button"
-          onClick={onReheat}
-          style={{
-            width: "100%", padding: "16px 18px", marginBottom: 10,
-            background: "#1a1608", border: "1px solid #3a2f10",
-            borderRadius: 12, textAlign: "left",
-            display: "flex", alignItems: "center", gap: 14,
-            cursor: "pointer",
-          }}
-        >
-          <span style={{ fontSize: 28, flexShrink: 0 }}>♨</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
-              color: "#f5c842", letterSpacing: "0.1em",
-            }}>
-              REHEAT FIRST
+        {/* PRIMARY path.
+            hasReheat=true  → REHEAT FIRST (method summary subtitle)
+            hasReheat=false → GENERATE REHEAT WITH AI (swaps in a
+                              sparkle + different copy; tapping fires
+                              the async onGenerate and shows a
+                              loading state until the parent swaps us
+                              out for ReheatMode). */}
+        {hasReheat ? (
+          <button
+            type="button"
+            onClick={onReheat}
+            disabled={primaryDisabled}
+            style={{
+              width: "100%", padding: "16px 18px", marginBottom: 10,
+              background: "#1a1608", border: "1px solid #3a2f10",
+              borderRadius: 12, textAlign: "left",
+              display: "flex", alignItems: "center", gap: 14,
+              cursor: primaryDisabled ? "not-allowed" : "pointer",
+              opacity: primaryDisabled ? 0.5 : 1,
+            }}
+          >
+            <span style={{ fontSize: 28, flexShrink: 0 }}>♨</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+                color: "#f5c842", letterSpacing: "0.1em",
+              }}>
+                REHEAT FIRST
+              </div>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb",
+                marginTop: 2, lineHeight: 1.35,
+              }}>
+                {summary
+                  ? `${summary} — walk through the cook screen, then log the bite.`
+                  : "Walk through the cook screen, then log the bite."}
+              </div>
             </div>
-            <div style={{
-              fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb",
-              marginTop: 2, lineHeight: 1.35,
-            }}>
-              {summary ? `${summary} — walk through the cook screen, then log the bite.` : "Walk through the cook screen, then log the bite."}
+            <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={primaryDisabled}
+            style={{
+              width: "100%", padding: "16px 18px", marginBottom: 10,
+              background: generating ? "#1a1a1a" : "#1a1608",
+              border: `1px solid ${generating ? "#2a2a2a" : "#3a2f10"}`,
+              borderRadius: 12, textAlign: "left",
+              display: "flex", alignItems: "center", gap: 14,
+              cursor: primaryDisabled ? "not-allowed" : "pointer",
+            }}
+          >
+            <span style={{ fontSize: 28, flexShrink: 0 }}>{generating ? "⏳" : "✨"}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+                color: generating ? "#888" : "#f5c842", letterSpacing: "0.1em",
+              }}>
+                {generating ? "GENERATING…" : "GENERATE REHEAT WITH AI"}
+              </div>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb",
+                marginTop: 2, lineHeight: 1.35,
+              }}>
+                Claude writes a tight 2-5 step walkthrough for this item, saves it to the row, and opens the cook screen.
+              </div>
             </div>
-          </div>
-          <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
-        </button>
+            <span style={{ color: generating ? "#888" : "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+          </button>
+        )}
 
-        {/* Secondary option — already ate it cold / didn't need to
-            heat. Muted palette (same as neutral buttons elsewhere)
-            so the primary REHEAT reads as the default path. */}
+        {/* Skip-reheat path — always available, same visual weight as
+            the secondary action elsewhere in the consumption flow. */}
         <button
           type="button"
           onClick={onJustLog}
+          disabled={primaryDisabled}
           style={{
             width: "100%", padding: "16px 18px",
             background: "#0f1a0f", border: "1px solid #1e3a1e",
             borderRadius: 12, textAlign: "left",
             display: "flex", alignItems: "center", gap: 14,
-            cursor: "pointer",
+            cursor: primaryDisabled ? "not-allowed" : "pointer",
+            opacity: primaryDisabled ? 0.5 : 1,
           }}
         >
           <span style={{ fontSize: 28, flexShrink: 0 }}>📝</span>
@@ -106,6 +173,18 @@ export default function EatIntentSheet({ item, summary, onReheat, onJustLog, onC
           </div>
           <span style={{ color: "#7ec87e", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
         </button>
+
+        {error && (
+          <div style={{
+            marginTop: 12, padding: "10px 12px",
+            background: "#1a0f0f", border: "1px solid #3a1a1a",
+            borderRadius: 10,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#f87171",
+            lineHeight: 1.4,
+          }}>
+            {error}
+          </div>
+        )}
       </div>
     </ModalSheet>
   );

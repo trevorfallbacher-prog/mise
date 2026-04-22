@@ -48,8 +48,11 @@ export async function suggestCookInstructions({
     return { error: detail };
   }
 
-  if (!data?.cookInstructions?.primary) {
-    return { error: "Unexpected response from cook-instructions suggestor." };
+  // The recipe-shape response carries steps[] as the load-bearing
+  // field (ReheatMode can't render without them); reheat.primary is
+  // the summary pill but optional for rendering purposes.
+  if (!Array.isArray(data?.cookInstructions?.steps) || data.cookInstructions.steps.length === 0) {
+    return { error: "Response missing steps — try again." };
   }
   return { cookInstructions: data.cookInstructions };
 }
