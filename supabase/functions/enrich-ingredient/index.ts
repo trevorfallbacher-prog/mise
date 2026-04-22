@@ -139,7 +139,7 @@ omitted when not applicable. Every other field is REQUIRED.
   // turkey). Map of anatomical cut → per-100g nutrition block. Same
   // shape as "nutrition" above (each value must validate the same
   // per/serving_g rules). The client resolver prefers this over the
-  // generic "nutrition" block when the pantry row has a `cut` tag
+  // generic "nutrition" block when the pantry row has a 'cut' tag
   // set, so "chicken + cut=thigh" gets thigh-specific macros (209 kcal)
   // instead of the hub default (breast, 165 kcal). Keys should be the
   // cut slugs used by CUT_WEIGHTS_G (breast, thigh, leg, wing, ribeye,
