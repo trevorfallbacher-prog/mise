@@ -27,10 +27,18 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 // caller with duplicates). `onCancel` closes without firing. The
 // component renders as a full-screen overlay; the caller decides
 // when to mount/unmount it.
+//
+// mode="rapid" keeps the stream open after each detect so Shop Mode
+// can fire item after item without closing / reopening the camera.
+// The caller is responsible for deciding when to unmount (e.g. when
+// the user taps DONE SHOPPING). A 1500ms same-UPC suppression window
+// prevents double-fires while the pair sheet is still up.
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
 
-export default function BarcodeScanner({ onDetected, onCancel }) {
+export default function BarcodeScanner({ onDetected, onCancel, mode = "single" }) {
+  const rapidMode = mode === "rapid";
+  const lastRapidRef = useRef({ upc: "", at: 0 });
   const videoRef   = useRef(null);
   const streamRef  = useRef(null);
   const detectorRef = useRef(null);
@@ -163,10 +171,18 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
         videoRef.current,
         (digits) => {
           if (cancelledRef.current) return;
+          if (rapidMode) {
+            // Keep the stream alive — just bubble the digits up. The
+            // zxing wrapper already suppresses same-UPC dupes within
+            // 1500ms when opts.continuous is set.
+            onDetected?.(digits);
+            return;
+          }
           stopStream();
           onDetected?.(digits);
         },
         (err) => { console.warn("[barcode] zxing live error:", err); },
+        { continuous: rapidMode },
       );
       zxingStopRef.current = scanner;
     } catch (err) {
@@ -192,6 +208,21 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
           if (codes && codes.length > 0) {
             const raw = String(codes[0].rawValue || "").trim();
             if (/^\d{8,14}$/.test(raw)) {
+              if (rapidMode) {
+                // Suppress same-UPC re-fires within 1500ms so the pair
+                // sheet has time to appear and re-arm before the next
+                // scan, even if the same barcode is still in-frame.
+                const now = Date.now();
+                const isDupe = raw === lastRapidRef.current.upc
+                  && (now - lastRapidRef.current.at) < 1500;
+                if (!isDupe) {
+                  lastRapidRef.current = { upc: raw, at: now };
+                  if (!cancelledRef.current) onDetected?.(raw);
+                }
+                // Keep scanning — don't stopStream in rapid mode.
+                tickRef.current = window.setTimeout(tick, 350);
+                return;
+              }
               stopStream();
               if (!cancelledRef.current) onDetected?.(raw);
               return;

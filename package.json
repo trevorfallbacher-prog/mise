@@ -1,6 +1,6 @@
 {
   "name": "mise-app",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "private": true,
   "dependencies": {
     "@supabase/supabase-js": "^2.103.0",

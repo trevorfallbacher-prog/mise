@@ -62,6 +62,9 @@ import { useCanonicalOffTags } from "../lib/useCanonicalOffTags";
 import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
+import ShopMode from "./ShopMode";
+import { useShopMode } from "../lib/useShopMode";
+import { commitShopModeTrip } from "../lib/commitShopModeTrip";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
 import {
   resolveCanonicalFromScan,
@@ -5123,6 +5126,17 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
 export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed, pendingPantryAction, onPendingActionConsumed }) {
   const [scanning, setScanning] = useState(false);
+  // Shop Mode — persistent-scanner + pair-to-list feature (migrations
+  // 0126/0127/0128). Two pieces of state:
+  //   shopModeOpen      → full-screen ShopMode overlay is mounted
+  //   pendingTripCtx    → trip context handed off to the receipt scanner
+  //                       when the user taps DONE in ShopMode. Cleared
+  //                       once the receipt commits and commitShopModeTrip
+  //                       has paired everything up.
+  const [shopModeOpen, setShopModeOpen] = useState(false);
+  const [pendingTripCtx, setPendingTripCtx] = useState(null); // { trip, scans }
+  const { rows: brandNutritionRowsForShop } = useBrandNutrition();
+  const shopLearnedTagLookup = useCanonicalOffTags();
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
   const { profile } = useProfile(userId);
@@ -6170,6 +6184,50 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       bumpTemplateUse(tid);
     }
 
+    // Shop Mode commit pass — if the user came in through Shop Mode
+    // and a trip context is pending, pair the freshly inserted pantry
+    // rows to the trip's scans, mark list items purchased, and check
+    // out the trip. Fire-and-forget (no toast from here; the summary
+    // toast above already reports the big-picture stock count).
+    if (pendingTripCtx?.trip?.id && receiptId) {
+      // Build an in-memory view of the new pantry rows so we don't
+      // have to wait for useSyncedList's persist → realtime-read
+      // round trip. stableNewIds holds the ids we generated above,
+      // paired 1:1 with fannedItems in insertion order.
+      const newPantryRows = fannedItems.map((s, i) => ({
+        id: stableNewIds[i],
+        name: s.name || null,
+        brand: s.brand || null,
+        barcode_upc: s.barcodeUpc || null,
+        canonical_id: s.canonicalId || s.ingredientId || null,
+        receipt_line_index: typeof s.receiptLineIndex === "number" ? s.receiptLineIndex : null,
+      }));
+      // Small defer so the optimistic insert has landed in the DB by
+      // the time commitShopModeTrip starts updating those same rows.
+      setTimeout(async () => {
+        try {
+          const res = await commitShopModeTrip({
+            tripId:         pendingTripCtx.trip.id,
+            receiptId,
+            userId,
+            tripScans:      pendingTripCtx.scans || [],
+            newPantryRows,
+            receiptMeta:    meta,
+          });
+          if (res?.pairedCount > 0) {
+            pushToast(
+              `${res.pairedCount} item${res.pairedCount === 1 ? "" : "s"} paired from your trip.`,
+              { emoji: "🛒", kind: "success", ttl: 4000 },
+            );
+          }
+        } catch (e) {
+          console.warn("[shop-mode] commitShopModeTrip failed:", e);
+        } finally {
+          setPendingTripCtx(null);
+        }
+      }, 600);
+    }
+
     setScanning(false);
   };
 
@@ -7017,6 +7075,25 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     );
   };
 
+  if (shopModeOpen) return (
+    <ShopMode
+      userId={userId}
+      shoppingList={shoppingList}
+      setShoppingList={setShoppingList}
+      brandNutritionRows={brandNutritionRowsForShop}
+      learnedTagLookup={shopLearnedTagLookup}
+      onClose={() => setShopModeOpen(false)}
+      onCheckoutRequest={({ trip, scans }) => {
+        // Hand off to the existing receipt scanner. pendingTripCtx
+        // travels through addScannedItems so commitShopModeTrip can
+        // pair scans → pantry rows → list items after the commit.
+        setPendingTripCtx({ trip, scans });
+        setShopModeOpen(false);
+        setScanning(true);
+      }}
+    />
+  );
+
   if (scanning) return <Scanner
     userId={userId}
     shoppingList={shoppingList}
@@ -7547,6 +7624,35 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#666" }}>Need something? Jot it down.</div>
             </div>
             <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
+          </div>
+
+          {/* SHOP MODE entry point — persistent-scanner flow during a
+              trip. Tan palette (canonical color) since the button is
+              about identity capture, not shopping-list yellow. */}
+          <div
+            onClick={() => setShopModeOpen(true)}
+            style={{
+              margin: "10px 20px 0",
+              padding: "16px 20px",
+              background: "linear-gradient(135deg, #1c160c 0%, #120d05 100%)",
+              border: "1px solid #b8a87855",
+              borderRadius: 16,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+            }}
+          >
+            <div style={{ fontSize: 28 }}>🛒</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'Fraunces',serif", fontSize: 17, color: "#b8a878", fontStyle: "italic", marginBottom: 3 }}>
+                Shop Mode
+              </div>
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888" }}>
+                Scan every item at the store, pair to list, commit at checkout.
+              </div>
+            </div>
+            <div style={{ fontSize: 20, color: "#b8a878" }}>→</div>
           </div>
 
           {shoppingList.length === 0 ? (

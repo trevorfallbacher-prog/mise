@@ -89,7 +89,14 @@ function loadImage(src) {
 // requests its own getUserMedia stream, which conflicts with the
 // BarcodeScanner component's already-running stream. Easier to
 // decode off the existing video element.
-export async function createZxingLiveScanner(videoElement, onDetected, onError) {
+export async function createZxingLiveScanner(videoElement, onDetected, onError, opts = {}) {
+  // opts.continuous — when true, keep scanning after each detect
+  //                   instead of stopping. Shop Mode uses this so the
+  //                   user can fire off item after item without a
+  //                   close/reopen of the camera between each. A
+  //                   1500ms suppression window prevents the same UPC
+  //                   from re-firing while the pair sheet is up.
+  const continuous = !!opts.continuous;
   let browser;
   try {
     browser = await loadReader();
@@ -100,6 +107,8 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError) 
   const { BrowserMultiFormatReader } = browser;
   const reader = new BrowserMultiFormatReader();
   let stopped = false;
+  let lastText = "";
+  let lastAt   = 0;
   const tick = async () => {
     if (stopped) return;
     if (!videoElement || videoElement.readyState < 2) {
@@ -112,8 +121,20 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError) 
       if (stopped) return;
       const text = (result?.getText?.() || "").trim();
       if (/^\d{8,14}$/.test(text)) {
-        stopped = true;
-        onDetected?.(text);
+        const now = Date.now();
+        const isDupe = continuous && text === lastText && (now - lastAt) < 1500;
+        if (!isDupe) {
+          lastText = text;
+          lastAt   = now;
+          onDetected?.(text);
+        }
+        if (!continuous) {
+          stopped = true;
+          return;
+        }
+        // Continuous: keep looking after a short gap so the focus /
+        // frame can settle on the next item before the decoder fires.
+        setTimeout(tick, 400);
         return;
       }
       // Non-digit format (QR pointing to a URL, etc) — ignore and
