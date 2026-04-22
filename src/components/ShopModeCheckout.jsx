@@ -101,15 +101,33 @@ export default function ShopModeCheckout({
     const file = e?.target?.files?.[0];
     if (e?.target) e.target.value = "";
     if (!file) return;
+    // scan-receipt expects jpeg/png/webp — reject PDFs and weird
+    // formats up-front with a human message instead of sending
+    // unusable bytes to the edge fn.
+    if (!/^image\/(jpeg|png|webp|heic|heif)/i.test(file.type)) {
+      setError("Upload an image (jpg, png, or webp). For PDFs, screenshot them and try again.");
+      return;
+    }
     setError(null);
     setPhase("parsing");
     try {
-      const compressed = await compressImage(file);
-      const mediaType = compressed?.blob?.type || file.type || "image/jpeg";
-      const blob = compressed?.blob || file;
-      const base64 = await fileToBase64(blob);
-      const previewUrl = URL.createObjectURL(blob);
-      setImageData({ base64, mediaType, previewUrl });
+      // compressImage returns { base64, mediaType, size }. Use the
+      // compressed output directly — previously we were pulling
+      // .blob off it which doesn't exist, so the raw file was being
+      // re-encoded every time.
+      const compressed = await compressImage(file).catch(() => null);
+      let base64;
+      let mediaType;
+      if (compressed?.base64) {
+        base64 = compressed.base64;
+        mediaType = compressed.mediaType || "image/jpeg";
+      } else {
+        // Compression failed (unusual codec, corrupted image) — fall
+        // back to the raw file.
+        base64 = await fileToBase64(file);
+        mediaType = file.type || "image/jpeg";
+      }
+      setImageData({ base64, mediaType });
 
       // Invoke scan-receipt. Pass a minimal ingredients registry — the
       // edge fn expects one but we don't rely on its canonical
@@ -360,7 +378,7 @@ export default function ShopModeCheckout({
           )}
 
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-            <label style={{ flex: 2 }}>
+            <label style={{ flex: 1 }}>
               <input
                 type="file"
                 accept="image/*"
@@ -368,13 +386,26 @@ export default function ShopModeCheckout({
                 onChange={handlePhotoSelect}
                 style={{ display: "none" }}
               />
-              <div style={primaryBtn}>📸 SCAN RECEIPT</div>
+              <div style={primaryBtn}>📸 SCAN</div>
             </label>
-            <button
-              onClick={() => doCommit({ withReceipt: false })}
-              style={secondaryBtn}
-            >SKIP — commit without prices</button>
+            {/* Gallery / file upload — no `capture` attribute, so
+                mobile shows the native picker (photos + files) and
+                desktop gets a regular file dialog. Covers the
+                screenshot-of-an-email-receipt case. */}
+            <label style={{ flex: 1 }}>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handlePhotoSelect}
+                style={{ display: "none" }}
+              />
+              <div style={primaryBtn}>📁 UPLOAD</div>
+            </label>
           </div>
+          <button
+            onClick={() => doCommit({ withReceipt: false })}
+            style={{ ...secondaryBtn, marginTop: 10, flex: "none", width: "100%" }}
+          >SKIP — commit without prices</button>
         </div>
       )}
 
