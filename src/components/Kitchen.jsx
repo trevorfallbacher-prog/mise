@@ -63,6 +63,7 @@ import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
 import ShopMode from "./ShopMode";
+import ShoppingQuickAdd from "./ShoppingQuickAdd";
 import { useShopMode } from "../lib/useShopMode";
 import { commitShopModeTrip } from "../lib/commitShopModeTrip";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
@@ -7704,31 +7705,38 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         </>
       )}
 
-      {addingTo && (
+      {/* Shopping list = bare-bones: ShoppingQuickAdd is just a
+          name field + optional qty + ADD. The full AddItemModal
+          (brand, axes, package size, expiry, …) is for pantry rows
+          only — forcing it on shopping list entries killed the
+          "jot it down fast" pitch the list is supposed to deliver. */}
+      {addingTo === "shopping" && (
+        <ShoppingQuickAdd
+          onClose={() => { setAddingTo(null); setAddingToTile(null); }}
+          onAdd={item => setShoppingList(prev => [...prev, { ...item, source: item.source || "manual" }])}
+        />
+      )}
+      {addingTo === "pantry" && (
         <AddItemModal
           target={addingTo}
-          tileContext={addingTo === "pantry" ? addingToTile : null}
+          tileContext={addingToTile}
           userId={userId}
           isAdmin={isAdmin}
           shoppingList={shoppingList}
           onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
-            if (addingTo === "shopping") {
-              setShoppingList(prev => [...prev, { ...item, source: "manual" }]);
-            } else {
-              // Suggest a location: registry's storage.location wins
-              // (butter→fridge, flour→pantry), then the current tab the
-              // user is viewing, then the category heuristic. Everything
-              // honors an explicit location the modal may have set.
-              // When the modal was opened from a tile drill-down, the
-              // caller's tab is what we want — if they're in the Fridge
-              // tab's Condiments tile adding mustard, it goes in the
-              // fridge even though mustard's registry location is pantry.
-              const canon = findIngredient(item.ingredientId);
-              const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
-              const location = item.location || (addingToTile ? addingToTile.tabId : null) || regLocation || storageTab;
-              setPantry(prev => [...prev, { ...item, location }]);
-            }
+            // Suggest a location: registry's storage.location wins
+            // (butter→fridge, flour→pantry), then the current tab the
+            // user is viewing, then the category heuristic. Everything
+            // honors an explicit location the modal may have set.
+            // When the modal was opened from a tile drill-down, the
+            // caller's tab is what we want — if they're in the Fridge
+            // tab's Condiments tile adding mustard, it goes in the
+            // fridge even though mustard's registry location is pantry.
+            const canon = findIngredient(item.ingredientId);
+            const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
+            const location = item.location || (addingToTile ? addingToTile.tabId : null) || regLocation || storageTab;
+            setPantry(prev => [...prev, { ...item, location }]);
           }}
         />
       )}
