@@ -665,6 +665,22 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     return map;
   }, [pastCooks]);
 
+  // Stash the leftover pantry row id between pick and save — the
+  // SchedulePicker doesn't know about leftovers, it just collects
+  // date/time/notification settings, so we keep fromPantryRowId in
+  // this parent scope and stamp it on the scheduled_meals insert
+  // alongside whatever the picker returns.
+  //
+  // Hooks MUST live above the early return below; prior iterations
+  // added these after the return and tripped "rendered fewer hooks
+  // than expected" the moment cookingRecipe flipped truthy (N hooks
+  // on the pre-cook render, N-2 on the cook-mode render).
+  const [scheduleFromPantryRowId, setScheduleFromPantryRowId] = useState(null);
+  // When a scheduled leftover slot fires, we open IAteThisSheet on
+  // that pantry row instead of CookMode. Held here at the Plan level
+  // so the sheet renders above the whole view, not inside MealDetail.
+  const [eatingLeftover, setEatingLeftover] = useState(null);
+
   // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
   // Pantry + shoppingList wiring is identical to the Cook tab's path so
   // "ADD MISSING TO SHOPPING LIST" works regardless of where you started.
@@ -693,17 +709,6 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       />
     );
   }
-
-  // Stash the leftover pantry row id between pick and save — the
-  // SchedulePicker doesn't know about leftovers, it just collects
-  // date/time/notification settings, so we keep fromPantryRowId in
-  // this parent scope and stamp it on the scheduled_meals insert
-  // alongside whatever the picker returns.
-  const [scheduleFromPantryRowId, setScheduleFromPantryRowId] = useState(null);
-  // When a scheduled leftover slot fires, we open IAteThisSheet on
-  // that pantry row instead of CookMode. Held here at the Plan level
-  // so the sheet renders above the whole view, not inside MealDetail.
-  const [eatingLeftover, setEatingLeftover] = useState(null);
   const onPickRecipe = (recipe, opts = {}) => {
     setRecipeToSchedule(recipe);
     setScheduleFromPantryRowId(opts.fromPantryRowId || null);
