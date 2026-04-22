@@ -472,35 +472,52 @@ export function canonicalizeEffectiveRecipe(recipe) {
 }
 
 // Render step.instruction prose with strikethrough+replacement applied
-// for each swap. Deterministic regex substitution — no AI call.
-// Word-boundary match, case-insensitive, longest-name-first so
-// "tortilla" inside "flour tortilla" doesn't match before the longer
-// name. Returns an array of React-renderable nodes (strings + {type}
-// markers); callers map it into JSX. Plain-text-only by design —
-// doesn't attempt grammatical declension (plural / possessive). The
-// banner above the prose is the backstop for cases where regex can't
-// reach.
+// for each swap, AND plain tan rewrites for each brand upgrade.
+// Deterministic regex substitution — no AI call. Word-boundary match,
+// case-insensitive, longest-name-first so "flour tortilla" matches
+// before "tortilla". Returns an array of React-renderable tokens;
+// callers map them into JSX. Plain-text-only by design — doesn't
+// attempt grammatical declension (plural / possessive / verb forms).
+// The banner above the prose is the backstop for cases where regex
+// can't reach.
+//
+// Grammar note: `\b` dodges "buttered" / "creamed" naturally because
+// there's no word boundary between "butter" and "ed". Verb uses like
+// "butter the dish" DO match and become "Kerrygold Butter the dish" —
+// slightly awkward, but we accept the tradeoff to surface branded
+// names in every mention.
 //
 // The shape returned is a flat array of:
-//   { text: "..." }                    — unchanged prose
-//   { strike: "crepes", after: "tortillas" }  — swap pair
-//   { strike: "crepes", after: null }         — skip
-export function tokenizeSwappedInstruction(instruction, swaps) {
+//   { text: "..." }                          — unchanged prose
+//   { strike: "crepes", after: "tortillas" } — substitute swap
+//   { strike: "crepes", after: null }        — skipped ingredient
+//   { brand: "Kerrygold Butter" }            — brand upgrade (same
+//                                              canonical, more specific
+//                                              display name)
+export function tokenizeSwappedInstruction(instruction, swaps, brandUpgrades = []) {
   const base = String(instruction || "");
-  if (!base || !Array.isArray(swaps) || swaps.length === 0) {
-    return [{ text: base }];
-  }
-  // Longest-first so "flour tortilla" matches before "tortilla".
-  const ordered = [...swaps]
-    .filter(s => s.from && s.from.trim())
-    .sort((a, b) => b.from.length - a.from.length);
-  if (ordered.length === 0) return [{ text: base }];
+  if (!base) return [{ text: base }];
 
-  // Build a single combined regex with named alternation, case-insensitive.
-  // Escape regex meta-chars in the source names.
+  const all = [];
+  for (const s of (Array.isArray(swaps) ? swaps : [])) {
+    if (!s?.from || !s.from.trim()) continue;
+    all.push({ from: s.from, to: s.to, skipped: !!s.skipped, kind: "swap" });
+  }
+  for (const u of (Array.isArray(brandUpgrades) ? brandUpgrades : [])) {
+    if (!u?.from || !u.from.trim() || !u?.to || !u.to.trim()) continue;
+    // Swap wins if both swap and brand target the same `from` — the
+    // user made an explicit substitution decision that shouldn't be
+    // downgraded to a plain rename.
+    if (all.some(r => r.from.toLowerCase() === u.from.toLowerCase())) continue;
+    all.push({ from: u.from, to: u.to, kind: "brand" });
+  }
+  if (all.length === 0) return [{ text: base }];
+
+  // Longest-first so "heavy cream" matches before "cream".
+  const ordered = [...all].sort((a, b) => b.from.length - a.from.length);
   const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(
-    `\\b(${ordered.map(s => escape(s.from)).join("|")})\\b`,
+    `\\b(${ordered.map(r => escape(r.from)).join("|")})\\b`,
     "gi",
   );
 
@@ -513,13 +530,15 @@ export function tokenizeSwappedInstruction(instruction, swaps) {
     if (matchStart > lastIdx) {
       out.push({ text: base.slice(lastIdx, matchStart) });
     }
-    // Find which swap this match belongs to (case-insensitive).
     const lc = matched.toLowerCase();
-    const swap = ordered.find(s => s.from.toLowerCase() === lc);
-    out.push({
-      strike: matched,                           // preserve original casing
-      after:  swap && !swap.skipped ? swap.to : null,
-    });
+    const rep = ordered.find(r => r.from.toLowerCase() === lc);
+    if (rep?.kind === "brand") {
+      out.push({ brand: rep.to });
+    } else if (rep?.skipped) {
+      out.push({ strike: matched, after: null });
+    } else {
+      out.push({ strike: matched, after: rep?.to || null });
+    }
     lastIdx = matchStart + matched.length;
   }
   if (lastIdx < base.length) out.push({ text: base.slice(lastIdx) });

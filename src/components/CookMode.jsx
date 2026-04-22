@@ -8,7 +8,7 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
-import { applyBrandUpgradesToProse, applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
+import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -1016,16 +1016,25 @@ export default function CookMode({
       <div style={{ marginTop:20, padding:"20px", background:"#141414", border:"1px solid #252525", borderRadius:14 }}>
         <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>
           {(() => {
-            // Brand upgrades first — plain rename, no markup. Apply
-            // before the swap tokenizer so same-canonical pantry
-            // brand names (Kerrygold, Kirkland, EVOO Sizzle) land in
-            // the prose naturally, with substitute swaps strikethrough
-            // on top if both apply in the same step.
-            const branded = applyBrandUpgradesToProse(step.instruction, allBrandUpgrades);
-            if (allSwaps.length === 0) return branded;
-            const tokens = tokenizeSwappedInstruction(branded, allSwaps);
+            // Unified tokenizer — handles both same-canonical brand
+            // upgrades (plain tan rewrite, no strikethrough) and
+            // different-canonical substitutes (strike + replacement).
+            // Brand upgrades surface MY ingredient's branded name
+            // inline in the recipe prose — "Kerrygold Butter" renders
+            // wherever "butter" was, colored tan so the provenance
+            // reads at a glance. Grammar caveat: word-boundary regex
+            // dodges "buttered" naturally but "butter the dish"
+            // becomes "Kerrygold Butter the dish" — slightly awkward,
+            // worth the tradeoff to carry branded names throughout.
+            const tokens = tokenizeSwappedInstruction(step.instruction, allSwaps, allBrandUpgrades);
+            if (tokens.length === 1 && tokens[0].text === step.instruction) {
+              return step.instruction;
+            }
             return tokens.map((t, i) => {
               if (t.text != null) return <span key={i}>{t.text}</span>;
+              if (t.brand != null) {
+                return <span key={i} style={{ color:"#b8a878", fontWeight:500 }}>{t.brand}</span>;
+              }
               // Strike + replacement pair. `after: null` means skipped —
               // render just the strikethrough so the cook knows that
               // ingredient is out, with nothing in its place.
