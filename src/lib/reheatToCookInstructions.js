@@ -29,6 +29,22 @@ const METHOD_LABELS = {
 };
 
 export function reheatToCookInstructions(recipe) {
+  // Fast path: when the recipe was enriched at save-time with the
+  // focused suggest-cook-instructions call, the full step array
+  // lives on recipe.reheat.steps. Use it verbatim — those steps
+  // carry heat badges, doneCues, per-step timers, and tips that
+  // beat anything we could synthesize from reheat.primary alone.
+  const storedSteps = Array.isArray(recipe?.reheat?.steps) ? recipe.reheat.steps : [];
+  if (storedSteps.length > 0) {
+    return {
+      title: recipe?.title ? `Reheat ${recipe.title}` : "Reheat",
+      emoji: recipe?.emoji || "♨",
+      summary: formatReheatSummary(recipe?.reheat) || null,
+      reheat: recipe?.reheat,
+      steps: storedSteps,
+    };
+  }
+
   const p = recipe?.reheat?.primary;
   if (!p || !p.method) return null;
 
