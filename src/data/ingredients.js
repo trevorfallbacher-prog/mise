@@ -6423,6 +6423,75 @@ export const COUNT_WEIGHTS_G = {
   tortillas: 49,  // standard 6-inch flour tortilla
 };
 
+// Per-cut nutrition for meat hub canonicals. Parallel to CUT_WEIGHTS_G —
+// same hub → cut key shape, values are the nutrition block the resolver
+// returns (per="100g" always, so the scaleFactor mass ladder on chicken /
+// beef / pork / turkey picks it up directly). Sourced from USDA SR
+// Legacy averages for raw, trimmed, boneless/skinless where applicable;
+// legacy compound canonicals (chicken_breast, ribeye) pulled their
+// inline values from here originally.
+//
+// The resolver (src/lib/nutrition.js) consults this table as the tier-4
+// fallback when the pantry row is tagged with a cut but no brand /
+// ingredient_info override exists. Explicit pantryRow.nutritionOverride
+// and brand rows still win.
+//
+// Hub canonicals without a cut tag fall back to DEFAULT_CUT_PER_HUB
+// below — the count.toBase convention picks the most-commonly-purchased
+// cut (chicken count=200g=breast, beef count=340g=ribeye, etc.).
+export const CUT_NUTRITION = {
+  chicken: {
+    breast:      { per: "100g", kcal: 165, protein_g: 31, fat_g: 3.6, carb_g: 0 },
+    thigh:       { per: "100g", kcal: 209, protein_g: 19, fat_g: 15,  carb_g: 0 },
+    leg:         { per: "100g", kcal: 170, protein_g: 18, fat_g: 10,  carb_g: 0 },
+    wing:        { per: "100g", kcal: 222, protein_g: 21, fat_g: 15,  carb_g: 0 },
+    tenderloin:  { per: "100g", kcal: 119, protein_g: 25, fat_g: 1.3, carb_g: 0 },
+    back:        { per: "100g", kcal: 318, protein_g: 14, fat_g: 28,  carb_g: 0 },
+    whole_bird:  { per: "100g", kcal: 215, protein_g: 18, fat_g: 15,  carb_g: 0 },
+  },
+  beef: {
+    ribeye:      { per: "100g", kcal: 291, protein_g: 20, fat_g: 22,  carb_g: 0 },
+    ny_strip:    { per: "100g", kcal: 200, protein_g: 23, fat_g: 11,  carb_g: 0 },
+    sirloin:     { per: "100g", kcal: 158, protein_g: 21, fat_g: 7,   carb_g: 0 },
+    brisket:     { per: "100g", kcal: 155, protein_g: 21, fat_g: 7,   carb_g: 0 },
+    chuck:       { per: "100g", kcal: 240, protein_g: 17, fat_g: 19,  carb_g: 0 },
+    round:       { per: "100g", kcal: 139, protein_g: 22, fat_g: 5,   carb_g: 0 },
+    flank:       { per: "100g", kcal: 192, protein_g: 22, fat_g: 11,  carb_g: 0 },
+    skirt:       { per: "100g", kcal: 240, protein_g: 20, fat_g: 17,  carb_g: 0 },
+    short_rib:   { per: "100g", kcal: 303, protein_g: 18, fat_g: 25,  carb_g: 0 },
+    tenderloin:  { per: "100g", kcal: 219, protein_g: 20, fat_g: 14,  carb_g: 0 },
+  },
+  pork: {
+    chop:        { per: "100g", kcal: 202, protein_g: 24, fat_g: 11,  carb_g: 0 },
+    loin:        { per: "100g", kcal: 143, protein_g: 22, fat_g: 5,   carb_g: 0 },
+    shoulder:    { per: "100g", kcal: 269, protein_g: 19, fat_g: 21,  carb_g: 0 },
+    belly:       { per: "100g", kcal: 518, protein_g: 9,  fat_g: 53,  carb_g: 0 },
+    tenderloin:  { per: "100g", kcal: 143, protein_g: 22, fat_g: 5,   carb_g: 0 },
+    rib:         { per: "100g", kcal: 277, protein_g: 19, fat_g: 22,  carb_g: 0 },
+    ham:         { per: "100g", kcal: 139, protein_g: 21, fat_g: 5,   carb_g: 0 },
+    shank:       { per: "100g", kcal: 165, protein_g: 22, fat_g: 8,   carb_g: 0 },
+  },
+  turkey: {
+    breast:      { per: "100g", kcal: 120, protein_g: 26, fat_g: 1,   carb_g: 0 },
+    thigh:       { per: "100g", kcal: 160, protein_g: 21, fat_g: 8,   carb_g: 0 },
+    leg:         { per: "100g", kcal: 144, protein_g: 20, fat_g: 6,   carb_g: 0 },
+    wing:        { per: "100g", kcal: 180, protein_g: 22, fat_g: 10,  carb_g: 0 },
+    tenderloin:  { per: "100g", kcal: 109, protein_g: 23, fat_g: 1,   carb_g: 0 },
+    whole_bird:  { per: "100g", kcal: 148, protein_g: 22, fat_g: 6,   carb_g: 0 },
+  },
+};
+
+// Default cut when a hub-canonical pantry row isn't cut-tagged. Mirrors
+// each hub's count.toBase convention (chicken count=200g=breast, beef
+// count=340g=ribeye, pork count=170g=chop, turkey count=3175g=breast)
+// so the nutrition fallback matches the gram fallback.
+export const DEFAULT_CUT_PER_HUB = {
+  chicken: "breast",
+  beef:    "ribeye",
+  pork:    "chop",
+  turkey:  "breast",
+};
+
 export const CUT_LABELS = {
   breast: "breast", thigh: "thigh", leg: "leg", wing: "wing",
   tenderloin: "tenderloin", back: "back", whole_bird: "whole bird",

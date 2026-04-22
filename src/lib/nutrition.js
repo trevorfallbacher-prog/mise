@@ -20,7 +20,7 @@
 //   "count"   → each item carries the nutrition (eggs, apples).
 //   "serving" → use nutrition.serving_g to scale grams.
 
-import { findIngredient } from "../data/ingredients";
+import { findIngredient, CUT_NUTRITION, DEFAULT_CUT_PER_HUB, CANONICAL_ALIASES } from "../data/ingredients";
 import { convertWithBridge, effectiveCountWeightG, isMassLadder } from "./unitConvert";
 
 // Resolve the best available nutrition for a pantry row. Phase 1 only
@@ -73,7 +73,35 @@ export function resolveNutrition(pantryRow, { brandNutrition, getInfo } = {}) {
       return { nutrition: info.nutrition, source: "canonical" };
     }
   }
-  // 4. In-code registry fallback — fires when ingredient_info hasn't
+  // 4. Cut-specific registry lookup — for meat-hub canonicals
+  //    (chicken / beef / pork / turkey) the hub itself doesn't carry
+  //    nutrition because the value depends on the cut. Walk the row's
+  //    cut axis to resolve a per-100g value from CUT_NUTRITION.
+  //    Precedence within the tier:
+  //      a. pantryRow.cut — new-model canonical+cut rows.
+  //      b. CANONICAL_ALIASES[canonId]?.cut — legacy compound slugs
+  //         like "chicken_breast" still carry cut info via the alias.
+  //      c. DEFAULT_CUT_PER_HUB[hub] — untagged hub rows fall to the
+  //         hub's conventional default (matches count.toBase).
+  //    Resolved hub can come from the canonical we just found (aliases
+  //    route to the base) OR from CANONICAL_ALIASES when canonId is a
+  //    legacy compound slug.
+  if (canonId) {
+    const canon = findIngredient(canonId);
+    const aliasEntry = CANONICAL_ALIASES[canonId];
+    const hubId = canon?.id || aliasEntry?.base || canonId;
+    if (CUT_NUTRITION[hubId]) {
+      const cut = pantryRow.cut
+        || aliasEntry?.cut
+        || DEFAULT_CUT_PER_HUB[hubId]
+        || null;
+      const cutN = cut ? CUT_NUTRITION[hubId][cut] : null;
+      if (cutN && acceptableForResolve(cutN)) {
+        return { nutrition: cutN, source: "cut" };
+      }
+    }
+  }
+  // 5. In-code registry fallback — fires when ingredient_info hasn't
   //    been seeded for this canonical yet.
   if (canonId) {
     const canon = findIngredient(canonId);
@@ -558,6 +586,7 @@ export function sourceBadge(source) {
     case "pantry":    return { label: "YOU",      color: "#7ec87e" };
     case "brand":     return { label: "BRAND",    color: "#c7a8d4" };
     case "canonical": return { label: "CANONICAL", color: "#b8a878" };
+    case "cut":       return { label: "CUT",      color: "#a8553a" };
     case "default":   return { label: "EST.",     color: "#888"    };
     default:          return { label: "",         color: "#555"    };
   }
