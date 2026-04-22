@@ -8,6 +8,7 @@ import { setComponentsForParent, leftoverCompositionFromPlan } from "../lib/pant
 import { identityKey } from "../lib/pantryFormat";
 import { recipeNutrition, recipeNutritionBreakdown } from "../lib/nutrition";
 import { applyCookSessionToRecipe, canonicalizeEffectiveRecipe, countActiveSwaps } from "../lib/effectiveRecipe";
+import { reheatToCookInstructions } from "../lib/reheatToCookInstructions";
 import CookCompleteSummary from "./CookCompleteSummary";
 
 // Completion flow shown when the user taps the final "DONE! LOG IT"
@@ -801,6 +802,17 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
               servingsRemaining: savedServings,
               sourceRecipeSlug: recipe.slug,
               sourceCookLogId: cookLogId,
+              // Auto-populate the reheat walkthrough at cook-complete
+              // time. When the recipe carries a reheat block (authored
+              // by generate-recipe + refined by the
+              // suggest-cook-instructions chain), synthesize a
+              // recipe-shape cookInstructions and stamp it directly on
+              // the leftover. This replaces the old runtime-lookup
+              // fallback (findBySlug + synth at ItemCard render) with
+              // a concrete stored block — self-contained, no lookup
+              // dance, and every row reads the same walkthrough even
+              // if the source recipe is deleted or un-saved later.
+              cookInstructions: reheatToCookInstructions(recipe),
               ownerId: userId,
             });
           }

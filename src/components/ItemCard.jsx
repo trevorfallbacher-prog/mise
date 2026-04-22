@@ -1364,31 +1364,14 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               source === "canonical" ? "· FROM ENRICHMENT"
               : source === "recipe"  ? "· FROM RECIPE"
               : "";
-            if (!ci || stepCount === 0) {
-              return (
-                <button
-                  type="button"
-                  onClick={() => setCookInstructionsOpen(true)}
-                  style={{
-                    width: "100%", padding: "10px 12px", marginBottom: 14,
-                    background: "#141414", border: "1px dashed #2a2a2a",
-                    borderRadius: 10,
-                    display: "flex", alignItems: "center", gap: 10,
-                    cursor: "pointer", textAlign: "left",
-                  }}
-                >
-                  <span style={{ fontSize: 16, opacity: 0.6 }}>♨</span>
-                  <span style={{
-                    flex: 1,
-                    fontFamily: "'DM Mono',monospace", fontSize: 11,
-                    color: "#888", letterSpacing: "0.08em",
-                  }}>
-                    TAP TO ADD {cookVerb} INSTRUCTIONS
-                  </span>
-                  <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>+</span>
-                </button>
-              );
-            }
+            // Hide when there's nothing to preview. Empty state is
+            // intentionally absent — AI generation lives only on the
+            // EAT button flow (EAT → GENERATE REHEAT WITH AI), so a
+            // standalone "+ ADD" pill here has no purpose. When the
+            // row has cookInstructions (stamped at cook-complete,
+            // inherited from canonical enrichment, or generated via
+            // EAT), the filled pill below renders.
+            if (!ci || stepCount === 0) return null;
             // Prefer the AI-written one-line summary; fall back to
             // the old reheat-block formatter for legacy rows written
             // under the pre-pivot (primary-only) shape.

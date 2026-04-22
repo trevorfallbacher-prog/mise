@@ -1,25 +1,30 @@
 import { useState } from "react";
 import ModalSheet from "./ModalSheet";
 import { Z } from "../lib/tokens";
-import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 
 /**
- * CookInstructionsSheet — recipe-shape preview editor for
- * pantry_items.cook_instructions (migration 0125).
+ * CookInstructionsSheet — read-only preview of a pantry row's
+ * cookInstructions (migration 0125).
  *
- * After the pivot to recipe-shaped cook_instructions, this sheet is
- * essentially a SUGGEST-with-AI surface. The AI drafts a tight
- * mini-recipe (title, emoji, reheat summary, steps[]); the user
- * previews it and either SAVEs, REGENERATEs, or CLEARs. No manual
- * step authoring in this sheet — keep it tight. Power users who want
- * to hand-edit can do it via a direct pantry_items row update later.
+ * After the UX consolidation: AI generation lives exclusively in the
+ * EAT button flow (EatIntentSheet → GENERATE REHEAT WITH AI). This
+ * sheet is now a pure preview surface — no SUGGEST, no REGENERATE,
+ * no SAVE. Users who want to REGENERATE go through EAT → GENERATE
+ * (which overwrites the block). CLEAR stays so users can drop bad
+ * instructions; clearing returns them to the empty state where the
+ * EAT flow takes over.
  *
  * Props:
- *   item — pantry row. We read .name, .emoji, .ingredientId /
- *          .canonicalId, .brand, .state, .cut, .category,
- *          .cookInstructions.
- *   onClose() — dismiss.
- *   onSave(block | null) — persist. Pass null to clear.
+ *   item       — pantry row. Reads .name, .emoji, .cookInstructions.
+ *   fromCanonical — true when the block came from ingredient_info.
+ *   fromRecipe    — true when the block was synthesized from a
+ *                   source-recipe's reheat block at render time.
+ *   verb       — "COOK" or "REHEAT" depending on context (raw
+ *                ingredient vs meal leftover).
+ *   onClose()  — dismiss.
+ *   onSave(block | null) — the parent's commit path. We only use
+ *                the null form here (CLEAR); generation/save flow
+ *                lives elsewhere.
  */
 
 export default function CookInstructionsSheet({
@@ -29,68 +34,26 @@ export default function CookInstructionsSheet({
   verb = "COOK",
   onClose, onSave,
 }) {
-  const existing = item?.cookInstructions || null;
+  const block = item?.cookInstructions || null;
+  const steps = Array.isArray(block?.steps) ? block.steps : [];
 
-  const [draft,    setDraft]    = useState(existing);
-  const [suggesting, setSuggesting] = useState(false);
-  const [saving,   setSaving]   = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error,    setError]    = useState(null);
 
-  // AI autofill. Calls the suggest-cook-instructions edge function
-  // with the row's identity axes and replaces the local draft with
-  // the response. Saving persists; regenerating discards the draft.
-  const suggest = async () => {
-    setError(null);
-    setSuggesting(true);
-    try {
-      const { cookInstructions, error: err } = await suggestCookInstructions({
-        name:        item?.name,
-        canonicalId: item?.ingredientId || item?.canonicalId,
-        brand:       item?.brand,
-        state:       item?.state,
-        cut:         item?.cut,
-        category:    item?.category,
-      });
-      if (err) { setError(err); return; }
-      if (!cookInstructions) { setError("Couldn't suggest — try again."); return; }
-      setDraft(cookInstructions);
-    } catch (e) {
-      setError(e?.message || "Couldn't suggest — try again.");
-    } finally {
-      setSuggesting(false);
-    }
-  };
-
-  const save = async () => {
-    setError(null);
-    if (!draft) { setError("Generate a draft first."); return; }
-    setSaving(true);
-    try {
-      await onSave?.(draft);
-      onClose?.();
-    } catch (e) {
-      setError(e?.message || "Couldn't save — try again.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const clear = async () => {
-    setSaving(true);
+    setError(null);
+    setClearing(true);
     try {
       await onSave?.(null);
       onClose?.();
     } catch (e) {
       setError(e?.message || "Couldn't clear — try again.");
-    } finally {
-      setSaving(false);
+      setClearing(false);
     }
   };
 
-  const steps = Array.isArray(draft?.steps) ? draft.steps : [];
-
   return (
-    <ModalSheet onClose={onClose} zIndex={Z.picker} label="COOK INSTRUCTIONS">
+    <ModalSheet onClose={onClose} zIndex={Z.picker} label={`${verb} INSTRUCTIONS`}>
       <div style={{ padding: "4px 22px 18px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 18 }}>
           <div style={{ fontSize: 40, flexShrink: 0 }}>{item?.emoji || "🍽️"}</div>
@@ -99,63 +62,36 @@ export default function CookInstructionsSheet({
               {item?.name || "Ingredient"}
             </div>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", marginTop: 4, letterSpacing: "0.12em" }}>
-              MINI {verb} RECIPE · OPENS ON "I ATE THIS"
+              MINI {verb} RECIPE · OPENS ON EAT
               {fromCanonical && (
-                <span style={{ marginLeft: 8, color: "#a99870" }}>
-                  · FROM ENRICHMENT
-                </span>
+                <span style={{ marginLeft: 8, color: "#a99870" }}>· FROM ENRICHMENT</span>
               )}
               {fromRecipe && (
-                <span style={{ marginLeft: 8, color: "#a99870" }}>
-                  · FROM RECIPE
-                </span>
+                <span style={{ marginLeft: 8, color: "#a99870" }}>· FROM RECIPE</span>
               )}
             </div>
           </div>
         </div>
 
-        {/* SUGGEST button — the primary action when no draft exists;
-            becomes REGENERATE once a draft is on screen. Same gold-
-            on-dark palette as the AIRecipe draft CTA so users learn
-            one vocabulary across both surfaces. */}
-        <button
-          type="button"
-          onClick={suggest}
-          disabled={suggesting || saving}
-          style={{
-            width: "100%", padding: "12px 14px", marginBottom: 14,
-            background: suggesting ? "#1a1a1a" : "#1a1608",
-            border: `1px solid ${suggesting ? "#2a2a2a" : "#3a2f10"}`,
-            color: suggesting ? "#888" : "#f5c842",
-            borderRadius: 10,
-            fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
-            letterSpacing: "0.1em", cursor: suggesting || saving ? "not-allowed" : "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-          }}
-        >
-          <span style={{ fontSize: 14 }}>{suggesting ? "⏳" : "✨"}</span>
-          {suggesting ? "SUGGESTING…" : draft ? "REGENERATE WITH AI" : "SUGGEST WITH AI"}
-        </button>
-
-        {/* Draft preview — only when a draft exists. Reads like a
-            mini ItemCard for a recipe: emoji + title header, reheat
-            summary pill, then each step as a card (icon, title,
-            instruction, timer / heat / doneCue / tip badges). */}
-        {draft && (
+        {/* Preview — when a block exists. Reads like a mini recipe
+            card: emoji + title header, reheat summary pill, then each
+            step as a card (icon, title, instruction, timer / heat /
+            doneCue / tip badges). */}
+        {block && steps.length > 0 ? (
           <div style={{
             padding: "16px", marginBottom: 14,
             background: "#0f0f0f", border: "1px solid #222",
             borderRadius: 14,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
-              <div style={{ fontSize: 28, flexShrink: 0 }}>{draft.emoji || "♨"}</div>
+              <div style={{ fontSize: 28, flexShrink: 0 }}>{block.emoji || "♨"}</div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 18, color: "#f0ece4", lineHeight: 1.15 }}>
-                  {draft.title || "Reheat"}
+                  {block.title || "Reheat"}
                 </div>
-                {draft.summary && (
+                {block.summary && (
                   <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", marginTop: 3, letterSpacing: "0.08em" }}>
-                    ♨ {draft.summary}
+                    ♨ {block.summary}
                   </div>
                 )}
               </div>
@@ -199,13 +135,19 @@ export default function CookInstructionsSheet({
                       {s.doneCue}
                     </div>
                   )}
+                  {s.tip && (
+                    <div style={{ marginTop: 5, fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#6aa3d9" }}>
+                      <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 8, letterSpacing: "0.1em", color: "#4a7aa5", marginRight: 4 }}>
+                        TIP
+                      </span>
+                      {s.tip}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           </div>
-        )}
-
-        {!draft && !suggesting && (
+        ) : (
           <div style={{
             padding: "14px 16px", marginBottom: 14,
             background: "#0f0f0f", border: "1px dashed #242424",
@@ -213,9 +155,9 @@ export default function CookInstructionsSheet({
             fontFamily: "'DM Sans',sans-serif", fontSize: 12,
             color: "#888", lineHeight: 1.5,
           }}>
-            No cook instructions yet. Tap SUGGEST and Claude will write a
-            tight 2–5 step walkthrough based on the item's identity.
-            You can regenerate until it reads right, then SAVE.
+            No {verb.toLowerCase()} instructions yet. Tap the EAT button on
+            this item and pick GENERATE REHEAT WITH AI — Claude will
+            write a tight walkthrough and save it to the row.
           </div>
         )}
 
@@ -225,40 +167,23 @@ export default function CookInstructionsSheet({
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8 }}>
-          {existing && (
-            <button
-              type="button"
-              onClick={clear}
-              disabled={saving}
-              style={{
-                flex: 1, padding: "14px",
-                background: "#1a1a1a", border: "1px solid #3a1a1a",
-                color: "#f87171", borderRadius: 12,
-                fontFamily: "'DM Mono',monospace", fontSize: 11,
-                letterSpacing: "0.1em", cursor: saving ? "not-allowed" : "pointer",
-              }}
-            >
-              CLEAR
-            </button>
-          )}
+        {block && (
           <button
             type="button"
-            onClick={save}
-            disabled={saving || !draft}
+            onClick={clear}
+            disabled={clearing}
             style={{
-              flex: existing ? 2 : 1, padding: "14px",
-              background: saving || !draft ? "#1a1a1a" : "#f5c842",
-              border: "none", borderRadius: 12,
-              fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
-              color: saving || !draft ? "#444" : "#111",
-              cursor: saving || !draft ? "not-allowed" : "pointer",
-              letterSpacing: "0.08em",
+              width: "100%", padding: "14px",
+              background: "#1a1a1a", border: "1px solid #3a1a1a",
+              color: "#f87171", borderRadius: 12,
+              fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+              letterSpacing: "0.1em",
+              cursor: clearing ? "not-allowed" : "pointer",
             }}
           >
-            {saving ? "SAVING…" : "SAVE"}
+            {clearing ? "CLEARING…" : "CLEAR"}
           </button>
-        </div>
+        )}
       </div>
     </ModalSheet>
   );
