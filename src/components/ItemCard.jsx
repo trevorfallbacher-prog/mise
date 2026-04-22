@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { INGREDIENTS, findIngredient, findHub, membersOfHub, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub, cutsForIngredient, cutLabel, resolveCanonicalIdentity } from "../data/ingredients";
+import { INGREDIENTS, findIngredient, findHub, membersOfHub, getIngredientInfo, inferUnitsForScanned, stateLabel, statesForIngredient, statesForItem, unitLabel, inferCanonicalFromName, parseIdentity, siblingsInHub, cutsForIngredient, cutLabel, resolveCanonicalIdentity, dbCanonicalsSnapshot } from "../data/ingredients";
 import IdentifiedAsPicker from "./IdentifiedAsPicker";
 import IngredientCard from "./IngredientCard";
 import ModalSheet from "./ModalSheet";
@@ -2610,8 +2610,18 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
         >
           {(() => {
             const q = canonicalSearch.trim().toLowerCase();
+            // Candidate list = bundled registry + admin-approved
+            // synthetics from ingredient_info. Previously this picker
+            // only walked INGREDIENTS, so a synthetic like "soda_pop"
+            // (created via admin rewire with display_name "Soda Pop")
+            // was invisible — typing "Soda Pop" only offered + CREATE
+            // even though the canonical already existed. Synthetics
+            // join via dbCanonicalsSnapshot(); findIngredient() already
+            // consults both registries, so tapping a synthetic here
+            // commits the same canonicalId end-to-end.
+            const allCanonicals = [...INGREDIENTS, ...dbCanonicalsSnapshot()];
             const matches = q
-              ? INGREDIENTS.filter(i =>
+              ? allCanonicals.filter(i =>
                   i.name.toLowerCase().includes(q) ||
                   (i.shortName && i.shortName.toLowerCase().includes(q)) ||
                   i.id.includes(q.replace(/\s+/g, "_"))

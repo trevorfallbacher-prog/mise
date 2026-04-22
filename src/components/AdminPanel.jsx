@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase";
 import { INGREDIENTS, HUBS } from "../data/ingredients";
 import { slugifyIngredientName, useIngredientInfo } from "../lib/useIngredientInfo";
 import { enrichIngredient } from "../lib/enrichIngredient";
+import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
 // EditPackagingModal import removed — admin sizes catalog retired.
@@ -957,12 +958,14 @@ function CanonicalsList({ viewerId }) {
             console.warn("[admin-rewire] enrichment failed for", newSlug, err?.message);
           });
       }
-      // Read the row's components so we can scrub any mention of the
-      // old slug before the UPDATE lands. Single read is cheap and
+      // Read the row's components + barcode_upc so we can (a) scrub
+      // any mention of the old slug from components before the UPDATE
+      // lands and (b) persist a barcode_identity_corrections entry
+      // below if this row came from a scan. Single read is cheap and
       // avoids a race with whatever the client last wrote.
       const { data: curRow, error: readErr } = await supabase
         .from("pantry_items")
-        .select("components, ingredient_ids")
+        .select("components, ingredient_ids, barcode_upc")
         .eq("id", pantryRow.id)
         .maybeSingle();
       if (readErr) throw readErr;
@@ -990,6 +993,34 @@ function CanonicalsList({ viewerId }) {
         })
         .eq("id", pantryRow.id);
       if (upErr) throw upErr;
+
+      // Teach the barcode resolver. If the pantry row we just rewired
+      // came from a scan (barcode_upc is set), the admin has now given
+      // us the authoritative canonical for that UPC — future scans of
+      // the same barcode should skip OFF's productName fuzzy-match and
+      // land on this slug. Mirrors the same hook the scan-flow
+      // CanonicalCreatePrompt uses at Kitchen.jsx:966. Admins write to
+      // the GLOBAL barcode_identity_corrections table (all users benefit)
+      // rather than the family-scoped user_scan_corrections.
+      const scannedUpc = curRow?.barcode_upc || null;
+      if (scannedUpc && viewerId) {
+        rememberBarcodeCorrection({
+          userId:        viewerId,
+          isAdmin:       true,
+          barcodeUpc:    scannedUpc,
+          canonicalId:   newSlug,
+          ingredientIds: [newSlug],
+          ...(emoji ? { emoji } : {}),
+        })
+          .then(res => {
+            if (res?.error) {
+              console.warn("[admin-rewire] barcode correction write failed:", res.error.message);
+            }
+          })
+          .catch(err => {
+            console.warn("[admin-rewire] barcode correction threw:", err?.message);
+          });
+      }
       setRowsCache(prev => {
         const m = new Map(prev);
         m.delete(oldSlug);
