@@ -546,6 +546,13 @@ function CanonicalsList({ viewerId }) {
   // out of the visible list.
   const [rowsFor, setRowsFor] = useState(null);
   const [rowsCache, setRowsCache] = useState(new Map());
+  // Reverse index of the Tier-1 learned tag map: canonical_id →
+  // [off_tag, ...]. Admins can add/remove tags per canonical to
+  // teach the resolver explicitly (without waiting for a user
+  // correction to seed a hint). The value is loaded once per
+  // CanonicalsList reload cycle so the chips under each row stay in
+  // sync with writes. Empty when migration 0123 isn't applied yet.
+  const [offTagsByCanonical, setOffTagsByCanonical] = useState(new Map());
   // Packaging editor — opens a ModalSheet over the admin panel,
   // seeded with the canonical's saved sizes + parentId. Null =
   // closed; object = the row being edited.
@@ -592,6 +599,29 @@ function CanonicalsList({ viewerId }) {
       }
       setOverrides(om);
       setParentIds(pm);
+    }
+    // Tier-1 learned tag map (migration 0123). Reverse-index into
+    // canonical_id → [off_tag, ...] so each canonical card can list
+    // its mapped tags inline. Silent no-op on envs without 0123.
+    const { data: tagRows, error: tagErr } = await supabase
+      .from("off_category_tag_canonicals")
+      .select("off_tag, canonical_id");
+    if (tagErr) {
+      if (tagErr.code !== "42P01") {
+        console.warn("[admin] off tag map load:", tagErr.message);
+      }
+      setOffTagsByCanonical(new Map());
+    } else {
+      const tm = new Map();
+      for (const r of (tagRows || [])) {
+        if (!r?.canonical_id || !r?.off_tag) continue;
+        const arr = tm.get(r.canonical_id) || [];
+        arr.push(r.off_tag);
+        tm.set(r.canonical_id, arr);
+      }
+      // Sort tags alphabetically so chip order is predictable.
+      for (const arr of tm.values()) arr.sort();
+      setOffTagsByCanonical(tm);
     }
   }
 
@@ -1081,6 +1111,85 @@ function CanonicalsList({ viewerId }) {
     }
   }
 
+  // Add one-or-more OFF category tag → this canonical mappings.
+  // Admin-only; surfaces the Tier-1 learned tag map directly so you
+  // don't have to scan-and-correct a product to seed it. Comma-
+  // separated input keeps the interaction dense — typical use is
+  // bulk-add after renaming a canonical ("soft_drink: sodas, colas,
+  // carbonated-drinks, diet-sodas" in one shot).
+  async function addOffTags(row) {
+    // eslint-disable-next-line no-alert
+    const raw = window.prompt(
+      `Add OFF category tags to "${row.name}" (${row.id}).\n\n` +
+        `Comma-separated. OFF slug form only — dashes not spaces ` +
+        `(e.g. "sodas, colas, carbonated-drinks, diet-sodas").\n\n` +
+        `Any fresh scan whose categoryHints contain one of these ` +
+        `will Tier-1 match this canonical at "exact" confidence, no ` +
+        `user correction needed. If the same tag already maps to ` +
+        `another canonical, the most recent write wins — so adding ` +
+        `"sodas" here steals the mapping from whatever had it before.`
+    );
+    if (!raw) return;
+    const tags = Array.from(new Set(
+      raw.split(",")
+        .map(t => t.trim().toLowerCase().replace(/\s+/g, "-"))
+        .filter(Boolean)
+    ));
+    if (tags.length === 0) return;
+    setBusy(`tags:${row.id}`);
+    try {
+      const now = new Date().toISOString();
+      for (const tag of tags) {
+        const { error } = await supabase
+          .from("off_category_tag_canonicals")
+          .upsert(
+            {
+              off_tag:          tag,
+              canonical_id:     row.id,
+              correction_count: 1,
+              last_used_at:     now,
+              created_by:       viewerId || null,
+            },
+            { onConflict: "off_tag" },
+          );
+        if (error) {
+          if (error.code === "42P01") {
+            // eslint-disable-next-line no-alert
+            window.alert(
+              "Tag map table not found. Migration 0123 hasn't been applied to this database yet — run `supabase db push` and retry."
+            );
+            return;
+          }
+          console.warn(`[admin] add off_tag ${tag}:`, error.message);
+        }
+      }
+      setVersion(v => v + 1);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Remove a single tag → canonical mapping. Because the map's key
+  // is off_tag alone (one canonical per tag globally), this is a
+  // straight DELETE by primary key — no cascade needed.
+  async function removeOffTag(tag) {
+    const trimmed = String(tag || "").trim().toLowerCase();
+    if (!trimmed) return;
+    setBusy(`untag:${trimmed}`);
+    try {
+      const { error } = await supabase
+        .from("off_category_tag_canonicals")
+        .delete()
+        .eq("off_tag", trimmed);
+      if (error && error.code !== "42P01") {
+        console.warn(`[admin] remove off_tag ${trimmed}:`, error.message);
+      }
+      setVersion(v => v + 1);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function rejectCustom(row) {
     // eslint-disable-next-line no-alert
     const confirm = window.confirm(
@@ -1302,6 +1411,68 @@ function CanonicalsList({ viewerId }) {
                 </div>
               )}
 
+              {/* OFF TAGS — Tier-1 learned tag map editor. Lists every
+                  OFF categoryHint slug currently mapped to this
+                  canonical, with an × on each chip to unmap and a
+                  "+ TAG" button to bulk-add. Rendered for BOTH
+                  bundled and custom canonicals — an admin might want
+                  to seed "milks, dairy-milks" onto bundled `milk`
+                  just as much as "sodas, colas" onto custom
+                  `soft_drink`. Tag chips are tan (canonical color)
+                  since OFF tags are literally "what this canonical
+                  is" in OFF's taxonomy. */}
+              <div style={{ width: "100%", marginTop: 4, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 8,
+                  color: "#555", letterSpacing: "0.1em",
+                  marginRight: 2,
+                }}>
+                  OFF TAGS
+                </span>
+                {(offTagsByCanonical.get(r.id) || []).map(tag => {
+                  const untagBusy = busy === `untag:${tag}`;
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => removeOffTag(tag)}
+                      disabled={untagBusy}
+                      title={`Remove "${tag}" mapping`}
+                      style={{
+                        padding: "3px 7px",
+                        background: "#141008",
+                        border: "1px solid #3a2f10",
+                        color: "#b8a878",
+                        borderRadius: 10,
+                        fontFamily: "'DM Mono',monospace", fontSize: 8,
+                        letterSpacing: "0.05em",
+                        cursor: untagBusy ? "not-allowed" : "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                      }}
+                    >
+                      <span>{tag}</span>
+                      <span style={{ color: "#8a7a5a" }}>×</span>
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => addOffTags(r)}
+                  disabled={busy === `tags:${r.id}`}
+                  title="Add OFF category tags that should Tier-1 match this canonical"
+                  style={{
+                    padding: "3px 7px",
+                    background: "transparent",
+                    border: "1px dashed #3a2f10",
+                    color: "#8a7a5a",
+                    borderRadius: 10,
+                    fontFamily: "'DM Mono',monospace", fontSize: 8,
+                    letterSpacing: "0.05em",
+                    cursor: busy === `tags:${r.id}` ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {busy === `tags:${r.id}` ? "…" : "+ TAG"}
+                </button>
+              </div>
+
               {/* Row drilldown. Clicking the count badge loads the
                   actual pantry_items on this canonical so the admin
                   can rewire a single row to a different (or new)
@@ -1390,9 +1561,15 @@ function CanonicalsList({ viewerId }) {
         different (or brand-new) canonical — use this when a scan
         misfired on just one row ("SUGAR FREE" Pepsi landing on the
         sugar slug) and you don't want to rewrite every sugar row.
-        Package sizes are no longer admin-curated here — they're
-        learned from pantry_items observations (popular_package_sizes
-        RPC) with AI-generated typicalSizes as the cold-start fallback.
+        OFF TAGS teaches the resolver directly: any tag added here
+        wins Tier-1 "exact" matching on every fresh scan whose OFF
+        categoryHints carry it — one bulk-add of
+        "sodas, colas, carbonated-drinks, diet-sodas" onto soft_drink
+        and future cold-start soda scans resolve without a correction
+        round-trip. Package sizes are no longer admin-curated here
+        — they're learned from pantry_items observations
+        (popular_package_sizes RPC) with AI-generated typicalSizes as
+        the cold-start fallback.
       </div>
 
       {/* EditPackagingModal removed — admin sizes catalog retired.
