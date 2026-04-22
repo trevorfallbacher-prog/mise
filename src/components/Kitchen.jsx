@@ -5153,6 +5153,17 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // persists the row (via addScannedItems sans draftMode). DISCARD /
   // close clears the draft with no DB write.
   const [draftItem, setDraftItem] = useState(null);
+  // In-flight guard for draft commits. A rapid double-tap on STOCK IN
+  // PANTRY was landing two rows: React fires both click events before
+  // setDraftItem(null) flushes, so onStock ran twice and each call
+  // pushed its own row through the setPantry reducer → useSyncedList
+  // inserted both. This ref flips true on the first commit and
+  // short-circuits the second; resets on every fresh draft so
+  // back-to-back scans each get their own one-shot commit.
+  const committingDraftRef = useRef(false);
+  useEffect(() => {
+    if (draftItem) committingDraftRef.current = false;
+  }, [draftItem]);
   const [cardIng, setCardIng] = useState(null);
   // Stack drill-down — set to a bucket ({key, items}) to open, null to
   // close. Opened by tapping a StackedItemCard; shows each physical
@@ -5323,11 +5334,16 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         ? locClassify(p, { findIngredient, hubForIngredient })
         : null;
       const tile = tileId ? (locTiles?.find(t => t.id === tileId) || null) : null;
-      // Match against everything textual we carry on the row: name, emoji,
-      // ingredient id, canonical name, category, and the tile's own label
-      // so searching "bread" surfaces tortillas / pita / naan via the tile.
+      // Match against everything textual we carry on the row: name,
+      // brand, emoji, ingredient id, canonical name, category, and
+      // the tile's own label so searching "bread" surfaces tortillas
+      // / pita / naan via the tile — and searching "pepsi" surfaces a
+      // row whose name is "Soda Pop" but whose brand column is set
+      // (the grouped-search path at line 5389 already includes brand;
+      // this legacy path had diverged).
       const hay = [
         p.name,
+        p.brand || "",
         p.emoji,
         p.ingredientId || "",
         p.category || "",
@@ -7636,6 +7652,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           onUpdate={(patch) => setDraftItem(prev => prev ? { ...prev, ...patch } : prev)}
           onEditTags={() => setLinkingItem(draftItem)}
           onStock={(finalDraft) => {
+            // Double-tap guard: the React batch may not flush
+            // setDraftItem(null) before a second click lands, and
+            // both clicks ran onStock → addScannedItems → setPantry →
+            // TWO rows inserted. Short-circuit via a ref so the
+            // second tap becomes a no-op. The ref resets when a new
+            // draftItem lands (see useEffect above).
+            if (committingDraftRef.current) return;
+            committingDraftRef.current = true;
             // Commit the draft as if it were a fresh scan row —
             // reusing addScannedItems keeps the merge-on-existing,
             // expiration-estimate, receipt-line-index, and toast
