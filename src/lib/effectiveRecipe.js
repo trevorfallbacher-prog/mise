@@ -134,10 +134,13 @@ export function countActiveSwaps(session) {
   return n;
 }
 
-// Build the per-step swap summary used by the banner + inline prose
-// rewriter. Returns an array of { from, to, skipped } for the current
-// step's uses that have a _swappedFrom marker. Empty when no swaps
-// touch this step.
+// Build the per-step swap summary — swaps that specifically rewrote a
+// step.uses entry. Returns { from, to, skipped } per uses row. Used
+// to label the "FOR THIS STEP" tile; on its own it's too narrow for
+// the prose banner + tokenizer because step.uses is a CURATED subset
+// of the recipe (bundled recipes only list what the step needs RIGHT
+// NOW, so "milk, pesto, capers" in the prose may be absent from
+// uses). Use recipeSwapSummary below for prose-reach.
 export function stepSwapSummary(step) {
   const uses = Array.isArray(step?.uses) ? step.uses : [];
   const out = [];
@@ -148,6 +151,63 @@ export function stepSwapSummary(step) {
       to:      u._skipped ? null : (u.item || "(ingredient)"),
       skipped: !!u._skipped,
     });
+  }
+  return out;
+}
+
+// Build a recipe-wide swap summary by walking every ingredient in the
+// effective recipe that carries _swappedFrom. This is the right input
+// for the prose tokenizer: a step's instruction ("Add the 2% milk,
+// pesto, and capers") may mention ingredients the step.uses tile
+// doesn't list, so step-scoped summaries miss them. Tokenizer is a
+// no-op on entries that don't appear in the prose, so passing the
+// full recipe list is safe — deduping happens naturally.
+export function recipeSwapSummary(effectiveRecipe) {
+  const ingredients = Array.isArray(effectiveRecipe?.ingredients) ? effectiveRecipe.ingredients : [];
+  const out = [];
+  const seen = new Set();
+  for (const ing of ingredients) {
+    if (!ing?._swappedFrom) continue;
+    const from = ing._swappedFrom.item || "(ingredient)";
+    const key = from.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      from,
+      to:      ing._skipped ? null : (ing.item || "(ingredient)"),
+      skipped: !!ing._skipped,
+    });
+  }
+  return out;
+}
+
+// Filter a recipe-wide swap list down to the ones relevant for a
+// specific step. A swap is "relevant" when either (a) the original
+// ingredient name appears in step.instruction prose with a word
+// boundary, or (b) the step.uses tile already had _swappedFrom
+// stamped on it by applyCookSessionToRecipe. Drives the yellow
+// per-step banner — we don't want to blast every swap across every
+// step when only one actually applies to what the cook is doing
+// right now.
+export function relevantSwapsForStep(step, allSwaps) {
+  if (!Array.isArray(allSwaps) || allSwaps.length === 0) return [];
+  const prose = String(step?.instruction || "");
+  const usesHits = new Set();
+  const uses = Array.isArray(step?.uses) ? step.uses : [];
+  for (const u of uses) {
+    if (u?._swappedFrom?.item) usesHits.add(u._swappedFrom.item.toLowerCase());
+  }
+  const out = [];
+  for (const s of allSwaps) {
+    const name = (s.from || "").toLowerCase();
+    if (!name) continue;
+    if (usesHits.has(name)) { out.push(s); continue; }
+    if (prose) {
+      const escaped = s.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (new RegExp(`\\b${escaped}\\b`, "i").test(prose)) {
+        out.push(s);
+      }
+    }
   }
   return out;
 }

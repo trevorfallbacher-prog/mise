@@ -8,7 +8,7 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
-import { applyCookSessionToRecipe, countActiveSwaps, stepSwapSummary, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
+import { applyCookSessionToRecipe, countActiveSwaps, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -324,6 +324,12 @@ export default function CookMode({
   // in CookComplete materializes this into a user_recipes row.
   const effectiveRecipe = applyCookSessionToRecipe(recipe, session, pantry);
   const swapCount = countActiveSwaps(session);
+  // Recipe-wide swap list for the per-step prose banner + inline
+  // tokenizer. Built once per render; derived from
+  // effectiveRecipe.ingredients so every swap — even ones the AI
+  // omitted from step.uses — can surface in prose that mentions the
+  // original name.
+  const allSwaps = recipeSwapSummary(effectiveRecipe);
 
   const steps    = effectiveRecipe.steps || [];
   const step     = steps[activeStep];
@@ -954,23 +960,29 @@ export default function CookMode({
         );
       })()}
 
-      {/* Per-step swap banner + inline prose rewrite. The banner lists
-          each swap ("Using tortillas instead of crepes for this step")
-          so the cook sees the change even when the prose doesn't
-          naturally contain the ingredient name. The prose below is
-          tokenized by tokenizeSwappedInstruction — a deterministic
-          regex substitution that strikes out the original ingredient
-          name and renders the replacement alongside. No AI call; the
-          banner is the backstop when regex can't reach (plural /
-          possessive forms the simple word-boundary match misses). */}
+      {/* Per-step swap banner + inline prose rewrite.
+          Why the swap list comes from recipeSwapSummary, not
+          stepSwapSummary: step.uses is a CURATED subset of the
+          recipe — "FOR THIS STEP" — and bundled recipes routinely
+          omit ingredients the prose mentions (e.g. uses lists
+          butter/salt/pepper but the instruction reads "Add the
+          milk, pesto, and capers"). A step-scoped swap summary
+          would miss swaps on those prose-only mentions. Filtering
+          through relevantSwapsForStep keeps banner noise low —
+          only swaps that actually appear in this step's prose or
+          uses surface. The prose below is tokenized with the same
+          filtered list: word-boundary regex, deterministic, no AI
+          call. The banner is the backstop for cases regex can't
+          reach (plural / possessive forms the simple word-boundary
+          match misses). */}
       {(() => {
-        const swaps = stepSwapSummary(step);
-        if (swaps.length === 0) return null;
+        const stepSwaps = relevantSwapsForStep(step, allSwaps);
+        if (stepSwaps.length === 0) return null;
         return (
           <div style={{ marginTop:12, padding:"10px 14px", background:"#1a1608", border:"1px solid #3a2f10", borderRadius:10, display:"flex", gap:10, alignItems:"flex-start" }}>
             <span style={{ fontSize:14, flexShrink:0 }}>↔</span>
             <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#f5c842", lineHeight:1.5 }}>
-              {swaps.map((s, i) => (
+              {stepSwaps.map((s, i) => (
                 <div key={i}>
                   {s.skipped
                     ? <>Skipping <strong>{s.from}</strong> for this step.</>
@@ -985,9 +997,8 @@ export default function CookMode({
       <div style={{ marginTop:20, padding:"20px", background:"#141414", border:"1px solid #252525", borderRadius:14 }}>
         <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>
           {(() => {
-            const swaps = stepSwapSummary(step);
-            if (swaps.length === 0) return step.instruction;
-            const tokens = tokenizeSwappedInstruction(step.instruction, swaps);
+            if (allSwaps.length === 0) return step.instruction;
+            const tokens = tokenizeSwappedInstruction(step.instruction, allSwaps);
             return tokens.map((t, i) => {
               if (t.text != null) return <span key={i}>{t.text}</span>;
               // Strike + replacement pair. `after: null` means skipped —
