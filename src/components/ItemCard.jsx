@@ -30,6 +30,7 @@ import IAteThisSheet from "./IAteThisSheet";
 import ScheduleEatingSheet from "./ScheduleEatingSheet";
 import CookInstructionsSheet from "./CookInstructionsSheet";
 import ReheatMode from "./ReheatMode";
+import EatIntentSheet from "./EatIntentSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
 import { findRecipe } from "../data/recipes";
 import { useUserRecipes } from "../lib/useUserRecipes";
@@ -180,10 +181,16 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   const [iAteOpen, setIAteOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [cookInstructionsOpen, setCookInstructionsOpen] = useState(false);
-  // Reheat walkthrough. Opens on I-ATE-THIS when the row has a
-  // recipe-shape cookInstructions with steps[]; chains to the
-  // iAte sheet on FINISH so the two screens read as one flow.
+  // Reheat walkthrough. Opens when the user picks REHEAT FIRST from
+  // the EAT intent sheet; chains to the iAte sheet on FINISH so the
+  // two screens read as one flow.
   const [reheatOpen, setReheatOpen] = useState(false);
+  // EAT intent picker. Shown after the user taps EAT on a row that
+  // has reheat instructions available — lets them choose between
+  // REHEAT FIRST (launches walkthrough) and ALREADY ATE IT (skips
+  // straight to log). Rows with no reheat data bypass this and open
+  // IAteThisSheet directly.
+  const [eatIntentOpen, setEatIntentOpen] = useState(false);
   // Resolved-for-display reheat/cook block. Computed below after
   // useIngredientInfo so the canonical-level enrichment fallback is
   // available. Shared between the cook-instructions pill, the
@@ -1452,15 +1459,14 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
               <button
                 type="button"
                 onClick={() => {
-                  // Route through the full-screen ReheatMode first when
-                  // the row has a recipe-shape cookInstructions with
-                  // steps (per-row or inherited from canonical
-                  // enrichment). FINISH on the last step advances to
-                  // the IAteThisSheet amount-and-log phase. Rows
-                  // without any cook instructions skip straight to
-                  // the log.
+                  // Always-on EAT button. Two-path routing:
+                  //   reheat available → open the intent sheet so the
+                  //     user picks REHEAT FIRST vs ALREADY ATE IT on
+                  //     each tap (they may have eaten it cold).
+                  //   no reheat        → go straight to log (no point
+                  //     asking — there's only one path).
                   if (effectiveCookInstructions.ci?.steps?.length) {
-                    setReheatOpen(true);
+                    setEatIntentOpen(true);
                   } else {
                     setIAteOpen(true);
                   }
@@ -1474,10 +1480,8 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 }}
               >
-                <span style={{ fontSize: 16 }}>{effectiveCookInstructions.ci?.steps?.length ? "♨" : "🍽️"}</span>
-                {effectiveCookInstructions.ci?.steps?.length
-                  ? (isMealLeftover ? "REHEAT & EAT" : "COOK & EAT")
-                  : "I ATE THIS"}
+                <span style={{ fontSize: 16 }}>🍽️</span>
+                EAT
               </button>
               <button
                 type="button"
@@ -3242,6 +3246,25 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           userId={userId}
           onClose={() => setIAteOpen(false)}
           onDone={() => setIAteOpen(false)}
+        />
+      )}
+
+      {/* EAT intent picker — opens when the user taps EAT on a row
+          with reheat data. Two paths: REHEAT FIRST (launch the
+          walkthrough) or ALREADY ATE IT (skip to log). */}
+      {eatIntentOpen && (
+        <EatIntentSheet
+          item={item}
+          summary={effectiveCookInstructions.ci?.summary || formatReheatSummary(effectiveCookInstructions.ci?.reheat) || null}
+          onReheat={() => {
+            setEatIntentOpen(false);
+            setReheatOpen(true);
+          }}
+          onJustLog={() => {
+            setEatIntentOpen(false);
+            setIAteOpen(true);
+          }}
+          onClose={() => setEatIntentOpen(false)}
         />
       )}
 
