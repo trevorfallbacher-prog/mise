@@ -63,9 +63,9 @@ import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
 import ShopMode from "./ShopMode";
+import ShopModeCheckout from "./ShopModeCheckout";
 import ShoppingQuickAdd from "./ShoppingQuickAdd";
 import { useShopMode } from "../lib/useShopMode";
-import { commitShopModeTrip } from "../lib/commitShopModeTrip";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
 import {
   resolveCanonicalFromScan,
@@ -6185,49 +6185,9 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       bumpTemplateUse(tid);
     }
 
-    // Shop Mode commit pass — if the user came in through Shop Mode
-    // and a trip context is pending, pair the freshly inserted pantry
-    // rows to the trip's scans, mark list items purchased, and check
-    // out the trip. Fire-and-forget (no toast from here; the summary
-    // toast above already reports the big-picture stock count).
-    if (pendingTripCtx?.trip?.id && receiptId) {
-      // Build an in-memory view of the new pantry rows so we don't
-      // have to wait for useSyncedList's persist → realtime-read
-      // round trip. stableNewIds holds the ids we generated above,
-      // paired 1:1 with fannedItems in insertion order.
-      const newPantryRows = fannedItems.map((s, i) => ({
-        id: stableNewIds[i],
-        name: s.name || null,
-        brand: s.brand || null,
-        barcode_upc: s.barcodeUpc || null,
-        canonical_id: s.canonicalId || s.ingredientId || null,
-        receipt_line_index: typeof s.receiptLineIndex === "number" ? s.receiptLineIndex : null,
-      }));
-      // Small defer so the optimistic insert has landed in the DB by
-      // the time commitShopModeTrip starts updating those same rows.
-      setTimeout(async () => {
-        try {
-          const res = await commitShopModeTrip({
-            tripId:         pendingTripCtx.trip.id,
-            receiptId,
-            userId,
-            tripScans:      pendingTripCtx.scans || [],
-            newPantryRows,
-            receiptMeta:    meta,
-          });
-          if (res?.pairedCount > 0) {
-            pushToast(
-              `${res.pairedCount} item${res.pairedCount === 1 ? "" : "s"} paired from your trip.`,
-              { emoji: "🛒", kind: "success", ttl: 4000 },
-            );
-          }
-        } catch (e) {
-          console.warn("[shop-mode] commitShopModeTrip failed:", e);
-        } finally {
-          setPendingTripCtx(null);
-        }
-      }, 600);
-    }
+    // (Shop Mode commit now lives in src/components/ShopModeCheckout.jsx.
+    // This receipt/shelf path is the generic flow; trip checkouts take
+    // the dedicated route that treats trip_scans as the identity source.)
 
     setScanning(false);
   };
@@ -7085,12 +7045,29 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       learnedTagLookup={shopLearnedTagLookup}
       onClose={() => setShopModeOpen(false)}
       onCheckoutRequest={({ trip, scans }) => {
-        // Hand off to the existing receipt scanner. pendingTripCtx
-        // travels through addScannedItems so commitShopModeTrip can
-        // pair scans → pantry rows → list items after the commit.
+        // Hand off to the dedicated trip checkout — trip_scans are
+        // the identity source, receipt only contributes price + id.
         setPendingTripCtx({ trip, scans });
         setShopModeOpen(false);
-        setScanning(true);
+      }}
+    />
+  );
+
+  if (pendingTripCtx) return (
+    <ShopModeCheckout
+      trip={pendingTripCtx.trip}
+      scans={pendingTripCtx.scans || []}
+      userId={userId}
+      shoppingList={shoppingList}
+      setShoppingList={setShoppingList}
+      onCancel={() => {
+        // Back out to ShopMode — trip stays active, user can scan
+        // more / edit pairing / hit DONE again.
+        setPendingTripCtx(null);
+        setShopModeOpen(true);
+      }}
+      onDone={() => {
+        setPendingTripCtx(null);
       }}
     />
   );
