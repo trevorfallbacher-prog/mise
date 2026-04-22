@@ -8,7 +8,7 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
-import { applyCookSessionToRecipe, countActiveSwaps, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
+import { applyBrandUpgradesToProse, applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -343,6 +343,12 @@ export default function CookMode({
   // omitted from step.uses — can surface in prose that mentions the
   // original name.
   const allSwaps = recipeSwapSummary(effectiveRecipe);
+  // Brand-upgrade rewrites — same-canonical pantry rows whose branded
+  // display name we lift into the recipe ("butter" → "Kerrygold
+  // Butter"). Applied to prose as a plain rename BEFORE the swap
+  // tokenizer runs, so branded replacements never collide with
+  // strike-through markup.
+  const allBrandUpgrades = recipeBrandUpgrades(effectiveRecipe);
 
   const steps    = effectiveRecipe.steps || [];
   const step     = steps[activeStep];
@@ -1010,8 +1016,14 @@ export default function CookMode({
       <div style={{ marginTop:20, padding:"20px", background:"#141414", border:"1px solid #252525", borderRadius:14 }}>
         <p style={{ fontSize:16, lineHeight:1.6, color:"#ddd", fontWeight:300 }}>
           {(() => {
-            if (allSwaps.length === 0) return step.instruction;
-            const tokens = tokenizeSwappedInstruction(step.instruction, allSwaps);
+            // Brand upgrades first — plain rename, no markup. Apply
+            // before the swap tokenizer so same-canonical pantry
+            // brand names (Kerrygold, Kirkland, EVOO Sizzle) land in
+            // the prose naturally, with substitute swaps strikethrough
+            // on top if both apply in the same step.
+            const branded = applyBrandUpgradesToProse(step.instruction, allBrandUpgrades);
+            if (allSwaps.length === 0) return branded;
+            const tokens = tokenizeSwappedInstruction(branded, allSwaps);
             return tokens.map((t, i) => {
               if (t.text != null) return <span key={i}>{t.text}</span>;
               // Strike + replacement pair. `after: null` means skipped —

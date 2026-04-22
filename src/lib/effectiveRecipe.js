@@ -23,7 +23,7 @@
 // drifts.
 
 import { findIngredient } from "../data/ingredients";
-import { normalizeForMatch } from "./recipePairing";
+import { deriveRowHeader, normalizeForMatch, resolvesToSameCanonical } from "./recipePairing";
 
 // Apply session overrides to a recipe and return the effective view.
 // Shape-preserving: effective.ingredients has the same length as
@@ -49,7 +49,8 @@ import { normalizeForMatch } from "./recipePairing";
 export function applyCookSessionToRecipe(recipe, session, pantry = []) {
   if (!recipe) return recipe;
   const overrides = session?.overrides || {};
-  const pantryById = new Map((pantry || []).map(p => [p.id, p]));
+  const pantryList = Array.isArray(pantry) ? pantry : [];
+  const pantryById = new Map(pantryList.map(p => [p.id, p]));
 
   // Sanitize residual UI markers off the input. Fork-to-new-recipe
   // calls canonicalizeEffectiveRecipe on save, but v1 forks (before
@@ -60,16 +61,21 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
   // downstream originated from the CURRENT session, nothing inherited.
   const stripMarkers = (obj) => {
     if (!obj) return obj;
-    const { _swappedFrom, _skipped, _extra, ...rest } = obj;
+    const { _swappedFrom, _brandedFrom, _skipped, _extra, ...rest } = obj;
     return rest;
   };
   const origIngredients = (Array.isArray(recipe.ingredients) ? recipe.ingredients : []).map(stripMarkers);
 
-  // Keyed map from (ingredientId | normalized name) → replacement
-  // metadata, so rewriting step.uses doesn't re-run the swap logic
-  // per step. ingredientId first (stable), normalized name as
-  // fallback (AI drafts don't always carry stable ids).
+  // Two rewrite maps, keyed by (ingredientId | normalized name):
+  //   swappedKeys  — substitute / skip: step.uses entries matched
+  //                  here get strikethrough + "↔ was:" annotation.
+  //   brandedKeys  — same-canonical name upgrade (pantry row has
+  //                  brand info): step.uses entries matched here
+  //                  just take the upgraded display name, no
+  //                  strikethrough — this is the "I'm using MY
+  //                  Kerrygold, not generic butter" vibe.
   const swappedKeys = new Map();
+  const brandedKeys = new Map();
 
   const effectiveIngredients = origIngredients.map((ing, i) => {
     const ov = overrides[i] || {};
@@ -80,23 +86,68 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
       if (nm) swappedKeys.set(`nm:${nm}`, marked);
       return marked;
     }
+
+    // Resolve the committed pantry row for this ingredient:
+    //   1. explicit session override (user tapped a pantry row in the
+    //      swap picker)
+    //   2. auto-pair: first ingredient-kind row that resolves to the
+    //      same canonical (Tier 1). Quieter than pairRecipeIngredients
+    //      — we only care whether SOME matching row exists so we can
+    //      lift its branded name into the display.
+    let committedRow = null;
     if (ov.pantryItemId) {
-      const row = pantryById.get(ov.pantryItemId);
-      if (!row) return ing; // pantry row vanished mid-session; leave as-is
-      const canonical = row.ingredientId ? findIngredient(row.ingredientId) : null;
-      const swapped = {
-        ...ing,
-        item:          row.name || canonical?.name || ing.item,
-        ingredientId:  row.ingredientId || ing.ingredientId || null,
-        pantryItemId:  row.id,
-        _swappedFrom:  { item: ing.item, ingredientId: ing.ingredientId || null },
-      };
-      if (ing.ingredientId) swappedKeys.set(`id:${ing.ingredientId}`, swapped);
-      const nm = normalizeForMatch(ing.item || "");
-      if (nm) swappedKeys.set(`nm:${nm}`, swapped);
-      return swapped;
+      committedRow = pantryById.get(ov.pantryItemId) || null;
+    } else if (ing.ingredientId) {
+      committedRow = findSameCanonicalPantryRow(ing, pantryList);
     }
-    return ing;
+    if (!committedRow) return ing;
+
+    const rowCanon = committedRow.ingredientId || committedRow.canonicalId || null;
+    const sameCanonical = !!rowCanon && !!ing.ingredientId &&
+      resolvesToSameCanonical(rowCanon, ing.ingredientId);
+
+    if (sameCanonical) {
+      // Brand upgrade path — swap target (or auto-paired row) is the
+      // same canonical as the recipe called for. Lift the branded
+      // display name, stamp pantryItemId for the pairing Tier-0
+      // short-circuit, but NO _swappedFrom — this isn't a
+      // substitution.
+      const upgraded = brandedDisplayName(committedRow);
+      if (!upgraded || !isDistinctive(upgraded, ing.item)) {
+        // Names match — no visible upgrade, just bind the pantry row
+        // so downstream pairing/deduction uses it.
+        return { ...ing, pantryItemId: committedRow.id };
+      }
+      const branded = {
+        ...ing,
+        item:          upgraded,
+        ingredientId:  ing.ingredientId,
+        pantryItemId:  committedRow.id,
+        _brandedFrom:  { item: ing.item, ingredientId: ing.ingredientId || null },
+      };
+      if (ing.ingredientId) brandedKeys.set(`id:${ing.ingredientId}`, branded);
+      const nm = normalizeForMatch(ing.item || "");
+      if (nm) brandedKeys.set(`nm:${nm}`, branded);
+      return branded;
+    }
+
+    // Substitute path — only fires when the user explicitly picked a
+    // pantry row whose canonical DIFFERS from the recipe's
+    // ingredient. Auto-pair never reaches here (we only auto-pair
+    // same-canonical rows above), so an unwanted substitute can't
+    // sneak in from pantry state alone.
+    const canonical = rowCanon ? findIngredient(rowCanon) : null;
+    const swapped = {
+      ...ing,
+      item:          committedRow.name || canonical?.name || ing.item,
+      ingredientId:  rowCanon || ing.ingredientId || null,
+      pantryItemId:  committedRow.id,
+      _swappedFrom:  { item: ing.item, ingredientId: ing.ingredientId || null },
+    };
+    if (ing.ingredientId) swappedKeys.set(`id:${ing.ingredientId}`, swapped);
+    const nm = normalizeForMatch(ing.item || "");
+    if (nm) swappedKeys.set(`nm:${nm}`, swapped);
+    return swapped;
   });
 
   const origSteps = Array.isArray(recipe.steps) ? recipe.steps : [];
@@ -104,18 +155,38 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
     if (!Array.isArray(step.uses) || step.uses.length === 0) return step;
     const cleanedUses = step.uses.map(stripMarkers);
     const newUses = cleanedUses.map(use => {
+      // Swap map takes priority over brand map: a substitute
+      // always strikes through (even if the original also had a
+      // branded variant in pantry we could have upgraded).
       let hit = null;
+      let kind = null;
       if (use.ingredientId) hit = swappedKeys.get(`id:${use.ingredientId}`);
       if (!hit) {
         const nm = normalizeForMatch(use.item || "");
         if (nm) hit = swappedKeys.get(`nm:${nm}`);
       }
+      if (hit) kind = "swap";
+      if (!hit && use.ingredientId) hit = brandedKeys.get(`id:${use.ingredientId}`);
+      if (!hit) {
+        const nm = normalizeForMatch(use.item || "");
+        if (nm) hit = brandedKeys.get(`nm:${nm}`);
+      }
+      if (hit && !kind) kind = "brand";
       if (!hit) return use;
       if (hit._skipped) {
         return {
           ...use,
           _skipped: true,
           _swappedFrom: { item: use.item, ingredientId: use.ingredientId || null },
+        };
+      }
+      if (kind === "brand") {
+        return {
+          ...use,
+          item:         hit.item,
+          ingredientId: hit.ingredientId,
+          pantryItemId: hit.pantryItemId,
+          _brandedFrom: { item: use.item, ingredientId: use.ingredientId || null },
         };
       }
       return {
@@ -130,6 +201,44 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
   });
 
   return { ...recipe, ingredients: effectiveIngredients, steps: effectiveSteps };
+}
+
+// First pantry row (kind=ingredient, non-zero) whose canonical
+// resolves to the same as the recipe ingredient's. Used for
+// auto-brandification when there's no explicit session override.
+// Intentionally simple — expiry/FIFO ordering is the deduction
+// layer's job; for display-name lifting we just need ONE same-
+// canonical row to know the user has that ingredient in a
+// distinctive form.
+function findSameCanonicalPantryRow(ing, pantryList) {
+  if (!ing?.ingredientId) return null;
+  for (const p of pantryList) {
+    if (!p) continue;
+    if ((p.kind || "ingredient") !== "ingredient") continue;
+    if (Number(p.amount) <= 0) continue;
+    const pCanon = p.ingredientId || p.canonicalId;
+    if (!pCanon) continue;
+    if (resolvesToSameCanonical(pCanon, ing.ingredientId)) return p;
+  }
+  return null;
+}
+
+// Compose the branded display name for a pantry row:
+// "[Brand] [Canonical name]" when the row carries pantry_items.brand,
+// else the canonical name, else whatever the user typed as row.name.
+function brandedDisplayName(row) {
+  return deriveRowHeader(row) || row?.name || null;
+}
+
+// True when the pantry row name carries info the recipe ingredient
+// doesn't (brand, variant, size hint). Normalized comparison dodges
+// case / punctuation noise — "Butter" vs "butter" isn't distinctive,
+// "Kerrygold Butter" vs "butter" is.
+function isDistinctive(rowName, ingName) {
+  const rn = normalizeForMatch(rowName || "");
+  const ig = normalizeForMatch(ingName || "");
+  if (!rn || !ig) return false;
+  return rn !== ig;
 }
 
 // Count how many recipe ingredients are actively swapped or skipped in
@@ -166,6 +275,52 @@ export function stepSwapSummary(step) {
     });
   }
   return out;
+}
+
+// Build a recipe-wide brand-upgrade summary: every ingredient whose
+// display name was lifted to a pantry row's branded name. Drives the
+// prose rewriter that plain-replaces "butter" with "Kerrygold Butter"
+// throughout step.instruction / title / tip — no strikethrough,
+// because a brand upgrade isn't a substitution.
+export function recipeBrandUpgrades(effectiveRecipe) {
+  const ingredients = Array.isArray(effectiveRecipe?.ingredients) ? effectiveRecipe.ingredients : [];
+  const out = [];
+  const seen = new Set();
+  for (const ing of ingredients) {
+    if (!ing?._brandedFrom || ing._skipped) continue;
+    const from = ing._brandedFrom.item;
+    const to   = ing.item;
+    if (!from || !to) continue;
+    const key = from.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ from, to });
+  }
+  return out;
+}
+
+// Word-boundary, longest-first plain replacement for brand upgrades.
+// Unlike tokenizeSwappedInstruction this returns a plain string —
+// no strike/after markup — because same-canonical upgrades aren't
+// swaps, the cook is literally using this exact ingredient. Apply
+// this BEFORE the swap tokenizer so swap markup doesn't get eaten
+// by a subsequent brand replace.
+export function applyBrandUpgradesToProse(text, upgrades) {
+  if (typeof text !== "string" || !text) return text;
+  if (!Array.isArray(upgrades) || upgrades.length === 0) return text;
+  const ordered = [...upgrades]
+    .filter(u => u.from && u.from.trim() && u.to && u.to.trim())
+    .sort((a, b) => b.from.length - a.from.length);
+  if (ordered.length === 0) return text;
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(
+    `\\b(${ordered.map(u => escape(u.from)).join("|")})\\b`,
+    "gi",
+  );
+  return text.replace(pattern, (match) => {
+    const up = ordered.find(u => u.from.toLowerCase() === match.toLowerCase());
+    return up ? up.to : match;
+  });
 }
 
 // Build a recipe-wide swap summary by walking every ingredient in the
