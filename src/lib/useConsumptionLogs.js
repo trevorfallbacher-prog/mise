@@ -229,7 +229,7 @@ export function useConsumptionLogs({ userId, brandNutrition, getInfo }) {
     } finally {
       setLoading(false);
     }
-  }, [userId, setPantry, brandNutrition, getInfo]);
+  }, [userId, brandNutrition, getInfo]);
 
   return { logConsumption, loading, error };
 }
