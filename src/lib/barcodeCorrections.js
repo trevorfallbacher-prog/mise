@@ -25,6 +25,18 @@ function fromGlobal(row) {
     emoji:           row.emoji || null,
     ingredientIds:   Array.isArray(row.ingredient_ids) ? row.ingredient_ids : [],
     correctionCount: row.correction_count || 1,
+    // Fields populated by the external-baseline ingest (migration
+    // 0130 / scripts/ingest_usda_branded.js). All nullable — legacy
+    // admin-written rows don't carry them. source_provenance says
+    // which external source set which field ("admin" = locked).
+    brand:              row.brand || null,
+    name:               row.name || null,
+    packageSizeAmount:  row.package_size_amount ?? null,
+    packageSizeUnit:    row.package_size_unit || null,
+    imageUrl:           row.image_url || null,
+    categoryHints:      Array.isArray(row.category_hints) ? row.category_hints : [],
+    sourceProvenance:   row.source_provenance || {},
+    lastExternalSync:   row.last_external_sync || null,
   };
 }
 
@@ -40,6 +52,17 @@ function fromFamily(row) {
     emoji:           row.emoji || null,
     ingredientIds:   Array.isArray(row.ingredient_ids) ? row.ingredient_ids : [],
     correctionCount: row.correction_count || 1,
+    // External-baseline fields never populate on family rows (the
+    // ingest only writes to the global table). Emitted as nulls so
+    // call-sites can destructure uniformly regardless of source tier.
+    brand:              null,
+    name:               null,
+    packageSizeAmount:  null,
+    packageSizeUnit:    null,
+    imageUrl:           null,
+    categoryHints:      [],
+    sourceProvenance:   {},
+    lastExternalSync:   null,
   };
 }
 
@@ -176,18 +199,31 @@ export async function rememberBarcodeCorrection({
     // Global path — upsert by barcode_upc (unique index).
     const { data: existing, error: selErr } = await supabase
       .from("barcode_identity_corrections")
-      .select("id, correction_count")
+      .select("id, correction_count, source_provenance")
       .eq("barcode_upc", upc)
       .maybeSingle();
     if (selErr) {
       console.warn("[barcode_identity_corrections] select failed:", selErr.message);
       return { error: selErr };
     }
+    // Stamp provenance for every field this write touches. Locks the
+    // field against later external-baseline re-ingests (migration
+    // 0130 / scripts/ingest_usda_branded.js) — the ingest merge logic
+    // refuses to overwrite any field whose provenance is "admin".
+    // Patch-key → column-name mapping is identity for the columns we
+    // stamp; ingredientIds isn't locked because the tag-map path has
+    // its own admin-write flow.
+    const provKeys = Object.keys(patch).filter(k =>
+      ["canonical_id", "type_id", "tile_id", "location", "emoji"].includes(k)
+    );
+    const nextProv = { ...(existing?.source_provenance || {}) };
+    for (const k of provKeys) nextProv[k] = "admin";
     if (existing) {
       const { error } = await supabase
         .from("barcode_identity_corrections")
         .update({
           ...patch,
+          source_provenance: nextProv,
           correction_count: (existing.correction_count || 1) + 1,
           last_used_at: new Date().toISOString(),
         })
@@ -204,6 +240,7 @@ export async function rememberBarcodeCorrection({
       .insert({
         barcode_upc: upc,
         ...patch,
+        source_provenance: nextProv,
         correction_count: 1,
         last_used_at: new Date().toISOString(),
         created_by: userId,
