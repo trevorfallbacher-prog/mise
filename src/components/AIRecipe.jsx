@@ -1649,15 +1649,35 @@ export default function AIRecipe({
         }
         if (pantryIdx !== null) {
           matchedPantryIdx.add(pantryIdx);
-          entries.push({
-            kind: pantryEdits.removes.has(pantryIdx) ? "removed"
-                : isSub ? "subbed"
-                : "matched",
-            idealIdx,
-            pantryIdx,
-          });
+          // USE ORIGINAL was clicked: user rejected this sub AND promoted
+          // the classical ideal to shopping. Render as a clean
+          // "idealShopping" entry (showing the ORIGINAL ingredient name
+          // with a "not in pantry" note) — NOT as a strikethrough
+          // "removed" row which reads as "this ingredient won't be in
+          // the recipe." The sub pantry row is absorbed as "rejected
+          // context" for an optional hint.
+          const rejected = pantryEdits.removes.has(pantryIdx)
+            && pantryEdits.shopping.has(idealIdx);
+          if (rejected) {
+            entries.push({ kind: "idealShopping", idealIdx, rejectedPantryIdx: pantryIdx });
+          } else {
+            entries.push({
+              kind: pantryEdits.removes.has(pantryIdx) ? "removed"
+                  : isSub ? "subbed"
+                  : "matched",
+              idealIdx,
+              pantryIdx,
+            });
+          }
         } else {
-          entries.push({ kind: "missing", idealIdx });
+          // No sketch.pantry match but user still promoted this ideal
+          // to shopping via the standalone PROMOTE action — render as
+          // idealShopping so it doesn't get lost.
+          if (pantryEdits.shopping.has(idealIdx)) {
+            entries.push({ kind: "idealShopping", idealIdx, rejectedPantryIdx: null });
+          } else {
+            entries.push({ kind: "missing", idealIdx });
+          }
         }
       });
       // Second pass: any pantry rows the sketch included that
@@ -1842,6 +1862,68 @@ export default function AIRecipe({
                     }}>
                       <span><s>{row.name} · {row.amount}</s></span>
                       <button onClick={() => toggleRemove(entry.pantryIdx)} style={undoChip}>UNDO</button>
+                    </div>
+                  );
+                }
+
+                // IDEAL SHOPPING — user clicked USE ORIGINAL on a sub
+                // row, which rejected Claude's substitute and asked to
+                // use the classical ingredient instead. Renders as a
+                // prominent "will shop for" row in the ORIGINAL
+                // ingredient's position (not crossed out, not demoted
+                // to a missing-style row) so the user reads it as
+                // "this IS in the recipe, you'll pick it up at the
+                // store." Shows the rejected sub as a small footnote
+                // so the undo path stays discoverable.
+                if (entry.kind === "idealShopping") {
+                  const ideal = sketch.ideal[entry.idealIdx];
+                  const rejectedRow = entry.rejectedPantryIdx != null
+                    ? sketch.pantry[entry.rejectedPantryIdx]
+                    : null;
+                  return (
+                    <div key={`ishop-${idx}`} style={{
+                      padding: "10px 12px",
+                      background: "#141414", border: "1px solid #1e1e1e", borderRadius: 12,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4" }}>
+                            {ideal.name} · <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{ideal.amount}</span>
+                          </div>
+                          <div style={{
+                            marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#f59e0b", letterSpacing: "0.06em",
+                          }}>
+                            ⚠ NOT IN PANTRY — WILL ADD TO SHOPPING LIST
+                          </div>
+                          {rejectedRow && (
+                            <div style={{
+                              marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4,
+                              padding: "2px 8px",
+                              background: "#1a1410", border: "1px solid #3a2f1a",
+                              borderRadius: 10,
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#a88868", letterSpacing: "0.04em",
+                            }}>
+                              rejected sub: {rejectedRow.name}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          {/* UNDO restores the rejected sub: drops the
+                              pantryIdx from removes AND idealIdx from
+                              shopping in one click. */}
+                          <button
+                            onClick={() => {
+                              if (entry.rejectedPantryIdx != null) toggleRemove(entry.rejectedPantryIdx);
+                              togglePromoteToShopping(entry.idealIdx);
+                            }}
+                            style={undoChip}
+                          >
+                            UNDO
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   );
                 }
