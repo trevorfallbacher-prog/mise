@@ -33,7 +33,7 @@ import { FRIDGE_TILES } from "../lib/fridgeTiles";
 import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import TypePicker from "./TypePicker";
-import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
+import { findFoodType, inferFoodTypeFromName, typeIdForCanonical } from "../data/foodTypes";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../lib/barcodeCorrections";
 import { usePopularPackages, clearPopularPackagesCache } from "../lib/usePopularPackages";
 import { useProfile } from "../lib/useProfile";
@@ -70,37 +70,41 @@ function normalizeBarcode(b) {
   return stripped || digits; // guard against all-zeros sentinels
 }
 
-// Walmart (and a few other US retailers) print the item code on
-// receipts as "0" + first 11 digits of the manufacturer UPC-A,
-// effectively dropping the check digit AND right-shifting:
-//   manufacturer UPC-A: 073420000110  (Daisy Sour Cream, 16oz)
-//   Walmart receipt:    007342000011
+// Two UPCs are "equivalent" when they point at the same manufacturer
+// product code, regardless of how the formatting chopped off the
+// edges (leading zeros, check digit, Walmart's right-shift). The
+// canonical identity is the data portion — the digits between any
+// leading zero padding and the (sometimes dropped) check digit.
 //
-// These differ under direct equality AND under leading-zero strip
-// (the Walmart form starts with "00", the manufacturer form starts
-// with "0"). The common ground is an 11-digit substring shared by
-// both. Pull every 11-char window of digits from each side; if any
-// window appears on both sides, treat as equivalent. 11 = the data
-// portion of UPC-A (12 minus the check digit). False-positive risk
-// for valid UPCs is low — UPC-A data portions are essentially
-// unique per product.
-function upcSubstrings11(b) {
-  const d = String(b || "").replace(/\D+/g, "");
-  if (d.length < 11) return [];
-  const out = [];
-  for (let i = 0; i + 11 <= d.length; i++) out.push(d.slice(i, i + 11));
-  return out;
-}
-
+// Real-world cases this must handle:
+//   - UPC-A (12) vs EAN-13 (12 + leading 0) vs 11-digit short form
+//     (leading 0 dropped) — all should compare equal.
+//   - Walmart's right-shift: "0" + first 11 of UPC-A (check digit
+//     dropped). Manufacturer prints 073420000110; receipt shows
+//     007342000011.
+//   - Vision truncation: Haiku OCR on a thermal receipt sometimes
+//     reads ONLY 11 of 12 digits, dropping either the leading 0 or
+//     the trailing check digit. Scan: 681131354684 (12). Vision:
+//     06811313546 (11). After leading-zero strip both sides share
+//     the 10-digit data prefix 6811313546.
+//
+// Match strategy: strip leading zeros from both, then either direct
+// equality OR one is a substring of the other with >= 10 digit
+// overlap. 10 digits of UPC-A data are effectively unique per
+// product (100-billion space), and 10 is the floor of what Vision
+// reliably extracts — going tighter re-introduces the ghost misses
+// we just fixed.
 function upcsEquivalent(a, b) {
   const an = normalizeBarcode(a);
   const bn = normalizeBarcode(b);
-  if (an && bn && an === bn) return true;
-  const aSubs = upcSubstrings11(a);
-  if (aSubs.length === 0) return false;
-  const bSubs = new Set(upcSubstrings11(b));
-  for (const s of aSubs) if (bSubs.has(s)) return true;
-  return false;
+  if (!an || !bn) return false;
+  if (an === bn) return true;
+  const [shorter, longer] = an.length <= bn.length ? [an, bn] : [bn, an];
+  // Require 10+ shared digits. UPC-A data portions are 11; EAN-13
+  // is 12. Accepting a 10-digit substring catches Vision's "lost
+  // one digit" case without relaxing to noise territory.
+  if (shorter.length < 10) return false;
+  return longer.includes(shorter);
 }
 
 // Match a trip_scan to a receipt line. UPC direct match wins (the
@@ -866,9 +870,15 @@ export default function ShopModeCheckout({
           source_shopping_list_item_id: scan.pairedShoppingListItemId || null,
           location,
           tile_id: tileId,
+          // type_id cascade mirrors the EditableScanLine cascade —
+          // typeIdForCanonical sits above inferFoodTypeFromName so a
+          // canonical-linked row commits with the canonical's WWEIA
+          // type instead of whatever alias-match the OFF productName
+          // happens to hit (often nothing).
           type_id: override?.typeId
             || taught?.typeId
             || offAxes.typeId
+            || (canon ? typeIdForCanonical(canon) : null)
             || inferFoodTypeFromName(displayName || scan.productName || scan.brand || "")
             || null,
           purchased_at:   nowIso,
@@ -1554,8 +1564,21 @@ const EditableScanLine = memo(function EditableScanLine({
     catch { offCategoryAxes = { category: null, tileId: null, typeId: null }; }
 
     const inferredTypeId = inferFoodTypeFromName(scan.productName || scan.brand || "") || null;
+    // typeIdForCanonical inverts the FOOD_TYPES registry: given a
+    // bundled canonical ("sweet_corn"), return the WWEIA food type
+    // it belongs to ("wweia_vegetables_starchy"). Critical rung of
+    // the cascade — once a canonical is linked, the CATEGORY chip
+    // should snap to the right food type WITHOUT the user having to
+    // tap it. Previously the cascade only fell through
+    // inferFoodTypeFromName(productName/brand) which doesn't always
+    // alias-match on the OFF product text ("Great Value Sweet Corn"
+    // against the "sweet corn" alias list). Hoisting
+    // typeIdForCanonical ABOVE the productName path makes the chip
+    // auto-fill whenever the row has a canonical.
+    const canonicalTypeId = currentCanonical ? typeIdForCanonical(currentCanonical) : null;
     const effectiveTypeId = packageOverride?.typeId
       || offCategoryAxes.typeId
+      || canonicalTypeId
       || inferredTypeId
       || null;
     const effectiveType = effectiveTypeId ? findFoodType(effectiveTypeId) : null;
@@ -1567,8 +1590,15 @@ const EditableScanLine = memo(function EditableScanLine({
     const effectiveLocation = packageOverride?.location
       || currentCanonical?.storage?.location
       || defaultLocationForCategory(effectiveCategory);
+    // STORED IN tile cascade gets the food type's defaultTileId too
+    // — same rung the TypePicker uses for auto-fill. Without this,
+    // Sweet Corn / Cantaloupe / Mayonnaise / Soda showed "+ set
+    // stored in" even with a canonical AND a resolved food type,
+    // because bundled canonicals don't all have storage.tileId
+    // populated (only the ones with explicit fridge/pantry homes).
     const effectiveTileId = packageOverride?.tileId
       || currentCanonical?.storage?.tileId
+      || effectiveType?.defaultTileId
       || offCategoryAxes.tileId
       || null;
     const effectiveTile = tileById(effectiveTileId);
