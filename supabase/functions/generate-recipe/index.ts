@@ -614,6 +614,22 @@ Rules:
     user has pecorino" is a real sub. "Classic calls for tortillas,
     user has tortillas" is not a sub at all — just use them.
 
+  - COMPOUND PRODUCTS ARE NEVER A SUB FOR RAW INGREDIENTS. A box of
+    Ritz Butter Crackers contains flour, butter, and salt in its
+    composition — that does NOT mean it satisfies a recipe call for
+    FLOUR. Cereal does not sub for wheat. Bread does not sub for
+    flour. Chocolate chip cookies do not sub for chocolate. Frozen
+    pizza does not sub for mozzarella or tomato sauce. Pre-made
+    pesto does not sub for basil. Hot dogs do not sub for ground
+    pork. The user expects raw ingredients; pairing with a compound
+    product and labeling it "subbed from flour" is always wrong.
+    Cracker boxes / cookie boxes / cereal / sauces in jars / frozen
+    prepared foods / spice blends / anything on a grocery shelf that
+    is already A THING UNTO ITSELF — none of those are ingredients
+    in the pairing sense. If the pantry lacks a raw ingredient, mark
+    it as shopping (pantryItemId: null, missingFromIdeal: false),
+    not as a sub-from-compound.
+
   - "subbedFrom" is non-null ONLY on genuine swaps (case above).
     null when the pantry item matches the ideal directly — including
     when brand/packaging differs (Mission Tortillas for tortillas

@@ -72,8 +72,19 @@ function tilesForIngredient(ingredientId) {
  * when exact misses.
  *
  * 'exact' quality fires when:
- *   * row.ingredientIds includes the recipeIngredientId, OR
- *   * row.ingredientId === recipeIngredientId (legacy singular)
+ *   * row.canonicalId === recipeIngredientId (identity match)
+ *
+ * NOT exact anymore (was, before this bug was audited):
+ *   * row.ingredientIds composition includes recipeIngredientId.
+ *
+ *   Rationale: a recipe calling for "flour" is NOT satisfied by Ritz
+ *   Butter Crackers that list `ingredientIds: ["flour"]` in their
+ *   composition. Identity is "what the thing IS"; composition is
+ *   "what's inside." Recipes ask for identity. The composition axis
+ *   still has real uses (ingredient-detail card, leftover deduction,
+ *   receipt reconciliation) but those are distinct from pairing
+ *   direction. Previously the composition-as-exact path was the
+ *   smoking gun for "system pinned my Ritz for a flour call."
  *
  * 'tile' quality fires when:
  *   * exact missed, AND
@@ -86,21 +97,17 @@ function tilesForIngredient(ingredientId) {
 export function matchRowToRecipeIngredient(row, recipeIngredientId) {
   if (!row || !recipeIngredientId) return { quality: null };
 
-  // Exact check — preserves today's behavior
-  const rowIds = Array.isArray(row.ingredientIds) && row.ingredientIds.length
-    ? row.ingredientIds
-    : (row.ingredientId ? [row.ingredientId] : []);
-  if (rowIds.includes(recipeIngredientId)) {
-    return { quality: "exact" };
-  }
-
-  // Canonical identity check (0039). "Franks Best Cheese Dogs" has
-  // canonical_id='hot_dog'; a recipe calling for 'hot_dog' matches
-  // exactly via this path even though the user's composition
-  // ingredient_ids are [cheddar, ground_pork] (no hot_dog tag).
-  // Identity is the USDA-defensible "what the thing IS" — recipes
-  // rightly ask for things by identity, not composition.
-  if (row.canonicalId && row.canonicalId === recipeIngredientId) {
+  // Compound products (frozen pizzas, leftovers, cracker boxes) are
+  // NEVER exact matches for a raw ingredient call. They carry
+  // composition data for other surfaces, but pairing is pure identity.
+  if (row.kind && row.kind !== "ingredient") {
+    // Skip exact check entirely; fall through to tile fallback so the
+    // row can still surface as a weak-quality candidate if its tile
+    // aligns.
+  } else if (row.canonicalId && row.canonicalId === recipeIngredientId) {
+    return { quality: "exact", reason: "canonical identity" };
+  } else if (row.ingredientId && row.ingredientId === recipeIngredientId) {
+    // Legacy single-id rows — same identity check, different field.
     return { quality: "exact", reason: "canonical identity" };
   }
 
