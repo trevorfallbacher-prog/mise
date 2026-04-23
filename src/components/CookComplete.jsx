@@ -11,6 +11,16 @@ import { applyCookSessionToRecipe, canonicalizeEffectiveRecipe, countActiveSwaps
 import { reheatToCookInstructions } from "../lib/reheatToCookInstructions";
 import CookCompleteSummary from "./CookCompleteSummary";
 
+// Visibility gate for the per-ingredient calorie breakdown phase. The
+// `nutritionDebug` phase is a diagnostic screen that exposes the
+// macro-resolver trace (canonical match, factor, why a row was
+// skipped) and reads as engineering output to end users. Gated behind
+// a localStorage flag so day-to-day cooks go rating → notes → save
+// without seeing it. Flip on when debugging a dashboard regression:
+//     localStorage.setItem("mise_debug", "1")
+const SHOW_NUTRITION_DEBUG = typeof localStorage !== "undefined"
+  && localStorage.getItem("mise_debug") === "1";
+
 // Completion flow shown when the user taps the final "DONE! LOG IT"
 // button in CookMode. Phases:
 //   1. celebrate      — confetti + "+XP" pulse, "Continue →"
@@ -2257,7 +2267,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
             ← BACK
           </button>
           <button
-            onClick={() => setPhase("nutritionDebug")}
+            onClick={() => setPhase(SHOW_NUTRITION_DEBUG ? "nutritionDebug" : "notes")}
             disabled={!rating}
             style={{ flex:2, padding:"14px", background: rating?"#f5c842":"#1a1a1a", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: rating?"#111":"#444", cursor: rating?"pointer":"not-allowed", letterSpacing:"0.08em" }}>
             CONTINUE →
@@ -2467,13 +2477,14 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
         )}
 
         <div style={{ display:"flex", gap:10, marginTop:"auto" }}>
-          <button onClick={() => setPhase("nutritionDebug")} disabled={saving}
+          <button onClick={() => setPhase(SHOW_NUTRITION_DEBUG ? "nutritionDebug" : "rating")} disabled={saving}
             style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#888", cursor: saving?"not-allowed":"pointer", letterSpacing:"0.08em" }}>
             ← BACK
           </button>
           <button
             onClick={save}
             disabled={saving}
+            className={saving ? "" : "mise-cta"}
             style={{ flex:2, padding:"14px", background: saving?"#1a1a1a":"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: saving?"#444":"#111", cursor: saving?"not-allowed":"pointer", letterSpacing:"0.08em" }}>
             {saving ? "SAVING..." : "SAVE TO COOKBOOK →"}
           </button>

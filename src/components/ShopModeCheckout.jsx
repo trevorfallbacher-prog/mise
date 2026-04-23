@@ -37,6 +37,10 @@ import { findFoodType, inferFoodTypeFromName, typeIdForCanonical } from "../data
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../lib/barcodeCorrections";
 import { usePopularPackages, clearPopularPackagesCache } from "../lib/usePopularPackages";
 import { useProfile } from "../lib/useProfile";
+import {
+  SET_CHIP, UNSET_CHIP, CHIP_TONES,
+  pickerKicker, pickerTitle, pickerBody, pickerOptionStyle,
+} from "../lib/tokens";
 
 const FLASH_COLORS = {
   green:  { bg: "#1f6b3a", label: "MATCHED" },
@@ -214,30 +218,8 @@ function tileToCategory(tileId) {
   return "pantry";
 }
 
-// Reusable chip styles matching the scan-draft / ItemCard pattern
-// (DM Mono 9px, letter-spaced, emoji + UPPERCASE when set, dashed
-// grey "+ set <axis>" when unset). Keyed by axis color.
-const SET_CHIP = (tone) => ({
-  display: "inline-flex", alignItems: "center", gap: 4,
-  fontFamily: "'DM Mono',monospace", fontSize: 9,
-  color: tone.fg, background: tone.bg,
-  border: `1px solid ${tone.border}`,
-  borderRadius: 4, padding: "2px 6px",
-  letterSpacing: "0.08em", cursor: "pointer",
-});
-const UNSET_CHIP = {
-  fontFamily: "'DM Mono',monospace", fontSize: 9,
-  color: "#666", background: "transparent",
-  border: "1px dashed #2a2a2a",
-  borderRadius: 4, padding: "1px 6px",
-  letterSpacing: "0.08em", cursor: "pointer",
-};
-const CHIP_TONES = {
-  canonical:     { fg: "#b8a878", bg: "#1a1508", border: "#3a2f10" }, // tan
-  category:      { fg: "#e07a3a", bg: "#1a0f08", border: "#3a1f0e" }, // orange
-  location:      { fg: "#7eb8d4", bg: "#0f1620", border: "#1f3040" }, // blue (STORED IN tile)
-  locationMuted: { fg: "#7eb8d4aa", bg: "#0d1218", border: "#1a2430" }, // muted blue (LOCATION — fridge/pantry/freezer)
-};
+// Chip styles (SET_CHIP / UNSET_CHIP / CHIP_TONES) are imported from
+// lib/tokens.js — single source of truth for every item-list surface.
 
 // Verbose match-attempt logging is gated behind a localStorage flag.
 // Was previously unconditional — every commit emitted N × M log
@@ -2118,10 +2100,10 @@ const EditableScanLine = memo(function EditableScanLine({
         <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="86vh">
           <div style={pickerKicker(CHIP_TONES.category.fg)}>CATEGORY</div>
           <h2 style={pickerTitle}>
-            What category does {scan.productName || scan.brand || "this"} belong to?
+            What is this?
           </h2>
-          <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
-            USDA-rooted food categories. Picking one suggests a default shelf for STORED IN and a default canonical if this scan didn't resolve one.
+          <p style={pickerBody}>
+            Picking a category suggests a shelf and, if needed, an identity.
           </p>
           <TypePicker
             userId={null}
@@ -2188,10 +2170,10 @@ const EditableScanLine = memo(function EditableScanLine({
         <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="80vh">
           <div style={pickerKicker(CHIP_TONES.location.fg)}>STORED IN</div>
           <h2 style={pickerTitle}>
-            Which shelf does {scan.productName || scan.brand || "this"} live on?
+            Which shelf?
           </h2>
-          <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
-            Showing {effectiveLocation} tiles. Change the LOCATION chip to see shelves in the fridge / pantry / freezer instead.
+          <p style={pickerBody}>
+            {effectiveLocation} shelves shown. Tap the LOCATION chip to switch.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
             {(TILES_BY_LOCATION[effectiveLocation] || []).map(tile => (
@@ -2219,30 +2201,10 @@ const EditableScanLine = memo(function EditableScanLine({
   );
 });
 
-// Shared ModalSheet picker styles — mirror the scan-draft pickers
-// in Kitchen.jsx so CATEGORY / STORED IN pickers here feel like the
-// same component.
-const pickerKicker = (color) => ({
-  fontFamily: "'DM Mono',monospace", fontSize: 10,
-  color, letterSpacing: "0.12em",
-  marginBottom: 10,
-});
-const pickerTitle = {
-  fontFamily: "'Fraunces',serif", fontSize: 20,
-  fontStyle: "italic", color: "#f0ece4",
-  fontWeight: 400, margin: "0 0 6px", lineHeight: 1.2,
-};
-function pickerOptionStyle(active, tone) {
-  return {
-    display: "flex", alignItems: "center", gap: 10,
-    padding: "12px 14px",
-    background: active ? tone.bg : "#141414",
-    border: `1px solid ${active ? tone.border : "#1e1e1e"}`,
-    borderRadius: 10,
-    textAlign: "left", cursor: "pointer",
-    fontFamily: "'DM Sans',sans-serif",
-  };
-}
+// Picker styles (pickerKicker / pickerTitle / pickerOptionStyle) are
+// imported from lib/tokens.js — every axis picker in the app shares
+// them so CATEGORY / STORED IN / LOCATION sheets all read as one
+// component.
 
 const textInput = {
   background: "#0d0d0d",

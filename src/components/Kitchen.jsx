@@ -40,7 +40,7 @@ import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
 import ReceiptView from "./ReceiptView";
 import ReceiptHistoryModal from "./ReceiptHistoryModal";
-import { Z } from "../lib/tokens";
+import { Z, SET_CHIP, UNSET_CHIP, CHIP_TONES, FONT, COLOR, pickerKicker, pickerTitle, pickerBody } from "../lib/tokens";
 import { bumpTileUse } from "../lib/userTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import {
@@ -88,6 +88,17 @@ import {
   rememberScanCorrection,
   normalizeScanText,
 } from "../lib/userScanCorrections";
+
+// Scan-pipeline debug logging. Was previously unconditional — every
+// scan fired a dozen `[ramen-debug]` / `[upc-debug]` / `[claims-debug]`
+// lines into the console whether or not anyone was diagnosing. The
+// code still lives (these are invaluable when a scan regression
+// lands), but it's gated behind a localStorage flag so day-to-day
+// users get a quiet console. Turn on for a session:
+//     localStorage.setItem("mise_debug", "1")
+const DEBUG_SCAN = typeof localStorage !== "undefined"
+  && localStorage.getItem("mise_debug") === "1";
+const dbg = DEBUG_SCAN ? console.log.bind(console) : () => {};
 
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
@@ -922,7 +933,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           initialBrand={canonicalCreatePrompt.pendingRow?.brand || ""}
           sourceHint={canonicalCreatePrompt.pendingResolverReason}
           onCreate={async ({ finalName, finalBrand }) => {
-            console.log("[ramen-debug] 3/onCreate-entry", {
+            dbg("[ramen-debug] 3/onCreate-entry", {
               finalName,
               finalBrand,
               pendingRowBrand: canonicalCreatePrompt?.pendingRow?.brand,
@@ -961,7 +972,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brand:         resolvedBrand,
                 autoLinked:    true,
               };
-              console.log("[ramen-debug] 4/patchedRow-built", {
+              dbg("[ramen-debug] 4/patchedRow-built", {
                 name: patchedRow.name,
                 brand: patchedRow.brand,
                 canonicalId: patchedRow.canonicalId,
@@ -970,7 +981,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // Teach the system. UPC → canonical mapping persists so
               // future scans of the same UPC auto-pair.
               const scanUpc = cpSnapshot?.pendingRow?.barcodeUpc || null;
-              console.log("[upc-debug] 3/write-attempt", {
+              dbg("[upc-debug] 3/write-attempt", {
                 scanUpc,
                 userId,
                 isAdmin,
@@ -997,7 +1008,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   ingredientIds: [slug],
                   categoryHints: scanHints,
                 })
-                  .then(res => console.log("[upc-debug] 4/write-result", res))
+                  .then(res => dbg("[upc-debug] 4/write-result", res))
                   .catch(e => console.warn("[upc-debug] write threw:", e));
               }
               // Single-item barcode scan — hand off as a DRAFT so the
@@ -1007,7 +1018,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // draftItem state; commit happens only on STOCK IN PANTRY.
               setCanonicalCreatePrompt(null);
               onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, draftMode: true });
-              console.log("[ramen-debug] 5/committed-via-onItemsScanned");
+              dbg("[ramen-debug] 5/committed-via-onItemsScanned");
             } catch (e) {
               console.error("[ramen-debug] onCreate core failed:", e);
               // Even the core path threw (shouldn't happen, but guard).
@@ -1081,7 +1092,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             setError(null);
             try {
               const res = await lookupBarcode(barcode, { brandNutritionRows: brandNutritionRowsForScan });
-              console.log("[ramen-debug] 1/off-response", {
+              dbg("[ramen-debug] 1/off-response", {
                 barcode,
                 found: res?.found,
                 productName: res?.productName,
@@ -1130,7 +1141,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               let correction = null;
               try {
                 correction = await findBarcodeCorrection(barcode);
-                console.log("[upc-debug] 1/lookup", {
+                dbg("[upc-debug] 1/lookup", {
                   barcode,
                   correction: correction
                     ? { source: correction.source, canonicalId: correction.canonicalId }
@@ -1152,7 +1163,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                     defaultUnit:  "count",
                     _synthetic:   true,
                   };
-                  console.log("[upc-debug] 2/resolved-ing", {
+                  dbg("[upc-debug] 2/resolved-ing", {
                     canonicalId: correction.canonicalId,
                     synthetic: !real,
                     name: ing.name,
@@ -1267,7 +1278,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                       packageSize = { amount: Number(prior.package_amount), unit: prior.package_unit };
                     }
                   }
-                  console.log("[upc-debug] inherit", {
+                  dbg("[upc-debug] inherit", {
                     barcode,
                     inheritedScanRaw,
                     inheritedAttributes: inheritedAttributes ? Object.keys(inheritedAttributes) : null,
@@ -1301,7 +1312,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               if (inheritedAttributes) {
                 attributes = mergeAttributes(attributes || null, inheritedAttributes);
               }
-              console.log("[claims-debug] extraction", {
+              dbg("[claims-debug] extraction", {
                 barcode,
                 resProductName: res.productName,
                 resCached: res.cached,
@@ -1461,7 +1472,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // accepting a pre-fill. Better than silently stocking
               // a "Barcode 8500…" row.
               if (!canon && !hadCorrection) {
-                console.log("[ramen-debug] 2/prompt-opening", {
+                dbg("[ramen-debug] 2/prompt-opening", {
                   suggestedName: suggestedName || "",
                   pendingRowBrand: row.brand,
                   effectiveBrand,
@@ -1570,13 +1581,13 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             </div>
           </div>
           <div style={{ flex:1, overflowY:"auto", display:"flex", flexDirection:"column", gap:10, minHeight:0, WebkitOverflowScrolling:"touch" }}>
-            {orderedItems.map(({ item, originalIdx }) => {
+            {orderedItems.map(({ item, originalIdx }, renderIdx) => {
               const idx = originalIdx;
               const canon = findIngredient(item.ingredientId);
               const unitDisplay = canon ? unitLabel(canon, item.unit) : item.unit;
               const conf = confidenceStyle(item.confidence);
               return (
-                <div key={idx} style={{ position:"relative", display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden", flexShrink:0 }}>
+                <div key={idx} className="mise-fade-in" style={{ position:"relative", display:"flex", alignItems:"stretch", gap:0, borderRadius:12, background: item.selected?"#161616":"#0f0f0f", border:`1px solid ${item.selected ? conf.border : "#1a1a1a"}`, opacity: item.selected?1:0.4, transition:"all 0.2s", overflow:"hidden", flexShrink:0, ["--mise-delay"]: `${Math.min(renderIdx * 32, 360)}ms` }}>
                   {/* Confidence accent stripe — reads at a glance whether to
                       trust the row, even before you read the name. */}
                   <div style={{ width:4, background: item.selected ? conf.color : "#222", flexShrink:0 }} />
@@ -1717,13 +1728,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                               onClick={e => { e.stopPropagation(); setLinkingScanMode("canonical"); setLinkingScanIdx(idx); }}
                               aria-label="Set canonical"
                               title="Tap to set canonical"
-                              style={{
-                                fontFamily:"'DM Mono',monospace", fontSize:9,
-                                color:"#666", background:"transparent",
-                                border:"1px dashed #2a2a2a",
-                                borderRadius:4, padding:"1px 6px",
-                                letterSpacing:"0.08em", cursor:"pointer",
-                              }}
+                              style={UNSET_CHIP}
                             >
                               + set canonical
                             </button>
@@ -1736,14 +1741,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                             title={isPending
                               ? `Canonical: ${displayName} — pending review. Tap to change.`
                               : `Canonical: ${displayName} — tap to change`}
-                            style={{
-                              display:"inline-flex", alignItems:"center", gap:4,
-                              fontFamily:"'DM Mono',monospace", fontSize:9,
-                              color:"#b8a878", background:"#1a1508",
-                              border:"1px solid #3a2f10",
-                              borderRadius:4, padding:"2px 6px",
-                              letterSpacing:"0.08em", cursor:"pointer",
-                            }}
+                            style={SET_CHIP(CHIP_TONES.canonical)}
                           >
                             <span>{displayEmoji} {displayName.toUpperCase()}</span>
                             {isPending && !isAdmin && (
@@ -1851,19 +1849,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                             onClick={e => { e.stopPropagation(); setTypingScanIdx(idx); }}
                             aria-label={typeEntry ? `Change food category (currently ${typeEntry.label})` : "Set food category"}
                             title={typeEntry ? `Food category: ${typeEntry.label} — tap to change` : "Tap to set food category"}
-                            style={typeEntry ? {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#e07a3a", background: "#1a0f08",
-                              border: "1px solid #3a1f0e",
-                              borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            } : {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#666", background: "transparent",
-                              border: "1px dashed #2a2a2a",
-                              borderRadius: 4, padding: "1px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            }}
+                            style={typeEntry ? SET_CHIP(CHIP_TONES.category) : UNSET_CHIP}
                           >
                             {typeEntry
                               ? <>{typeEntry.emoji} {typeEntry.label.toUpperCase()}</>
@@ -1892,19 +1878,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                             onClick={e => { e.stopPropagation(); setTilingScanIdx(idx); }}
                             aria-label={tileEntry ? `Change stored-in shelf (currently ${tileEntry.label})` : "Set stored-in shelf"}
                             title={tileEntry ? `Stored in ${tileEntry.label} — tap to change` : "Tap to set a shelf"}
-                            style={tileEntry ? {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#7eb8d4", background: "#0f1620",
-                              border: "1px solid #1f3040",
-                              borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            } : {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#666", background: "transparent",
-                              border: "1px dashed #2a2a2a",
-                              borderRadius: 4, padding: "1px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            }}
+                            style={tileEntry ? SET_CHIP(CHIP_TONES.location) : UNSET_CHIP}
                           >
                             {tileEntry
                               ? <>{tileEntry.emoji} {tileEntry.label.toUpperCase()}</>
@@ -2064,7 +2038,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             // filter needed.
             onItemsScanned(scannedItems, { ...receiptMeta, imageData });
             setPhase("done");
-          }} style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
+          }} className="mise-cta" style={{ marginTop:12, width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, letterSpacing:"0.08em", cursor:"pointer", flexShrink:0 }}>
             STOCK MY PANTRY →
           </button>
         </div>
@@ -2077,7 +2051,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#4ade80", letterSpacing:"0.15em", marginBottom:8 }}>PANTRY UPDATED</div>
           <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:28, fontWeight:300, fontStyle:"italic", color:"#f0ece4", marginBottom:8 }}>All stocked up</h2>
           <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:14, color:"#666", marginBottom:40 }}>We'll track everything as you cook.</p>
-          <button onClick={onClose} style={{ width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, cursor:"pointer" }}>SEE MY PANTRY →</button>
+          <button onClick={onClose} className="mise-cta" style={{ width:"100%", padding:"16px", background:"#f5c842", color:"#111", border:"none", borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600, cursor:"pointer" }}>SEE MY PANTRY →</button>
           <style>{`@keyframes pop{0%{transform:scale(0.5);opacity:0}70%{transform:scale(1.15)}100%{transform:scale(1);opacity:1}}`}</style>
         </div>
       )}
@@ -2185,14 +2159,12 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           (canonical) auto-fills too unless the user already linked. */}
       {typingScanIdx != null && scannedItems[typingScanIdx] && (
         <ModalSheet onClose={() => setTypingScanIdx(null)} maxHeight="86vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:10 }}>
-            CATEGORY
-          </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 6px", lineHeight:1.2 }}>
-            What category does {scannedItems[typingScanIdx].name} belong to?
+          <div style={pickerKicker(CHIP_TONES.category.fg)}>CATEGORY</div>
+          <h2 style={pickerTitle}>
+            What is this?
           </h2>
-          <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", lineHeight:1.5, margin:"0 0 14px" }}>
-            We've loaded the largest USDA categories for you to choose from. Category drives the state picker (sliced / ground / whole / ...) and the default tile — pick the one that best matches.
+          <p style={pickerBody}>
+            Category drives the state options (sliced, ground, whole…) and where it lands.
           </p>
           <TypePicker
             userId={userId}
@@ -2224,12 +2196,13 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           explicitly moved one of them already. */}
       {tilingScanIdx != null && scannedItems[tilingScanIdx] && (
         <ModalSheet onClose={() => setTilingScanIdx(null)} maxHeight="86vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em", marginBottom:10 }}>
-            STORED IN
-          </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
-            Where does {scannedItems[tilingScanIdx].name} live?
+          <div style={pickerKicker(CHIP_TONES.location.fg)}>STORED IN</div>
+          <h2 style={pickerTitle}>
+            Where does it live?
           </h2>
+          <p style={pickerBody}>
+            Pick a shelf. We'll route future scans of this item here too.
+          </p>
           <IdentifiedAsPicker
             userId={userId}
             locationHint={scannedItems[tilingScanIdx].location}
@@ -2252,10 +2225,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           get the same emoji in one tap. */}
       {emojiingScanIdx != null && scannedItems[emojiingScanIdx] && (
         <ModalSheet onClose={() => setEmojiingScanIdx(null)} maxHeight="60vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:10 }}>
-            PICK AN EMOJI
-          </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+          <div style={pickerKicker(COLOR.gold)}>PICK AN EMOJI</div>
+          <h2 style={pickerTitle}>
             {scannedItems[emojiingScanIdx].name}
           </h2>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:8 }}>
@@ -6121,7 +6092,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           }
         } else {
           addedCount++;
-          console.log("[ramen-debug] 6/pantry-row-push", {
+          dbg("[ramen-debug] 6/pantry-row-push", {
             name: s.name,
             brand: s.brand,
             canonicalId: s.canonicalId,

@@ -1,4 +1,9 @@
 import { useMemo, useState } from "react";
+import ModalSheet from "./ModalSheet";
+import {
+  CHIP_TONES, COLOR, FONT,
+  pickerKicker, pickerTitle, pickerOptionStyle,
+} from "../lib/tokens";
 
 // Multi-step form for authoring a custom recipe. Produces a recipe
 // object matching the bundled schema (src/data/recipes/schema.js) so
@@ -253,26 +258,46 @@ export default function CustomRecipeBuilder({
           </Field>
           <Row>
             <Field label="CUISINE">
-              <select value={cuisine} onChange={e => setCuisine(e.target.value)} style={inputStyle}>
-                {CUISINE_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SelectButton
+                label="CUISINE"
+                kickerColor={CHIP_TONES.category.fg}
+                title="Pick a cuisine"
+                value={cuisine}
+                options={CUISINE_OPTIONS}
+                onChange={setCuisine}
+              />
             </Field>
             <Field label="CATEGORY">
-              <select value={category} onChange={e => setCategory(e.target.value)} style={inputStyle}>
-                {CATEGORY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <SelectButton
+                label="CATEGORY"
+                kickerColor={CHIP_TONES.category.fg}
+                title="Pick a category"
+                value={category}
+                options={CATEGORY_OPTIONS}
+                onChange={setCategory}
+              />
             </Field>
           </Row>
           <Row>
             <Field label="COURSE">
-              <select value={course} onChange={e => setCourse(e.target.value)} style={inputStyle}>
-                {COURSE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              <SelectButton
+                label="COURSE"
+                kickerColor={CHIP_TONES.category.fg}
+                title="Which course is this?"
+                value={course}
+                options={COURSE_OPTIONS}
+                onChange={setCourse}
+              />
             </Field>
             <Field label="MEAL TIMING">
-              <select value={mealTiming} onChange={e => setMealTiming(e.target.value)} style={inputStyle}>
-                {MEAL_TIMING_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              <SelectButton
+                label="MEAL TIMING"
+                kickerColor={CHIP_TONES.category.fg}
+                title="When is this eaten?"
+                value={mealTiming}
+                options={MEAL_TIMING_OPTIONS}
+                onChange={setMealTiming}
+              />
             </Field>
           </Row>
           <Field label={`DIFFICULTY · ${difficultyWord(difficulty)}`}>
@@ -673,4 +698,83 @@ function difficultyWord(n) {
   if (n <= 3) return "EASY";
   if (n <= 6) return "MEDIUM";
   return "ADVANCED";
+}
+
+// Bottom-sheet dropdown replacement — replaces the native `<select>`
+// for the CUISINE / CATEGORY / COURSE / MEAL TIMING fields so the
+// recipe builder matches the ModalSheet picker pattern the rest of
+// the app uses for discrete identity axes (CLAUDE.md).
+//
+// Props:
+//   label, kickerColor   — kicker line above the title ("CUISINE", etc.)
+//   title                — the sheet's headline ("Pick a cuisine")
+//   value, options       — current pick + option list
+//   onChange(id)         — fired with the picked id
+//   renderOption(opt)    — optional custom label renderer
+function SelectButton({
+  label, kickerColor = COLOR.gold,
+  title, value, options,
+  onChange, renderOption,
+}) {
+  const [open, setOpen] = useState(false);
+  const active = options.find(o => {
+    const id = typeof o === "string" ? o : o.id;
+    return id === value;
+  });
+  const display = active
+    ? (typeof active === "string" ? active : active.label)
+    : "—";
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          ...inputStyle,
+          textAlign: "left",
+          cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        <span>{display}</span>
+        <span style={{
+          fontFamily: FONT.mono, fontSize: 10,
+          color: COLOR.dim, letterSpacing: "0.1em",
+        }}>▾</span>
+      </button>
+      {open && (
+        <ModalSheet onClose={() => setOpen(false)} maxHeight="70vh">
+          <div style={pickerKicker(kickerColor)}>{label}</div>
+          <h2 style={pickerTitle}>{title}</h2>
+          <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0", display: "flex", flexDirection: "column", gap: 6 }}>
+            {options.map(o => {
+              const id    = typeof o === "string" ? o : o.id;
+              const lbl   = typeof o === "string" ? o : o.label;
+              const isOn  = id === value;
+              return (
+                <li key={id}>
+                  <button
+                    type="button"
+                    onClick={() => { onChange(id); setOpen(false); }}
+                    style={{
+                      ...pickerOptionStyle(isOn, CHIP_TONES.category),
+                      width: "100%",
+                      color: isOn ? CHIP_TONES.category.fg : COLOR.ink,
+                      fontSize: 14,
+                    }}
+                  >
+                    <span style={{ flex: 1 }}>
+                      {renderOption ? renderOption(o) : lbl}
+                    </span>
+                    {isOn && <span style={{ fontFamily: FONT.mono, fontSize: 12 }}>✓</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </ModalSheet>
+      )}
+    </>
+  );
 }

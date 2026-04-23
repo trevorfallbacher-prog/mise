@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { COLOR, FONT, RADIUS, Z } from "../lib/tokens";
+import { motion } from "framer-motion";
+import { COLOR, FONT, RADIUS, Z, SPRING } from "../lib/tokens";
 
 /**
  * ModalSheet — shared bottom-sheet modal primitive.
@@ -26,6 +27,10 @@ import { COLOR, FONT, RADIUS, Z } from "../lib/tokens";
  *     disable for modals where vertical scrolling fights the gesture,
  *     e.g. pickers with lots of content)
  *   - z-index from the token scale (default Z.card = 320)
+ *   - Motion-driven enter animation: spring-slide up from bottom,
+ *     backdrop fade-in, via framer-motion using the SPRING.sheet preset.
+ *     The existing drag-to-dismiss is preserved; motion and drag share
+ *     the `y` value so the spring controller honors live drag position.
  *
  * Props:
  *   onClose()         - called when any dismissal happens. Caller owns
@@ -71,6 +76,31 @@ export default function ModalSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Mobile keyboard awareness — when an input inside the sheet is
+  // focused, iOS Safari / Android Chrome push the viewport up to
+  // make room for the keyboard, but `vh` units still reference the
+  // FULL screen. Result: a `maxHeight: 92vh` sheet overflows the
+  // visible viewport and the keyboard covers the input the user is
+  // typing into. The `visualViewport` API reports the actually-visible
+  // inner height; subscribing to its resize event and clamping the
+  // sheet to that height keeps the input above the keyboard at all
+  // times. Fallback for browsers without visualViewport: `dvh` units
+  // do the same thing at the CSS layer.
+  const [visibleH, setVisibleH] = useState(null);
+  useEffect(() => {
+    const vv = typeof window !== "undefined" && window.visualViewport;
+    if (!vv) return;
+    const update = () => setVisibleH(Math.round(vv.height));
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
+
   // Swipe-down state. Dragged downward past DISMISS_THRESHOLD fires
   // onClose with an animated slide-out; anything less snaps back.
   //
@@ -81,6 +111,7 @@ export default function ModalSheet({
   //                  accidentally triggers dismiss.
   const DISMISS_THRESHOLD = 100;
   const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
   const dragStartRef = useRef(null);
   const internalScrollRef = useRef(null);
   const scrollRef = scrollRefFromProps || internalScrollRef;
@@ -97,6 +128,7 @@ export default function ModalSheet({
     if (!el) return;
     if (el.scrollTop > 0) return;  // let the user scroll up first
     dragStartRef.current = { y: e.touches[0].clientY };
+    setDragging(true);
   };
   const onTouchMove = (e) => {
     if (!swipeable) return;
@@ -112,6 +144,7 @@ export default function ModalSheet({
     if (!dragStartRef.current) return;
     const finalY = dragY;
     dragStartRef.current = null;
+    setDragging(false);
     if (finalY >= DISMISS_THRESHOLD) {
       // Slide off-screen then dismiss. The setTimeout matches the
       // transition duration so the onClose lands right as the sheet
@@ -123,38 +156,82 @@ export default function ModalSheet({
     }
   };
 
+  // Backdrop opacity drops with drag distance so dismiss feels
+  // physical. While the user is actively dragging, we disable the
+  // spring so the backdrop tracks the finger 1:1.
+  const backdropOpacity = Math.max(0, 1 - dragY / 400);
+
+  // Resolve the effective maxHeight. If the caller passed a vh-based
+  // string (default "92vh"), translate the percentage against the
+  // visualViewport's height when we have it so the sheet shrinks as
+  // the keyboard opens. Any non-vh value (px, dvh, etc.) passes
+  // through untouched.
+  const resolvedMaxHeight = (() => {
+    if (!visibleH) return maxHeight;
+    const m = /^([\d.]+)vh$/.exec(String(maxHeight).trim());
+    if (!m) return maxHeight;
+    const pct = parseFloat(m[1]) / 100;
+    return `${Math.round(visibleH * pct)}px`;
+  })();
+
+  // Focus-aware scroll-into-view. When any input / textarea inside
+  // the sheet gains focus, give the mobile keyboard 280ms to animate
+  // in, then center the focused element inside the visible sheet
+  // area. On iOS this is the difference between seeing what you're
+  // typing and seeing the keyboard over the input.
+  const assignSheetRef = (node) => {
+    if (typeof scrollRef === "function") scrollRef(node);
+    else if (scrollRef) scrollRef.current = node;
+    if (node && !node.__miseFocusListenerInstalled) {
+      node.__miseFocusListenerInstalled = true;
+      node.addEventListener("focusin", (e) => {
+        const t = e.target;
+        if (!t) return;
+        const tag = t.tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return;
+        setTimeout(() => {
+          try { t.scrollIntoView({ block: "center", behavior: "smooth" }); }
+          catch { t.scrollIntoView(); }
+        }, 280);
+      });
+    }
+  };
+
   return (
-    <div
+    <motion.div
       onClick={closeOnBackdrop ? onClose : undefined}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: backdropOpacity }}
+      transition={dragging ? { duration: 0 } : { duration: 0.2, ease: "easeOut" }}
       style={{
         position: "fixed", inset: 0,
-        // Fade the backdrop with the drag so dismiss feels physical.
-        // Held dragging pins the transition off; release re-enables it.
-        background: `rgba(0,0,0,${0.87 * Math.max(0, 1 - dragY / 400)})`,
+        background: "rgba(0,0,0,0.87)",
         zIndex,
         display: "flex", alignItems: "flex-end",
         maxWidth: 480, margin: "0 auto",
-        transition: dragStartRef.current ? "none" : "background 0.18s ease",
       }}
     >
-      <div
-        ref={scrollRef}
+      <motion.div
+        ref={assignSheetRef}
         onClick={e => e.stopPropagation()}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
+        initial={{ y: "100%" }}
+        animate={{ y: dragY }}
+        transition={dragging ? { duration: 0 } : SPRING.sheet}
         style={{
           width: "100%", background: COLOR.ground,
           borderRadius: `${RADIUS.sheet}px ${RADIUS.sheet}px 0 0`,
           padding: "18px 22px 36px",
-          maxHeight, overflowY: "auto",
+          maxHeight: resolvedMaxHeight,
+          overflowY: "auto",
           position: "relative",
-          transform: `translateY(${dragY}px)`,
-          transition: dragStartRef.current ? "none" : "transform 0.18s ease",
           // iOS overscroll-bounce chains to the whole page otherwise,
           // which fights the gesture. Contain it here.
           overscrollBehaviorY: "contain",
+          willChange: "transform",
         }}
       >
         {showHandle && (
@@ -189,7 +266,7 @@ export default function ModalSheet({
           </div>
         )}
         {children}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

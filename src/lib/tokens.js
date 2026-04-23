@@ -138,3 +138,120 @@ export const MOTION = {
   normal: "0.18s ease",
   slow:   "0.30s ease",
 };
+
+// Framer-motion friendly spring/tween presets. Use the token rather
+// than hand-rolling `{ type: "spring", stiffness: 400, ... }` in each
+// component — it drifts fast and the app stops feeling cohesive.
+export const SPRING = {
+  // snappy press feedback (chip taps, button press)
+  tap:    { type: "spring", stiffness: 520, damping: 32, mass: 0.6 },
+  // default sheet / modal enter
+  sheet:  { type: "spring", stiffness: 360, damping: 34, mass: 0.9 },
+  // list items mounting in
+  stagger:{ type: "spring", stiffness: 300, damping: 28, mass: 0.8 },
+  // soft, gentle settle (toasts, overlays)
+  soft:   { type: "spring", stiffness: 220, damping: 26, mass: 1 },
+};
+
+// ── CHIP TONES (reserved color axis palette) ────────────────────────
+// Every identity-axis chip in the app must pull its color from this
+// map. Keys mirror the CLAUDE.md reserved-color hierarchy:
+//   canonical → tan   | cut         → rust   | category → orange
+//   location  → blue  | state       → purple | ingredient → yellow
+// Never hand-roll a `background: "#e07a3a1a"` at the callsite — reach
+// for `CHIP_TONES.category` instead. `locationMuted` is the muted
+// LOCATION variant (fridge/pantry/freezer — the axis above STORED IN).
+export const CHIP_TONES = {
+  canonical:     { fg: "#b8a878", bg: "#1a1508", border: "#3a2f10" }, // tan
+  cut:           { fg: "#a8553a", bg: "#1a0c07", border: "#3a1a10" }, // rust
+  category:      { fg: "#e07a3a", bg: "#1a0f08", border: "#3a1f0e" }, // orange
+  location:      { fg: "#7eb8d4", bg: "#0f1620", border: "#1f3040" }, // blue (STORED IN tile)
+  locationMuted: { fg: "#7eb8d4aa", bg: "#0d1218", border: "#1a2430" }, // muted blue (LOCATION)
+  state:         { fg: "#c7a8d4", bg: "#16101e", border: "#2f2440" }, // purple
+  ingredients:   { fg: "#f5c842", bg: "#1e1a0e", border: "#3a3010" }, // yellow
+};
+
+// ── CHIP STYLES ─────────────────────────────────────────────────────
+// Reusable chip styles matching the scan-draft / ItemCard reference
+// pattern in Kitchen.jsx. DM Mono 9px, letter-spaced, emoji +
+// UPPERCASE when set, dashed grey "+ set <axis>" when unset. Keyed by
+// `CHIP_TONES` tone.
+//
+// USAGE:
+//   import { SET_CHIP, UNSET_CHIP, CHIP_TONES } from "../lib/tokens";
+//   <button style={SET_CHIP(CHIP_TONES.category)}>🍞 BREAD</button>
+//   <button style={UNSET_CHIP}>+ set category</button>
+//
+// Do NOT hand-roll chip styles. If you need a new variant, extend
+// this file, not the consumer.
+export const SET_CHIP = (tone) => ({
+  display: "inline-flex", alignItems: "center", gap: 4,
+  fontFamily: FONT.mono, fontSize: 9,
+  color: tone.fg, background: tone.bg,
+  border: `1px solid ${tone.border}`,
+  borderRadius: RADIUS.sm, padding: "3px 7px",
+  minHeight: 22,
+  letterSpacing: "0.08em", cursor: "pointer",
+  transition: `background ${MOTION.fast}, border-color ${MOTION.fast}, transform ${MOTION.fast}`,
+});
+// UNSET_CHIP — dashed affordance for unset identity axes. Kept visually
+// quieter than SET_CHIP so a scan-draft row's filled chips read first
+// and the gaps stay clearly secondary — but bumped from #666 on
+// #2a2a2a (ratio ~3:1, failing WCAG and awful on OLED) to dim on a
+// warmer dashed border so kids and tired adults can actually see
+// where the tap-targets are.
+export const UNSET_CHIP = {
+  display: "inline-flex", alignItems: "center",
+  fontFamily: FONT.mono, fontSize: 9,
+  color: COLOR.dim, background: "transparent",
+  border: `1px dashed #3a3a3a`,
+  borderRadius: RADIUS.sm, padding: "2px 7px",
+  minHeight: 22,
+  letterSpacing: "0.08em", cursor: "pointer",
+  transition: `border-color ${MOTION.fast}, color ${MOTION.fast}, background ${MOTION.fast}`,
+};
+
+// ── PICKER STYLES (ModalSheet picker content) ───────────────────────
+// Every ModalSheet that functions as an axis picker (CANONICAL,
+// CATEGORY, STORED IN, etc.) renders a kicker label in DM Mono tinted
+// the axis color, a Fraunces italic title, and a list of option
+// buttons. These styles keep all of them visually synchronized.
+export const pickerKicker = (color) => ({
+  fontFamily: FONT.mono, fontSize: 10,
+  color, letterSpacing: "0.18em",
+  marginBottom: 10,
+  textTransform: "uppercase",
+});
+// Editorial-weight headline for ModalSheet pickers. Bumped from the
+// original 20px to 26px — when the sheet is the focal plane, the
+// title should feel like a magazine cover line, not a form field
+// label. Fraunces italic carries the weight; the kicker above
+// supplies the category tag; the description paragraph below
+// supplies the instructions. This shape (tag → hero line →
+// body) is the sheet's brand signature.
+export const pickerTitle = {
+  fontFamily: FONT.serif, fontSize: 26,
+  fontStyle: "italic", color: COLOR.ink,
+  fontWeight: 400, margin: "0 0 10px", lineHeight: 1.15,
+  letterSpacing: "-0.01em",
+};
+// Muted body copy that sits under pickerTitle to explain the
+// picker's purpose. Previously re-rolled as inline style in every
+// picker; consolidated here so every sheet's body reads identically.
+export const pickerBody = {
+  fontFamily: FONT.sans, fontSize: 13,
+  color: COLOR.dim, lineHeight: 1.55,
+  margin: "0 0 16px",
+};
+export function pickerOptionStyle(active, tone) {
+  return {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "12px 14px",
+    background: active ? tone.bg : COLOR.ground,
+    border: `1px solid ${active ? tone.border : COLOR.edge}`,
+    borderRadius: RADIUS.lg,
+    textAlign: "left", cursor: "pointer",
+    fontFamily: FONT.sans,
+    transition: `background ${MOTION.fast}, border-color ${MOTION.fast}, transform ${MOTION.fast}`,
+  };
+}
