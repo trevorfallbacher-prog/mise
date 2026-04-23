@@ -38,13 +38,6 @@ self.addEventListener("push", (event) => {
 
   const title = payload.title || "mise";
   const body  = payload.body  || "";
-  // Icons were pointing at /icon-192.png + /icon-badge-72.png which
-  // don't exist in public/. Chrome falls back silently but Firefox /
-  // Safari / Samsung Internet silently DROP the whole notification
-  // when the icon URL 404s. Omit the icon fields until we actually
-  // ship the branded PNGs — OS default (manifest icon or browser
-  // fallback) renders in the meantime. Add them back when
-  // public/icon-192.png and public/icon-badge-72.png exist.
   // tag prevents a stack of duplicate banners for the same logical
   // event — when the same notification row fires twice (e.g., retry),
   // the later one replaces the earlier.
@@ -53,6 +46,17 @@ self.addEventListener("push", (event) => {
   const options = {
     body,
     tag,
+    icon:  "/icon-192.png",
+    badge: "/icon-badge-72.png",
+    // `renotify` lets a replacement notification (same tag) vibrate /
+    // re-alert instead of silently updating. Timer rings want to feel
+    // like timer rings; a silent banner update is worse than the first
+    // ring rung twice.
+    renotify: true,
+    // Requiring interaction keeps cook timers pinned until the user
+    // dismisses — they might have left the phone on the counter. Only
+    // applied to timer-kind pushes; other categories auto-dismiss.
+    requireInteraction: payload.target_kind === "cook_session",
     data: {
       id:          payload.id          || null,
       target_kind: payload.target_kind || null,

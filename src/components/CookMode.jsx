@@ -10,6 +10,7 @@ import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonica
 import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
+import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -131,9 +132,25 @@ function PlateAnimation() {
 
 const AnimationMap = { boil:BoilAnimation, stir:StirAnimation, brown:BrownAnimation, bloom:BloomAnimation, toss:TossAnimation, plate:PlateAnimation };
 
-function Timer({ seconds, onDone }) {
-  const [remaining, setRemaining] = useState(seconds);
-  const [running, setRunning] = useState(false);
+function Timer({ seconds, onDone, endsAt }) {
+  // When resuming from the banner (or reopening CookMode mid-step),
+  // `endsAt` is the server-side push deadline already queued in
+  // cook_step_notifications. Clamping the on-screen countdown to that
+  // wall-clock deadline means the mm:ss the user sees matches when
+  // the push will actually fire — no "fresh 5:00" on a step that's
+  // really 30 seconds from ringing. Fresh start still uses `seconds`
+  // verbatim.
+  const initialRemaining = endsAt
+    ? Math.max(0, Math.ceil((new Date(endsAt).getTime() - Date.now()) / 1000))
+    : seconds;
+  const [remaining, setRemaining] = useState(initialRemaining);
+  // Auto-start: the server-side push in cook_step_notifications was
+  // already queued at step-enter with deliver_at = now + seconds, so
+  // running the in-app countdown immediately keeps the visual and the
+  // push aligned. Users can still pause — pausing only pauses the
+  // on-screen number, the push will still fire at its scheduled time
+  // (which matches current behavior before wiring onDone).
+  const [running, setRunning] = useState(true);
   const [done, setDone] = useState(false);
   // Reset to the step's full duration. Fires when the cook needs to
   // re-run a step ("pulled the chicken too early, sear another 3
@@ -153,17 +170,19 @@ function Timer({ seconds, onDone }) {
   const mins=Math.floor(remaining/60), secs=remaining%60;
   const pct=((seconds-remaining)/seconds)*100;
   const showReset = done || remaining !== seconds;
+  const pulsing = !done && running && remaining > 0 && remaining <= 10;
   return (
     <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12 }}>
       <div style={{ position:"relative", width:52, height:52 }}>
         <svg viewBox="0 0 52 52" style={{ width:52, height:52, transform:"rotate(-90deg)" }}>
           <circle cx="26" cy="26" r="22" fill="none" stroke="#333" strokeWidth="3" />
-          <circle cx="26" cy="26" r="22" fill="none" stroke={done?"#4ade80":"#f59e0b"} strokeWidth="3"
+          <circle cx="26" cy="26" r="22" fill="none" stroke={done?"#4ade80":pulsing?"#ef4444":"#f59e0b"} strokeWidth="3"
             strokeDasharray={`${2*Math.PI*22}`} strokeDashoffset={`${2*Math.PI*22*(1-pct/100)}`}
-            strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear" }} />
+            strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear, stroke 0.3s" }} />
         </svg>
         <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
-          fontFamily:"'DM Mono',monospace", fontSize:10, color: done?"#4ade80":"#f5f5f0" }}>
+          fontFamily:"'DM Mono',monospace", fontSize:10, color: done?"#4ade80":pulsing?"#ef4444":"#f5f5f0",
+          animation: pulsing ? "cookTimerPulse 1s ease-in-out infinite" : "none" }}>
           {done ? "✓" : `${mins}:${String(secs).padStart(2,"0")}`}
         </div>
       </div>
@@ -174,6 +193,12 @@ function Timer({ seconds, onDone }) {
           fontSize:12, cursor:"pointer", fontWeight:600, letterSpacing:"0.05em", transition:"all 0.2s"
         }}>{running ? "⏸ PAUSE" : remaining===seconds ? "▶ START" : "▶ RESUME"}</button>
       )}
+      {done && (
+        <div style={{
+          fontFamily:"'DM Mono',monospace", fontSize:11, color:"#4ade80",
+          letterSpacing:"0.12em",
+        }}>⏰ TIMER'S UP</div>
+      )}
       {showReset && (
         <button onClick={reset} style={{
           background: "transparent", color: "#9a9a9a",
@@ -182,6 +207,7 @@ function Timer({ seconds, onDone }) {
           fontWeight: 600, letterSpacing: "0.05em", transition: "all 0.2s",
         }}>↻ RESET</button>
       )}
+      <style>{`@keyframes cookTimerPulse{0%,100%{opacity:1}50%{opacity:0.55}}`}</style>
     </div>
   );
 }
@@ -294,9 +320,19 @@ export default function CookMode({
   // this flow. Optional: if not provided, the save action simply
   // isn't offered.
   onForkRecipe = null,
+  // Resume-from-banner handoff. When the CookBanner re-opens CookMode
+  // on an already-active session, App passes the live step index + a
+  // hint to skip past the ingredient-prep overview + the real
+  // cook_step_notifications.deliver_at so the in-app Timer shows
+  // wall-clock-accurate remaining seconds instead of a fresh
+  // step.timer countdown. Defaults keep the first-launch flow
+  // (overview → step 0 → fresh countdown from step.timer) intact.
+  initialView       = "overview",
+  initialStepIndex  = 0,
+  initialTimerEndsAt = null,
 }) {
-  const [view, setView] = useState("overview");
-  const [activeStep, setActiveStep] = useState(0);
+  const [view, setView] = useState(initialView);
+  const [activeStep, setActiveStep] = useState(initialStepIndex);
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
   const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
@@ -352,6 +388,10 @@ export default function CookMode({
       recipeTitle: recipe.title,
       recipeEmoji: recipe.emoji,
     });
+    // Prime the Web Audio context on this explicit user action so
+    // subsequent Timer chimes land on an unsuspended context — mobile
+    // browsers suspend until a gesture. Safe to call repeatedly.
+    primeCookAudio();
   }, [view, recipe?.slug, recipe?.title, recipe?.emoji, telemetry]);
 
   // Each time activeStep changes (and we're inside a live session),
@@ -377,20 +417,47 @@ export default function CookMode({
     });
   }, [view, activeStep, telemetry, recipe]);
 
-  // Best-effort abandon: if the user navigates away (back button,
-  // parent unmounts CookMode) without going through the green CTA →
-  // CookComplete path, mark the session abandoned so the analytics
-  // view doesn't count its half-recorded durations. Skipped when the
-  // user already finalized — finalizedRef guards against the race
-  // where endCook(finished) is still in flight when unmount fires.
+  // NOTE: we intentionally DO NOT mark the session abandoned when
+  // CookMode unmounts. Before, any back-button / parent-close path
+  // flipped status → 'abandoned', which made the "resume your cook"
+  // banner impossible — the row we'd key off was torched before the
+  // user even noticed they'd navigated away. Now unmounts are treated
+  // as "stepping out of the kitchen for a moment"; the session stays
+  // active for up to 2h (enforced by useCookTelemetry.startCook's
+  // resume window) and surfaces as a pinned top banner via
+  // useActiveCookSession. Explicit abandonment is still reachable —
+  // it happens when the user starts a different recipe (startCook
+  // creates a fresh row) or when the 2h window lapses.
+
+  // Wake lock — keep the screen on while CookMode is visible.
+  // navigator.wakeLock is supported on Chrome/Edge/Android; silently
+  // no-ops on Safari and older browsers. Re-acquires on visibility
+  // change because the browser drops the lock whenever the tab is
+  // backgrounded.
   useEffect(() => {
-    return () => {
-      if (finalizedRef.current) return;
-      telemetry.endCook({ status: "abandoned" });
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return undefined;
+    let sentinel = null;
+    let cancelled = false;
+    const acquire = async () => {
+      try {
+        sentinel = await navigator.wakeLock.request("screen");
+      } catch (e) {
+        // Battery-saver mode or permissions policy — not fatal.
+        console.warn("[cookMode] wake lock denied:", e?.message || e);
+      }
     };
-    // Mount-only; we want the cleanup to capture the final ref value.
-    // (Project's eslint config doesn't load react-hooks/exhaustive-deps,
-    // so no disable pragma — see Cookbook.jsx line 69 for the same note.)
+    acquire();
+    const onVis = () => {
+      if (!cancelled && document.visibilityState === "visible" && (!sentinel || sentinel.released)) {
+        acquire();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVis);
+      try { sentinel && sentinel.release && sentinel.release(); } catch { /* ignore */ }
+    };
   }, []);
 
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
@@ -593,6 +660,10 @@ export default function CookMode({
     // No-op if telemetry isn't tracking this step (e.g. session
     // creation hasn't landed yet on a fast-tap user).
     telemetry.finishStep({});
+    // Satisfying tactile confirmation the step was logged — quieter
+    // than the timer chime so rapid step-taps don't sound like a
+    // malfunctioning alarm clock.
+    playStepCompleteChime();
     if (activeStep < steps.length - 1) setTimeout(() => setActiveStep(s => s + 1), 300);
   };
 
@@ -1142,7 +1213,35 @@ export default function CookMode({
             });
           })()}
         </p>
-        {step.timer && <Timer seconds={step.timer} />}
+        {step.timer && (
+          <Timer
+            key={`${activeStep}-${step.id}`}
+            seconds={step.timer}
+            // Only honor the resume deadline on the step that matched
+            // the active session when CookMode re-mounted. Moving
+            // forward / back clears it so fresh starts don't read a
+            // stale wall-clock from an unrelated step.
+            endsAt={activeStep === initialStepIndex ? initialTimerEndsAt : null}
+            onDone={() => {
+              // Ring the bell. Server-side push already queued at
+              // step-start (see useCookTelemetry.startStep) handles
+              // the "app is closed" case; this handles "app is open
+              // but user wandered off / backgrounded the tab."
+              playTimerChime();
+              if (typeof document !== "undefined" && document.hidden &&
+                  typeof Notification !== "undefined" && Notification.permission === "granted") {
+                try {
+                  new Notification(`${recipe.emoji || "⏲️"} Timer's up`, {
+                    body: step.title ? `Step ${activeStep + 1}: ${step.title}` : "Step timer ended",
+                    tag: `cook-timer-${telemetry.session?.id || "local"}-${step.id}`,
+                    icon: "/icon-192.png",
+                    badge: "/icon-badge-72.png",
+                  });
+                } catch { /* some contexts forbid Notification constructor */ }
+              }
+            }}
+          />
+        )}
       </div>
       {step.tip && (
         <div style={{ marginTop:12, padding:"14px 16px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, display:"flex", gap:10 }}>
