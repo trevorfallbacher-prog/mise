@@ -659,7 +659,8 @@ exact shape. Every field is REQUIRED unless marked optional.
     // (scheduled meal time - leadMinutes). Use these for actions the
     // cook must take BEFORE the main cook session starts — things
     // that happen hours or days ahead of the burners going on. DO
-    // NOT duplicate inside-the-cook steps here; those go in `steps`.
+    // NOT duplicate inside-the-cook steps here; those go in the
+    // steps[] array above, not here.
     //
     // Emit a prepStep ONLY when the dish genuinely benefits from
     // advance work. Examples worth emitting:
