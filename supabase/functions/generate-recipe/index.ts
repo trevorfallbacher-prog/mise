@@ -618,7 +618,35 @@ exact shape. Every field is REQUIRED unless marked optional.
       "title":       "<short step title>",
       "instruction": "<1-3 sentences — reference ingredients by display name; the UI zips them back to the top-level ingredients[] list>",
       "icon":        "🔪",
-      "timer":       <seconds or null>,
+      // Timer semantics — READ CAREFULLY, this drives real push
+      // notifications to the cook's phone (cook_step_notifications,
+      // migration 0137). A wrong value rings a push at the wrong time.
+      //
+      // ALWAYS in SECONDS. Never minutes. A 25-minute bake is 1500,
+      // NOT 25. Double-check: if your number is under ~60 and the
+      // step is clearly minutes-long, you forgot to multiply by 60.
+      //
+      // Emit a timer (number) ONLY on PASSIVE-WAIT steps where the
+      // cook can walk away. Pushes fire when the timer elapses, so
+      // "walk away" is the whole point. Examples:
+      //   • Bake 25 min (1500)         • Simmer 1 hour (3600)
+      //   • Rest meat 10 min (600)     • Rise dough 2 hours (7200)
+      //   • Reduce sauce 8 min (480)   • Chill 30 min (1800)
+      //   • Sous vide 2 hours (7200)   • Braise 90 min (5400)
+      //
+      // Emit NULL on active-work steps where the cook is at the
+      // stove and a push would be noise. Examples:
+      //   • Chop / mince / slice       • Stir / toss / flip
+      //   • Whisk together             • Season to taste
+      //   • "Cook, stirring, until X"  • Assemble / plate
+      //
+      // Short sears (90 seconds) are a judgment call — emit a timer
+      // if the cook typically sets one (steak flip, pasta water
+      // test). Skip if the instruction already says "watch closely".
+      //
+      // Valid range: 5..86400 seconds (5s to 24h). Anything outside
+      // is treated as an error by the normalizer and dropped.
+      "timer":       <integer seconds for passive-wait steps, null otherwise>,
       "tip":         "<optional one-line tip or null>",
       "heat":    "<optional: 'low' | 'medium-low' | 'medium' | 'medium-high' | 'high' | 'off'>",
       "doneCue": "<optional short qualitative ready-signal: 'nutty smell, color of wet sand'>"
@@ -1292,16 +1320,50 @@ function normalizeIngredients(ings: unknown): unknown[] {
 // empty, which is now always. Defaults to [] here so saved
 // pre-trim recipes still hydrate without nulls breaking
 // CookMode's uses.map.
+// Timer clamp bounds. 5s floor drops trivial "1 second" hallucinations;
+// 24h ceiling catches a model that confused days with seconds. Actual
+// cooks that need longer (e.g. 48h sous vide) are rare enough that the
+// cook can set a phone alarm — we'd rather drop than ring wrong.
+const MIN_TIMER_SECONDS = 5;
+const MAX_TIMER_SECONDS = 24 * 60 * 60;
+
+// Heuristic: if Claude returns a small integer on a step whose
+// instruction clearly references minutes or hours, it probably meant
+// minutes. Rescue by multiplying.
+function rescueTimerUnit(timer: number, instruction: string): number {
+  if (timer >= 60) return timer;                // Already plausibly seconds.
+  if (timer <= 0)  return timer;
+  const txt = (instruction || "").toLowerCase();
+  // Look for minute/hour references in the instruction text. "bake
+  // 25 minutes" with timer=25 is a classic minutes-as-seconds bug.
+  if (/\bmin(ute)?s?\b|\bhours?\b|\bhr\b/.test(txt)) {
+    return timer * 60;
+  }
+  return timer;
+}
+
 function normalizeSteps(steps: unknown): unknown[] {
   if (!Array.isArray(steps)) return [];
   return steps.map((s, i) => {
     const step = (s && typeof s === "object") ? s as Record<string, unknown> : {};
+    const instruction = typeof step.instruction === "string" ? step.instruction : "";
+
+    // Timer: sanitize with clamp + unit-rescue so a hallucinated
+    // value doesn't queue a 10-hour push for a 10-minute rest step.
+    let timer: number | null = null;
+    if (typeof step.timer === "number" && Number.isFinite(step.timer)) {
+      const rescued = rescueTimerUnit(step.timer, instruction);
+      if (rescued >= MIN_TIMER_SECONDS && rescued <= MAX_TIMER_SECONDS) {
+        timer = Math.round(rescued);
+      }
+    }
+
     return {
       id:          typeof step.id          === "string" ? step.id          : `step${i + 1}`,
       title:       typeof step.title       === "string" ? step.title       : `Step ${i + 1}`,
-      instruction: typeof step.instruction === "string" ? step.instruction : "",
+      instruction,
       icon:        typeof step.icon        === "string" ? step.icon        : "👨‍🍳",
-      timer:       typeof step.timer       === "number" ? step.timer       : null,
+      timer,
       tip:         typeof step.tip         === "string" ? step.tip         : null,
       uses:        [],
       heat:        typeof step.heat        === "string" ? step.heat        : null,
