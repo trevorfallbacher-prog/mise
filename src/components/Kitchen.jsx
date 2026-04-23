@@ -89,6 +89,17 @@ import {
   normalizeScanText,
 } from "../lib/userScanCorrections";
 
+// Scan-pipeline debug logging. Was previously unconditional — every
+// scan fired a dozen `[ramen-debug]` / `[upc-debug]` / `[claims-debug]`
+// lines into the console whether or not anyone was diagnosing. The
+// code still lives (these are invaluable when a scan regression
+// lands), but it's gated behind a localStorage flag so day-to-day
+// users get a quiet console. Turn on for a session:
+//     localStorage.setItem("mise_debug", "1")
+const DEBUG_SCAN = typeof localStorage !== "undefined"
+  && localStorage.getItem("mise_debug") === "1";
+const dbg = DEBUG_SCAN ? console.log.bind(console) : () => {};
+
 // Compact registry shape we send to the scan-receipt Edge Function. The model
 // needs just enough to emit correct `ingredientId` + unit values; units are
 // stringified to their ids only (the Claude prompt doesn't need toBase math).
@@ -922,7 +933,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           initialBrand={canonicalCreatePrompt.pendingRow?.brand || ""}
           sourceHint={canonicalCreatePrompt.pendingResolverReason}
           onCreate={async ({ finalName, finalBrand }) => {
-            console.log("[ramen-debug] 3/onCreate-entry", {
+            dbg("[ramen-debug] 3/onCreate-entry", {
               finalName,
               finalBrand,
               pendingRowBrand: canonicalCreatePrompt?.pendingRow?.brand,
@@ -961,7 +972,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 brand:         resolvedBrand,
                 autoLinked:    true,
               };
-              console.log("[ramen-debug] 4/patchedRow-built", {
+              dbg("[ramen-debug] 4/patchedRow-built", {
                 name: patchedRow.name,
                 brand: patchedRow.brand,
                 canonicalId: patchedRow.canonicalId,
@@ -970,7 +981,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // Teach the system. UPC → canonical mapping persists so
               // future scans of the same UPC auto-pair.
               const scanUpc = cpSnapshot?.pendingRow?.barcodeUpc || null;
-              console.log("[upc-debug] 3/write-attempt", {
+              dbg("[upc-debug] 3/write-attempt", {
                 scanUpc,
                 userId,
                 isAdmin,
@@ -997,7 +1008,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                   ingredientIds: [slug],
                   categoryHints: scanHints,
                 })
-                  .then(res => console.log("[upc-debug] 4/write-result", res))
+                  .then(res => dbg("[upc-debug] 4/write-result", res))
                   .catch(e => console.warn("[upc-debug] write threw:", e));
               }
               // Single-item barcode scan — hand off as a DRAFT so the
@@ -1007,7 +1018,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // draftItem state; commit happens only on STOCK IN PANTRY.
               setCanonicalCreatePrompt(null);
               onItemsScanned([patchedRow], { store: null, date: null, totalCents: null, draftMode: true });
-              console.log("[ramen-debug] 5/committed-via-onItemsScanned");
+              dbg("[ramen-debug] 5/committed-via-onItemsScanned");
             } catch (e) {
               console.error("[ramen-debug] onCreate core failed:", e);
               // Even the core path threw (shouldn't happen, but guard).
@@ -1081,7 +1092,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             setError(null);
             try {
               const res = await lookupBarcode(barcode, { brandNutritionRows: brandNutritionRowsForScan });
-              console.log("[ramen-debug] 1/off-response", {
+              dbg("[ramen-debug] 1/off-response", {
                 barcode,
                 found: res?.found,
                 productName: res?.productName,
@@ -1130,7 +1141,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               let correction = null;
               try {
                 correction = await findBarcodeCorrection(barcode);
-                console.log("[upc-debug] 1/lookup", {
+                dbg("[upc-debug] 1/lookup", {
                   barcode,
                   correction: correction
                     ? { source: correction.source, canonicalId: correction.canonicalId }
@@ -1152,7 +1163,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                     defaultUnit:  "count",
                     _synthetic:   true,
                   };
-                  console.log("[upc-debug] 2/resolved-ing", {
+                  dbg("[upc-debug] 2/resolved-ing", {
                     canonicalId: correction.canonicalId,
                     synthetic: !real,
                     name: ing.name,
@@ -1267,7 +1278,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                       packageSize = { amount: Number(prior.package_amount), unit: prior.package_unit };
                     }
                   }
-                  console.log("[upc-debug] inherit", {
+                  dbg("[upc-debug] inherit", {
                     barcode,
                     inheritedScanRaw,
                     inheritedAttributes: inheritedAttributes ? Object.keys(inheritedAttributes) : null,
@@ -1301,7 +1312,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               if (inheritedAttributes) {
                 attributes = mergeAttributes(attributes || null, inheritedAttributes);
               }
-              console.log("[claims-debug] extraction", {
+              dbg("[claims-debug] extraction", {
                 barcode,
                 resProductName: res.productName,
                 resCached: res.cached,
@@ -1461,7 +1472,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // accepting a pre-fill. Better than silently stocking
               // a "Barcode 8500…" row.
               if (!canon && !hadCorrection) {
-                console.log("[ramen-debug] 2/prompt-opening", {
+                dbg("[ramen-debug] 2/prompt-opening", {
                   suggestedName: suggestedName || "",
                   pendingRowBrand: row.brand,
                   effectiveBrand,
@@ -6078,7 +6089,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           }
         } else {
           addedCount++;
-          console.log("[ramen-debug] 6/pantry-row-push", {
+          dbg("[ramen-debug] 6/pantry-row-push", {
             name: s.name,
             brand: s.brand,
             canonicalId: s.canonicalId,
