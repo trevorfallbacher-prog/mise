@@ -227,6 +227,7 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
     upcMatches: !!scanUpc && !claimed.has(i)
       && upcsEquivalent(l?.barcode, scan.barcodeUpc),
   }));
+  const receiptHadAnyUpc = upcAttempts.some(a => a.barcodeRaw);
   dbgLog("UPC tier", { scanUpc, lines: upcAttempts });
 
   if (scanUpc) {
@@ -234,7 +235,7 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
     if (byUpc >= 0) {
       dbgLog(`✅ MATCH via UPC at line ${byUpc}: "${upcAttempts[byUpc].rawText}"`);
       dbgGroupEnd();
-      return byUpc;
+      return { idx: byUpc, reason: "upc", diagnostic: null };
     }
   }
 
@@ -268,20 +269,22 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
   // to really mean the same product. Unpaired scans get fixed
   // manually on the ItemCard.
   const MIN_SHARED_TOKENS = 2;
+  let best = -1;
+  let bestShared = 0;
+  let bestSharedTokens = [];
   if (scanToks.size > 0) {
-    let best = -1;
-    let bestShared = 0;
     for (const a of tokenAttempts) {
       if (a.claimed) continue;
       if (a.sharedCount > bestShared) {
         bestShared = a.sharedCount;
         best = a.i;
+        bestSharedTokens = a.sharedTokens;
       }
     }
     if (best >= 0 && bestShared >= MIN_SHARED_TOKENS) {
       dbgLog(`✅ MATCH via tokens at line ${best} (shared ${bestShared}: ${tokenAttempts[best].sharedTokens.join(", ")}): "${tokenAttempts[best].rawText}"`);
       dbgGroupEnd();
-      return best;
+      return { idx: best, reason: "tokens", diagnostic: null };
     }
     if (best >= 0 && bestShared > 0) {
       dbgLog(`⚠ token match for line ${best} had only ${bestShared} shared token(s) — below the ${MIN_SHARED_TOKENS} threshold, skipping (generic tokens like "cream" cause false pairs).`);
@@ -290,7 +293,43 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
 
   dbgLog(`❌ NO MATCH for ${scanLabel}.`);
   dbgGroupEnd();
-  return -1;
+  // Build a human-readable diagnostic so the review-screen UI can
+  // tell the user WHY this scan didn't pair, instead of just
+  // showing it priceless and silent.
+  const diagnostic = {
+    scanUpc,
+    scanText,
+    scanTokens: Array.from(scanToks),
+    receiptHadAnyUpc,
+    bestFuzzyLineIdx: best,
+    bestFuzzySharedCount: bestShared,
+    bestFuzzySharedTokens: bestSharedTokens,
+    bestFuzzyRawText: best >= 0 ? tokenAttempts[best].rawText : null,
+    minSharedRequired: MIN_SHARED_TOKENS,
+  };
+  return { idx: -1, reason: "no-match", diagnostic };
+}
+
+// Render-side helper: turn a diagnostic object into a one-sentence
+// human explanation for the review screen. Keeps the matcher pure
+// while still giving the UI a single source of "why didn't this
+// pair?" copy.
+function explainMissedMatch(diag) {
+  if (!diag) return "Couldn't auto-pair this scan to any receipt line.";
+  if (diag.scanUpc && !diag.receiptHadAnyUpc) {
+    return "Receipt didn't print barcodes on any line, so we couldn't UPC-match. Tap below to pair manually.";
+  }
+  if (diag.scanUpc && diag.receiptHadAnyUpc) {
+    return `Scan UPC ${diag.scanUpc} didn't appear on any receipt line${
+      diag.bestFuzzySharedCount > 0
+        ? `, and the closest fuzzy match shared only ${diag.bestFuzzySharedCount}/${diag.minSharedRequired} tokens ("${diag.bestFuzzySharedTokens.join(", ")}" with "${diag.bestFuzzyRawText}").`
+        : "."
+    }`;
+  }
+  if (diag.bestFuzzySharedCount > 0) {
+    return `No UPC on this scan, and the closest fuzzy match shared only ${diag.bestFuzzySharedCount}/${diag.minSharedRequired} tokens ("${diag.bestFuzzySharedTokens.join(", ")}" with "${diag.bestFuzzyRawText}").`;
+  }
+  return "No UPC and no fuzzy text overlap with any receipt line.";
 }
 
 async function fileToBase64(file) {
@@ -315,9 +354,53 @@ export default function ShopModeCheckout({
   const [imageData, setImageData] = useState(null); // { base64, mediaType, previewUrl }
   const [receiptMeta, setReceiptMeta] = useState({ store: null, date: null, totalCents: null });
   const [receiptLines, setReceiptLines] = useState([]);
-  // Map<scanId, { priceCents, lineIndex }> — which receipt line
-  // each scan paired to, and what price to stamp on the pantry row.
+  // Map<scanId, { priceCents, lineIndex, reason }> — which receipt
+  // line each scan paired to, and what price to stamp on the pantry
+  // row. `reason` is "upc" | "tokens" | "manual".
   const [priceByScan, setPriceByScan] = useState(new Map());
+  // Map<scanId, diagnostic> — for scans the auto-matcher COULDN'T
+  // pair, the diagnostic explains why. Surfaced inline in the
+  // review UI so the user sees the failure reason and can pick a
+  // line manually instead of opening devtools to debug.
+  const [matchDiagnostics, setMatchDiagnostics] = useState(() => new Map());
+
+  // Manual-pair entry. Tap an unmatched scan in the review screen
+  // → state = { scanId } → modal opens listing every unclaimed
+  // receipt line. Tap a line → pair the two; close the modal.
+  const [manualPairScanId, setManualPairScanId] = useState(null);
+  const claimedLineSet = useMemo(() => {
+    const s = new Set();
+    for (const v of priceByScan.values()) s.add(v.lineIndex);
+    return s;
+  }, [priceByScan]);
+  const pairScanToLine = useCallback((scanId, lineIdx) => {
+    setPriceByScan(prev => {
+      const next = new Map(prev);
+      const line = receiptLines[lineIdx];
+      next.set(scanId, {
+        priceCents: typeof line?.priceCents === "number" ? line.priceCents : null,
+        lineIndex: lineIdx,
+        reason: "manual",
+      });
+      return next;
+    });
+    // Clear the diagnostic for this scan since it's now paired.
+    setMatchDiagnostics(prev => {
+      if (!prev.has(scanId)) return prev;
+      const next = new Map(prev);
+      next.delete(scanId);
+      return next;
+    });
+    setManualPairScanId(null);
+  }, [receiptLines]);
+  const unpairScan = useCallback((scanId) => {
+    setPriceByScan(prev => {
+      if (!prev.has(scanId)) return prev;
+      const next = new Map(prev);
+      next.delete(scanId);
+      return next;
+    });
+  }, []);
   // ingredient_info dbMap — used to pull synthetic canonical info
   // (storage, category, units) for family-created canonicals that
   // aren't in the bundled INGREDIENTS registry.
@@ -491,27 +574,32 @@ export default function ShopModeCheckout({
       // scanning the receipt isn't trampled by a misread "QTY 1").
       const claimed = new Set();
       const prices = new Map();
+      const diags = new Map(); // scanId → diagnostic { reason, ... }
       const qtyBumps = []; // [{ scanId, fromQty, toQty }]
       for (const scan of scans) {
         // Pass the paired list slot's name so the matcher can use
         // its tokens too — fixes the "scan productName is brand-
         // only, receipt rawText is product-only" mismatch.
         const pairedListName = nameForListId(shoppingList, scan.pairedShoppingListItemId);
-        const idx = matchScanToReceiptLine(scan, lines, claimed, pairedListName);
-        if (idx >= 0) {
-          claimed.add(idx);
+        const result = matchScanToReceiptLine(scan, lines, claimed, pairedListName);
+        if (result.idx >= 0) {
+          claimed.add(result.idx);
           prices.set(scan.id, {
-            priceCents: typeof lines[idx].priceCents === "number" ? lines[idx].priceCents : null,
-            lineIndex:  idx,
+            priceCents: typeof lines[result.idx].priceCents === "number" ? lines[result.idx].priceCents : null,
+            lineIndex:  result.idx,
+            reason:     result.reason,
           });
-          const lineQty = Number(lines[idx].qty);
+          const lineQty = Number(lines[result.idx].qty);
           const currentQty = scan.qty || 1;
           if (Number.isFinite(lineQty) && lineQty > currentQty) {
             qtyBumps.push({ scanId: scan.id, fromQty: currentQty, toQty: lineQty });
           }
+        } else {
+          diags.set(scan.id, result.diagnostic);
         }
       }
       setPriceByScan(prices);
+      setMatchDiagnostics(diags);
       // Apply qty bumps in parallel — each is a small DB write, and
       // patchScan is optimistic so the UI updates immediately. Don't
       // await: by the time the user reviews the receipt, the bumps
@@ -1063,21 +1151,152 @@ export default function ShopModeCheckout({
             {typeof receiptMeta.totalCents === "number" && (
               <span> Receipt total ${(receiptMeta.totalCents / 100).toFixed(2)}.</span>
             )}
+            {matchDiagnostics.size > 0 && (
+              <span style={{ display: "block", marginTop: 6, color: "#f8c87a" }}>
+                {matchDiagnostics.size} unpaired — tap "PAIR" on each to fix.
+              </span>
+            )}
           </div>
+
+          {/* Claude Vision UPC report — shows EXACTLY what Vision
+              returned for each receipt line's barcode field. This is
+              the answer to "why don't UPCs match?" — if this list is
+              all `null` then Vision didn't read the digits off the
+              receipt at all (prompt issue or photo quality), and no
+              amount of matcher tuning will help. If digits ARE here
+              but they don't match a scan UPC, the issue is
+              normalization / Walmart-shift handling. <details> to
+              keep it folded by default; tap to expand. */}
+          {receiptLines.length > 0 && (
+            <details style={{
+              marginBottom: 14,
+              background: "#101010",
+              border: "1px solid #2a2a2a",
+              borderRadius: 8,
+              padding: "8px 12px",
+            }}>
+              <summary style={{
+                cursor: "pointer",
+                fontFamily: "'DM Mono',monospace",
+                fontSize: 11,
+                color: "#aaa",
+                letterSpacing: "0.08em",
+              }}>
+                CLAUDE VISION UPC REPORT · {receiptLines.filter(l => l?.barcode).length}/{receiptLines.length} LINES HAD UPCS
+              </summary>
+              <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                {receiptLines.map((line, i) => (
+                  <div key={i} style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 10,
+                    color: "#aaa", padding: "3px 0",
+                    borderBottom: i < receiptLines.length - 1 ? "1px solid #1a1a1a" : "none",
+                  }}>
+                    <span style={{ color: "#666", width: 24, flexShrink: 0 }}>#{i}</span>
+                    <span style={{
+                      width: 110, flexShrink: 0,
+                      color: line?.barcode ? "#9bd89b" : "#5a3030",
+                    }}>
+                      {line?.barcode || "(no UPC)"}
+                    </span>
+                    <span style={{
+                      flex: 1, minWidth: 0,
+                      color: "#888",
+                      whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    }}>
+                      {line?.rawText || line?.name || "(blank)"}
+                    </span>
+                    {typeof line?.priceCents === "number" && (
+                      <span style={{ color: "#f5c842", flexShrink: 0 }}>
+                        ${(line.priceCents / 100).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div style={{
+                marginTop: 8, fontSize: 10, color: "#666",
+                fontFamily: "'DM Sans',sans-serif", lineHeight: 1.4,
+              }}>
+                Green = Vision extracted a UPC. Red = Vision returned no UPC for that line.
+                Compare against your scan UPCs above. Mostly red means Vision didn't read
+                the digits; redeploy <code style={{ color: "#888" }}>scan-receipt</code> after
+                a prompt change or try a sharper photo.
+              </div>
+            </details>
+          )}
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {scans.map(s => {
-              const price = priceByScan.get(s.id)?.priceCents;
+              const priceInfo = priceByScan.get(s.id);
+              const diag = matchDiagnostics.get(s.id);
               return (
                 <TripScanLine
                   key={s.id}
                   scan={s}
                   listName={nameForListId(shoppingList, s.pairedShoppingListItemId)}
-                  priceCents={price ?? null}
+                  priceCents={priceInfo?.priceCents ?? null}
+                  reason={priceInfo?.reason || null}
+                  matchedRawText={
+                    priceInfo
+                      ? receiptLines[priceInfo.lineIndex]?.rawText || null
+                      : null
+                  }
+                  diagnostic={diag || null}
+                  onManualPair={() => setManualPairScanId(s.id)}
+                  onUnpair={priceInfo ? () => unpairScan(s.id) : null}
                 />
               );
             })}
           </div>
+
+          {/* Unclaimed receipt lines — every line that didn't pair to a
+              scan. Useful for: (a) confirming the receipt parser got
+              everything, (b) spotting items the user bought without
+              scanning in-aisle. Read-only for now; the manual-pair
+              flow lives on each unmatched scan. */}
+          {(() => {
+            const unclaimed = receiptLines
+              .map((line, i) => ({ line, i }))
+              .filter(({ i }) => !claimedLineSet.has(i));
+            if (unclaimed.length === 0) return null;
+            return (
+              <div style={{ marginTop: 20 }}>
+                <div style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#888", letterSpacing: "0.12em", marginBottom: 6,
+                }}>
+                  RECEIPT LINES NOT PAIRED · {unclaimed.length}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {unclaimed.map(({ line, i }) => (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      padding: "8px 10px",
+                      background: "#101010",
+                      border: "1px dashed #2a2a2a",
+                      borderRadius: 8,
+                      fontSize: 12, color: "#aaa",
+                    }}>
+                      <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {line.rawText || line.name || "(blank)"}
+                        {line.barcode && (
+                          <span style={{ marginLeft: 8, fontFamily: "'DM Mono',monospace", color: "#666", fontSize: 10 }}>
+                            {line.barcode}
+                          </span>
+                        )}
+                      </span>
+                      {typeof line.priceCents === "number" && (
+                        <span style={{ fontFamily: "'DM Mono',monospace", color: "#f5c842", fontSize: 12 }}>
+                          ${(line.priceCents / 100).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
 
           {error && (
             <div style={{
@@ -1089,7 +1308,7 @@ export default function ShopModeCheckout({
 
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
             <button
-              onClick={() => { setImageData(null); setPriceByScan(new Map()); setReceiptLines([]); setPhase("summary"); }}
+              onClick={() => { setImageData(null); setPriceByScan(new Map()); setMatchDiagnostics(new Map()); setReceiptLines([]); setPhase("summary"); }}
               style={secondaryBtn}
             >← Retake</button>
             <button
@@ -1097,6 +1316,54 @@ export default function ShopModeCheckout({
               style={{ ...primaryBtn, flex: 2 }}
             >COMMIT {scans.length} TO KITCHEN →</button>
           </div>
+
+          {/* Manual-pair picker — open when the user taps PAIR on any
+              unmatched scan in the list above. Shows every receipt
+              line that hasn't been claimed yet, ordered by index. */}
+          {manualPairScanId && (() => {
+            const targetScan = scans.find(s => s.id === manualPairScanId);
+            const unclaimed = receiptLines
+              .map((line, i) => ({ line, i }))
+              .filter(({ i }) => !claimedLineSet.has(i));
+            return (
+              <ModalSheet onClose={() => setManualPairScanId(null)} maxHeight="80vh">
+                <div style={pickerKicker("#f5c842")}>PAIR TO RECEIPT LINE</div>
+                <h2 style={pickerTitle}>
+                  Which receipt line is "{targetScan?.productName || targetScan?.brand || `UPC ${targetScan?.barcodeUpc}`}"?
+                </h2>
+                <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
+                  {unclaimed.length === 0
+                    ? "All receipt lines are already paired. Unpair another scan first."
+                    : `Showing ${unclaimed.length} unpaired line${unclaimed.length === 1 ? "" : "s"}. Tap one.`}
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {unclaimed.map(({ line, i }) => (
+                    <button
+                      key={i}
+                      onClick={() => pairScanToLine(manualPairScanId, i)}
+                      style={pickerOptionStyle(false, { fg: "#f5c842", bg: "#1e1a0e", border: "#3a3010" })}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, color: "#f0ece4", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {line.rawText || line.name || "(blank line)"}
+                        </div>
+                        {line.barcode && (
+                          <div style={{ fontSize: 10, color: "#888", marginTop: 2, fontFamily: "'DM Mono',monospace" }}>
+                            {line.barcode}
+                          </div>
+                        )}
+                      </div>
+                      {typeof line.priceCents === "number" && (
+                        <span style={{ color: "#f5c842", fontSize: 13, fontFamily: "'DM Mono',monospace" }}>
+                          ${(line.priceCents / 100).toFixed(2)}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </ModalSheet>
+            );
+          })()}
         </div>
       )}
 
@@ -1786,55 +2053,156 @@ const editBtn = {
   cursor: "pointer",
 };
 
-function TripScanLine({ scan, listName, priceCents }) {
+function TripScanLine({
+  scan, listName, priceCents,
+  reason = null, matchedRawText = null,
+  diagnostic = null,
+  onManualPair, onUnpair,
+}) {
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
   const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
   const offParsed = parsePackageSize(scan.offPayload?.quantity || null);
   const sizeLabel = offParsed
     ? `${offParsed.amount}${offParsed.unit ? " " + offParsed.unit : ""}`
     : "";
+  const isUnmatched = typeof priceCents !== "number";
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 10,
+      display: "flex", flexDirection: "column", gap: 6,
       padding: "10px 12px",
       background: "#141414",
-      border: `1px solid ${color}55`,
+      border: `1px solid ${isUnmatched ? "#5a3030" : color + "55"}`,
       borderRadius: 10,
     }}>
-      <span style={{ color, fontSize: 14, flexShrink: 0 }}>●</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-          <div style={{
-            color: "#f0ece4", fontSize: 14,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-            flex: "1 1 auto", minWidth: 0,
-          }}>
-            {label}
-          </div>
-          {sizeLabel && (
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ color, fontSize: 14, flexShrink: 0 }}>●</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
             <div style={{
-              flex: "0 0 auto", fontSize: 11,
-              color: "#b8a878",
-              fontFamily: "'DM Mono',monospace",
-              letterSpacing: 0.3,
+              color: "#f0ece4", fontSize: 14,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              flex: "1 1 auto", minWidth: 0,
             }}>
-              {sizeLabel}{scan.qty > 1 ? ` ×${scan.qty}` : ""}
+              {label}
             </div>
-          )}
-          {!sizeLabel && scan.qty > 1 && (
-            <div style={{ flex: "0 0 auto", fontSize: 11, color: "#888" }}>
-              ×{scan.qty}
+            {sizeLabel && (
+              <div style={{
+                flex: "0 0 auto", fontSize: 11,
+                color: "#b8a878",
+                fontFamily: "'DM Mono',monospace",
+                letterSpacing: 0.3,
+              }}>
+                {sizeLabel}{scan.qty > 1 ? ` ×${scan.qty}` : ""}
+              </div>
+            )}
+            {!sizeLabel && scan.qty > 1 && (
+              <div style={{ flex: "0 0 auto", fontSize: 11, color: "#888" }}>
+                ×{scan.qty}
+              </div>
+            )}
+          </div>
+          <div style={{ color: "#888", fontSize: 11, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {listName ? `→ ${listName}` : "unpaired"}
+            {scan.brand ? ` · ${scan.brand}` : ""}
+          </div>
+          {/* Always show the scan UPC so it can be compared against
+              the receipt-line UPC the matcher was working with. */}
+          {scan.barcodeUpc && (
+            <div style={{
+              color: "#666", fontSize: 10, marginTop: 2,
+              fontFamily: "'DM Mono',monospace", letterSpacing: 0.4,
+            }}>
+              scan UPC: {scan.barcodeUpc}
             </div>
           )}
         </div>
-        <div style={{ color: "#888", fontSize: 11, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {listName ? `→ ${listName}` : "unpaired"}
-          {scan.brand ? ` · ${scan.brand}` : ""}
-        </div>
+        {typeof priceCents === "number" && (
+          <div style={{ color: "#f5c842", fontSize: 13, fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>
+            ${(priceCents / 100).toFixed(2)}
+          </div>
+        )}
       </div>
-      {typeof priceCents === "number" && (
-        <div style={{ color: "#f5c842", fontSize: 13, fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>
-          ${(priceCents / 100).toFixed(2)}
+      {/* Matched: show which receipt line + how it matched (UPC vs
+          fuzzy vs manual) so the user can spot a wrong auto-pair
+          and fix it via UNPAIR. */}
+      {!isUnmatched && matchedRawText && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          fontSize: 11, color: "#9bb89b",
+          paddingLeft: 24,
+        }}>
+          <span style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            background: reason === "upc" ? "#1f3a1f" : reason === "manual" ? "#3a2f1f" : "#1f2f3a",
+            color: reason === "upc" ? "#9bd89b" : reason === "manual" ? "#d8c89b" : "#9bb8d8",
+            padding: "2px 6px", borderRadius: 3, letterSpacing: "0.06em",
+          }}>
+            {reason === "upc" ? "UPC ✓" : reason === "manual" ? "MANUAL" : "FUZZY"}
+          </span>
+          <span style={{
+            flex: 1, minWidth: 0,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            ↪ {matchedRawText}
+          </span>
+          {onUnpair && (
+            <button
+              onClick={onUnpair}
+              style={{
+                background: "transparent", border: "1px solid #444",
+                color: "#aaa", borderRadius: 4,
+                padding: "2px 8px", fontSize: 10,
+                fontFamily: "'DM Mono',monospace", letterSpacing: 0.4,
+                cursor: "pointer", flexShrink: 0,
+              }}
+            >UNPAIR</button>
+          )}
+        </div>
+      )}
+      {/* Unmatched: show WHY (the diagnostic) + a manual-pair button.
+          The diagnostic tells the user whether the receipt had any
+          UPCs at all, which UPC was on the scan, and what the closest
+          fuzzy match was — answers "why didn't this pair?" without
+          devtools. */}
+      {isUnmatched && (
+        <div style={{
+          paddingLeft: 24,
+          display: "flex", flexDirection: "column", gap: 6,
+        }}>
+          <div style={{ fontSize: 11, color: "#f8c87a", lineHeight: 1.4 }}>
+            {explainMissedMatch(diagnostic)}
+          </div>
+          {/* Vision UPC inventory — show what Claude actually returned
+              for receipt-line UPCs so the user can compare against
+              the scan UPC and see whether Vision read the digits or
+              dropped them entirely. The first time you spot "Vision
+              returned no UPCs at all" you know the prompt or the
+              receipt photo quality is the issue, not the matcher. */}
+          {diagnostic && diagnostic.scanUpc && (
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              color: diagnostic.receiptHadAnyUpc ? "#888" : "#d88a8a",
+              lineHeight: 1.4,
+            }}>
+              {diagnostic.receiptHadAnyUpc
+                ? "Vision read UPCs on other lines but not a match for this scan."
+                : "Vision returned NO UPCs on this receipt — the digits weren't extracted from any line."}
+            </div>
+          )}
+          {onManualPair && (
+            <button
+              onClick={onManualPair}
+              style={{
+                alignSelf: "flex-start",
+                background: "#1e1a0e",
+                border: "1px solid #3a3010",
+                color: "#f5c842", borderRadius: 6,
+                padding: "6px 12px", fontSize: 11,
+                fontFamily: "'DM Mono',monospace", letterSpacing: 0.6,
+                cursor: "pointer",
+              }}
+            >+ PAIR TO RECEIPT LINE</button>
+          )}
         </div>
       )}
     </div>
