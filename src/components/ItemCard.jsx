@@ -41,7 +41,7 @@ import { findRecipe } from "../data/recipes";
 import { useUserRecipes } from "../lib/useUserRecipes";
 import { reheatToCookInstructions } from "../lib/reheatToCookInstructions";
 import { formatReheatSummary } from "./../data/recipes/schema";
-import { Z } from "../lib/tokens";
+import { Z, COLOR, FONT, CHIP_TONES, pickerKicker, pickerTitle, pickerOptionStyle } from "../lib/tokens";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanonical } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
@@ -540,7 +540,17 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
   // unit that isn't in the canonical's ladder ("pack", "wheel",
   // etc). Cleared when editingField closes.
   const [customUnitOpen, setCustomUnitOpen] = useState(false);
-  useEffect(() => { if (editingField !== "qty") setCustomUnitOpen(false); }, [editingField]);
+  // Bottom-sheet picker for unit choice — replaces the native
+  // <select> per CLAUDE.md's "chip → ModalSheet → list" rule. Kept
+  // closed by default; opens when the user taps the unit label next
+  // to PACKAGE SIZE.
+  const [unitPickerOpen, setUnitPickerOpen] = useState(false);
+  useEffect(() => {
+    if (editingField !== "qty") {
+      setCustomUnitOpen(false);
+      setUnitPickerOpen(false);
+    }
+  }, [editingField]);
 
   // Focus-aware input state for PACKAGE SIZE + QUANTITY.
   //
@@ -1609,41 +1619,35 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
                           boxSizing: "border-box",
                         }}
                       />
-                    ) : (
-                      <select
-                        key={`unit-sel-${item.id}-${item.unit}`}
-                        value={opts.some(u => u.id === item.unit) ? item.unit : (opts[0]?.id || "")}
-                        onChange={e => {
-                          if (e.target.value === "__custom") {
-                            setCustomUnitOpen(true);
-                            return;
-                          }
-                          if (e.target.value !== item.unit) commit({ unit: e.target.value });
-                        }}
-                        onClick={e => e.stopPropagation()}
-                        style={{
-                          width: "100%",
-                          padding: "4px 22px 4px 8px",
-                          background: "#0a0a0a", border: "1px solid #2a2a2a",
-                          color: "#aaa", borderRadius: 6,
-                          fontFamily: "'DM Mono',monospace", fontSize: 11, outline: "none",
-                          cursor: "pointer",
-                          appearance: "none",
-                          WebkitAppearance: "none",
-                          MozAppearance: "none",
-                          backgroundImage: "linear-gradient(45deg, transparent 50%, #888 50%), linear-gradient(135deg, #888 50%, transparent 50%)",
-                          backgroundPosition: "calc(100% - 12px) 50%, calc(100% - 7px) 50%",
-                          backgroundSize: "5px 5px, 5px 5px",
-                          backgroundRepeat: "no-repeat",
-                          boxSizing: "border-box",
-                        }}
-                      >
-                        {opts.map(u => (
-                          <option key={u.id} value={u.id} style={{ background: "#141414" }}>{u.label}</option>
-                        ))}
-                        <option value="__custom" style={{ background: "#141414", color: "#7eb8d4" }}>+ custom…</option>
-                      </select>
-                    )}
+                    ) : (() => {
+                      const activeOpt = opts.find(u => u.id === item.unit) || opts[0];
+                      return (
+                        <button
+                          type="button"
+                          key={`unit-btn-${item.id}-${item.unit}`}
+                          onClick={e => { e.stopPropagation(); setUnitPickerOpen(true); }}
+                          aria-label={`Change unit (currently ${activeOpt?.label || item.unit || "not set"})`}
+                          style={{
+                            width: "100%",
+                            padding: "4px 22px 4px 8px",
+                            background: "#0a0a0a", border: "1px solid #2a2a2a",
+                            color: "#aaa", borderRadius: 6,
+                            fontFamily: FONT.mono, fontSize: 11, outline: "none",
+                            cursor: "pointer",
+                            textAlign: "left",
+                            boxSizing: "border-box",
+                            position: "relative",
+                          }}
+                        >
+                          {activeOpt?.label || item.unit || "—"}
+                          <span style={{
+                            position: "absolute", right: 8, top: "50%",
+                            transform: "translateY(-50%)",
+                            color: COLOR.dim, fontSize: 9,
+                          }}>▾</span>
+                        </button>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -3137,6 +3141,68 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
           />
         </ModalSheet>
       )}
+
+      {/* UNIT picker — bottom sheet replacement for the native <select>
+          on the PACKAGE SIZE tile. Opens when the user taps the unit
+          label. Options are `opts` computed from the canonical's unit
+          ladder at render-time; "+ custom…" drops into the inline
+          free-text path (setCustomUnitOpen) for pack/wheel/whatever. */}
+      {unitPickerOpen && (() => {
+        const units = canonical ? canonical.units : inferUnitsForScanned(item).units;
+        const hasCurrent = units.some(u => u.id === item.unit);
+        const opts = hasCurrent
+          ? units
+          : [{ id: item.unit, label: item.unit || "—", toBase: 1 }, ...units];
+        return (
+          <ModalSheet onClose={() => setUnitPickerOpen(false)} maxHeight="60vh">
+            <div style={pickerKicker(COLOR.gold)}>UNIT</div>
+            <h2 style={pickerTitle}>What unit does it come in?</h2>
+            <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0", display: "flex", flexDirection: "column", gap: 6 }}>
+              {opts.map(u => {
+                const isOn = u.id === item.unit;
+                return (
+                  <li key={u.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (u.id !== item.unit) commit({ unit: u.id });
+                        setUnitPickerOpen(false);
+                      }}
+                      style={{
+                        ...pickerOptionStyle(isOn, CHIP_TONES.canonical),
+                        width: "100%",
+                        color: isOn ? CHIP_TONES.canonical.fg : COLOR.ink,
+                        fontSize: 14,
+                      }}
+                    >
+                      <span style={{ flex: 1 }}>{u.label}</span>
+                      {isOn && <span style={{ fontFamily: FONT.mono, fontSize: 12 }}>✓</span>}
+                    </button>
+                  </li>
+                );
+              })}
+              <li>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUnitPickerOpen(false);
+                    setCustomUnitOpen(true);
+                  }}
+                  style={{
+                    ...pickerOptionStyle(false, CHIP_TONES.canonical),
+                    width: "100%",
+                    color: CHIP_TONES.location.fg,
+                    fontSize: 14,
+                    borderStyle: "dashed",
+                  }}
+                >
+                  + custom…
+                </button>
+              </li>
+            </ul>
+          </ModalSheet>
+        );
+      })()}
 
       {/* Floating UPDATE bar — appears any time the card has staged
           changes that haven't been applied yet. Sticks to the bottom
