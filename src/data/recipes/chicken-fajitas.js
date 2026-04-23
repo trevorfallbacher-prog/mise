@@ -40,8 +40,30 @@ const recipe = {
     { amount: "½ tsp",  item: "freshly ground black pepper" },
   ],
 
+  // Legacy shape — preserved so older clients keep seeing reminders.
+  // The structured `prepSteps` below supersedes this and drives the
+  // prep_notifications scheduler (migration 0134).
   prepNotifications: [
     { id: "marinate", leadTime: "T-30m", text: "Toss chicken with the spice rub + lime juice now — even 20 minutes makes it sing.", defaultOn: true },
+  ],
+
+  prepSteps: [
+    {
+      id: "marinate",
+      leadMinutes: 30,
+      emoji: "🌶",
+      title: "Start the fajita marinade",
+      body: "Toss chicken with the spice rub + lime juice now — even 20 minutes makes it sing.",
+      defaultOn: true,
+    },
+    {
+      id: "slice-veg",
+      leadMinutes: 20,
+      emoji: "🔪",
+      title: "Slice the peppers + onion",
+      body: "¼-inch strips. Mince the garlic last so it doesn't sit and oxidize.",
+      defaultOn: true,
+    },
   ],
 
   steps: [

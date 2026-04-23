@@ -567,17 +567,20 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // (e.g. one that was planned last Tuesday and never cooked) still surface
   // on the timeline — they read as "missed" next to a cook_log that DID
   // happen on that day.
-  const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
-    fromISO: windowStart.toISOString(),
-    toISO:   windowEnd.toISOString(),
-    familyKey,
-  });
-
   // User-recipe resolver — lets findRecipe() below resolve slugs that
   // point at user_recipes rows (custom or AI recipes scheduled via
   // Quick Cook). Without this wired in, scheduled user recipes would
   // render as blank tiles on the calendar.
   const { recipes: userRecipesList, findBySlug: findUserRecipe, saveRecipe: saveUserRecipe } = useUserRecipes(userId);
+
+  const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
+    fromISO: windowStart.toISOString(),
+    toISO:   windowEnd.toISOString(),
+    familyKey,
+    // Resolve bundled recipes first, fall through to the user library
+    // so custom recipes also get prep reminders queued.
+    recipeResolver: (slug) => findRecipe(slug, findUserRecipe),
+  });
 
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we

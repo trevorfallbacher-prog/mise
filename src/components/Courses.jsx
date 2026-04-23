@@ -7,6 +7,7 @@ import {
   CUISINES,
   difficultyLabel,
   totalTimeMin,
+  findRecipe,
 } from "../data/recipes";
 import { SKILL_TREE } from "../data";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
@@ -173,7 +174,12 @@ export default function Courses({
   const [schedulingRecipe, setSchedulingRecipe] = useState(null);
 
   const skillLevels = profile?.skill_levels || {};
-  const { schedule } = useScheduledMeals(userId);
+  // Bundled-only resolver is fine here — Courses schedules the
+  // library. User-recipe scheduling flows through Plan.jsx, which
+  // passes its own combined resolver.
+  const { schedule } = useScheduledMeals(userId, {
+    recipeResolver: (slug) => findRecipe(slug),
+  });
   const userName = profile?.name?.trim().split(/\s+/)[0];
 
   // Nutrition context for every RecipeCard's calorie chip. Shared here

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, safeChannel } from "./supabase";
+import { syncPrepNotifications } from "./prepScheduler";
 
 /**
  * Loads the user's (and family's) scheduled meals in a window.
@@ -24,8 +25,17 @@ import { supabase, safeChannel } from "./supabase";
  *   user_id       — creator (always set)
  *   cook_id       — who's going to cook. null = unclaimed request.
  *   requested_by  — only set for request-a-meal rows (normally = user_id)
+ *
+ * Prep reminder sync:
+ *   Pass a `recipeResolver` option — a function from slug → recipe
+ *   object — and schedule()/updateMeal() will automatically upsert
+ *   prep_notifications rows for the meal's recipe.prepSteps. The
+ *   reminders fire for the cook (cook_id, falling back to user_id).
+ *   See src/lib/prepScheduler.js.
  */
-export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtime } = {}) {
+export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtime, recipeResolver } = {}) {
+  const recipeResolverRef = useRef(recipeResolver);
+  useEffect(() => { recipeResolverRef.current = recipeResolver; }, [recipeResolver]);
   const [meals, setMeals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -124,6 +134,17 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
         next.sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for));
         return next;
       });
+      // Queue prep reminders for the cook. Fire-and-forget — failures
+      // are already warned from inside syncPrepNotifications and must
+      // never block the schedule flow.
+      const resolver = recipeResolverRef.current;
+      const cookUserId = data.cook_id || data.user_id;
+      if (resolver && cookUserId) {
+        const recipe = resolver(data.recipe_slug);
+        if (recipe) {
+          syncPrepNotifications({ scheduledMeal: data, recipe, userId: cookUserId });
+        }
+      }
       return data;
     },
     [userId]
@@ -138,6 +159,17 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
       .single();
     if (e) throw e;
     setMeals(prev => prev.map(m => (m.id === id ? data : m)));
+    // Reschedule / cook-change / toggle-flip — all want the prep queue
+    // rebuilt. syncPrepNotifications deletes and re-inserts, so running
+    // it on unrelated patches (e.g. `note`) is harmless.
+    const resolver = recipeResolverRef.current;
+    const cookUserId = data.cook_id || data.user_id;
+    if (resolver && cookUserId) {
+      const recipe = resolver(data.recipe_slug);
+      if (recipe) {
+        syncPrepNotifications({ scheduledMeal: data, recipe, userId: cookUserId });
+      }
+    }
     return data;
   }, []);
 

@@ -7,6 +7,7 @@ import {
   RECIPES,
   totalTimeMin,
   difficultyLabel,
+  findRecipe,
 } from "../data/recipes";
 import { inferCanonicalFromName, findIngredient } from "../data/ingredients";
 import { useUserRecipes } from "../lib/useUserRecipes";
@@ -58,7 +59,7 @@ export default function CreateMenu({
   // enter this state — picking a day just writes the scheduled_meals row.
   const [scheduling, setScheduling] = useState(null); // recipe object | null
 
-  const { recipes: userRecipes, saveRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipes, saveRecipe, findBySlug: findUserRecipe } = useUserRecipes(userId);
   // MEAL composition hook — exposes hydrated meals + CRUD. Pieces
   // resolve through userRecipes and bundled RECIPES so tap-to-cook on
   // a meal's piece hands CookMode a full recipe object.
@@ -66,7 +67,9 @@ export default function CreateMenu({
     userRecipes,
     bundledRecipes: RECIPES,
   });
-  const { schedule } = useScheduledMeals(userId);
+  const { schedule } = useScheduledMeals(userId, {
+    recipeResolver: (slug) => findRecipe(slug, findUserRecipe),
+  });
   const { push: pushToast } = useToast();
   // Ingredient enrichment is provided once at App level; reading it
   // here lets AIRecipe's context builder look up flavorProfile/pairs/
