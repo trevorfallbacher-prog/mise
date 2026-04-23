@@ -34,7 +34,11 @@
 //     classifiedFrom:  "<string>",
 //   }
 
-const VERSION = 1;
+// VERSION 2: added `phase` + full `recipe` to the payload so preview-
+// phase recipes survive tab close. V1 drafts are dropped on load
+// rather than migrated — the schema diff is small and the risk of a
+// partial recover is worse than a clean slate.
+const VERSION = 2;
 // After 14 days, drafts go stale — either the user moved on or the
 // pantry has drifted enough that the sketch is wrong anyway. Clear
 // on read rather than auto-delete at save time so we don't do I/O
@@ -75,6 +79,16 @@ export function saveDraft(userId, state) {
     const payload = {
       v: VERSION,
       savedAt: new Date().toISOString(),
+      // Phase captures where the user was — tweak (still editing
+      // the sketch) or preview (saw the final recipe, didn't save
+      // yet). Restore drops them back into the same phase so the
+      // recipe surface they reached isn't lost to a tab close.
+      phase:             state.phase === "preview" ? "preview" : "tweak",
+      // Full final recipe, persisted when phase is preview. Null
+      // otherwise. Without this, a user who reached preview and
+      // navigated away had no way to recover the generated steps —
+      // even the sketch doesn't contain them.
+      recipe:            state.recipe ?? null,
       sketch:            state.sketch ?? null,
       pantryEdits:       serializePantryEdits(state.pantryEdits),
       recipeFeedback:    state.recipeFeedback ?? "",
@@ -112,14 +126,20 @@ export function loadDraft(userId) {
     clearDraft(userId);
     return null;
   }
-  // A draft with no sketch has nothing salvageable — treat as empty.
-  if (!parsed.sketch || typeof parsed.sketch !== "object") {
+  // A draft with no sketch AND no final recipe is empty — treat as
+  // nothing salvageable. Having EITHER (sketch for tweak-phase or
+  // recipe for preview-phase) is enough to restore usefully.
+  const hasSketch = parsed.sketch && typeof parsed.sketch === "object";
+  const hasRecipe = parsed.recipe && typeof parsed.recipe === "object";
+  if (!hasSketch && !hasRecipe) {
     clearDraft(userId);
     return null;
   }
   return {
     savedAt:           parsed.savedAt,
-    sketch:            parsed.sketch,
+    phase:             parsed.phase === "preview" ? "preview" : "tweak",
+    recipe:            hasRecipe ? parsed.recipe : null,
+    sketch:            hasSketch ? parsed.sketch : null,
     pantryEdits:       deserializePantryEdits(parsed.pantryEdits),
     recipeFeedback:    parsed.recipeFeedback ?? "",
     previousTitles:    Array.isArray(parsed.previousTitles) ? parsed.previousTitles : [],

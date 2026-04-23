@@ -693,7 +693,8 @@ export default function AIRecipe({
     // user has already typed into mealPrompt or picked a course, they
     // started a new draft and we shouldn't clobber it.
     if (mealPrompt || starIngredientIds.length > 0 || course !== "any") return;
-    setSketch(d.sketch);
+    if (d.recipe) setRecipe(d.recipe);
+    if (d.sketch) setSketch(d.sketch);
     setPantryEdits(d.pantryEdits);
     setRecipeFeedback(d.recipeFeedback);
     setPreviousTitles(d.previousTitles);
@@ -708,25 +709,31 @@ export default function AIRecipe({
     setDishContract(d.dishContract);
     setClassifiedFrom(d.classifiedFrom);
     setDraftSavedAt(d.savedAt);
-    setPhase("tweak");
+    // Restore to the phase they last reached. Preview wins over tweak
+    // when a full recipe is on the draft — the user spent money on
+    // Sonnet to get it, losing it to a tab close was the bug.
+    setPhase(d.recipe && d.phase === "preview" ? "preview" : "tweak");
     // Deps intentionally include the setup-state we read in the
     // freshness guard — when they change, the effect re-runs and
     // the draftHydrated flag short-circuits it on line 1. Cheap
     // no-op after the first hydration.
   }, [userId, draftHydrated, mealPrompt, starIngredientIds, course]);
 
-  // Auto-save on any tweak-phase state change, debounced so rapid
-  // typing / swap toggles don't thrash localStorage. 500ms matches the
-  // human "paused thinking" threshold — saves feel instant without
-  // writing 10× per second. Only runs when phase === "tweak" (where
-  // the draft is salvageable); other phases clear or no-op.
+  // Auto-save on any tweak-OR-preview state change, debounced so
+  // rapid edits don't thrash localStorage. 500ms matches the human
+  // "paused thinking" threshold. Preview phase is included because
+  // the generated recipe is the most expensive artifact in the
+  // session (Sonnet call, real dollars) and losing it to a tab
+  // close was a billing-visible bug. Save clears only on explicit
+  // save/schedule/cook actions below.
   const draftTimerRef = useRef(null);
   useEffect(() => {
     if (!draftHydrated || !userId) return;
-    if (phase !== "tweak") return;
+    if (phase !== "tweak" && phase !== "preview") return;
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
       saveDraft(userId, {
+        phase, recipe,
         sketch, pantryEdits, recipeFeedback, previousTitles,
         mealPrompt, mealTiming, course, priority, starIngredientIds,
         cuisine, time, difficulty, dishContract, classifiedFrom,
@@ -737,7 +744,7 @@ export default function AIRecipe({
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     };
   }, [
-    userId, draftHydrated, phase, sketch, pantryEdits, recipeFeedback,
+    userId, draftHydrated, phase, recipe, sketch, pantryEdits, recipeFeedback,
     previousTitles, mealPrompt, mealTiming, course, priority,
     starIngredientIds, cuisine, time, difficulty, dishContract,
     classifiedFrom,
@@ -749,6 +756,7 @@ export default function AIRecipe({
   const abandonDraft = () => {
     if (userId) clearDraft(userId);
     setDraftSavedAt(null);
+    setRecipe(null);
     setSketch(null);
     setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
     setRecipeFeedback("");
@@ -1082,11 +1090,10 @@ export default function AIRecipe({
         })));
       }
       setPhase("preview");
-      // Final succeeded — draft's job is done, clear it so the next
-      // AIRecipe open starts fresh instead of restoring a stale sketch
-      // that no longer matches what the user cooked.
-      if (userId) clearDraft(userId);
-      setDraftSavedAt(null);
+      // Preview landed, but the user hasn't saved yet — keep the
+      // draft alive so "I closed the tab before hitting SAVE" still
+      // recovers. The draft only clears when the user takes an
+      // explicit save/schedule/cook action below.
     } catch (e) {
       console.error("AI recipe final failed:", e);
       setErrMsg(e?.message || "Final cook failed");
@@ -1095,11 +1102,17 @@ export default function AIRecipe({
   };
 
   // Each action guards on busy so a double-tap can't fire twice.
+  // On successful save/schedule/cook, the draft is cleared — that
+  // commit is the point where user_recipes has a row and the local
+  // sketch is no longer the source of truth. If the action throws,
+  // the draft stays so the user can retry.
   const handleAction = (kind, cb) => async () => {
     if (!recipe || busy) return;
     setBusy(kind);
     try {
       await cb?.(recipe);
+      if (userId) clearDraft(userId);
+      setDraftSavedAt(null);
     } catch (e) {
       console.error(`[ai recipe] ${kind} failed:`, e);
     } finally {
@@ -2029,8 +2042,13 @@ export default function AIRecipe({
                         // renders until the user types. Same gating as
                         // the primary swap picker — incompat items hidden
                         // unless explicitly shown.
-                        const baseShown = q ? safe.slice(0, 12) : [];
-                        const shown = showIncompatSwaps && q
+                        // Small focused picker: show the top 5
+                        // compatible candidates immediately. Widen to
+                        // top 12 when the user starts typing. Incompat
+                        // items hide until the user opts in via the
+                        // override link.
+                        const baseShown = q ? safe.slice(0, 12) : safe.slice(0, 5);
+                        const shown = showIncompatSwaps
                           ? [...baseShown, ...incompat.slice(0, 20)]
                           : baseShown;
                         const pickCandidate = (c) => {
@@ -2065,14 +2083,16 @@ export default function AIRecipe({
                               style={swapSearchInput}
                               autoFocus
                             />
-                            {!q && (
-                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                                Type to search your pantry for a substitute.
+                            {!q && safe.length > 0 && (
+                              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
+                                COMPATIBLE SUBS · TYPE TO SEARCH
                               </div>
                             )}
-                            {q && shown.length === 0 && (
+                            {shown.length === 0 && (
                               <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
-                                No compatible substitutes match &quot;{q}&quot;.
+                                {q
+                                  ? `No compatible substitutes match "${q}".`
+                                  : `No compatible substitutes in your pantry for "${ideal.name}".`}
                                 {!showIncompatSwaps && incompat.length > 0 && (
                                   <>
                                     {" "}
@@ -2355,13 +2375,14 @@ export default function AIRecipe({
                       }));
                       const safe = scored.filter(r => r.quality !== "incompat");
                       const incompat = scored.filter(r => r.quality === "incompat");
-                      // Default-empty: the picker shows nothing until
-                      // the user types into the search box. Avoids the
-                      // "wall of chips" behavior the user called out.
-                      // With a query, render the top 12 compatible
-                      // matches; show-all toggle appends incompat.
-                      const baseShown = q ? safe.slice(0, 12) : [];
-                      const shown = showIncompatSwaps && q
+                      // Swap picker on the tweak screen is small and
+                      // focused — show the top compatible candidates
+                      // immediately so users see "here are the 3 subs
+                      // you already have for flour" without typing.
+                      // With a query, widen to top 12. Incompat items
+                      // stay hidden unless the user opts in.
+                      const baseShown = q ? safe.slice(0, 12) : safe.slice(0, 5);
+                      const shown = showIncompatSwaps
                         ? [...baseShown, ...incompat.slice(0, 20)]
                         : baseShown;
                       const pickCandidate = (c) => {
@@ -2642,35 +2663,7 @@ export default function AIRecipe({
           </div>
 
           {recipe.aiRationale && (
-            // "Why I picked this" banner. Claude cites the concrete
-            // signals it used — expiring items, the user's stated
-            // preferences, recent cuisine runs, cooking level — so
-            // the draft doesn't feel like a black box. Styled softer
-            // than the bundled copy so it reads as AI commentary, not
-            // part of the recipe.
-            <div style={{
-              marginTop: 8, padding: "12px 14px",
-              background: "linear-gradient(135deg, #1a1624 0%, #141018 100%)",
-              border: "1px solid #2e2538",
-              borderRadius: 12,
-              display: "flex", gap: 10, alignItems: "flex-start",
-            }}>
-              <div style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>✨</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
-                  color: "#c7a8d4", letterSpacing: "0.12em", marginBottom: 4,
-                }}>
-                  WHY THIS DISH
-                </div>
-                <div style={{
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-                  color: "#d8d2c8", lineHeight: 1.55,
-                }}>
-                  {recipe.aiRationale}
-                </div>
-              </div>
-            </div>
+            <AiRationaleBanner text={recipe.aiRationale} />
           )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
@@ -2807,7 +2800,7 @@ export default function AIRecipe({
             actively hydrating a draft into tweak phase the banner
             doesn't show. Gives them an easy "throw it out" button
             without forcing a navigate. */}
-        {draftSavedAt && phase === "setup" && sketch && (
+        {draftSavedAt && phase === "setup" && (sketch || recipe) && (
           <div style={{
             marginTop: 12, padding: "10px 12px",
             background: "#16121a", border: "1px solid #3a2f40",
@@ -2815,9 +2808,13 @@ export default function AIRecipe({
             display: "flex", alignItems: "center", gap: 12,
             fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#c7a8d4",
           }}>
-            <span>Draft saved {draftAgeLabel(draftSavedAt)} — resume in progress</span>
+            <span>
+              {recipe
+                ? `Unsaved recipe "${recipe.title}" — saved ${draftAgeLabel(draftSavedAt)}`
+                : `Draft saved ${draftAgeLabel(draftSavedAt)} — resume in progress`}
+            </span>
             <button
-              onClick={() => setPhase("tweak")}
+              onClick={() => setPhase(recipe ? "preview" : "tweak")}
               style={{
                 marginLeft: "auto",
                 padding: "4px 10px",
@@ -3117,6 +3114,65 @@ const previewShopBtn = {
   letterSpacing: "0.08em", cursor: "pointer", whiteSpace: "nowrap",
 };
 const previewShopBtnDone = { ...previewShopBtn, background: "#0f1a0f", borderColor: "#22c55e44", color: "#4ade80", cursor: "default" };
+
+// "WHY THIS DISH" banner with collapse-expand. The rationale can run
+// 150–900 chars depending on how much context Claude had to cite; a
+// hard truncation mid-word in the UI was being reported as a bug.
+// Collapse threshold is 240 chars — short-enough rationales render
+// in full; longer ones show a snippet + "Show more" toggle that
+// reveals the rest in-place. Collapsed state doesn't mutate the
+// underlying text, so copy-paste and screen readers still see the
+// whole thing.
+const RATIONALE_COLLAPSE_THRESHOLD = 240;
+function AiRationaleBanner({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  const long = text.length > RATIONALE_COLLAPSE_THRESHOLD;
+  const visible = !long || expanded
+    ? text
+    : text.slice(0, RATIONALE_COLLAPSE_THRESHOLD).replace(/\s+\S*$/, "") + "…";
+  return (
+    <div style={{
+      marginTop: 8, padding: "12px 14px",
+      background: "linear-gradient(135deg, #1a1624 0%, #141018 100%)",
+      border: "1px solid #2e2538",
+      borderRadius: 12,
+      display: "flex", gap: 10, alignItems: "flex-start",
+    }}>
+      <div style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>✨</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#c7a8d4", letterSpacing: "0.12em", marginBottom: 4,
+        }}>
+          WHY THIS DISH
+        </div>
+        <div style={{
+          fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+          color: "#d8d2c8", lineHeight: 1.55,
+        }}>
+          {visible}
+          {long && (
+            <>
+              {" "}
+              <button
+                onClick={() => setExpanded(e => !e)}
+                style={{
+                  background: "transparent", border: "none", padding: 0,
+                  color: "#c7a8d4", cursor: "pointer",
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  letterSpacing: "0.08em", textDecoration: "underline",
+                }}
+              >
+                {expanded ? "SHOW LESS" : "SHOW MORE"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Section({ label, children }) {
   return (

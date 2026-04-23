@@ -1449,7 +1449,12 @@ Deno.serve(async (req) => {
       ideal:       Array.isArray(recipe.ideal)  ? recipe.ideal  : [],
       pantry:      Array.isArray(recipe.pantry) ? recipe.pantry : [],
       aiRationale: typeof recipe.aiRationale === "string"
-        ? String(recipe.aiRationale).slice(0, 400).trim() || null
+        // 1000-char cap (up from 400): the prompt asks for 1-3 sentences
+        // but Sonnet occasionally writes a longer, genuinely useful
+        // rationale citing multiple pantry items + goal + cuisine
+        // history. Client-side collapse-expand handles long text in
+        // the preview UI; this cap catches runaway model outputs.
+        ? String(recipe.aiRationale).slice(0, 1000).trim() || null
         : null,
     };
     return new Response(
