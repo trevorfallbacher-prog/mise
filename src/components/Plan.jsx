@@ -258,18 +258,86 @@ function RecipePickerModal({ userRecipes = [], leftovers = [], onPick, onClose }
 function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], prepRows = [], onDismissPrep, onUndismissPrep, onCookNow, onClaim, onUnclaim, onChangeCook, onChangeServings, onDelete, onClose }) {
   const [confirming, setConfirming] = useState(false);
   if (!recipe) {
+    // Recipe couldn't be resolved from the bundled library or the
+    // viewer's user_recipes list. Two likely causes:
+    //   1) Author IS the viewer — their own row was deleted or never
+    //      saved (silent persist failure on an old AI cook).
+    //   2) Author is family — user_recipes is private-by-default
+    //      (migration 0052), so a meal scheduled without flipping
+    //      shared=true is visible to family via scheduled_meals
+    //      (family-select) but the recipe JSON isn't. scary before;
+    //      now we explain it.
+    // Either way, render the scheduled context we DO have: time, slot,
+    // the author, and a title derived from the slug so the drawer
+    // never shows as "null".
+    const viewerIsAuthor = meal.user_id === userId;
+    const authorName     = nameFor ? nameFor(meal.user_id) : null;
+    const prettyTitle    = (meal.recipe_slug || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim() || "Untitled recipe";
     return (
       <div style={{
         position: "fixed", inset: 0, background: "#000000dd", zIndex: 280,
         display: "flex", alignItems: "flex-end",
         maxWidth: 480, margin: "0 auto",
       }}>
-        <div style={{ width: "100%", background: "#141414", borderRadius: "20px 20px 0 0", padding: "24px 22px 36px" }}>
-          <div style={{ color: "#f87171", fontFamily: "'DM Sans',sans-serif", fontSize: 14 }}>
-            Recipe "{meal.recipe_slug}" not found in the library.
+        <div style={{ width: "100%", background: "#141414", borderRadius: "20px 20px 0 0", padding: "20px 22px 36px" }}>
+          <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 18px" }} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ fontSize: 40 }}>🔒</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
+                {meal.meal_slot ? `${meal.meal_slot.toUpperCase()} · ` : ""}{fmtTime(meal.scheduled_for).toUpperCase()}
+              </div>
+              <div style={{ fontFamily: "'Fraunces',serif", fontSize: 22, color: "#f0ece4", fontWeight: 300, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {prettyTitle}
+              </div>
+              {authorName && !viewerIsAuthor && (
+                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666" }}>
+                  Scheduled by {authorName}
+                </div>
+              )}
+            </div>
           </div>
+
+          <div style={{
+            marginTop: 18, padding: "14px 16px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e",
+            borderRadius: 10, display: "flex", gap: 10,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb", lineHeight: 1.5,
+          }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>{viewerIsAuthor ? "⚠️" : "🔒"}</span>
+            <span>
+              {viewerIsAuthor ? (
+                <>This recipe isn't in your library — it may have been deleted, or the save didn't land. You can schedule it again from your recipes.</>
+              ) : (
+                <>{authorName || "The author"} hasn't shared this recipe yet, so the details aren't visible. Ask them to re-open it and tap <b>SHARE WITH FAMILY</b>.</>
+              )}
+            </span>
+          </div>
+
+          {/* Destructive: let the viewer remove the stale schedule
+              if they own it — the drawer is the right place to
+              clean up after a deleted recipe row. */}
+          {viewerIsAuthor && onDelete && (
+            <button
+              onClick={() => onDelete(meal.id)}
+              style={{
+                marginTop: 14, width: "100%", padding: "14px",
+                background: "#2a0a0a", border: "1px solid #5a1a1a",
+                color: "#ef4444", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 12,
+                letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
+              }}
+            >
+              REMOVE FROM CALENDAR
+            </button>
+          )}
+
           <button onClick={onClose} style={{
-            marginTop: 16, width: "100%", padding: "14px",
+            marginTop: 10, width: "100%", padding: "14px",
             background: "#1a1a1a", border: "1px solid #2a2a2a",
             color: "#888", borderRadius: 12,
             fontFamily: "'DM Mono',monospace", fontSize: 12, cursor: "pointer",

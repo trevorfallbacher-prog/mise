@@ -200,12 +200,34 @@ export default function CreateMenu({
     setScheduling(row.recipe);
   };
 
-  // COOK IT — original save + cook handoff. Preserves the "cook anyway
-  // if save fails" behavior so a transient DB error doesn't strand the
-  // user mid-session.
+  // COOK IT — save then cook. Two rules learned the hard way:
+  //
+  //   1. Bail when the save fails. Before, the cook proceeded even if
+  //      persist() returned null (unique-slug collision, RLS denial,
+  //      network blip) — the user would cook something that never
+  //      landed in their library, then wonder "where did my recipe go."
+  //      Now we stop, re-toast, and let the user retry. The pushToast
+  //      inside persist() already surfaced the original error; this
+  //      extra nudge explains why cook didn't happen.
+  //
+  //   2. Mirror handleSchedule and stamp shared=true. Cooking an AI
+  //      recipe means the rest of the family sees the cook_log and
+  //      any scheduled_meals row in realtime. Without shared=true,
+  //      the user_recipes row is private, the family view resolves
+  //      null, and the meal detail drawer renders a "locked recipe"
+  //      state. Cooking is a family-visible action; the recipe that
+  //      was cooked should be too.
   const handleSaveAndCook = (source) => async (recipe, opts = {}) => {
-    await persist(recipe, source, opts);
-    startCooking(recipe);
+    const row = await persist(recipe, source, { ...opts, shared: true });
+    if (!row) {
+      pushToast("Save failed — couldn't start cook", { emoji: "⚠️", kind: "warn" });
+      return;
+    }
+    // Use the stamped (DB-slugged) recipe so subsequent lookups via
+    // findRecipe hit the exact row we just wrote. Pre-save slug may
+    // have collided and been suffixed "-2" — the raw `recipe` arg
+    // still has the old slug.
+    startCooking(row.recipe || recipe);
   };
 
   // Silent save — persist without toasting or closing. Used by the
