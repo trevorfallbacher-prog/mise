@@ -12,11 +12,19 @@
  * picks these rows up automatically; no read-path changes needed.
  *
  * ── Input format ────────────────────────────────────────────────────
- * JSONL — one product object per line. Convert the USDA JSON dump
- * with:
- *   jq -c '.BrandedFoods[]' brandedDownload.json > usda.jsonl
- *
- * OFF publishes JSONL natively (openfoodfacts-products.jsonl.gz).
+ * Auto-detected by file extension on --input:
+ *   *.csv     — USDA's branded_food.csv (from the FDC CSV download
+ *               bundle). Streams line-by-line, flat memory. The
+ *               RECOMMENDED format for USDA — smaller, faster, and
+ *               doesn't need jq preprocessing. Note: CSV rows don't
+ *               carry the product description field (that lives in a
+ *               separate food.csv), so ingested rows land with
+ *               name=null — scan time fills it in as usual.
+ *   *.jsonl   — One product object per line. USDA JSON dump converted
+ *               with `jq -c '.BrandedFoods[]' …` or OFF's native
+ *               openfoodfacts-products.jsonl dump. Carries the
+ *               description, but the 2GB USDA JSON can OOM modest
+ *               laptops during conversion — prefer CSV for USDA.
  *
  * ── Merge rules (per-field provenance) ───────────────────────────────
  *   admin     — locked. Ingest NEVER overwrites a field whose
@@ -28,7 +36,7 @@
  * ── CLI ─────────────────────────────────────────────────────────────
  *   node scripts/ingest_external_baseline.js \
  *     --source=usda \
- *     --input=./usda.jsonl \
+ *     --input=./branded_food.csv \
  *     [--batch=1000] [--limit=50000] [--dry-run]
  *
  *   SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required in env.
@@ -205,6 +213,30 @@ function normalizeUsda(rec) {
   };
 }
 
+// CSV variant of USDA — same output shape as normalizeUsda but
+// `rec` is an object keyed by the CSV's header column names. Name
+// stays null (description lives in a separate food.csv that we don't
+// join here — keeping the ingest streamable with flat memory; the
+// browser resolver fills name in at scan time from OFF / user input).
+function normalizeUsdaCsv(rec) {
+  const upc = cleanUpc(rec.gtin_upc);
+  if (!upc) return null;
+  const cat = rec.branded_food_category || "";
+  if (!USDA_GROCERY_CATEGORIES.has(cat)) return null;
+  const brand = stringOrNull(rec.brand_name) || stringOrNull(rec.brand_owner);
+  const sizeRaw = rec.household_serving_fulltext || rec.package_weight || null;
+  const size = sizeRaw ? parseSize(String(sizeRaw)) : null;
+  return {
+    upc,
+    brand: brand ? normalizeBrand(brand) : null,
+    name: null,
+    packageSizeAmount: size?.amount ?? null,
+    packageSizeUnit:   size?.unit || null,
+    imageUrl: null,
+    categoryHints: cat ? [slugify(cat)] : [],
+  };
+}
+
 function normalizeOff(rec) {
   const upc = cleanUpc(rec.code || rec._id);
   if (!upc) return null;
@@ -288,7 +320,52 @@ function slugify(s) {
     .replace(/^-+|-+$/g, "");
 }
 
-const normalizer = SOURCE === "usda" ? normalizeUsda : normalizeOff;
+const IS_CSV = /\.csv$/i.test(String(INPUT));
+const normalizer = SOURCE === "off"
+  ? normalizeOff
+  : (IS_CSV ? normalizeUsdaCsv : normalizeUsda);
+
+// ── CSV line splitter (RFC 4180) ───────────────────────────────────
+// Handles quoted fields, escaped double-quotes (""), and unquoted
+// numeric/text fields. Assumes no fields span lines — branded_food.csv
+// columns we consume (gtin_upc, brand_*, branded_food_category,
+// household_serving_fulltext, package_weight) are all single-line in
+// the USDA dataset; a multi-line ingredients field (if present)
+// wouldn't match and we'd skip the row with a parseErr bump.
+function splitCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let i = 0;
+  const len = line.length;
+  while (i < len) {
+    const ch = line[i];
+    if (ch === '"') {
+      // Quoted field. Consume until the closing quote, honoring
+      // double-quote escapes.
+      i += 1;
+      while (i < len) {
+        const c = line[i];
+        if (c === '"') {
+          if (line[i + 1] === '"') { cur += '"'; i += 2; continue; }
+          i += 1;
+          break;
+        }
+        cur += c;
+        i += 1;
+      }
+      // After the closing quote we expect a comma or end-of-line.
+      if (i < len && line[i] === ',') { out.push(cur); cur = ""; i += 1; }
+      else if (i >= len) { out.push(cur); cur = ""; }
+      else { return null; }   // malformed (text after closing quote)
+    } else if (ch === ',') {
+      out.push(cur); cur = ""; i += 1;
+    } else {
+      cur += ch; i += 1;
+    }
+  }
+  out.push(cur);
+  return out;
+}
 
 // ── Merge — admin fields locked, external siblings fill empties ────
 function mergeFields(existing, incoming) {
@@ -421,12 +498,20 @@ async function main() {
     buffer = [];
   }
 
+  let csvHeaders = null;     // populated on first CSV line
   for await (const line of rl) {
     if (read >= LIMIT) break;
     const trimmed = line.trim();
     if (!trimmed) continue;
     let rec;
-    try { rec = JSON.parse(trimmed); } catch { parseErr += 1; continue; }
+    if (IS_CSV) {
+      const fields = splitCsvLine(line);
+      if (!fields) { parseErr += 1; continue; }
+      if (!csvHeaders) { csvHeaders = fields.map(h => h.trim()); continue; }
+      rec = Object.fromEntries(csvHeaders.map((h, i) => [h, fields[i] ?? null]));
+    } else {
+      try { rec = JSON.parse(trimmed); } catch { parseErr += 1; continue; }
+    }
     read += 1;
     const normalized = normalizer(rec);
     if (!normalized) { skipped += 1; continue; }
