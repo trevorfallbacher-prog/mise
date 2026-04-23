@@ -234,32 +234,35 @@ function assemblePromptHeader(
         .map((p, i) => {
           // Per-item pantry data is kept tight — only fields that
           // genuinely change the dish-picking decision ship to the
-          // model. What we deliberately leave out:
+          // model. Everything else is cut because it's either
+          // redundant with what Claude already knows from training
+          // or it's decorative detail that doesn't move the draft.
           //
-          //   • Raw stock quantity (weighed oz / count) — Claude
-          //     isn't doing inventory math, and shipping it invited
-          //     precision echoes like "29.3545 oz garlic" into
-          //     recipe requirements.
-          //   • Category — the canonical_id already encodes it
-          //     ("chicken_breast" is obviously meat); sending a
-          //     second "Category: meat" label is redundant noise.
-          //   • Diet enrichment — Claude already knows butter is
-          //     dairy, chicken isn't vegan. Dietary constraints
-          //     enter the prompt via the user's PROFILE.dietary
-          //     field, which is the right level.
+          // Dropped (redundant / decorative):
+          //   • Stock quantity — invited precision echoes
+          //     ("29.3545 oz garlic") into recipe amounts.
+          //   • Category — canonical_id already encodes it.
+          //   • Location (fridge/pantry/freezer) — Claude infers.
+          //   • Flavor profile — Claude knows for common canonicals.
+          //   • Pairs — Claude knows classic pairings from training.
           //
-          // Kept: identity axes (canonical/cut/state/brand), shelf
-          // location (useful for "use the X from your fridge"
-          // phrasing), kind (compound / leftover differ), expiry
-          // (use-soon signal), starred, and enrichment hints that
-          // add NEW info (flavor / pairs for user-minted or unusual
-          // ingredients Claude might not know from training).
+          // Kept:
+          //   • Identity axes (canonical / cut / state / brand) —
+          //     what the thing IS, including the brand that step
+          //     instructions reference inline.
+          //   • Kind (when non-default) — compound / leftover
+          //     behaves differently from a raw ingredient.
+          //   • Expiry — use-soon signal the model genuinely acts on.
+          //   • Starred — user preference weight.
+          //   • Diet enrichment — actionable per-item dietary
+          //     information (allergens, vegan / keto / gluten-free
+          //     flags). Especially important for user-minted
+          //     canonicals where Claude's training has no prior.
           const lines: string[] = [`Pantry Item ${i + 1}:`];
           lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
-          if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
           if (typeof p.daysToExpiry === "number") {
             lines.push(
@@ -269,11 +272,8 @@ function assemblePromptHeader(
             );
           }
           if (p.star) lines.push(`  ★ STARRED BY USER`);
-          const enr = p.enrichment;
-          if (enr) {
-            if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
-            if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
-          }
+          const diet = p.enrichment ? dietSummary(p.enrichment.diet) : "";
+          if (diet) lines.push(`  Diet: ${diet}`);
           return lines.join("\n");
         })
         .join("\n");
@@ -1011,13 +1011,17 @@ function dietSummary(diet: Record<string, unknown> | null | undefined): string {
 }
 
 function profileSection(p: NonNullable<NonNullable<RichContext>["profile"]>): string {
+  // Kept: dietary (hard constraint), cooking level (simple vs advanced
+  // dish complexity), goal (weight loss / muscle / flavor). Dropped:
+  // practiced skills (`knife_skills(L3), sauté(L5)`) — Claude doesn't
+  // meaningfully tune dishes against skill-tree levels; the `level`
+  // field above already captures "easy vs complex" at the right scope,
+  // and the topSkills list was incremental noise for zero behaviour
+  // change across A/B drafts.
   const lines: string[] = [];
   if (p.dietary)    lines.push(`- dietary: ${p.dietary}${p.veganStyle ? ` (${p.veganStyle})` : ""}`);
   if (p.level)      lines.push(`- cooking level: ${p.level}`);
   if (p.goal)       lines.push(`- goal: ${p.goal}`);
-  if (p.topSkills && p.topSkills.length) {
-    lines.push(`- practiced skills: ${p.topSkills.map((s) => `${s.id}(L${s.level})`).join(", ")}`);
-  }
   if (!lines.length) return "";
   return `\nPROFILE:\n${lines.join("\n")}\n`;
 }
