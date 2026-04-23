@@ -1518,6 +1518,25 @@ export default function AIRecipe({
       else shopping.add(i);
       return { ...prev, shopping };
     });
+    // Escape hatch for unwanted substitutions. When Claude subbed
+    // Ritz for flour and the user doesn't have real flour in their
+    // pantry, SWAP has no good targets and × just deletes the slot
+    // entirely — the user was trapped making a recipe with ingredients
+    // they didn't want. `rejectSubForShopping` promotes the IDEAL
+    // to the shopping list (so "all-purpose flour" appears as a
+    // buy-this item) AND drops the sub pantry row in one atomic
+    // edit, so the user sees the real ingredient they'll shop for
+    // instead of the substitute they wanted to reject.
+    const rejectSubForShopping = (pantryIdx, idealIdx) => setPantryEdits(prev => {
+      const removes = new Set(prev.removes);
+      removes.add(pantryIdx);
+      const shopping = new Set(prev.shopping);
+      if (idealIdx != null) shopping.add(idealIdx);
+      // Drop any swap the user had on this row — it's going away.
+      const swaps = { ...prev.swaps };
+      delete swaps[pantryIdx];
+      return { ...prev, removes, shopping, swaps };
+    });
     const dropAdd = (i) => setPantryEdits(prev => ({
       ...prev,
       adds: prev.adds.filter((_, idx) => idx !== i),
@@ -2108,13 +2127,29 @@ export default function AIRecipe({
                           </div>
                         )}
                       </div>
-                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
                         <button
                           onClick={() => swapOpen ? openSwapPicker(null) : openSwapPicker(pantryIdx)}
                           style={swapOpen ? swapBtnActive : swapBtn}
                         >
                           ⇌ SWAP
                         </button>
+                        {/* BUY REAL — only surfaces on substitution rows
+                            (isSub). Drops the sub and promotes the classical
+                            ideal to the shopping list, so users aren't trapped
+                            into cooking with ingredients they don't want.
+                            Example: Ritz auto-paired as "flour"; user taps
+                            BUY REAL → Ritz removed, "all-purpose flour" lands
+                            on the shopping list. */}
+                        {isSub && idealRef && (
+                          <button
+                            onClick={() => rejectSubForShopping(pantryIdx, entry.idealIdx)}
+                            style={buyRealBtn}
+                            title={`Drop this sub and add ${idealRef.name} to your shopping list`}
+                          >
+                            🛒 BUY REAL
+                          </button>
+                        )}
                         <button onClick={() => toggleRemove(pantryIdx)} style={removeBtn}>×</button>
                       </div>
                     </div>
@@ -2913,6 +2948,17 @@ const swapBtn = {
   letterSpacing: "0.06em", cursor: "pointer", whiteSpace: "nowrap",
 };
 const swapBtnActive = { ...swapBtn, background: "#1a2430", color: "#9bcae0" };
+// Amber-tint button for the "BUY REAL" action on substitution rows —
+// reuses the rust/amber palette from the subHint chip ("⇌ classic
+// calls for X") so the two visually rhyme: same dish-substitution
+// story, one explains, one resolves.
+const buyRealBtn = {
+  padding: "5px 10px",
+  background: "#1f1410", border: "1px solid #4a2f1a",
+  color: "#d4a878", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  letterSpacing: "0.06em", cursor: "pointer", whiteSpace: "nowrap",
+};
 const removeBtn = {
   width: 28, height: 28, padding: 0,
   background: "transparent", border: "1px solid #2a2a2a",
