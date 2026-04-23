@@ -57,6 +57,39 @@ function normalizeBarcode(b) {
   return stripped || digits; // guard against all-zeros sentinels
 }
 
+// Walmart (and a few other US retailers) print the item code on
+// receipts as "0" + first 11 digits of the manufacturer UPC-A,
+// effectively dropping the check digit AND right-shifting:
+//   manufacturer UPC-A: 073420000110  (Daisy Sour Cream, 16oz)
+//   Walmart receipt:    007342000011
+//
+// These differ under direct equality AND under leading-zero strip
+// (the Walmart form starts with "00", the manufacturer form starts
+// with "0"). The common ground is an 11-digit substring shared by
+// both. Pull every 11-char window of digits from each side; if any
+// window appears on both sides, treat as equivalent. 11 = the data
+// portion of UPC-A (12 minus the check digit). False-positive risk
+// for valid UPCs is low — UPC-A data portions are essentially
+// unique per product.
+function upcSubstrings11(b) {
+  const d = String(b || "").replace(/\D+/g, "");
+  if (d.length < 11) return [];
+  const out = [];
+  for (let i = 0; i + 11 <= d.length; i++) out.push(d.slice(i, i + 11));
+  return out;
+}
+
+function upcsEquivalent(a, b) {
+  const an = normalizeBarcode(a);
+  const bn = normalizeBarcode(b);
+  if (an && bn && an === bn) return true;
+  const aSubs = upcSubstrings11(a);
+  if (aSubs.length === 0) return false;
+  const bSubs = new Set(upcSubstrings11(b));
+  for (const s of aSubs) if (bSubs.has(s)) return true;
+  return false;
+}
+
 // Match a trip_scan to a receipt line. UPC direct match wins (the
 // receipt prompt now asks the model to pluck the UPC off each line,
 // typically printed between the item text and the price on US
@@ -98,7 +131,7 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
     barcodeRaw: l?.barcode,
     barcodeNormalized: normalizeBarcode(l?.barcode),
     claimed: claimed.has(i),
-    upcMatches: !claimed.has(i) && normalizeBarcode(l?.barcode) === scanUpc,
+    upcMatches: !claimed.has(i) && upcsEquivalent(l?.barcode, scan.barcodeUpc),
   }));
   console.log("UPC tier", { scanUpc, lines: upcAttempts });
 
@@ -109,7 +142,7 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
     return byUpc;
   }
 
-  console.log(`❌ NO MATCH — receipt has no unclaimed line with UPC ${scanUpc}.`);
+  console.log(`❌ NO MATCH — receipt has no unclaimed line with UPC ${scanUpc} (or any 11-digit substring of it).`);
   console.groupEnd();
   return -1;
 }
