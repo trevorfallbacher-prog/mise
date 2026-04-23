@@ -101,12 +101,16 @@ function upcsEquivalent(a, b) {
 // receipt UPCs (raw + normalized + claimed), scan text + tokens,
 // every line's text + tokens + shared count, final reason for
 // match or no-match. Trade off console noise for diagnosability.
-// UPC-ONLY matcher. No token fuzz, no name overlap, no list-slot
-// inference. The UPC is the source of truth — if it matches, pair;
-// if not, leave the scan unpaired and let the user fix it manually.
-// Trying to "be smart" with token fallbacks moved pairs around
-// unpredictably (Daisy ↔ Sour Cream brand mismatch, English
-// Cucumber stealing Cucumber's slot, etc).
+// Match a trip_scan to a receipt line. Two-tier strategy:
+//   1. UPC equivalence — direct match after leading-zero strip
+//      OR shared 11-digit substring (handles Walmart's POS shift
+//      that prepends "0" + drops the manufacturer's check digit).
+//   2. Token overlap — productName + brand + paired list slot name
+//      tokens vs receipt rawText + name tokens. The list slot name
+//      is critical because OFF often returns brand-only productName
+//      ("Daisy") and the receipt is product-only ("SOUR CREAM"),
+//      so the user's pair intent ("Sour cream" list slot) bridges
+//      the vocabularies.
 function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = null) {
   const scanUpc = normalizeBarcode(scan.barcodeUpc);
   const scanLabel = scan.productName || scan.brand || `UPC ${scan.barcodeUpc}`;
@@ -116,33 +120,71 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
     id: scan.id,
     barcodeUpc: scan.barcodeUpc,
     barcodeUpcNormalized: scanUpc,
+    productName: scan.productName,
+    brand: scan.brand,
     pairedListName,
   });
 
-  if (!scanUpc) {
-    console.log(`❌ NO MATCH — scan has no parseable UPC.`);
-    console.groupEnd();
-    return -1;
-  }
-
+  // ── Tier 1: UPC equivalence ─────────────────────────────────
   const upcAttempts = receiptLines.map((l, i) => ({
     i,
     rawText: l?.rawText,
     barcodeRaw: l?.barcode,
     barcodeNormalized: normalizeBarcode(l?.barcode),
     claimed: claimed.has(i),
-    upcMatches: !claimed.has(i) && upcsEquivalent(l?.barcode, scan.barcodeUpc),
+    upcMatches: !!scanUpc && !claimed.has(i)
+      && upcsEquivalent(l?.barcode, scan.barcodeUpc),
   }));
   console.log("UPC tier", { scanUpc, lines: upcAttempts });
 
-  const byUpc = upcAttempts.findIndex(a => a.upcMatches);
-  if (byUpc >= 0) {
-    console.log(`✅ MATCH via UPC at line ${byUpc}: "${upcAttempts[byUpc].rawText}"`);
-    console.groupEnd();
-    return byUpc;
+  if (scanUpc) {
+    const byUpc = upcAttempts.findIndex(a => a.upcMatches);
+    if (byUpc >= 0) {
+      console.log(`✅ MATCH via UPC at line ${byUpc}: "${upcAttempts[byUpc].rawText}"`);
+      console.groupEnd();
+      return byUpc;
+    }
   }
 
-  console.log(`❌ NO MATCH — receipt has no unclaimed line with UPC ${scanUpc} (or any 11-digit substring of it).`);
+  // ── Tier 2: token overlap (productName + brand + list slot) ──
+  const scanText = [scan.productName, scan.brand, pairedListName].filter(Boolean).join(" ");
+  const scanToks = new Set(
+    normalizeName(scanText).split(" ").filter(t => t.length >= 2),
+  );
+  const tokenAttempts = receiptLines.map((line, i) => {
+    const lineText = [line?.rawText, line?.name].filter(Boolean).join(" ");
+    const lineToks = normalizeName(lineText).split(" ").filter(t => t.length >= 2);
+    let shared = [];
+    for (const t of lineToks) if (scanToks.has(t)) shared.push(t);
+    return {
+      i,
+      rawText: line?.rawText,
+      lineTokens: lineToks,
+      sharedTokens: shared,
+      sharedCount: shared.length,
+      claimed: claimed.has(i),
+    };
+  });
+  console.log("Token tier", { scanText, scanTokens: Array.from(scanToks), lines: tokenAttempts });
+
+  if (scanToks.size > 0) {
+    let best = -1;
+    let bestShared = 0;
+    for (const a of tokenAttempts) {
+      if (a.claimed) continue;
+      if (a.sharedCount > bestShared) {
+        bestShared = a.sharedCount;
+        best = a.i;
+      }
+    }
+    if (best >= 0 && bestShared > 0) {
+      console.log(`✅ MATCH via tokens at line ${best} (shared ${bestShared}: ${tokenAttempts[best].sharedTokens.join(", ")}): "${tokenAttempts[best].rawText}"`);
+      console.groupEnd();
+      return best;
+    }
+  }
+
+  console.log(`❌ NO MATCH for ${scanLabel}.`);
   console.groupEnd();
   return -1;
 }
