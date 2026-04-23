@@ -211,23 +211,22 @@ function assemblePromptHeader(
   context: RichContext,
   opts: { skipPantry?: boolean } = {},
 ): string {
-  // Pantry detail level follows the user's intent. If they asked for
-  // a SPECIFIC dish ("chicken marsala") and didn't star any pantry
-  // items, the dish is already decided — pantry info is only used to
-  // label coverage (in-pantry vs shopping) and to reference brands
-  // inline in step text. Expiry, flavor, pairs, starred weights,
-  // shelf location — none of those change the draft because the
-  // draft is already pinned. Sending them is just noise.
+  // Two modes of intent, two treatments of the pantry:
   //
-  // FAMILY / OPEN / FREEFORM tiers, or SPECIFIC with starred items,
-  // mean the user IS leaning on the pantry to pick / tune the dish.
-  // Every enrichment signal matters there — flavor + pairs help
-  // choose within a family, expiry pushes use-soon items to the
-  // front, starred items force inclusion.
+  //   1. USE-MY-PANTRY mode — FAMILY / OPEN / FREEFORM tiers, or any
+  //      tier with starred items. The user IS leaning on what they
+  //      have; ship full pantry detail so Claude can pick and tune
+  //      the dish around it.
+  //
+  //   2. FREE-RECIPE mode — SPECIFIC tier without starred items.
+  //      The user asked for a specific dish ("chicken marsala");
+  //      the pantry is irrelevant to drafting it. Skip the pantry
+  //      block entirely — the client does the coverage join
+  //      (in-pantry vs shopping) downstream using the returned
+  //      ingredient list, no LLM turns needed.
   const hasStarred = Array.isArray(prefs.starIngredientIds) && prefs.starIngredientIds.length > 0;
   const contractTier = prefs.dishContract?.tier;
-  const pantryMode: "minimal" | "full" =
-    contractTier === "SPECIFIC" && !hasStarred ? "minimal" : "full";
+  const freeRecipeMode = contractTier === "SPECIFIC" && !hasStarred;
   // Final-mode skips the pantry listing — the sketch already picked
   // a dish, the LOCKED INGREDIENTS block below is the authoritative
   // shopping list, and re-sending 80 pantry rows burns thousands of
@@ -245,6 +244,8 @@ function assemblePromptHeader(
   // tortillas" while Mission Tortillas sat in the pantry).
   const pantryLines = opts.skipPantry
     ? "(pantry was surveyed during sketch — see LOCKED INGREDIENTS below for the authoritative set)"
+    : freeRecipeMode
+    ? "(user asked for a specific dish — draft the canonical recipe; the client will label coverage against the pantry on its own. Do not try to bias toward what the user has — they asked for THIS dish.)"
     : pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
@@ -273,34 +274,25 @@ function assemblePromptHeader(
           // user-minted canonicals where Claude has no training prior.
           const lines: string[] = [`Pantry Item ${i + 1}:`];
           lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
-          // Always keep identity axes and brand — these are needed
-          // in every mode for coverage labeling + inline step text
-          // references. Kind is also identity (frozen pizza can't
-          // be cracked open for mozzarella) so it stays in minimal.
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
+          if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
-          // Full-pantry-mode fields — gated because when the dish is
-          // already pinned (SPECIFIC tier without starred items), none
-          // of these change the draft and they just burn input tokens.
-          if (pantryMode === "full") {
-            if (p.location) lines.push(`  Location: ${p.location}`);
-            if (typeof p.daysToExpiry === "number") {
-              lines.push(
-                p.daysToExpiry <= 0
-                  ? `  Expiry: EXPIRED`
-                  : `  Expiry: in ${p.daysToExpiry}d`,
-              );
-            }
-            if (p.star) lines.push(`  ★ STARRED BY USER`);
-            const enr = p.enrichment;
-            if (enr) {
-              if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
-              if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
-              const diet = dietSummary(enr.diet);
-              if (diet) lines.push(`  Diet: ${diet}`);
-            }
+          if (typeof p.daysToExpiry === "number") {
+            lines.push(
+              p.daysToExpiry <= 0
+                ? `  Expiry: EXPIRED`
+                : `  Expiry: in ${p.daysToExpiry}d`,
+            );
+          }
+          if (p.star) lines.push(`  ★ STARRED BY USER`);
+          const enr = p.enrichment;
+          if (enr) {
+            if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
+            if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
+            const diet = dietSummary(enr.diet);
+            if (diet) lines.push(`  Diet: ${diet}`);
           }
           return lines.join("\n");
         })
