@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { signOut } from "../lib/useAuth";
 import { useWebPush } from "../lib/useWebPush";
+import { useNotificationPreferences } from "../lib/useNotificationPreferences";
 import { supabase } from "../lib/supabase";
 
 // Panel header used at the top of each section in Settings.
@@ -479,6 +480,15 @@ export default function Settings({
             users to Block. */}
         <PushNotificationsSection userId={userId} />
 
+        {/* What kinds of notifications to actually receive. Defaults
+            are intentionally skewed quiet — "someone added butter to
+            the pantry" is off out of the box; meaningful coordination
+            (meal scheduled, prep reminders, a friend cooked for you)
+            is on. Every toggle here also governs Web Push, because the
+            push fanout goes through the notifications table and the
+            DB trigger checks should_notify() before inserting. */}
+        {userId && <NotificationPreferencesSection userId={userId} />}
+
         {/* About — release notes entry. Always available so users can
             re-read past notes; also the recovery valve for the silent
             first-paint heuristic in useWhatsNew (new accounts get the
@@ -652,6 +662,198 @@ function PushNotificationsSection({ userId }) {
             {error}
           </div>
         )}
+      </div>
+    </>
+  );
+}
+
+// ── Notification preferences ────────────────────────────────────────
+// Per-user toggles (stored in notification_preferences, migration 0133).
+// Every toggle here gates the DB trigger that inserts into the
+// notifications table — so a disabled toggle kills BOTH the in-app row
+// AND the Web Push delivery (since push is fanned out from the same
+// insert). The "ON THIS DEVICE" switch above toggles push-only; the
+// switches below toggle notifications at the source.
+//
+// The key design decision: pantry activity defaults OFF. The app was
+// firing a push on every fridge-door event; that trains users to mute
+// the app. Meaningful events (meal scheduled, someone will cook for
+// you, a prep reminder) stay on by default because those are the ones
+// users actually want.
+function PrefToggle({ label, hint, value, onChange, tone = "#f5c842" }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12,
+      padding: "12px 14px", marginBottom: 8,
+      background: value ? "#141612" : "#141414",
+      border: `1px solid ${value ? "#2a3a1e" : "#1e1e1e"}`,
+      borderRadius: 12,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700,
+          color: value ? tone : "#888",
+          letterSpacing: "0.1em", marginBottom: 4,
+        }}>
+          {label} · {value ? "ON" : "OFF"}
+        </div>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#999", lineHeight: 1.45 }}>
+          {hint}
+        </div>
+      </div>
+      <button
+        onClick={() => onChange(!value)}
+        style={{
+          flexShrink: 0, width: 44, height: 26, padding: 0,
+          background: value ? tone : "#2a2a2a",
+          border: `1px solid ${value ? tone : "#3a3a3a"}`,
+          borderRadius: 13, cursor: "pointer", position: "relative",
+          transition: "background 120ms",
+        }}
+        aria-pressed={value}
+        aria-label={`Toggle ${label}`}
+      >
+        <span style={{
+          position: "absolute", top: 2, left: value ? 20 : 2,
+          width: 20, height: 20, borderRadius: 10,
+          background: value ? "#111" : "#888",
+          transition: "left 120ms",
+          display: "block",
+        }} />
+      </button>
+    </div>
+  );
+}
+
+function NotificationPreferencesSection({ userId }) {
+  const { preferences, loading, setPref } = useNotificationPreferences(userId);
+
+  if (loading) return null;
+
+  const quietOn = preferences.quiet_hours_start != null && preferences.quiet_hours_end != null;
+
+  const setQuietHours = (start, end) => {
+    // Both must be set, or both cleared — mixed state is invalid.
+    if (start && end) {
+      setPref({ quiet_hours_start: start, quiet_hours_end: end });
+    } else {
+      setPref({ quiet_hours_start: null, quiet_hours_end: null });
+    }
+  };
+
+  return (
+    <>
+      <SectionHeader label="WHAT TO NOTIFY ME ABOUT" />
+
+      <PrefToggle
+        label="PREP REMINDERS"
+        hint="Start-the-prep reminders before scheduled meals. Cascades all the way back to overnight: freeze the butter at 10pm for tomorrow's pie."
+        value={!!preferences.prep_reminders}
+        onChange={v => setPref({ prep_reminders: v })}
+        tone="#e07a3a"
+      />
+
+      <PrefToggle
+        label="MEAL COORDINATION"
+        hint="Who's cooking, meal rescheduled, requests to cook. Doesn't cover prep — that's above."
+        value={!!preferences.meal_coordination}
+        onChange={v => setPref({ meal_coordination: v })}
+        tone="#7eb8d4"
+      />
+
+      <PrefToggle
+        label="SOMEONE COOKED FOR YOU"
+        hint="When a family member logs a cook and tags you as a diner."
+        value={!!preferences.cook_log_diners}
+        onChange={v => setPref({ cook_log_diners: v })}
+        tone="#c7a8d4"
+      />
+
+      <PrefToggle
+        label="RECEIPTS"
+        hint="One summary per receipt scan. Low volume — the dedup warning fires here too."
+        value={!!preferences.receipt_activity}
+        onChange={v => setPref({ receipt_activity: v })}
+        tone="#b8a878"
+      />
+
+      <PrefToggle
+        label="PANTRY SCANS"
+        hint="Batch summaries when someone scans the fridge/pantry. One line per scan, not per item."
+        value={!!preferences.pantry_scan_activity}
+        onChange={v => setPref({ pantry_scan_activity: v })}
+        tone="#b8a878"
+      />
+
+      <PrefToggle
+        label="SHOPPING LIST"
+        hint="Adds, edits, and removals on the shared shopping list."
+        value={!!preferences.shopping_activity}
+        onChange={v => setPref({ shopping_activity: v })}
+        tone="#7eb8d4"
+      />
+
+      <PrefToggle
+        label="PANTRY FIDDLING"
+        hint="Every time someone adds, renames, or deletes a pantry item. Off by default — this is the noisy one."
+        value={!!preferences.pantry_activity}
+        onChange={v => setPref({ pantry_activity: v })}
+        tone="#a8553a"
+      />
+
+      <SectionHeader label="QUIET HOURS" />
+      <div style={{
+        padding: "12px 14px", marginBottom: 14,
+        background: "#141414", border: "1px solid #1e1e1e",
+        borderRadius: 12,
+      }}>
+        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#999", lineHeight: 1.5, marginBottom: 10 }}>
+          Prep reminders inside this window get shifted EARLIER — a
+          freeze-overnight ping scheduled for 2am fires at 9:30pm
+          instead so you don't wake up to it (and the butter actually
+          gets in the freezer).
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            type="time"
+            value={preferences.quiet_hours_start || ""}
+            onChange={e => setQuietHours(e.target.value || null, preferences.quiet_hours_end)}
+            style={{
+              flex: 1, padding: "10px 12px",
+              background: "#0c0c0c", border: "1px solid #2a2a2a",
+              color: "#f0ece4", borderRadius: 10,
+              fontFamily: "'DM Mono',monospace", fontSize: 13,
+            }}
+          />
+          <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#666", letterSpacing: "0.1em" }}>TO</span>
+          <input
+            type="time"
+            value={preferences.quiet_hours_end || ""}
+            onChange={e => setQuietHours(preferences.quiet_hours_start, e.target.value || null)}
+            style={{
+              flex: 1, padding: "10px 12px",
+              background: "#0c0c0c", border: "1px solid #2a2a2a",
+              color: "#f0ece4", borderRadius: 10,
+              fontFamily: "'DM Mono',monospace", fontSize: 13,
+            }}
+          />
+          {quietOn && (
+            <button
+              onClick={() => setQuietHours(null, null)}
+              style={{
+                padding: "10px 12px", background: "#1a1a1a", color: "#888",
+                border: "1px solid #2a2a2a", borderRadius: 10,
+                fontFamily: "'DM Mono',monospace", fontSize: 10, letterSpacing: "0.08em",
+                cursor: "pointer",
+              }}
+            >
+              CLEAR
+            </button>
+          )}
+        </div>
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em", marginTop: 10 }}>
+          TIMEZONE · {preferences.timezone || "UTC"}
+        </div>
       </div>
     </>
   );
