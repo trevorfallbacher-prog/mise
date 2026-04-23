@@ -11,6 +11,7 @@ import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
+import { useWebPush } from "../lib/useWebPush";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -133,30 +134,84 @@ function PlateAnimation() {
 const AnimationMap = { boil:BoilAnimation, stir:StirAnimation, brown:BrownAnimation, bloom:BloomAnimation, toss:TossAnimation, plate:PlateAnimation };
 
 function Timer({ seconds, onDone, endsAt }) {
-  // When resuming from the banner (or reopening CookMode mid-step),
-  // `endsAt` is the server-side push deadline already queued in
-  // cook_step_notifications. Clamping the on-screen countdown to that
-  // wall-clock deadline means the mm:ss the user sees matches when
-  // the push will actually fire — no "fresh 5:00" on a step that's
-  // really 30 seconds from ringing. Fresh start still uses `seconds`
-  // verbatim.
-  const initialRemaining = endsAt
-    ? Math.max(0, Math.ceil((new Date(endsAt).getTime() - Date.now()) / 1000))
-    : seconds;
-  const [remaining, setRemaining] = useState(initialRemaining);
-  // Auto-start: the server-side push in cook_step_notifications was
-  // already queued at step-enter with deliver_at = now + seconds, so
-  // running the in-app countdown immediately keeps the visual and the
-  // push aligned. Users can still pause — pausing only pauses the
-  // on-screen number, the push will still fire at its scheduled time
-  // (which matches current behavior before wiring onDone).
-  const [running, setRunning] = useState(true);
-  const [done, setDone] = useState(false);
+  // Wall-clock-driven countdown.
+  //
+  // The old implementation decremented `remaining` every setTimeout(1s),
+  // which sounded fine but drifted badly whenever the browser throttled
+  // JS — phone locks, tab backgrounds for long stretches, OS battery
+  // saver. On unlock the countdown would resume from its paused value
+  // instead of catching up to real wall-clock elapsed, leaving the
+  // in-app timer wildly out of sync with the server-side push.
+  //
+  // Now we pin an absolute `deadline` once, then every render-interval
+  // compute remaining = ceil((deadline - Date.now())/1000). Throttled
+  // browsers will just re-render late; the MATH always reads from the
+  // wall clock, so an unlock snaps the UI to the correct remaining in
+  // one paint. The push in cook_step_notifications fires off the same
+  // absolute instant, so the two surfaces stay aligned regardless of
+  // what JS was doing in the meantime.
+  //
+  // `endsAt` (from the banner resume handoff) wins over `seconds`
+  // because it's the real server-side deadline. Fresh starts use
+  // seconds → now + seconds*1000.
+  const initialDeadline = endsAt
+    ? new Date(endsAt).getTime()
+    : Date.now() + seconds * 1000;
+  const [deadline, setDeadline]    = useState(initialDeadline);
+  const [pausedAt, setPausedAt]    = useState(null);  // ms — when running=false
+  const [tick, setTick]            = useState(0);
+  const [done, setDone]            = useState(false);
+  const running = pausedAt == null;
+
+  const remaining = Math.max(
+    0,
+    Math.ceil(((running ? deadline : pausedAt) - Date.now()) / 1000),
+  );
+
+  // Tick the render clock. 500ms is plenty for a 1s-precision display
+  // and smooths over Safari's coarser throttle on backgrounded tabs
+  // (Safari's minimum throttle is ~1s, so 500ms gives us two shots at
+  // a one-second grid). No cleanup complexity; we just repaint.
   useEffect(() => {
-    if (!running || remaining <= 0) return;
-    const id = setTimeout(() => setRemaining(r => { if(r<=1){setRunning(false);setDone(true);onDone?.();return 0;} return r-1; }), 1000);
-    return () => clearTimeout(id);
-  }, [running, remaining]);
+    if (!running || done) return undefined;
+    const id = setInterval(() => setTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, [running, done]);
+
+  // Detect rollover to 0 on any render (including the first one after
+  // unlock that snaps from 3:42 past the deadline). Guarded by `done`
+  // so onDone fires exactly once — idempotent re-triggers would double
+  // the chime + fire extra local notifications.
+  useEffect(() => {
+    if (!done && running && remaining <= 0) {
+      setDone(true);
+      setPausedAt(Date.now());   // stop the interval
+      onDone?.();
+    }
+  }, [remaining, running, done, onDone]);
+
+  // Pause / resume — preserve "time remaining" across the flip.
+  const togglePause = () => {
+    if (done) return;
+    if (running) {
+      setPausedAt(Date.now());
+    } else {
+      // Shift the deadline forward by however long we were paused.
+      setDeadline(d => d + (Date.now() - pausedAt));
+      setPausedAt(null);
+    }
+  };
+
+  // Also recheck remaining whenever the page becomes visible again —
+  // covers the lock-screen case where `setInterval` got suspended for
+  // N seconds; we want to repaint immediately on unlock, not wait for
+  // the next 500ms tick.
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVis = () => { if (document.visibilityState === "visible") setTick(t => t + 1); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
   const mins=Math.floor(remaining/60), secs=remaining%60;
   const pct=((seconds-remaining)/seconds)*100;
   const pulsing = !done && running && remaining > 0 && remaining <= 10;
@@ -176,11 +231,11 @@ function Timer({ seconds, onDone, endsAt }) {
         </div>
       </div>
       {!done && (
-        <button onClick={() => setRunning(r=>!r)} style={{
+        <button onClick={togglePause} style={{
           background: running ? "#3f3f3f" : "#f59e0b", color: running ? "#f5f5f0" : "#1a1a1a",
           border:"none", borderRadius:8, padding:"8px 16px", fontFamily:"'DM Mono',monospace",
           fontSize:12, cursor:"pointer", fontWeight:600, letterSpacing:"0.05em", transition:"all 0.2s"
-        }}>{running ? "⏸ PAUSE" : remaining===seconds ? "▶ START" : "▶ RESUME"}</button>
+        }}>{running ? "⏸ PAUSE" : "▶ RESUME"}</button>
       )}
       {done && (
         <div style={{
@@ -339,6 +394,16 @@ export default function CookMode({
   useEffect(() => {
     resetSession();
   }, [recipe?.slug, resetSession]);
+
+  // Web Push subscription for this device. We don't AUTO-prompt on
+  // mount (browsers blacklist you for that). Instead, render an inline
+  // "enable" card inside the cook view the first time a user starts
+  // a timer on an unsubscribed device. Rationale: without a push
+  // subscription, the server-side cron drain that fires
+  // cook_step_notifications has nobody to deliver to — lock-screen
+  // rings never arrive. Opt-in is the difference between "the timer
+  // works" and "the timer only works when I'm looking at it."
+  const webPush = useWebPush(userId);
 
   // ── Cook telemetry + timer pushes (migration 0136 / 0137) ─────────
   // Records per-step durations and queues mid-cook timer notifications
@@ -1059,6 +1124,60 @@ export default function CookMode({
         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>STEP {activeStep+1} OF {steps.length}</span>
         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{completedSteps.size} DONE</span>
       </div>
+
+      {/* Push-enable prompt — only renders when:
+          - this device CAN do push (supported flag from useWebPush)
+          - user hasn't already subscribed
+          - user hasn't explicitly denied (respect the blacklist)
+          - this step has a timer (otherwise the value-add is unclear;
+            no timer step = no push benefit, no reason to nag)
+
+          The copy emphasizes the lock-screen case because that's the
+          pain point: an in-app countdown can't wake a locked phone,
+          a push can. One tap calls webPush.enable() which handles
+          permission prompt, SW register, and push_subscriptions
+          upsert in one go. */}
+      {webPush.supported && !webPush.enabled && webPush.permission !== "denied" && Number.isFinite(step?.timer) && step.timer > 0 && (
+        <div style={{
+          marginTop: 16,
+          padding: "14px 16px",
+          background: "linear-gradient(180deg,#1e1408 0%,#170d05 100%)",
+          border: "1px solid #3a2a0a",
+          borderRadius: 12,
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <span style={{ fontSize: 22, flexShrink: 0 }}>🔔</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+              color:"#f5c842", letterSpacing:"0.14em", marginBottom:3,
+            }}>
+              RING ME ON THE LOCK SCREEN
+            </div>
+            <div style={{
+              fontFamily:"'DM Sans',sans-serif", fontSize:12,
+              color:"#bbb", lineHeight:1.4,
+            }}>
+              Timers only reach your phone when it's locked if notifications are enabled.
+            </div>
+          </div>
+          <button
+            onClick={() => { primeCookAudio(); webPush.enable(); }}
+            disabled={webPush.busy}
+            style={{
+              flexShrink: 0,
+              padding: "10px 14px",
+              background: "#f5c842", color: "#111",
+              border: "none", borderRadius: 10,
+              fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+              letterSpacing:"0.08em", cursor: webPush.busy ? "not-allowed" : "pointer",
+              opacity: webPush.busy ? 0.5 : 1,
+            }}
+          >
+            {webPush.busy ? "…" : "ENABLE"}
+          </button>
+        </div>
+      )}
       <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"center" }}>
         {steps.map((_,i)=>(
           <button key={i} onClick={()=>setActiveStep(i)} style={{ width: completedSteps.has(i)||i===activeStep?24:8, height:8, borderRadius:4, border:"none", cursor:"pointer", background: completedSteps.has(i)?"#22c55e":i===activeStep?"#f5c842":"#333", transition:"all 0.3s" }} />
