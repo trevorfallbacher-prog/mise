@@ -27,3 +27,6 @@ verify_jwt = false
 [functions.suggest-cook-instructions]
 verify_jwt = false
 
+[functions.scan-nutrition-label]
+verify_jwt = false
+

@@ -178,11 +178,35 @@ function hasNumbers(n) {
 //     base unit — a stick of butter is 813 kcal, dense fat is 900; 10k
 //     is unreachable by real food, so it's a safe ceiling)
 //   - any macro that's present but not a finite non-negative number
+//
+// Side effect: MUTATES the block in-place to normalize alias fields.
+// The label scanner returns FDA-style keys (`total_fat_g`,
+// `total_sugar_g`), but the rest of the app reads the legacy `fat_g`
+// / `sugar_g` names. Mirroring them here means downstream consumers
+// (formatMacros, resolveNutrition, MacroCell, recipeNutrition) keep
+// working unmodified — new label-scan rows drop straight into the
+// existing renderers without per-consumer plumbing. Legacy rows
+// that only have `fat_g` / `sugar_g` round-trip unchanged.
+//
+// Also: cross-check that added_sugar_g does not exceed total_sugar_g
+// (+ 0.5g for label rounding tolerance) — "Includes Xg Added Sugars"
+// is a subset of "Total Sugars" on every real FDA label.
+//
 // Returns { ok: true } on pass or { ok: false, reason } on failure. Used
 // by useBrandNutrition.upsert and the pantry-override write path to
 // reject bad data at the boundary rather than propagating it.
 export function validateNutrition(n) {
   if (!n || typeof n !== "object") return { ok: false, reason: "not an object" };
+
+  // Alias normalization — see fn docblock for rationale.
+  // Mirror total_fat_g ↔ fat_g and total_sugar_g ↔ sugar_g so either
+  // key resolves. Prefer the "total_" FDA key when both are present
+  // and disagree (assume the label-scan value is more recent).
+  if (n.total_fat_g != null && n.fat_g == null) n.fat_g = n.total_fat_g;
+  if (n.fat_g != null && n.total_fat_g == null) n.total_fat_g = n.fat_g;
+  if (n.total_sugar_g != null && n.sugar_g == null) n.sugar_g = n.total_sugar_g;
+  if (n.sugar_g != null && n.total_sugar_g == null) n.total_sugar_g = n.sugar_g;
+
   const per = n.per;
   if (per !== "100g" && per !== "count" && per !== "serving") {
     return { ok: false, reason: `per must be "100g"|"count"|"serving", got ${JSON.stringify(per)}` };
@@ -197,13 +221,39 @@ export function validateNutrition(n) {
   if (!Number.isFinite(kcal) || kcal < 0 || kcal > 10000) {
     return { ok: false, reason: `kcal must be 0-10000, got ${JSON.stringify(n.kcal)}` };
   }
-  const MACRO_CEILINGS = { protein_g: 100, fat_g: 100, carb_g: 100, fiber_g: 100, sugar_g: 100, sodium_mg: 50000 };
+  // Ceilings tuned to ~2-4x the worst real-food value so bogus
+  // scans (missed decimal point, mg / g confusion) bounce but
+  // legitimate dense foods fit. Aliases (fat_g, total_fat_g) are
+  // both listed; the normalization above keeps them in sync.
+  const MACRO_CEILINGS = {
+    // Legacy 7-field set — kept for back-compat.
+    protein_g: 200,  fat_g: 200,  carb_g: 200,
+    fiber_g: 100,    sugar_g: 200,
+    sodium_mg: 50000,
+    // FDA-label additions (label-scan / manual detailed entry).
+    total_fat_g: 200, saturated_fat_g: 100, trans_fat_g: 50,
+    cholesterol_mg: 5000,
+    total_sugar_g: 200, added_sugar_g: 200,
+    vitamin_d_mcg: 500, calcium_mg: 5000, iron_mg: 200, potassium_mg: 10000,
+  };
   for (const [key, ceiling] of Object.entries(MACRO_CEILINGS)) {
     if (n[key] == null) continue;
     const v = Number(n[key]);
     if (!Number.isFinite(v) || v < 0 || v > ceiling) {
       return { ok: false, reason: `${key} must be 0-${ceiling}, got ${JSON.stringify(n[key])}` };
     }
+  }
+  // Cross-check: added sugars can't exceed total sugars (with
+  // 0.5g slack for label rounding).
+  if (
+    typeof n.added_sugar_g === "number" &&
+    typeof n.total_sugar_g === "number" &&
+    n.added_sugar_g > n.total_sugar_g + 0.5
+  ) {
+    return {
+      ok: false,
+      reason: `added_sugar_g (${n.added_sugar_g}) exceeds total_sugar_g (${n.total_sugar_g})`,
+    };
   }
   return { ok: true };
 }
@@ -596,12 +646,15 @@ export function formatMacros(macros, { verbose = false } = {}) {
 // without the user having to guess where a number came from.
 export function sourceBadge(source) {
   switch (source) {
-    case "pantry":    return { label: "YOU",      color: "#7ec87e" };
-    case "brand":     return { label: "BRAND",    color: "#c7a8d4" };
-    case "canonical": return { label: "CANONICAL", color: "#b8a878" };
-    case "cut":       return { label: "CUT",      color: "#a8553a" };
-    case "state":     return { label: "STATE",    color: "#c7a8d4" };
-    case "default":   return { label: "EST.",     color: "#888"    };
-    default:          return { label: "",         color: "#555"    };
+    case "pantry":     return { label: "YOU",      color: "#7ec87e" };
+    case "brand":      return { label: "BRAND",    color: "#c7a8d4" };
+    case "canonical":  return { label: "CANONICAL", color: "#b8a878" };
+    case "cut":        return { label: "CUT",      color: "#a8553a" };
+    case "state":      return { label: "STATE",    color: "#c7a8d4" };
+    case "default":    return { label: "EST.",     color: "#888"    };
+    // label_scan — provenance for scan-nutrition-label writes. Gold
+    // accents it alongside the "📸" affordance used in the scanner UI.
+    case "label_scan": return { label: "SCAN",     color: "#f5c842" };
+    default:           return { label: "",         color: "#555"    };
   }
 }

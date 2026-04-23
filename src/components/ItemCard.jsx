@@ -32,6 +32,8 @@ import CookInstructionsSheet from "./CookInstructionsSheet";
 import ReheatMode from "./ReheatMode";
 import EatIntentSheet from "./EatIntentSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
+import NutritionLabelScanner from "./NutritionLabelScanner";
+import { clearPopularPackagesCache } from "../lib/usePopularPackages";
 import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { findRecipe } from "../data/recipes";
 import { useUserRecipes } from "../lib/useUserRecipes";
@@ -1333,6 +1335,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             item={item}
             getInfo={getDbInfo}
             getBrandNutrition={getBrandNutrition}
+            upsertBrandNutrition={upsertBrandNutrition}
             onUpdate={onUpdate}
           />
 
@@ -3813,9 +3816,16 @@ const brandChooserBlurbStyle = {
 // fill the gap lives behind "+ ADD BRAND" in the identity stack, not
 // as a standalone CTA here (keeps the nutrition band uncluttered and
 // one discoverable entry point for data enrichment).
-function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
+function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
+  // Scanner flow state. scanPayload holds what NutritionLabelScanner
+  // extracted so we can hand it into NutritionOverrideSheet as
+  // initialValues + packageInfo + photoPreviewUrl. Cleared when the
+  // review sheet closes.
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [scanPayload, setScanPayload] = useState(null);
+
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
   const brandNutritionMap = useMemo(() => ({ get: (k) => getBrandNutrition?.(k) || null }), [getBrandNutrition]);
@@ -3837,47 +3847,193 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
     { getInfo, brandNutrition: brandNutritionMap },
   );
 
-  // Persist a user-typed override via the standard commit path. `block`
-  // is a validated nutrition object OR null (clear). onUpdate routes
-  // through ItemCard → setPendingChanges → apply, same as every other
-  // field edit, so the pantry realtime subscription reconciles and
-  // the chip re-renders from the new `source: "pantry"` tier.
-  const saveOverride = async (block) => {
-    onUpdate?.({ nutritionOverride: block });
+  // Unified save path — handles both the scan-review payload and the
+  // clear-override null. Writes at two tiers:
+  //
+  //   1. pantry_items.nutrition_override (always) — instant, per-jar
+  //      precision via the standard commit path.
+  //   2. brand_nutrition (scan only, with guard) — shared teaching
+  //      keyed by (canonical_id, brand). Skipped when the user
+  //      hand-edited >3 fields (their numbers are probably row-
+  //      specific corrections, not canonical for the brand) or when
+  //      the row has no brand to key on.
+  //
+  // Package-size fields ride into the same onUpdate patch so
+  // popular_package_sizes auto-feeds off the pantry_items row
+  // (migration 0063's SECURITY DEFINER rollup reads max + unit +
+  // brand directly — no separate RPC write needed). After commit we
+  // clear the in-memory usePopularPackages cache for this
+  // (brand, canonical) pair so chip suggestions refresh immediately.
+  const saveOverride = async (payload) => {
+    // Null → clear the override, fall back to lower resolver tiers.
+    if (payload === null) {
+      onUpdate?.({ nutritionOverride: null });
+      setScanPayload(null);
+      return;
+    }
+
+    // Legacy-shape guard: some older callers might still pass a bare
+    // nutrition block. Normalize either way.
+    const {
+      nutrition: block,
+      packageInfo,
+      provenance,
+      dirtyCount,
+      scanId,
+    } = typeof payload === "object" && payload && "nutrition" in payload
+      ? payload
+      : { nutrition: payload, packageInfo: null, provenance: null, dirtyCount: 0, scanId: null };
+
+    // Build the pantry_items patch. Package-size fields only apply
+    // when the user kept the "also fill in package size" checkbox on
+    // inside NutritionOverrideSheet (parent passed packageInfo).
+    const patch = { nutritionOverride: block };
+    if (packageInfo) {
+      const nw = packageInfo.net_weight;
+      if (nw && nw.amount && nw.unit) {
+        patch.amount = nw.amount;
+        patch.unit   = nw.unit;
+        patch.max    = nw.amount;
+      } else if (packageInfo.serving_g && packageInfo.servings_per_container) {
+        // Derive from serving × servings when no net weight was read.
+        const grams = Number(packageInfo.serving_g) * Number(packageInfo.servings_per_container);
+        if (Number.isFinite(grams) && grams > 0) {
+          patch.amount = grams;
+          patch.unit   = "g";
+          patch.max    = grams;
+        }
+      }
+    }
+    onUpdate?.(patch);
+
+    // Brand-tier teach — fire-and-forget. Guarded on:
+    //   - provenance is a label scan (manual edits don't teach)
+    //   - canonical + brand both exist (store-brand rows with no
+    //     brand stay private)
+    //   - dirtyCount <= 3 (the user basically agreed with the scan;
+    //     heavy corrections might be row-specific)
+    const canonicalId = item?.ingredientId || item?.canonicalId || null;
+    const itemBrand = item?.brand || null;
+    if (provenance === "label_scan" && canonicalId && itemBrand && dirtyCount <= 3 && upsertBrandNutrition) {
+      upsertBrandNutrition({
+        canonicalId,
+        brand:      itemBrand,
+        nutrition:  block,
+        barcode:    item?.barcodeUpc || null,
+        source:     "label_scan",
+        sourceId:   scanId || null,
+        confidence: 90,
+      }).catch(e => console.warn("[brand_nutrition] scan teach failed:", e));
+    }
+
+    if (patch.amount && canonicalId) {
+      clearPopularPackagesCache(itemBrand, canonicalId);
+    }
+
+    setScanPayload(null);
   };
 
-  // When no resolver tier fires, render a "TAP TO ADD" affordance
-  // instead of hiding. Pre-Phase-4 we bailed with `return null` which
-  // stranded users on items like store-brand scans that no tier
-  // covered — they had no way to type the number in themselves.
+  // Scanner → Review handoff. Store the extracted payload and swap
+  // scanner for override sheet pre-filled with the scan values.
+  const handleScanComplete = (payload) => {
+    setScanPayload(payload);
+    setScannerOpen(false);
+    setOverrideOpen(true);
+  };
+
+  // User gave up on the scan and wants to type. Close scanner, open
+  // the override sheet in manual mode (no initialValues / provenance).
+  const handleManualFallback = () => {
+    setScanPayload(null);
+    setScannerOpen(false);
+    setOverrideOpen(true);
+  };
+
+  // When no resolver tier fires, render a hero scan affordance with
+  // a manual fallback beneath. This is the primary entry point for
+  // filling every gap in the nutrition graph — a photo of the label
+  // should be enough; typing is the escape hatch, not the default.
   if (!nutrition) {
     return (
       <>
+        <div style={{
+          marginBottom: 14,
+          padding: 2,
+          borderRadius: 14,
+          background: "linear-gradient(135deg, #f5c84222, transparent 45%, #f5c84222)",
+        }}>
+          <button
+            onClick={() => setScannerOpen(true)}
+            style={{
+              width: "100%", padding: "14px 14px",
+              background: "linear-gradient(135deg, #1a1508 0%, #141414 70%)",
+              border: `1px solid #3a2f10`,
+              borderRadius: 12,
+              display: "flex", alignItems: "center", gap: 12,
+              cursor: "pointer", textAlign: "left",
+              transition: "transform 0.14s ease, border-color 0.14s ease",
+            }}
+            onMouseDown={(e) => { e.currentTarget.style.transform = "scale(0.99)"; }}
+            onMouseUp={(e)   => { e.currentTarget.style.transform = "scale(1)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+          >
+            <span style={{
+              fontSize: 20,
+              filter: "drop-shadow(0 0 10px #f5c84266)",
+            }}>📸</span>
+            <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 700,
+                color: "#f5c842", letterSpacing: "0.1em",
+              }}>
+                SCAN NUTRITION LABEL
+              </span>
+              <span style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                color: "#888", lineHeight: 1.35,
+              }}>
+                Snap the label — we read calories, macros, vitamins, serving size.
+              </span>
+            </span>
+            <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
+          </button>
+        </div>
         <button
-          onClick={() => setOverrideOpen(true)}
+          onClick={() => { setScanPayload(null); setOverrideOpen(true); }}
           style={{
-            width: "100%", padding: "10px 12px", marginBottom: 14,
-            background: "#141414", border: "1px dashed #2a2a2a",
-            borderRadius: 10,
-            display: "flex", alignItems: "center", gap: 10,
-            cursor: "pointer", textAlign: "left",
+            display: "block",
+            margin: "-8px auto 14px",
+            padding: "4px 10px",
+            background: "transparent", border: "none",
+            color: "#666",
+            fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+            cursor: "pointer",
+            textDecoration: "underline",
+            textUnderlineOffset: 3,
+            textDecorationColor: "#333",
           }}
         >
-          <span style={{ fontSize: 16, opacity: 0.6 }}>🔥</span>
-          <span style={{
-            flex: 1,
-            fontFamily: "'DM Mono',monospace", fontSize: 11,
-            color: "#888", letterSpacing: "0.08em",
-          }}>
-            TAP TO ADD NUTRITION
-          </span>
-          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>✎</span>
+          ✎ or type it in manually
         </button>
+        {scannerOpen && (
+          <NutritionLabelScanner
+            item={item}
+            onClose={() => setScannerOpen(false)}
+            onComplete={handleScanComplete}
+            onManualFallback={handleManualFallback}
+          />
+        )}
         {overrideOpen && (
           <NutritionOverrideSheet
             item={item}
-            onClose={() => setOverrideOpen(false)}
+            onClose={() => { setOverrideOpen(false); setScanPayload(null); }}
             onSave={saveOverride}
+            initialValues={scanPayload?.nutritionBlock || null}
+            initialPer={scanPayload?.nutritionBlock?.per || null}
+            provenance={scanPayload ? "label_scan" : null}
+            packageInfo={scanPayload?.packageInfo || null}
+            photoPreviewUrl={scanPayload?.photoPreviewUrl || null}
+            scanId={scanPayload?.scanId || null}
           />
         )}
       </>
@@ -3934,15 +4090,32 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
             {expanded ? "▾" : "▸"}
           </span>
         </button>
-        {/* Override affordance — separate button so tapping it doesn't
-            toggle the expand. Uses a pencil glyph to read as "edit"
-            rather than "add", since nutrition is already present.
-            Source="pantry" means the override itself is what's
-            rendering; the button still opens the sheet so the user can
-            edit or clear their own override. */}
+        {/* Rescan — primary edit affordance. A photo of the label is
+            faster than retyping, especially for items where the current
+            tier (canonical fallback / OFF approximation) might be stale
+            or the wrong SKU. Opens NutritionLabelScanner directly. */}
         <button
-          onClick={() => setOverrideOpen(true)}
-          title={source === "pantry" ? "Edit override" : "Override with your numbers"}
+          onClick={() => setScannerOpen(true)}
+          title="Rescan label"
+          style={{
+            padding: "0 10px",
+            background: "#1a1508", border: "1px solid #3a2f10",
+            color: "#f5c842",
+            borderRadius: 10,
+            fontFamily: "'DM Mono',monospace", fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          📸
+        </button>
+        {/* Pencil — manual edit / clear path. Kept for the case where
+            the user already has an override and wants to tweak a single
+            value without going through the scan flow, OR wants to clear
+            the override. Source="pantry" tints green so the user can
+            see their override is the authoritative tier. */}
+        <button
+          onClick={() => { setScanPayload(null); setOverrideOpen(true); }}
+          title={source === "pantry" ? "Edit override" : "Type numbers manually"}
           style={{
             padding: "0 12px",
             background: "#141414", border: "1px solid #242424",
@@ -3966,16 +4139,38 @@ function NutritionChip({ item, getInfo, getBrandNutrition, onUpdate }) {
           <MacroCell label="PROTEIN"  value={nutrition.protein_g} unit="g" />
           <MacroCell label="CARBS"    value={nutrition.carb_g}    unit="g" />
           <MacroCell label="FAT"      value={nutrition.fat_g}     unit="g" />
-          {typeof nutrition.fiber_g   === "number" && <MacroCell label="FIBER"  value={nutrition.fiber_g}   unit="g"  />}
-          {typeof nutrition.sugar_g   === "number" && <MacroCell label="SUGAR"  value={nutrition.sugar_g}   unit="g"  />}
-          {typeof nutrition.sodium_mg === "number" && <MacroCell label="SODIUM" value={nutrition.sodium_mg} unit="mg" />}
+          {typeof nutrition.fiber_g         === "number" && <MacroCell label="FIBER"         value={nutrition.fiber_g}         unit="g"  />}
+          {typeof nutrition.sugar_g         === "number" && <MacroCell label="SUGAR"         value={nutrition.sugar_g}         unit="g"  />}
+          {typeof nutrition.added_sugar_g   === "number" && <MacroCell label="ADDED SUGAR"   value={nutrition.added_sugar_g}   unit="g"  />}
+          {typeof nutrition.saturated_fat_g === "number" && <MacroCell label="SAT. FAT"      value={nutrition.saturated_fat_g} unit="g"  />}
+          {typeof nutrition.trans_fat_g     === "number" && <MacroCell label="TRANS FAT"     value={nutrition.trans_fat_g}     unit="g"  />}
+          {typeof nutrition.cholesterol_mg  === "number" && <MacroCell label="CHOLESTEROL"   value={nutrition.cholesterol_mg}  unit="mg" />}
+          {typeof nutrition.sodium_mg       === "number" && <MacroCell label="SODIUM"        value={nutrition.sodium_mg}       unit="mg" />}
+          {typeof nutrition.vitamin_d_mcg   === "number" && <MacroCell label="VITAMIN D"     value={nutrition.vitamin_d_mcg}   unit="mcg" />}
+          {typeof nutrition.calcium_mg      === "number" && <MacroCell label="CALCIUM"       value={nutrition.calcium_mg}      unit="mg" />}
+          {typeof nutrition.iron_mg         === "number" && <MacroCell label="IRON"          value={nutrition.iron_mg}         unit="mg" />}
+          {typeof nutrition.potassium_mg    === "number" && <MacroCell label="POTASSIUM"     value={nutrition.potassium_mg}    unit="mg" />}
         </div>
+      )}
+      {scannerOpen && (
+        <NutritionLabelScanner
+          item={item}
+          onClose={() => setScannerOpen(false)}
+          onComplete={handleScanComplete}
+          onManualFallback={handleManualFallback}
+        />
       )}
       {overrideOpen && (
         <NutritionOverrideSheet
           item={item}
-          onClose={() => setOverrideOpen(false)}
+          onClose={() => { setOverrideOpen(false); setScanPayload(null); }}
           onSave={saveOverride}
+          initialValues={scanPayload?.nutritionBlock || null}
+          initialPer={scanPayload?.nutritionBlock?.per || null}
+          provenance={scanPayload ? "label_scan" : null}
+          packageInfo={scanPayload?.packageInfo || null}
+          photoPreviewUrl={scanPayload?.photoPreviewUrl || null}
+          scanId={scanPayload?.scanId || null}
         />
       )}
     </div>
