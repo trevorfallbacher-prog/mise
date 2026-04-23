@@ -12,6 +12,7 @@ export const DEFAULT_PREFERENCES = Object.freeze({
   prep_reminders:        true,
   receipt_activity:      true,
   pantry_scan_activity:  true,
+  cook_step_timers:      true,
   quiet_hours_start:     null,
   quiet_hours_end:       null,
   timezone:              typeof Intl !== "undefined"

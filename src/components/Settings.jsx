@@ -754,6 +754,14 @@ function NotificationPreferencesSection({ userId }) {
       />
 
       <PrefToggle
+        label="COOK TIMER PUSHES"
+        hint="Mid-cook pings — 'flip the steak', 'bread out of the oven'. Close the app during a 30-min braise and get a push when it's time to act."
+        value={!!preferences.cook_step_timers}
+        onChange={v => setPref({ cook_step_timers: v })}
+        tone="#f5c842"
+      />
+
+      <PrefToggle
         label="MEAL COORDINATION"
         hint="Who's cooking, meal rescheduled, requests to cook. Doesn't cover prep — that's above."
         value={!!preferences.meal_coordination}
