@@ -5387,15 +5387,29 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Low-stock surface — now stack-aware. Each entry is the HEAD row
   // of a bucket that passes isStackLow (discrete stacks compare
   // instance count, fractional stacks sum amounts), with the full
+  // Pantry identity-grouped once per pantry change. Previously
+  // groupByIdentity(pantry) was called inline here, at the tile
+  // renderStack site (L7047), and at ItemCard's hydration paths
+  // (L7556, L7878, L7897). Each call is O(N); a pantry of 100+
+  // items runs this 5+ times per render on tab switches. Cache it
+  // once and pass the result down where possible.
+  const pantryBuckets = useMemo(() => groupByIdentity(pantry), [pantry]);
   // bucket attached via _bucket for the restock math. Rendering the
   // banner chips and addLowStockToList both iterate this list as
   // one-per-identity rather than one-per-row, so a 5-can tuna stack
   // contributes one entry, not five.
   const lowItems = useMemo(() => {
-    return groupByIdentity(pantry)
+    return pantryBuckets
       .filter(isStackLow)
       .map(b => ({ ...b.items[0], _bucket: b }));
-  }, [pantry]);
+  }, [pantryBuckets]);
+  // Stocked count for the Kitchen header — was inline filter on
+  // every render. Memoize so scrolling / typing doesn't re-walk the
+  // pantry array + re-run pct() per item.
+  const stockedCount = useMemo(
+    () => pantry.reduce((n, i) => pct(i) > 50 ? n + 1 : n, 0),
+    [pantry],
+  );
 
   // Current tab's tile set + classifier. Null when the tab has no tiles
   // wired yet (freezer) — the render path falls back to a flat list.
@@ -7111,7 +7125,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
               </>
             ) : (
               <>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{pantry.filter(i=>pct(i)>50).length}/{pantry.length}</div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{stockedCount}/{pantry.length}</div>
                 <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>STOCKED</div>
               </>
             )}
@@ -7892,10 +7906,9 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // Widen the bucket: any OTHER rows that share identity
         // (e.g. the user just tapped + PACKAGE and we want the new
         // row in the list) should show up here too. Walk the full
-        // pantry, collect identity-matches via groupByIdentity on a
-        // synthetic seed.
-        const allBuckets = groupByIdentity(pantry);
-        const match = allBuckets.find(b => b.key === stackDrilldown.key);
+        // pantry, collect identity-matches via the already-memoized
+        // pantryBuckets from the top of the component.
+        const match = pantryBuckets.find(b => b.key === stackDrilldown.key);
         if (match) bucket = match;
         const ordered = sortedInstances(bucket, "fifo");
         const top = ordered[0] || bucket.items[0];

@@ -66,8 +66,61 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
 
   // Realtime subscription — merges in changes from other users, and
   // reconciles our own changes against what the DB ultimately stored.
+  //
+  // BATCHING: Supabase streams realtime events one-at-a-time over
+  // WebSocket, each on its own microtask, which React 18 does NOT
+  // automatically batch (batching only covers event handlers +
+  // effects, not async ticks). A commit that inserts 10 rows fires
+  // 10 setItems calls and 10 top-level re-renders of whoever uses
+  // this list (Kitchen, Shop Mode, etc.). On trips with bulk pantry
+  // inserts + shopping list mark-purchased + trip_scans audit, that
+  // compounds into visible UI jank.
+  //
+  // Fix: queue events in a ref, flush with a single setItems call
+  // on the next microtask. Cost: one-tick visual lag for remote
+  // changes (imperceptible). Win: ONE render per flush regardless
+  // of event count.
   useEffect(() => {
     if (!userId) return;
+    const pending = []; // queue of [eventType, newRow, oldRow]
+    let flushScheduled = false;
+    const flush = () => {
+      flushScheduled = false;
+      if (pending.length === 0) return;
+      const batch = pending.splice(0, pending.length);
+      setItems(prev => {
+        let next = prev;
+        for (const [eventType, newRow, oldRow] of batch) {
+          if (eventType === "INSERT") {
+            if (!next.some(i => i.id === newRow.id)) {
+              // Allocate once per batch: grow the array only on the
+              // first INSERT in this flush.
+              if (next === prev) next = prev.slice();
+              next.push(newRow);
+            }
+          } else if (eventType === "UPDATE") {
+            const idx = next.findIndex(i => i.id === newRow.id);
+            if (idx === -1) {
+              if (next === prev) next = prev.slice();
+              next.push(newRow);
+            } else if (next[idx] !== newRow) {
+              if (next === prev) next = prev.slice();
+              next[idx] = newRow;
+            }
+          } else if (eventType === "DELETE") {
+            const id = oldRow?.id;
+            if (id != null) {
+              const idx = next.findIndex(i => i.id === id);
+              if (idx !== -1) {
+                if (next === prev) next = prev.slice();
+                next.splice(idx, 1);
+              }
+            }
+          }
+        }
+        return next;
+      });
+    };
     const ch = safeChannel(`rt:${table}:${userId}`)
       .on("postgres_changes", { event: "*", schema: "public", table }, (payload) => {
         const mapRow = fromDbRef.current;
@@ -77,28 +130,22 @@ export function useSyncedList({ table, userId, toDb, fromDb, refreshKey, selfOnl
           (payload.new && payload.new.user_id && payload.new.user_id !== userId) ||
           (payload.old && payload.old.user_id && payload.old.user_id !== userId);
 
-        setItems(prev => {
-          if (payload.eventType === "INSERT") {
-            if (prev.some(i => i.id === newRow.id)) return prev;
-            return [...prev, newRow];
-          }
-          if (payload.eventType === "UPDATE") {
-            if (!prev.some(i => i.id === newRow.id)) return [...prev, newRow];
-            return prev.map(i => (i.id === newRow.id ? newRow : i));
-          }
-          if (payload.eventType === "DELETE") {
-            const id = oldRow?.id;
-            if (!id) return prev;
-            return prev.filter(i => i.id !== id);
-          }
-          return prev;
-        });
+        pending.push([payload.eventType, newRow, oldRow]);
+        if (!flushScheduled) {
+          flushScheduled = true;
+          queueMicrotask(flush);
+        }
 
         const cb = onRealtimeRef.current;
         if (fromOther && cb) cb(payload.eventType, newRow, oldRow);
       })
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    return () => {
+      // Flush any lingering events synchronously before tearing
+      // down — avoids a memory-only write being lost on unmount.
+      if (pending.length > 0) flush();
+      supabase.removeChannel(ch);
+    };
   }, [table, userId]);
 
   // StrictMode dedup: React invokes the updater below twice in dev
