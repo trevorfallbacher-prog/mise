@@ -480,9 +480,17 @@ export default function AIRecipe({
   // — resets every time a different row's picker opens.
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
   const [swapSearch,  setSwapSearch]  = useState("");
+  // Override toggle for the swap picker. When false (default), the
+  // picker hides incompatible candidates (score 0 — different food
+  // category and no token overlap). When true, the user has
+  // explicitly asked to see the full pantry including the rough
+  // matches. Resets whenever the picker closes so each open starts
+  // with the safe default.
+  const [showIncompatSwaps, setShowIncompatSwaps] = useState(false);
   const openSwapPicker = (idx) => {
     setSwapOpenIdx(idx);
     setSwapSearch("");
+    setShowIncompatSwaps(false);   // each open starts with the safe gate on
   };
   const [addOpen, setAddOpen]         = useState(false);
   // Revision instruction for the FINAL cook — the user's "make it
@@ -1440,6 +1448,26 @@ export default function AIRecipe({
     // name to contain the query as a substring (user is explicitly
     // typing, so loose substring is fine — we're filtering a list
     // in front of their eyes, not auto-pairing).
+    // Quality tiers derived from rankSwapCandidates scores.
+    //   score >= 1000 → "exact"   (same canonical id)
+    //   score >=  500 → "family"  (same hub — cuts of chicken, kinds of cheese)
+    //   score >=  100 → "category"(same food category — dairy, produce, etc.)
+    //   score >    0  → "weak"    (only token overlap)
+    //   score ==   0  → "incompat"(different category AND no overlap)
+    //
+    // The swap picker won't render incompat candidates by default —
+    // butter can't substitute for oranges and we shouldn't present it
+    // as an option. An explicit "show anything" disclosure exists for
+    // intentional overrides; picking a "weak" candidate triggers a
+    // confirm so the user acknowledges the stretch.
+    const classifySwapQuality = (score) => {
+      if (score >= 1000) return "exact";
+      if (score >= 500) return "family";
+      if (score >= 100) return "category";
+      if (score > 0) return "weak";
+      return "incompat";
+    };
+
     const rankSwapCandidates = (sketchPantryRow, query) => {
       const primaryCanon = sketchPantryRow.ingredientId
         ? findIngredient(sketchPantryRow.ingredientId)
@@ -1990,9 +2018,36 @@ export default function AIRecipe({
                           pantryItemId: null,
                         };
                         const ranked = rankSwapCandidates(target, swapSearch);
-                        const shown = q
-                          ? ranked.slice(0, 8).map(r => r.row)
-                          : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                        const scored = ranked.map(r => ({
+                          row: r.row,
+                          score: r.score,
+                          quality: classifySwapQuality(r.score),
+                        }));
+                        const safe = scored.filter(r => r.quality !== "incompat");
+                        const incompat = scored.filter(r => r.quality === "incompat");
+                        // Default-empty search-first picker. Nothing
+                        // renders until the user types. Same gating as
+                        // the primary swap picker — incompat items hidden
+                        // unless explicitly shown.
+                        const baseShown = q ? safe.slice(0, 12) : [];
+                        const shown = showIncompatSwaps && q
+                          ? [...baseShown, ...incompat.slice(0, 20)]
+                          : baseShown;
+                        const pickCandidate = (c) => {
+                          if (c.quality === "weak") {
+                            const ok = typeof window !== "undefined" && window.confirm
+                              ? window.confirm(`"${c.row.name}" isn't a close match for "${ideal.name}". Use it anyway?`)
+                              : true;
+                            if (!ok) return;
+                          } else if (c.quality === "incompat") {
+                            const ok = typeof window !== "undefined" && window.confirm
+                              ? window.confirm(`"${c.row.name}" is in a different food category than "${ideal.name}" — this is an unusual substitution. Use it anyway?`)
+                              : true;
+                            if (!ok) return;
+                          }
+                          addPantryRow(c.row);
+                          openSwapPicker(null);
+                        };
                         return (
                           <div style={{
                             marginTop: 10, paddingTop: 10,
@@ -2011,30 +2066,79 @@ export default function AIRecipe({
                               autoFocus
                             />
                             {!q && (
-                              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
-                                TOP 3 CLOSEST · TYPE TO SEARCH
+                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                                Type to search your pantry for a substitute.
                               </div>
                             )}
-                            {shown.length === 0 && (
-                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                                {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                            {q && shown.length === 0 && (
+                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
+                                No compatible substitutes match &quot;{q}&quot;.
+                                {!showIncompatSwaps && incompat.length > 0 && (
+                                  <>
+                                    {" "}
+                                    <button
+                                      onClick={() => setShowIncompatSwaps(true)}
+                                      style={{
+                                        background: "transparent", border: "none",
+                                        color: "#7eb8d4", cursor: "pointer",
+                                        padding: 0, font: "inherit",
+                                        textDecoration: "underline",
+                                      }}
+                                    >
+                                      Show all pantry items anyway
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             )}
                             {shown.map(c => (
                               <button
-                                key={c.id}
-                                onClick={() => { addPantryRow(c); openSwapPicker(null); }}
+                                key={c.row.id}
+                                onClick={() => pickCandidate(c)}
                                 style={swapOptionBtn}
+                                title={
+                                  c.quality === "exact"    ? "Same ingredient"
+                                : c.quality === "family"   ? "Same ingredient family"
+                                : c.quality === "category" ? "Same food category"
+                                : c.quality === "weak"     ? "Only loosely related"
+                                : "Different food category — unusual substitution"
+                                }
                               >
-                                <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                                <span style={{ fontSize: 16 }}>{c.row.emoji || "🥫"}</span>
                                 <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                                  {c.name}
+                                  {c.row.name}
                                 </span>
+                                {(c.quality === "weak" || c.quality === "incompat") && (
+                                  <span style={{
+                                    padding: "1px 6px",
+                                    background: "#2a1210", border: "1px solid #5a2a22",
+                                    color: "#e8908a", borderRadius: 6,
+                                    fontFamily: "'DM Mono',monospace", fontSize: 8,
+                                    letterSpacing: "0.06em",
+                                  }}>
+                                    {c.quality === "weak" ? "LOOSE" : "DIFFERENT CATEGORY"}
+                                  </span>
+                                )}
                                 <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
-                                  {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                                  {c.row.amount}{c.row.unit ? ` ${c.row.unit}` : ""}
                                 </span>
                               </button>
                             ))}
+                            {q && shown.length > 0 && !showIncompatSwaps && incompat.length > 0 && (
+                              <button
+                                onClick={() => setShowIncompatSwaps(true)}
+                                style={{
+                                  marginTop: 4,
+                                  padding: "4px 8px",
+                                  background: "transparent", border: "1px dashed #2a2a2a",
+                                  color: "#666", borderRadius: 6,
+                                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                  letterSpacing: "0.06em", cursor: "pointer",
+                                }}
+                              >
+                                + SHOW {incompat.length} MORE (DIFFERENT CATEGORY)
+                              </button>
+                            )}
                           </div>
                         );
                       })()}
@@ -2236,15 +2340,50 @@ export default function AIRecipe({
                       </div>
                     </div>
                     {swapOpen && (() => {
-                      // Pin the 3 closest matches at the top and let
-                      // the user type to filter the rest of pantry.
-                      // Replaces the old full-category dump that made
-                      // the user scroll past 20+ items every swap.
+                      // Metadata-gated swap picker. Default shows only
+                      // candidates in the same food category, hub, or
+                      // sharing a token — real substitution territory.
+                      // Incompatible candidates (different category, no
+                      // overlap) are hidden unless the user explicitly
+                      // opts to see them via the disclosure below.
                       const q = swapSearch.trim();
                       const ranked = rankSwapCandidates(row, swapSearch);
-                      const shown = q
-                        ? ranked.slice(0, 8).map(r => r.row)
-                        : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                      const scored = ranked.map(r => ({
+                        row: r.row,
+                        score: r.score,
+                        quality: classifySwapQuality(r.score),
+                      }));
+                      const safe = scored.filter(r => r.quality !== "incompat");
+                      const incompat = scored.filter(r => r.quality === "incompat");
+                      // Default-empty: the picker shows nothing until
+                      // the user types into the search box. Avoids the
+                      // "wall of chips" behavior the user called out.
+                      // With a query, render the top 12 compatible
+                      // matches; show-all toggle appends incompat.
+                      const baseShown = q ? safe.slice(0, 12) : [];
+                      const shown = showIncompatSwaps && q
+                        ? [...baseShown, ...incompat.slice(0, 20)]
+                        : baseShown;
+                      const pickCandidate = (c) => {
+                        // Weak picks (token-only overlap — e.g. "cream
+                        // cheese" searched as "cream" against "heavy
+                        // cream") get a confirm so intentional stretches
+                        // aren't accidental. Incompat picks (butter for
+                        // oranges) get a sharper confirm before applying.
+                        if (c.quality === "weak") {
+                          const ok = typeof window !== "undefined" && window.confirm
+                            ? window.confirm(`"${c.row.name}" isn't a close match for "${row.name}". Use it anyway?`)
+                            : true;
+                          if (!ok) return;
+                        } else if (c.quality === "incompat") {
+                          const ok = typeof window !== "undefined" && window.confirm
+                            ? window.confirm(`"${c.row.name}" is in a different food category than "${row.name}" — this is an unusual substitution. Use it anyway?`)
+                            : true;
+                          if (!ok) return;
+                        }
+                        applySwap(pantryIdx, c.row.id);
+                        openSwapPicker(null);
+                      };
                       return (
                         <div style={{
                           marginTop: 10, paddingTop: 10,
@@ -2263,30 +2402,87 @@ export default function AIRecipe({
                             autoFocus
                           />
                           {!q && (
-                            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
-                              TOP 3 CLOSEST · TYPE TO SEARCH
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                              Type to search your pantry for a substitute.
                             </div>
                           )}
-                          {shown.length === 0 && (
-                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                              {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                          {q && shown.length === 0 && (
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
+                              No compatible substitutes match &quot;{q}&quot;.
+                              {!showIncompatSwaps && incompat.length > 0 && (
+                                <>
+                                  {" "}
+                                  <button
+                                    onClick={() => setShowIncompatSwaps(true)}
+                                    style={{
+                                      background: "transparent", border: "none",
+                                      color: "#7eb8d4", cursor: "pointer",
+                                      padding: 0, font: "inherit",
+                                      textDecoration: "underline",
+                                    }}
+                                  >
+                                    Show all pantry items anyway
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                           {shown.map(c => (
                             <button
-                              key={c.id}
-                              onClick={() => { applySwap(pantryIdx, c.id); openSwapPicker(null); }}
+                              key={c.row.id}
+                              onClick={() => pickCandidate(c)}
                               style={swapOptionBtn}
+                              title={
+                                c.quality === "exact"    ? "Same ingredient"
+                              : c.quality === "family"   ? "Same ingredient family"
+                              : c.quality === "category" ? "Same food category"
+                              : c.quality === "weak"     ? "Only loosely related"
+                              : "Different food category — unusual substitution"
+                              }
                             >
-                              <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                              <span style={{ fontSize: 16 }}>{c.row.emoji || "🥫"}</span>
                               <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                                {c.name}
+                                {c.row.name}
                               </span>
+                              {/* Quality badge. exact+family fade into
+                                  the chip so the common case is quiet;
+                                  weak/incompat get a visible warning. */}
+                              {(c.quality === "weak" || c.quality === "incompat") && (
+                                <span style={{
+                                  padding: "1px 6px",
+                                  background: "#2a1210", border: "1px solid #5a2a22",
+                                  color: "#e8908a", borderRadius: 6,
+                                  fontFamily: "'DM Mono',monospace", fontSize: 8,
+                                  letterSpacing: "0.06em",
+                                }}>
+                                  {c.quality === "weak" ? "LOOSE" : "DIFFERENT CATEGORY"}
+                                </span>
+                              )}
                               <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
-                                {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                                {c.row.amount}{c.row.unit ? ` ${c.row.unit}` : ""}
                               </span>
                             </button>
                           ))}
+                          {/* Override disclosure. Only shown when
+                              compatible picks exist AND the user
+                              hasn't yet opted in. Gives a way to see
+                              "weird" pantry items without defaulting
+                              to the kitchen-sink behavior. */}
+                          {shown.length > 0 && !showIncompatSwaps && incompat.length > 0 && (
+                            <button
+                              onClick={() => setShowIncompatSwaps(true)}
+                              style={{
+                                marginTop: 4,
+                                padding: "4px 8px",
+                                background: "transparent", border: "1px dashed #2a2a2a",
+                                color: "#666", borderRadius: 6,
+                                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                letterSpacing: "0.06em", cursor: "pointer",
+                              }}
+                            >
+                              + SHOW {incompat.length} MORE (DIFFERENT CATEGORY)
+                            </button>
+                          )}
                           {swappedRow && (
                             <button onClick={() => { clearSwap(pantryIdx); openSwapPicker(null); }} style={swapClearBtn}>
                               ↺ REVERT TO ORIGINAL ({row.name})
