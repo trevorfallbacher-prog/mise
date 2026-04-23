@@ -19,7 +19,7 @@
 // Skip-receipt path is always available — pantry rows still land with
 // full identity, just without prices.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, memo } from "react";
 import { supabase } from "../lib/supabase";
 import { compressImage } from "../lib/compressImage";
 import { findIngredient } from "../data/ingredients";
@@ -35,6 +35,7 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../lib/barcodeCorrections";
+import { usePopularPackages } from "../lib/usePopularPackages";
 import { useProfile } from "../lib/useProfile";
 
 const FLASH_COLORS = {
@@ -328,14 +329,50 @@ export default function ShopModeCheckout({
   // the pantry row is built in doCommit. Kept in local state (not
   // persisted) — edits are lost if the user backs out of checkout.
   const [packageOverrides, setPackageOverrides] = useState(() => new Map());
-  function setPackageOverride(scanId, patch) {
+
+  // scansRef lets handlePackageChange read the latest scan without
+  // becoming identity-unstable on every scan state change. The
+  // callback identity has to stay stable because EditableScanLine is
+  // React.memo'd — a fresh closure every render would bust the memo
+  // and defeat the whole perf rewrite.
+  const scansRef = useRef(scans);
+  useEffect(() => { scansRef.current = scans; }, [scans]);
+
+  // CENTRAL edit handler — single source of truth for both local
+  // override state AND teach-on-edit UPC writes. Fires a
+  // rememberBarcodeCorrection the moment the user picks a chip so
+  // the correction lives in Supabase before commit, surviving a
+  // back-out or crash. Per CLAUDE.md minimal-data-entry rule: every
+  // identity-axis edit teaches. Commit-time is too late for UX.
+  const handlePackageChange = useCallback((scanId, patch) => {
     setPackageOverrides(prev => {
       const next = new Map(prev);
       const current = next.get(scanId) || {};
       next.set(scanId, { ...current, ...patch });
       return next;
     });
-  }
+    const scan = scansRef.current.find(s => s.id === scanId);
+    if (!scan?.barcodeUpc) return;
+    const teach = {};
+    if (patch.typeId)     teach.typeId = patch.typeId;
+    if (patch.tileId)     teach.tileId = patch.tileId;
+    if (patch.location)   teach.location = patch.location;
+    if (scan.canonicalId) teach.canonicalId = scan.canonicalId;
+    if (Object.keys(teach).length === 0) return;
+    rememberBarcodeCorrection({
+      userId, isAdmin,
+      barcodeUpc: scan.barcodeUpc,
+      ...teach,
+      ingredientIds: scan.canonicalId ? [scan.canonicalId] : [],
+      categoryHints: scan.offPayload?.categoryHints || null,
+    })
+      .then(r => {
+        if (r?.error) {
+          console.warn("[shop-checkout] teach-on-edit DB error:", r.error.message || r.error);
+        }
+      })
+      .catch(e => console.warn("[shop-checkout] teach-on-edit threw:", e?.message || e));
+  }, [userId, isAdmin]);
 
   async function handlePhotoSelect(e) {
     const file = e?.target?.files?.[0];
@@ -655,22 +692,21 @@ export default function ShopModeCheckout({
         } else {
           newPantryIds.set(scan.id, id);
 
-          // Teach the UPC → identity correction memory when the
-          // user explicitly overrode any axis on the checkout
-          // editor (typeId, tileId, location, OR canonical picked
-          // via LinkIngredient). Same pattern used by the main
-          // Scanner's correction flow — admin writes go to the
-          // global tier, everyone else to the family tier. Next
-          // scan of this UPC auto-resolves to the taught values.
+          // Teach UPC → identity memory for EVERY committed pantry
+          // row, not just the ones where the user explicitly
+          // overrode an axis. The cascade above has already resolved
+          // the best value we know for typeId/tileId/location; that
+          // resolved answer IS what the next scanner should see. The
+          // previous gate (`correctionPatch.length > 0`) silently
+          // skipped rows where the user accepted inferred defaults,
+          // which is why the same UPCs kept re-prompting on every
+          // trip. teach-on-edit in handlePackageChange covers the
+          // in-flight chip picks; this covers commit-time finalization.
           const correctionPatch = {};
-          if (override?.typeId)   correctionPatch.typeId     = override.typeId;
-          if (override?.tileId)   correctionPatch.tileId     = override.tileId;
-          if (override?.location) correctionPatch.location   = override.location;
-          if (scan.canonicalId)   correctionPatch.canonicalId = scan.canonicalId;
-          // Only write when at least one identity field would land
-          // AND the scan has a UPC to key on (red scans without OFF
-          // data already have correctionPatch.canonicalId via the
-          // user's in-aisle rename, so they teach too).
+          if (row.type_id)      correctionPatch.typeId      = row.type_id;
+          if (row.tile_id)      correctionPatch.tileId      = row.tile_id;
+          if (row.location)     correctionPatch.location    = row.location;
+          if (scan.canonicalId) correctionPatch.canonicalId = scan.canonicalId;
           if (scan.barcodeUpc && Object.keys(correctionPatch).length > 0) {
             rememberBarcodeCorrection({
               userId,
@@ -680,7 +716,11 @@ export default function ShopModeCheckout({
               emoji: row.emoji,
               ingredientIds: row.components || (scan.canonicalId ? [scan.canonicalId] : []),
               categoryHints: scan.offPayload?.categoryHints || null,
-            }).catch(e => console.warn("[shop-checkout] rememberBarcodeCorrection failed:", e?.message || e));
+            })
+              .then(r => {
+                if (r?.error) console.warn("[shop-checkout] rememberBarcodeCorrection DB error:", r.error.message || r.error);
+              })
+              .catch(e => console.warn("[shop-checkout] rememberBarcodeCorrection threw:", e?.message || e));
           }
         }
       }
@@ -742,8 +782,10 @@ export default function ShopModeCheckout({
   }
 
   // Edit handlers — write through to DB first, then mutate local
-  // state. On error, local state is untouched so the user can retry.
-  async function patchScan(scanId, patch) {
+  // state. Wrapped in useCallback so EditableScanLine's React.memo
+  // actually catches: a fresh function every render would break the
+  // shallow prop compare.
+  const patchScan = useCallback(async (scanId, patch) => {
     const { data, error: e } = await supabase
       .from("trip_scans")
       .update(patch)
@@ -756,9 +798,9 @@ export default function ShopModeCheckout({
     }
     setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...remapFromDb(data) } : s));
     return true;
-  }
+  }, []);
 
-  async function deleteScan(scanId) {
+  const deleteScan = useCallback(async (scanId) => {
     const ok = window.confirm("Remove this scan from the trip? It won't be stocked on commit.");
     if (!ok) return;
     const { error: e } = await supabase.from("trip_scans").delete().eq("id", scanId);
@@ -768,7 +810,15 @@ export default function ShopModeCheckout({
     }
     setScans(prev => prev.filter(s => s.id !== scanId));
     setEditingScanId(prev => prev === scanId ? null : prev);
-  }
+  }, []);
+
+  const handleToggleEdit = useCallback((scanId) => {
+    setEditingScanId(prev => prev === scanId ? null : scanId);
+  }, []);
+
+  const handleUnpair = useCallback((scanId) => {
+    return patchScan(scanId, { paired_shopping_list_item_id: null });
+  }, [patchScan]);
 
   const pairedCount = scans.filter(s => s.pairedShoppingListItemId).length;
   const totalQty    = scans.reduce((n, s) => n + (s.qty || 1), 0);
@@ -803,12 +853,12 @@ export default function ShopModeCheckout({
                 scan={s}
                 listName={nameForListId(shoppingList, s.pairedShoppingListItemId)}
                 isOpen={editingScanId === s.id}
-                onToggle={() => setEditingScanId(prev => prev === s.id ? null : s.id)}
-                onPatch={(patch) => patchScan(s.id, patch)}
-                onDelete={() => deleteScan(s.id)}
-                onUnpair={() => patchScan(s.id, { paired_shopping_list_item_id: null })}
+                onToggle={handleToggleEdit}
+                onPatch={patchScan}
+                onDelete={deleteScan}
+                onUnpair={handleUnpair}
                 packageOverride={packageOverrides.get(s.id) || null}
-                onPackageChange={(patch) => setPackageOverride(s.id, patch)}
+                onPackageChange={handlePackageChange}
               />
             ))}
           </div>
@@ -957,17 +1007,18 @@ function remapFromDb(row) {
 // state = name + brand text inputs, qty stepper, unpair + delete
 // actions. Edits write through to the DB; parent updates local
 // state on success.
-function EditableScanLine({
+const EditableScanLine = memo(function EditableScanLine({
   scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair,
   packageOverride = null, onPackageChange,
 }) {
   const [name, setName]   = useState(scan.productName || "");
   const [brand, setBrand] = useState(scan.brand || "");
-  // Package size user overrides — default to the OFF-parsed value
-  // when available, else blank. Typing commits back via
-  // onPackageChange, which threads through to the top-level
-  // packageOverrides map and is consumed at commit time in doCommit.
-  const offParsed = parsePackageSize(scan.offPayload?.quantity || null);
+  // Package size — default to OFF-parsed when blank. offParsed is
+  // memoized below so the useState initializer doesn't recompute.
+  const offParsed = useMemo(
+    () => parsePackageSize(scan.offPayload?.quantity || null),
+    [scan.offPayload],
+  );
   const [pkgAmount, setPkgAmount] = useState(() =>
     packageOverride?.amount != null ? String(packageOverride.amount)
       : (offParsed?.amount != null ? String(offParsed.amount) : "")
@@ -992,94 +1043,111 @@ function EditableScanLine({
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
   const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
 
-  // Resolve the current canonical for display. findIngredient covers
-  // bundled; for synthetic (admin-approved user slugs) we degrade to
-  // showing the raw slug — LinkIngredient handles the full lookup.
-  const currentCanonical = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
-  const canonicalLabel = currentCanonical
-    ? `${currentCanonical.emoji || ""} ${currentCanonical.shortName || currentCanonical.name}`
-    : scan.canonicalId
-      ? scan.canonicalId
-      : null;
+  // The full resolve cascade — memoized on the real inputs so we
+  // don't re-run findIngredient / tagHintsToAxes /
+  // inferFoodTypeFromName / findFoodType / tileById on every parent
+  // render. This was the main heat source: N rows × 6 lookups × every
+  // keystroke anywhere in the checkout = phone hot enough to fry an
+  // egg.
+  const resolved = useMemo(() => {
+    const currentCanonical = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
+    const canonicalLabel = currentCanonical
+      ? `${currentCanonical.emoji || ""} ${currentCanonical.shortName || currentCanonical.name}`
+      : scan.canonicalId || null;
 
-  // Effective package size for the collapsed preview — mirrors the
-  // cascade doCommit uses: user override > OFF parsed > canonical
-  // default. Empty string when nothing's resolved (preview hides it).
-  const effectiveSize = (() => {
+    let offCategoryAxes;
+    try { offCategoryAxes = tagHintsToAxes(scan.offPayload?.categoryHints || []); }
+    catch { offCategoryAxes = { category: null, tileId: null, typeId: null }; }
+
+    const inferredTypeId = inferFoodTypeFromName(scan.productName || scan.brand || "") || null;
+    const effectiveTypeId = packageOverride?.typeId
+      || offCategoryAxes.typeId
+      || inferredTypeId
+      || null;
+    const effectiveType = effectiveTypeId ? findFoodType(effectiveTypeId) : null;
+    const effectiveCategory = effectiveType?.defaultTileId
+      ? tileToCategory(effectiveType.defaultTileId)
+      : (currentCanonical?.category
+        || offCategoryAxes.category
+        || "pantry");
+    const effectiveLocation = packageOverride?.location
+      || currentCanonical?.storage?.location
+      || defaultLocationForCategory(effectiveCategory);
+    const effectiveTileId = packageOverride?.tileId
+      || currentCanonical?.storage?.tileId
+      || offCategoryAxes.tileId
+      || null;
+    const effectiveTile = tileById(effectiveTileId);
+
+    return {
+      currentCanonical, canonicalLabel,
+      inferredTypeId,
+      effectiveTypeId, effectiveType,
+      effectiveCategory, effectiveLocation,
+      effectiveTileId, effectiveTile,
+    };
+  }, [
+    scan.canonicalId,
+    scan.offPayload,
+    scan.productName,
+    scan.brand,
+    packageOverride?.typeId,
+    packageOverride?.tileId,
+    packageOverride?.location,
+  ]);
+  const {
+    currentCanonical, canonicalLabel,
+    inferredTypeId,
+    effectiveTypeId, effectiveType,
+    effectiveLocation,
+    effectiveTileId, effectiveTile,
+  } = resolved;
+
+  // Effective package size for the collapsed preview.
+  const effectiveSize = useMemo(() => {
     if (packageOverride?.amount != null && packageOverride.amount > 0) {
-      return { amount: packageOverride.amount, unit: packageOverride.unit || offParsed?.unit || currentCanonical?.defaultUnit || "" };
+      return {
+        amount: packageOverride.amount,
+        unit: packageOverride.unit || offParsed?.unit || currentCanonical?.defaultUnit || "",
+      };
     }
     if (offParsed?.amount != null) return offParsed;
     return null;
-  })();
+  }, [packageOverride?.amount, packageOverride?.unit, offParsed, currentCanonical]);
   const sizeLabel = effectiveSize
     ? `${effectiveSize.amount}${effectiveSize.unit ? " " + effectiveSize.unit : ""}`
     : "";
 
-  // Effective category + location — same cascade doCommit uses.
-  // Category is a USDA-rooted WWEIA typeId (src/data/foodTypes.js),
-  // resolved via override → canonical match → name inference → null.
-  const offCategoryAxes = (() => {
-    try { return tagHintsToAxes(scan.offPayload?.categoryHints || []); }
-    catch { return { category: null, tileId: null, typeId: null }; }
-  })();
-  const effectiveTypeId = packageOverride?.typeId
-    || offCategoryAxes.typeId
-    || inferFoodTypeFromName(scan.productName || scan.brand || "")
-    || null;
-  const effectiveType = effectiveTypeId ? findFoodType(effectiveTypeId) : null;
-  // Broad category string (dairy / produce / meat / …) still used
-  // for the pantry_items.category NOT NULL column. Derived from the
-  // food type's default tile when we have one, else from OFF axes,
-  // else canonical, else "pantry".
-  const effectiveCategory = effectiveType?.defaultTileId
-    ? tileToCategory(effectiveType.defaultTileId)
-    : (currentCanonical?.category
-      || offCategoryAxes.category
-      || "pantry");
-  const canonStorage = currentCanonical?.storage?.location || null;
-  const effectiveLocation = packageOverride?.location
-    || canonStorage
-    || defaultLocationForCategory(effectiveCategory);
-  // STORED IN — the specific tile within the location. Cascade:
-  //   1. user override (tile picker)
-  //   2. canonical's storage.tile / tileId
-  //   3. tagHintsToAxes from OFF (best-effort)
-  //   4. null — preview renders "+ set stored in"
-  const effectiveTileId = packageOverride?.tileId
-    || currentCanonical?.storage?.tileId
-    || offCategoryAxes.tileId
-    || null;
-  const effectiveTile = tileById(effectiveTileId);
+  // Popular package sizes for this (brand, canonical). Cached one
+  // minute in usePopularPackages. Surfaced as tap-to-fill chips below
+  // the amount/unit inputs — turns a typing chore into a tap.
+  const { rows: popularRows } = usePopularPackages(scan.brand || null, scan.canonicalId || null, 5);
+  const top3 = useMemo(() => (popularRows || []).slice(0, 3), [popularRows]);
 
-  async function saveTextFields() {
+  const saveTextFields = useCallback(async () => {
     const patch = {};
     if ((name || "") !== (scan.productName || "")) patch.product_name = name.trim() || null;
     if ((brand || "") !== (scan.brand || ""))     patch.brand        = brand.trim() || null;
     if (Object.keys(patch).length === 0) return;
-    await onPatch(patch);
-  }
+    await onPatch(scan.id, patch);
+  }, [name, brand, scan.id, scan.productName, scan.brand, onPatch]);
 
-  async function bumpQty(delta) {
+  const bumpQty = useCallback(async (delta) => {
     const next = Math.max(1, (scan.qty || 1) + delta);
     if (next === scan.qty) return;
-    await onPatch({ qty: next });
-  }
+    await onPatch(scan.id, { qty: next });
+  }, [scan.id, scan.qty, onPatch]);
 
   // LinkIngredient picked a canonical (single-mode → first id is the
-  // pick). Write it + re-classify status: if we now have a canonical,
-  // status goes green; cleared canonical demotes to yellow (unless
-  // there was never OFF data — stays red).
-  async function onCanonicalPicked(ids) {
+  // pick). Write it + re-classify status.
+  const onCanonicalPicked = useCallback(async (ids) => {
     const next = Array.isArray(ids) && ids.length ? ids[0] : null;
-    const patch = {
-      canonical_id: next,
-    };
+    const patch = { canonical_id: next };
     if (next) patch.status = "green";
     else if (scan.offPayload) patch.status = "yellow";
-    await onPatch(patch);
+    await onPatch(scan.id, patch);
     setPickerOpen(false);
-  }
+  }, [scan.id, scan.offPayload, onPatch]);
 
   return (
     <div style={{
@@ -1089,7 +1157,7 @@ function EditableScanLine({
       overflow: "hidden",
     }}>
       <button
-        onClick={onToggle}
+        onClick={() => onToggle(scan.id)}
         style={{
           display: "flex", width: "100%", alignItems: "center", gap: 10,
           padding: "10px 12px",
@@ -1281,9 +1349,9 @@ function EditableScanLine({
                 onBlur={() => {
                   const n = Number(pkgAmount);
                   if (Number.isFinite(n) && n > 0) {
-                    onPackageChange?.({ amount: n });
+                    onPackageChange?.(scan.id, { amount: n });
                   } else if (!pkgAmount) {
-                    onPackageChange?.({ amount: null });
+                    onPackageChange?.(scan.id, { amount: null });
                   }
                 }}
                 placeholder="16"
@@ -1293,11 +1361,48 @@ function EditableScanLine({
                 type="text"
                 value={pkgUnit}
                 onChange={e => setPkgUnit(e.target.value)}
-                onBlur={() => onPackageChange?.({ unit: pkgUnit.trim() || null })}
+                onBlur={() => onPackageChange?.(scan.id, { unit: pkgUnit.trim() || null })}
                 placeholder="oz / ml / count"
                 style={{ ...textInput, flex: 1 }}
               />
             </div>
+            {/* Top-3 popular package sizes for this (brand, canonical).
+                Tap-to-fill — one tap replaces typing both amount+unit.
+                Sourced from popular_package_sizes RPC (migration 0063)
+                with AI typicalSizes as the cold-start fallback. */}
+            {top3.length > 0 && (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                <span style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#666", letterSpacing: "0.1em",
+                  alignSelf: "center",
+                }}>POPULAR:</span>
+                {top3.map((p, i) => {
+                  const active = Number(pkgAmount) === p.amount && pkgUnit === p.unit;
+                  return (
+                    <button
+                      key={`${p.amount}-${p.unit}-${i}`}
+                      type="button"
+                      onClick={() => {
+                        setPkgAmount(String(p.amount));
+                        setPkgUnit(p.unit);
+                        onPackageChange?.(scan.id, { amount: p.amount, unit: p.unit });
+                      }}
+                      style={{
+                        fontFamily: "'DM Mono',monospace", fontSize: 10,
+                        color: active ? "#111" : "#b8a878",
+                        background: active ? "#b8a878" : "#1a1508",
+                        border: `1px solid ${active ? "#b8a878" : "#3a2f10"}`,
+                        borderRadius: 4, padding: "4px 8px",
+                        letterSpacing: "0.05em", cursor: "pointer",
+                      }}
+                    >
+                      {p.amount} {p.unit}{p.brand ? ` · ${p.brand}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 2 }}>
@@ -1315,9 +1420,9 @@ function EditableScanLine({
 
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             {scan.pairedShoppingListItemId && (
-              <button onClick={onUnpair} style={editBtn}>UNPAIR FROM LIST</button>
+              <button onClick={() => onUnpair(scan.id)} style={editBtn}>UNPAIR FROM LIST</button>
             )}
-            <button onClick={onDelete} style={{ ...editBtn, color: "#f8c7c7", borderColor: "#5a2a2a" }}>
+            <button onClick={() => onDelete(scan.id)} style={{ ...editBtn, color: "#f8c7c7", borderColor: "#5a2a2a" }}>
               DELETE SCAN
             </button>
           </div>
@@ -1352,7 +1457,7 @@ function EditableScanLine({
           <TypePicker
             userId={null}
             selectedTypeId={effectiveTypeId}
-            suggestedTypeId={inferFoodTypeFromName(scan.productName || scan.brand || "")}
+            suggestedTypeId={inferredTypeId}
             onPick={(typeId, defaultTileId, defaultLocation) => {
               const patch = { typeId };
               // Auto-fill tile + location when the user hasn't
@@ -1360,7 +1465,7 @@ function EditableScanLine({
               // scan-draft flow uses in Kitchen.jsx.
               if (defaultTileId && !packageOverride?.tileId) patch.tileId = defaultTileId;
               if (defaultLocation && !packageOverride?.location) patch.location = defaultLocation;
-              onPackageChange?.(patch);
+              onPackageChange?.(scan.id, patch);
               setAxisPicker(null);
             }}
           />
@@ -1394,7 +1499,7 @@ function EditableScanLine({
                       patch.tileId = null;
                     }
                   }
-                  onPackageChange?.(patch);
+                  onPackageChange?.(scan.id, patch);
                   setAxisPicker(null);
                 }}
                 style={pickerOptionStyle(opt.id === effectiveLocation, CHIP_TONES.location)}
@@ -1423,7 +1528,7 @@ function EditableScanLine({
             {(TILES_BY_LOCATION[effectiveLocation] || []).map(tile => (
               <button
                 key={tile.id}
-                onClick={() => { onPackageChange?.({ tileId: tile.id }); setAxisPicker(null); }}
+                onClick={() => { onPackageChange?.(scan.id, { tileId: tile.id }); setAxisPicker(null); }}
                 style={pickerOptionStyle(tile.id === effectiveTileId, CHIP_TONES.location)}
               >
                 <span style={{ fontSize: 20 }}>{tile.emoji}</span>
@@ -1443,7 +1548,7 @@ function EditableScanLine({
       )}
     </div>
   );
-}
+});
 
 // Shared ModalSheet picker styles — mirror the scan-draft pickers
 // in Kitchen.jsx so CATEGORY / STORED IN pickers here feel like the
