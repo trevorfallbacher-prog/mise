@@ -256,7 +256,7 @@ function assemblePromptHeader(
         })
         .join("\n");
 
-  const mealPrompt = prefs.mealPrompt || prefs.notes || "";
+  const mealPrompt = sanitizeUserText(prefs.mealPrompt || prefs.notes || "", 400);
 
   const starPantryNames = Array.isArray(prefs.starIngredientIds) && prefs.starIngredientIds.length
     ? prefs.starIngredientIds
@@ -682,9 +682,10 @@ ${lockedIngredients.map((i) => {
 }).join("\n")}\n`
     : "";
 
-  const feedbackBlock = (prefs.recipeFeedback || "").trim()
+  const sanitizedFeedback = sanitizeUserText(prefs.recipeFeedback || "", 800);
+  const feedbackBlock = sanitizedFeedback
     ? `\nRECIPE FEEDBACK (most recent revision instruction — apply on top of everything above except dietary, locked ingredients, and the SKETCH ANCHOR dish identity):
-${prefs.recipeFeedback!.trim()}\n`
+${sanitizedFeedback}\n`
     : "";
 
   return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${sketchBlock}${lockedBlock}${feedbackBlock}
@@ -1608,6 +1609,20 @@ function repairTruncatedJson(input: string): string {
     s += open === "{" ? "}" : "]";
   }
   return s;
+}
+
+// User-entered free text (mealPrompt, recipeFeedback) goes directly
+// into the LLM prompt. Strip control chars + code-fence markers so a
+// user can't smuggle prompt instructions, cap length so a 5000-char
+// paste doesn't blow past sane budgets.
+function sanitizeUserText(s: unknown, maxLen: number): string {
+  if (typeof s !== "string") return "";
+  return s
+    .replace(/[ -]+/g, " ")  // control chars → space
+    .replace(/`+/g, "")                        // code-fence markers
+    .replace(/\s+/g, " ")                      // collapse whitespace
+    .trim()
+    .slice(0, Math.max(1, maxLen));
 }
 
 function slugify(s: string): string {
