@@ -39,7 +39,7 @@ import { usePopularPackages, clearPopularPackagesCache } from "../lib/usePopular
 import { useProfile } from "../lib/useProfile";
 import {
   SET_CHIP, UNSET_CHIP, CHIP_TONES,
-  pickerKicker, pickerTitle, pickerOptionStyle,
+  pickerKicker, pickerTitle, pickerBody, pickerOptionStyle,
 } from "../lib/tokens";
 
 const FLASH_COLORS = {
@@ -2100,10 +2100,10 @@ const EditableScanLine = memo(function EditableScanLine({
         <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="86vh">
           <div style={pickerKicker(CHIP_TONES.category.fg)}>CATEGORY</div>
           <h2 style={pickerTitle}>
-            What category does {scan.productName || scan.brand || "this"} belong to?
+            What is this?
           </h2>
-          <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
-            USDA-rooted food categories. Picking one suggests a default shelf for STORED IN and a default canonical if this scan didn't resolve one.
+          <p style={pickerBody}>
+            Picking a category suggests a shelf and, if needed, an identity.
           </p>
           <TypePicker
             userId={null}
@@ -2170,10 +2170,10 @@ const EditableScanLine = memo(function EditableScanLine({
         <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="80vh">
           <div style={pickerKicker(CHIP_TONES.location.fg)}>STORED IN</div>
           <h2 style={pickerTitle}>
-            Which shelf does {scan.productName || scan.brand || "this"} live on?
+            Which shelf?
           </h2>
-          <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
-            Showing {effectiveLocation} tiles. Change the LOCATION chip to see shelves in the fridge / pantry / freezer instead.
+          <p style={pickerBody}>
+            {effectiveLocation} shelves shown. Tap the LOCATION chip to switch.
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
             {(TILES_BY_LOCATION[effectiveLocation] || []).map(tile => (

@@ -76,6 +76,31 @@ export default function ModalSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Mobile keyboard awareness — when an input inside the sheet is
+  // focused, iOS Safari / Android Chrome push the viewport up to
+  // make room for the keyboard, but `vh` units still reference the
+  // FULL screen. Result: a `maxHeight: 92vh` sheet overflows the
+  // visible viewport and the keyboard covers the input the user is
+  // typing into. The `visualViewport` API reports the actually-visible
+  // inner height; subscribing to its resize event and clamping the
+  // sheet to that height keeps the input above the keyboard at all
+  // times. Fallback for browsers without visualViewport: `dvh` units
+  // do the same thing at the CSS layer.
+  const [visibleH, setVisibleH] = useState(null);
+  useEffect(() => {
+    const vv = typeof window !== "undefined" && window.visualViewport;
+    if (!vv) return;
+    const update = () => setVisibleH(Math.round(vv.height));
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+
+
   // Swipe-down state. Dragged downward past DISMISS_THRESHOLD fires
   // onClose with an animated slide-out; anything less snaps back.
   //
@@ -136,6 +161,42 @@ export default function ModalSheet({
   // spring so the backdrop tracks the finger 1:1.
   const backdropOpacity = Math.max(0, 1 - dragY / 400);
 
+  // Resolve the effective maxHeight. If the caller passed a vh-based
+  // string (default "92vh"), translate the percentage against the
+  // visualViewport's height when we have it so the sheet shrinks as
+  // the keyboard opens. Any non-vh value (px, dvh, etc.) passes
+  // through untouched.
+  const resolvedMaxHeight = (() => {
+    if (!visibleH) return maxHeight;
+    const m = /^([\d.]+)vh$/.exec(String(maxHeight).trim());
+    if (!m) return maxHeight;
+    const pct = parseFloat(m[1]) / 100;
+    return `${Math.round(visibleH * pct)}px`;
+  })();
+
+  // Focus-aware scroll-into-view. When any input / textarea inside
+  // the sheet gains focus, give the mobile keyboard 280ms to animate
+  // in, then center the focused element inside the visible sheet
+  // area. On iOS this is the difference between seeing what you're
+  // typing and seeing the keyboard over the input.
+  const assignSheetRef = (node) => {
+    if (typeof scrollRef === "function") scrollRef(node);
+    else if (scrollRef) scrollRef.current = node;
+    if (node && !node.__miseFocusListenerInstalled) {
+      node.__miseFocusListenerInstalled = true;
+      node.addEventListener("focusin", (e) => {
+        const t = e.target;
+        if (!t) return;
+        const tag = t.tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT") return;
+        setTimeout(() => {
+          try { t.scrollIntoView({ block: "center", behavior: "smooth" }); }
+          catch { t.scrollIntoView(); }
+        }, 280);
+      });
+    }
+  };
+
   return (
     <motion.div
       onClick={closeOnBackdrop ? onClose : undefined}
@@ -151,7 +212,7 @@ export default function ModalSheet({
       }}
     >
       <motion.div
-        ref={scrollRef}
+        ref={assignSheetRef}
         onClick={e => e.stopPropagation()}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
@@ -164,7 +225,8 @@ export default function ModalSheet({
           width: "100%", background: COLOR.ground,
           borderRadius: `${RADIUS.sheet}px ${RADIUS.sheet}px 0 0`,
           padding: "18px 22px 36px",
-          maxHeight, overflowY: "auto",
+          maxHeight: resolvedMaxHeight,
+          overflowY: "auto",
           position: "relative",
           // iOS overscroll-bounce chains to the whole page otherwise,
           // which fights the gesture. Contain it here.

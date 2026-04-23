@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FOOD_TYPES } from "../data/foodTypes";
 import { useUserTypes } from "../lib/useUserTypes";
 import { createUserType } from "../lib/userTypes";
@@ -170,19 +170,43 @@ export default function TypePicker({
     }
   };
 
+  // Tracks the id the user most-recently picked so we can play the
+  // `.mise-picked` celebration animation on that row for ~450ms. We
+  // can't just key off selectedTypeId because that's persistent; the
+  // animation should be a one-shot on the tap that chose it.
+  const [justPickedId, setJustPickedId] = useState(null);
+  useEffect(() => {
+    if (!justPickedId) return;
+    const t = setTimeout(() => setJustPickedId(null), 480);
+    return () => clearTimeout(t);
+  }, [justPickedId]);
+
   // Shared row render — used by the starred row, the current-pick
-  // row (if different from star), and search results.
-  const renderTypeRow = (t, variant) => {
+  // row (if different from star), and search results. `idx` drives
+  // the CSS stagger: each row waits (idx × 32ms) before fading in,
+  // capped at ~350ms so long lists don't feel sluggish.
+  const renderTypeRow = (t, variant, idx = 0) => {
     const active = selectedTypeId === t.id;
     const suggested = variant === "star";
     const tileHint = t.defaultTileId ? TILE_LOOKUP.get(t.defaultTileId) : null;
+    const picked = justPickedId === t.id;
     return (
       <button
         key={`${variant}-${t.source}-${t.id}`}
-        onClick={() => onPick?.(t.id, t.defaultTileId || null, t.defaultLocation || null)}
+        className={`mise-fade-in${picked ? " mise-picked" : ""}`}
+        onClick={() => {
+          setJustPickedId(t.id);
+          // Tiny delay so the scale-up reads before the sheet
+          // dismisses — if the parent closes immediately the
+          // animation gets cut off. 120ms lands mid-overshoot.
+          setTimeout(() => {
+            onPick?.(t.id, t.defaultTileId || null, t.defaultLocation || null);
+          }, 120);
+        }}
         style={{
           display: "flex", alignItems: "center", gap: 10,
-          padding: suggested ? "14px 14px" : "10px 12px",
+          padding: suggested ? "16px 16px" : "12px 14px",
+          minHeight: 48,   // 44+ kid-friendly tap target
           width: "100%",
           background: active
             ? COLOR.goldDeep
@@ -196,6 +220,7 @@ export default function TypePicker({
           }`,
           borderRadius: RADIUS.lg,
           cursor: "pointer", textAlign: "left",
+          ["--mise-delay"]: `${Math.min(idx * 32, 320)}ms`,
         }}
       >
         <span style={{ fontSize: suggested ? 26 : 20, flexShrink: 0 }}>
@@ -400,8 +425,8 @@ export default function TypePicker({
         </div>
       )}
       {hasSearchHits
-        ? searchMatches.map(t => renderTypeRow(t, "search"))
-        : baselineList.slice(0, 20).map(t => renderTypeRow(t, "recommendation"))}
+        ? searchMatches.map((t, i) => renderTypeRow(t, "search", i))
+        : baselineList.slice(0, 20).map((t, i) => renderTypeRow(t, "recommendation", i))}
     </div>
   );
 }

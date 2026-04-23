@@ -218,13 +218,30 @@ export const UNSET_CHIP = {
 // buttons. These styles keep all of them visually synchronized.
 export const pickerKicker = (color) => ({
   fontFamily: FONT.mono, fontSize: 10,
-  color, letterSpacing: "0.12em",
+  color, letterSpacing: "0.18em",
   marginBottom: 10,
+  textTransform: "uppercase",
 });
+// Editorial-weight headline for ModalSheet pickers. Bumped from the
+// original 20px to 26px — when the sheet is the focal plane, the
+// title should feel like a magazine cover line, not a form field
+// label. Fraunces italic carries the weight; the kicker above
+// supplies the category tag; the description paragraph below
+// supplies the instructions. This shape (tag → hero line →
+// body) is the sheet's brand signature.
 export const pickerTitle = {
-  fontFamily: FONT.serif, fontSize: 20,
+  fontFamily: FONT.serif, fontSize: 26,
   fontStyle: "italic", color: COLOR.ink,
-  fontWeight: 400, margin: "0 0 6px", lineHeight: 1.2,
+  fontWeight: 400, margin: "0 0 10px", lineHeight: 1.15,
+  letterSpacing: "-0.01em",
+};
+// Muted body copy that sits under pickerTitle to explain the
+// picker's purpose. Previously re-rolled as inline style in every
+// picker; consolidated here so every sheet's body reads identically.
+export const pickerBody = {
+  fontFamily: FONT.sans, fontSize: 13,
+  color: COLOR.dim, lineHeight: 1.55,
+  margin: "0 0 16px",
 };
 export function pickerOptionStyle(active, tone) {
   return {

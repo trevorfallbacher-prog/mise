@@ -2484,6 +2484,7 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
           <button
             onClick={save}
             disabled={saving}
+            className={saving ? "" : "mise-cta"}
             style={{ flex:2, padding:"14px", background: saving?"#1a1a1a":"#f5c842", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, color: saving?"#444":"#111", cursor: saving?"not-allowed":"pointer", letterSpacing:"0.08em" }}>
             {saving ? "SAVING..." : "SAVE TO COOKBOOK →"}
           </button>

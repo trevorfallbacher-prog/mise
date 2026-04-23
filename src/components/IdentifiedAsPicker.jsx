@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FRIDGE_TILES } from "../lib/fridgeTiles";
 import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
@@ -166,16 +166,32 @@ export default function IdentifiedAsPicker({
     }
   };
 
-  const renderTile = (t, variant) => {
+  // One-shot pick celebration — mirrors the TypePicker pattern so
+  // every sheet-picker in the app feels the same when you tap an
+  // option. See TypePicker for rationale.
+  const [justPickedId, setJustPickedId] = useState(null);
+  useEffect(() => {
+    if (!justPickedId) return;
+    const t = setTimeout(() => setJustPickedId(null), 480);
+    return () => clearTimeout(t);
+  }, [justPickedId]);
+
+  const renderTile = (t, variant, idx = 0) => {
     const active = selectedTileId === t.id;
     const suggested = variant === "star";
+    const picked = justPickedId === t.id;
     return (
       <button
         key={`${variant}-${t.source}-${t.id}`}
-        onClick={() => onPick?.(t.id, t.location)}
+        className={`mise-fade-in${picked ? " mise-picked" : ""}`}
+        onClick={() => {
+          setJustPickedId(t.id);
+          setTimeout(() => onPick?.(t.id, t.location), 120);
+        }}
         style={{
           display: "flex", alignItems: "center", gap: 10,
-          padding: suggested ? "14px 14px" : "10px 12px",
+          padding: suggested ? "16px 16px" : "12px 14px",
+          minHeight: 48,
           width: "100%",
           background: active
             ? COLOR.goldDeep
@@ -189,6 +205,7 @@ export default function IdentifiedAsPicker({
           }`,
           borderRadius: RADIUS.lg,
           cursor: "pointer", textAlign: "left",
+          ["--mise-delay"]: `${Math.min(idx * 32, 320)}ms`,
         }}
       >
         <span style={{ fontSize: suggested ? 26 : 20, flexShrink: 0 }}>
@@ -477,7 +494,7 @@ export default function IdentifiedAsPicker({
           tap CREATE NEW STORAGE AREA above.
         </div>
       )}
-      {searchMatches.map(t => renderTile(t, "search"))}
+      {searchMatches.map((t, i) => renderTile(t, "search", i))}
 
       {/* Clear affordance — only on existing items (ItemCard).
           Resets the tile so the heuristic classifier routes by

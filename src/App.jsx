@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import Onboarding from "./components/Onboarding";
 import Home from "./components/Home";
 import Courses from "./components/Courses";
@@ -419,67 +420,84 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
         </button>
       )}
 
+      {/* Tab switcher. Wrapping in AnimatePresence/motion so the
+          active tab cross-fades with a subtle upward slide when the
+          user taps the bottom bar. mode="wait" holds the next tab
+          until the previous unmounts — prevents the brief stacking
+          flash that a simple transition would cause. Keeping the
+          animation short (120ms) so nothing feels sluggish; taps
+          still register instantly. */}
       <div style={{ paddingBottom:80 }}>
-        {tab === "home"     && (
-          <Home
-            profile={profile}
-            userId={user.id}
-            familyIds={familyIds}
-            familyLoading={relationships.loading}
-            nameFor={nameFor}
-            avatarFor={avatarFor}
-            openProfile={openProfile}
-            openCook={openCook}
-          />
-        )}
-        {tab === "courses"  && (
-          <Courses
-            profile={profile}
-            userId={user.id}
-            familyKey={familyKey}
-            pantry={pantry}
-            setPantry={setPantry}
-            shoppingList={shoppingList}
-            setShoppingList={setShoppingList}
-            onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
-            family={relationships.family}
-            friends={relationships.friends}
-            onCooked={() => setProfileUserId(user.id)}
-          />
-        )}
-        {tab === "plan"     && (
-          <Plan
-            profile={profile}
-            userId={user.id}
-            familyKey={familyKey}
-            nameFor={nameFor}
-            hasFamily={relationships.family.length > 0}
-            family={relationships.family}
-            friends={relationships.friends}
-            pantry={pantry}
-            setPantry={setPantry}
-            shoppingList={shoppingList}
-            setShoppingList={setShoppingList}
-            onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
-            onOpenCook={openCook}
-          />
-        )}
-        {tab === "pantry"   && (
-          <Kitchen
-            userId={user.id}
-            pantry={pantry}
-            setPantry={setPantry}
-            shoppingList={shoppingList}
-            setShoppingList={setShoppingList}
-            familyIds={familyIds}
-            view={pantryView}
-            setView={setPantryView}
-            deepLink={deepLink}
-            onDeepLinkConsumed={() => setDeepLink(null)}
-            pendingPantryAction={pendingPantryAction}
-            onPendingActionConsumed={() => setPendingPantryAction(null)}
-          />
-        )}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {tab === "home"     && (
+              <Home
+                profile={profile}
+                userId={user.id}
+                familyIds={familyIds}
+                familyLoading={relationships.loading}
+                nameFor={nameFor}
+                avatarFor={avatarFor}
+                openProfile={openProfile}
+                openCook={openCook}
+              />
+            )}
+            {tab === "courses"  && (
+              <Courses
+                profile={profile}
+                userId={user.id}
+                familyKey={familyKey}
+                pantry={pantry}
+                setPantry={setPantry}
+                shoppingList={shoppingList}
+                setShoppingList={setShoppingList}
+                onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
+                family={relationships.family}
+                friends={relationships.friends}
+                onCooked={() => setProfileUserId(user.id)}
+              />
+            )}
+            {tab === "plan"     && (
+              <Plan
+                profile={profile}
+                userId={user.id}
+                familyKey={familyKey}
+                nameFor={nameFor}
+                hasFamily={relationships.family.length > 0}
+                family={relationships.family}
+                friends={relationships.friends}
+                pantry={pantry}
+                setPantry={setPantry}
+                shoppingList={shoppingList}
+                setShoppingList={setShoppingList}
+                onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
+                onOpenCook={openCook}
+              />
+            )}
+            {tab === "pantry"   && (
+              <Kitchen
+                userId={user.id}
+                pantry={pantry}
+                setPantry={setPantry}
+                shoppingList={shoppingList}
+                setShoppingList={setShoppingList}
+                familyIds={familyIds}
+                view={pantryView}
+                setView={setPantryView}
+                deepLink={deepLink}
+                onDeepLinkConsumed={() => setDeepLink(null)}
+                pendingPantryAction={pendingPantryAction}
+                onPendingActionConsumed={() => setPendingPantryAction(null)}
+              />
+            )}
+          </motion.div>
+        </AnimatePresence>
       </div>
 
       {settingsOpen && (

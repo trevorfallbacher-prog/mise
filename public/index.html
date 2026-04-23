@@ -16,28 +16,95 @@
       input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
       input[type=number] { -moz-appearance: textfield; }
 
-      /* Tap feedback — every button in the app gets a subtle press-down
-         scale so taps feel tactile instead of dead-flat. Kept tiny (4%
-         scale) and brief (80ms) so it reads as feedback, not animation
-         theater. Also applied to role=button for the places we render
-         tappable divs. Honors prefers-reduced-motion so users with
-         vestibular sensitivity get instant state changes. */
+      /* Tap feedback — every button in the app gets a springy press-down
+         so taps register as physical events. Scale 0.92 on press with
+         a 120ms cubic-bezier that overshoots on release (back-ease) so
+         the button feels like it's made of something. Applies to both
+         <button> and role="button" so our tappable <div>s get it too.
+         Vestibular safety valve at the bottom. */
       button,
       [role="button"] {
-        transition: transform 0.08s ease, opacity 0.12s ease;
+        transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1),
+                    opacity 0.15s ease,
+                    box-shadow 0.2s ease,
+                    background 0.2s ease,
+                    border-color 0.2s ease;
         -webkit-tap-highlight-color: transparent;
       }
       button:active:not(:disabled),
       [role="button"]:active:not([aria-disabled="true"]) {
-        transform: scale(0.96);
+        transform: scale(0.92);
+        transition: transform 0.06s ease-out;
       }
 
       /* Focus ring — shows only on keyboard focus so touch users don't
-         see a lingering outline after every tap. Modern browsers only. */
+         see a lingering outline after every tap. */
       button:focus-visible,
       [role="button"]:focus-visible {
         outline: 2px solid #f5c842;
         outline-offset: 2px;
+      }
+
+      /* Brand halo pulse — primary CTAs (gold buttons, "COOK IT",
+         "STOCK IT", "SCAN", etc.) that opt in via the `mise-cta`
+         class get a breathing gold glow so they don't just sit
+         there inert. 3.2s cycle with a gentle sine so it reads as
+         ambient life, not flashing. The glow stays subtle at rest
+         and snaps brighter on hover; press collapses it with the
+         scale tap transform. */
+      @keyframes miseHaloPulse {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(245, 200, 66, 0.35),
+                               0 0 22px 0 rgba(245, 200, 66, 0.20); }
+        50%      { box-shadow: 0 0 0 4px rgba(245, 200, 66, 0.00),
+                               0 0 32px 4px rgba(245, 200, 66, 0.30); }
+      }
+      .mise-cta { animation: miseHaloPulse 3.2s ease-in-out infinite; }
+      .mise-cta:hover { filter: brightness(1.05); }
+
+      /* Fade-in-up — a universal mount animation for mount-once rows
+         in lists (scan-draft rows, pantry tiles, picker options). Used
+         by the `.mise-fade-in` utility class with a CSS var for
+         staggered delay so any list can cascade without needing a
+         framer-motion wrapper. */
+      @keyframes miseFadeInUp {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      /* fill-mode is `backwards` (not `both`): during the per-row
+         delay the element is hidden at the `from` state; AFTER the
+         animation the natural style (inline opacity / transform)
+         takes over. Critical for scan-draft rows whose inline style
+         dims deselected items to opacity 0.4 — with `both` the
+         animation would lock them at 1 forever. */
+      .mise-fade-in {
+        animation: miseFadeInUp 0.36s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+        animation-delay: var(--mise-delay, 0ms);
+      }
+
+      /* Chip pick celebration — a gentle scale-up + glow pulse fired
+         once when a chip becomes "active" (e.g. user picks a CATEGORY
+         option in the ModalSheet). Opt in via `.mise-picked` on the
+         just-activated element. 420ms one-shot so it doesn't compete
+         with the list's staggered mount. */
+      @keyframes misePicked {
+        0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(245, 200, 66, 0); }
+        30%  { transform: scale(1.06); box-shadow: 0 0 0 6px rgba(245, 200, 66, 0.18); }
+        100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(245, 200, 66, 0); }
+      }
+      .mise-picked { animation: misePicked 0.42s ease-out both; }
+
+      /* Emoji bob — tiny playful float that inline-block emojis can
+         opt into by adding `.mise-emoji-bob`. Used on the hero emoji
+         of ItemCard, scan-draft rows, picker rows. Kept imperceptibly
+         slow (4s) so it reads as "alive" not "distracting". */
+      @keyframes miseEmojiBob {
+        0%, 100% { transform: translateY(0) rotate(-0.5deg); }
+        50%      { transform: translateY(-2px) rotate(0.5deg); }
+      }
+      .mise-emoji-bob {
+        display: inline-block;
+        animation: miseEmojiBob 4s ease-in-out infinite;
+        transform-origin: center bottom;
       }
 
       @media (prefers-reduced-motion: reduce) {

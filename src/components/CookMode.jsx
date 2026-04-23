@@ -1062,7 +1062,7 @@ export default function CookMode({
             {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
           </button>
         ) : (
-          <button onClick={() => setCompleting(true)} style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", boxShadow:"0 0 30px #22c55e44" }}>
+          <button onClick={() => setCompleting(true)} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
             🍝 DONE! LOG IT →
           </button>
         )}
