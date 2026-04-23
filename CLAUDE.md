@@ -30,8 +30,14 @@ surface a pantry item's identity.
    has entries in `CUTS_FOR` (meats today — chicken/beef/pork/turkey).
 4. **CATEGORIES** — orange (`#e07a3a`). Food-category dropdown
    drilldown.
-5. **STORED IN** — blue (`#7eb8d4`). Wrap-up tiles (fridge / pantry /
-   freezer placement).
+5. **STORED IN** — blue (`#7eb8d4`). Specific shelf TILE (Dairy &
+   Eggs, Produce, Meat & Poultry, Condiments, etc.) — NOT the
+   fridge/pantry/freezer location. Those three are the LOCATION
+   axis which sits one level above STORED IN and determines which
+   tile list (FRIDGE_TILES / PANTRY_TILES / FREEZER_TILES) is in
+   scope. The STORED IN chip shows the tile's emoji + label; the
+   LOCATION chip renders in a muted blue to signal it's the
+   broader container.
 6. **SET STATE** — muted purple (`#c7a8d4`). Physical state (loaf /
    slices / crumbs, cubed, ground, minced, etc.). Crucially distinct
    from CUT: state is what you DID to the cut, cut is where on the

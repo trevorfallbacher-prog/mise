@@ -29,6 +29,11 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
+import { FRIDGE_TILES } from "../lib/fridgeTiles";
+import { PANTRY_TILES } from "../lib/pantryTiles";
+import { FREEZER_TILES } from "../lib/freezerTiles";
+import TypePicker from "./TypePicker";
+import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
 
 const FLASH_COLORS = {
   green:  { bg: "#1f6b3a", label: "MATCHED" },
@@ -116,24 +121,48 @@ function upcsEquivalent(a, b) {
 //      ("Daisy") and the receipt is product-only ("SOUR CREAM"),
 //      so the user's pair intent ("Sour cream" list slot) bridges
 //      the vocabularies.
-// Axis option lists — each entry's emoji matches the emoji used
-// elsewhere for that axis so the chips read consistently with
-// ItemCard. Categories drawn from the canonical registry set;
-// locations are the three physical storage shelves.
-const CATEGORY_OPTIONS = [
-  { id: "dairy",    label: "Dairy",    emoji: "🧀" },
-  { id: "produce",  label: "Produce",  emoji: "🥦" },
-  { id: "meat",     label: "Meat",     emoji: "🥩" },
-  { id: "dry",      label: "Dry",      emoji: "🌾" },
-  { id: "pantry",   label: "Pantry",   emoji: "🫙" },
-  { id: "frozen",   label: "Frozen",   emoji: "🧊" },
-  { id: "beverage", label: "Beverage", emoji: "🥤" },
-];
+// FOOD CATEGORY uses the USDA-rooted WWEIA food-type system (see
+// src/data/foodTypes.js). Scan-draft flow in Kitchen.jsx uses
+// TypePicker for this axis; Shop Mode does the same so the two
+// surfaces stay aligned. Each typeId maps to a defaultTileId for
+// STORED IN inference and (via canonicalIdForType) to a default
+// canonical.
+
 const LOCATION_OPTIONS = [
   { id: "fridge",  label: "Fridge",  emoji: "❄️" },
   { id: "pantry",  label: "Pantry",  emoji: "🫙" },
   { id: "freezer", label: "Freezer", emoji: "🧊" },
 ];
+
+// Tile options for STORED IN — the specific shelf within a location
+// (DAIRY, PRODUCE, MEAT & POULTRY, etc.). Keyed by location so the
+// picker can narrow to tiles that make sense for the chosen location.
+const TILES_BY_LOCATION = {
+  fridge:  FRIDGE_TILES,
+  pantry:  PANTRY_TILES,
+  freezer: FREEZER_TILES,
+};
+function tileById(id) {
+  if (!id) return null;
+  return [...FRIDGE_TILES, ...PANTRY_TILES, ...FREEZER_TILES]
+    .find(t => t.id === id) || null;
+}
+
+// Tile id → broad category string for pantry_items.category. Keeps
+// the Kitchen surface's filters / low-stock alerts / recipe match
+// working against the existing category enum (dairy / produce /
+// meat / dry / pantry / frozen / beverage) while Shop Mode stores
+// the finer typeId + tileId axes.
+function tileToCategory(tileId) {
+  if (!tileId) return "pantry";
+  if (/^frozen_/.test(tileId))     return "frozen";
+  if (tileId === "dairy")          return "dairy";
+  if (tileId === "produce" || tileId === "fresh_herbs") return "produce";
+  if (tileId === "meat_poultry" || tileId === "seafood") return "meat";
+  if (tileId === "drinks")         return "beverage";
+  if (tileId === "condiments" || tileId === "bread_baked" || tileId === "leftovers") return "pantry";
+  return "pantry";
+}
 
 // Reusable chip styles matching the scan-draft / ItemCard pattern
 // (DM Mono 9px, letter-spaced, emoji + UPPERCASE when set, dashed
@@ -154,9 +183,10 @@ const UNSET_CHIP = {
   letterSpacing: "0.08em", cursor: "pointer",
 };
 const CHIP_TONES = {
-  canonical: { fg: "#b8a878", bg: "#1a1508", border: "#3a2f10" }, // tan
-  category:  { fg: "#e07a3a", bg: "#1a0f08", border: "#3a1f0e" }, // orange
-  location:  { fg: "#7eb8d4", bg: "#0f1620", border: "#1f3040" }, // blue
+  canonical:     { fg: "#b8a878", bg: "#1a1508", border: "#3a2f10" }, // tan
+  category:      { fg: "#e07a3a", bg: "#1a0f08", border: "#3a1f0e" }, // orange
+  location:      { fg: "#7eb8d4", bg: "#0f1620", border: "#1f3040" }, // blue (STORED IN tile)
+  locationMuted: { fg: "#7eb8d4aa", bg: "#0d1218", border: "#1a2430" }, // muted blue (LOCATION — fridge/pantry/freezer)
 };
 
 function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = null) {
@@ -531,6 +561,17 @@ export default function ShopModeCheckout({
           || canonStorage
           || defaultLocationForCategory(category);
 
+        // STORED IN tile (specific shelf within the location).
+        // Cascade: override → canonical storage → OFF axes → null
+        // (no tile on the pantry row; Kitchen renders misc).
+        const canonTileId = canon?.storage?.tileId
+          || synthInfo?.info?.storage?.tileId
+          || null;
+        const tileId = override?.tileId
+          || canonTileId
+          || offAxes.tileId
+          || null;
+
         const row = {
           id,
           user_id: userId,
@@ -553,6 +594,11 @@ export default function ShopModeCheckout({
           source_receipt_id: receiptId,
           source_shopping_list_item_id: scan.pairedShoppingListItemId || null,
           location,
+          tile_id: tileId,
+          type_id: override?.typeId
+            || offAxes.typeId
+            || inferFoodTypeFromName(displayName || scan.productName || scan.brand || "")
+            || null,
           purchased_at:   nowIso,
         };
         // Trace the UPC end-to-end so mismatches between what the
@@ -909,21 +955,40 @@ function EditableScanLine({
     : "";
 
   // Effective category + location — same cascade doCommit uses.
-  // Exposed in the preview as axis-colored chips so the user can
-  // confirm at-a-glance where the pantry row will land (category
-  // = orange, stored-in = blue, per CLAUDE.md reserved colors).
+  // Category is a USDA-rooted WWEIA typeId (src/data/foodTypes.js),
+  // resolved via override → canonical match → name inference → null.
   const offCategoryAxes = (() => {
     try { return tagHintsToAxes(scan.offPayload?.categoryHints || []); }
-    catch { return { category: null }; }
+    catch { return { category: null, tileId: null, typeId: null }; }
   })();
-  const effectiveCategory = packageOverride?.category
-    || currentCanonical?.category
-    || offCategoryAxes.category
-    || "pantry";
+  const effectiveTypeId = packageOverride?.typeId
+    || offCategoryAxes.typeId
+    || inferFoodTypeFromName(scan.productName || scan.brand || "")
+    || null;
+  const effectiveType = effectiveTypeId ? findFoodType(effectiveTypeId) : null;
+  // Broad category string (dairy / produce / meat / …) still used
+  // for the pantry_items.category NOT NULL column. Derived from the
+  // food type's default tile when we have one, else from OFF axes,
+  // else canonical, else "pantry".
+  const effectiveCategory = effectiveType?.defaultTileId
+    ? tileToCategory(effectiveType.defaultTileId)
+    : (currentCanonical?.category
+      || offCategoryAxes.category
+      || "pantry");
   const canonStorage = currentCanonical?.storage?.location || null;
   const effectiveLocation = packageOverride?.location
     || canonStorage
     || defaultLocationForCategory(effectiveCategory);
+  // STORED IN — the specific tile within the location. Cascade:
+  //   1. user override (tile picker)
+  //   2. canonical's storage.tile / tileId
+  //   3. tagHintsToAxes from OFF (best-effort)
+  //   4. null — preview renders "+ set stored in"
+  const effectiveTileId = packageOverride?.tileId
+    || currentCanonical?.storage?.tileId
+    || offCategoryAxes.tileId
+    || null;
+  const effectiveTile = tileById(effectiveTileId);
 
   async function saveTextFields() {
     const patch = {};
@@ -1010,25 +1075,55 @@ function EditableScanLine({
             {scan.brand ? ` · ${scan.brand}` : ""}
             {canonicalLabel ? ` · ${canonicalLabel}` : ""}
           </div>
-          {/* Row 3: axis chips — CATEGORY (orange) + STORED IN
-              (blue), matching the scan-draft chip style from
-              Kitchen.jsx (DM Mono 9px, letter-spaced, emoji +
-              UPPERCASE label). Tap EDIT to change. */}
+          {/* Row 3: axis chips — CATEGORY (orange) + STORED IN tile
+              (blue) + LOCATION (muted blue). All directly tappable
+              — no need to open the full editor. stopPropagation
+              so the tap doesn't also toggle the editor. */}
           <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
-            {(() => {
-              const entry = CATEGORY_OPTIONS.find(o => o.id === effectiveCategory);
-              return (
-                <span style={SET_CHIP(CHIP_TONES.category)}>
-                  {entry?.emoji || "🫙"} {(entry?.label || effectiveCategory).toUpperCase()}
-                </span>
-              );
-            })()}
+            {effectiveType ? (
+              <button
+                onClick={e => { e.stopPropagation(); setAxisPicker("category"); }}
+                style={SET_CHIP(CHIP_TONES.category)}
+                aria-label="Change food category"
+              >
+                {effectiveType.emoji} {effectiveType.label.toUpperCase()}
+              </button>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); setAxisPicker("category"); }}
+                style={UNSET_CHIP}
+                aria-label="Set food category"
+              >
+                + set category
+              </button>
+            )}
+            {effectiveTile ? (
+              <button
+                onClick={e => { e.stopPropagation(); setAxisPicker("tile"); }}
+                style={SET_CHIP(CHIP_TONES.location)}
+                aria-label="Change stored-in shelf"
+              >
+                {effectiveTile.emoji} {effectiveTile.label.toUpperCase()}
+              </button>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); setAxisPicker("tile"); }}
+                style={UNSET_CHIP}
+                aria-label="Set stored-in shelf"
+              >
+                + set stored in
+              </button>
+            )}
             {(() => {
               const entry = LOCATION_OPTIONS.find(o => o.id === effectiveLocation);
               return (
-                <span style={SET_CHIP(CHIP_TONES.location)}>
+                <button
+                  onClick={e => { e.stopPropagation(); setAxisPicker("location"); }}
+                  style={SET_CHIP(CHIP_TONES.locationMuted)}
+                  aria-label="Change location"
+                >
                   {entry?.emoji || "🫙"} {(entry?.label || effectiveLocation).toUpperCase()}
-                </span>
+                </button>
               );
             })()}
           </div>
@@ -1150,38 +1245,11 @@ function EditableScanLine({
             <button onClick={() => bumpQty(1)} style={qtyBtn} aria-label="Increase">+</button>
           </div>
 
-          {/* Category + stored-in — chip buttons that open ModalSheet
-              pickers, matching the scan-draft and ItemCard pattern
-              used everywhere else in the app. No inline dropdowns. */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#e07a3a" }}>CATEGORY</span>
-            {(() => {
-              const entry = CATEGORY_OPTIONS.find(o => o.id === effectiveCategory);
-              return (
-                <button
-                  onClick={() => setAxisPicker("category")}
-                  style={{ ...SET_CHIP(CHIP_TONES.category), alignSelf: "flex-start" }}
-                >
-                  {entry?.emoji || "🫙"} {(entry?.label || effectiveCategory).toUpperCase()}
-                </button>
-              );
-            })()}
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#7eb8d4" }}>STORED IN</span>
-            {(() => {
-              const entry = LOCATION_OPTIONS.find(o => o.id === effectiveLocation);
-              return (
-                <button
-                  onClick={() => setAxisPicker("location")}
-                  style={{ ...SET_CHIP(CHIP_TONES.location), alignSelf: "flex-start" }}
-                >
-                  {entry?.emoji || "🫙"} {(entry?.label || effectiveLocation).toUpperCase()}
-                </button>
-              );
-            })()}
-          </div>
+          {/* Category / STORED IN / Location axes are now chip
+              buttons on the collapsed row itself — see the preview
+              above this editor. Kept the editor focused on fields
+              that need typing (name, brand, package size, qty)
+              rather than duplicating the tappable axis chips. */}
 
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             {scan.pairedShoppingListItemId && (
@@ -1211,22 +1279,68 @@ function EditableScanLine({
           tap targets matching the TypePicker / IdentifiedAsPicker
           style used in Kitchen.jsx. No dropdowns. */}
       {axisPicker === "category" && (
-        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="70vh">
+        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="86vh">
           <div style={pickerKicker(CHIP_TONES.category.fg)}>CATEGORY</div>
           <h2 style={pickerTitle}>
             What category does {scan.productName || scan.brand || "this"} belong to?
           </h2>
+          <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
+            USDA-rooted food categories. Picking one suggests a default shelf for STORED IN and a default canonical if this scan didn't resolve one.
+          </p>
+          <TypePicker
+            userId={null}
+            selectedTypeId={effectiveTypeId}
+            suggestedTypeId={inferFoodTypeFromName(scan.productName || scan.brand || "")}
+            onPick={(typeId, defaultTileId, defaultLocation) => {
+              const patch = { typeId };
+              // Auto-fill tile + location when the user hasn't
+              // explicitly set them — same non-overwrite rule the
+              // scan-draft flow uses in Kitchen.jsx.
+              if (defaultTileId && !packageOverride?.tileId) patch.tileId = defaultTileId;
+              if (defaultLocation && !packageOverride?.location) patch.location = defaultLocation;
+              onPackageChange?.(patch);
+              setAxisPicker(null);
+            }}
+          />
+        </ModalSheet>
+      )}
+
+      {axisPicker === "location" && (
+        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="60vh">
+          <div style={pickerKicker(CHIP_TONES.locationMuted.fg)}>LOCATION</div>
+          <h2 style={pickerTitle}>
+            Fridge, pantry, or freezer?
+          </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-            {CATEGORY_OPTIONS.map(opt => (
+            {LOCATION_OPTIONS.map(opt => (
               <button
                 key={opt.id}
-                onClick={() => { onPackageChange?.({ category: opt.id }); setAxisPicker(null); }}
-                style={pickerOptionStyle(opt.id === effectiveCategory, CHIP_TONES.category)}
+                onClick={() => {
+                  // When the user moves a row to a new location AND
+                  // the current tileId belongs to a different one,
+                  // clear the tile override so the picker re-opens
+                  // fresh for the new location. Otherwise the blue
+                  // STORED IN chip can show a "Dairy" tile with the
+                  // row now in the freezer — nonsensical.
+                  const patch = { location: opt.id };
+                  if (effectiveTileId) {
+                    const currentTileLocation = (FRIDGE_TILES.some(t => t.id === effectiveTileId) && "fridge")
+                      || (PANTRY_TILES.some(t => t.id === effectiveTileId) && "pantry")
+                      || (FREEZER_TILES.some(t => t.id === effectiveTileId) && "freezer")
+                      || null;
+                    if (currentTileLocation && currentTileLocation !== opt.id) {
+                      patch.tileId = null;
+                    }
+                  }
+                  onPackageChange?.(patch);
+                  setAxisPicker(null);
+                }}
+                style={pickerOptionStyle(opt.id === effectiveLocation, CHIP_TONES.location)}
               >
                 <span style={{ fontSize: 20 }}>{opt.emoji}</span>
                 <span style={{ flex: 1, fontSize: 14, color: "#f0ece4" }}>{opt.label}</span>
-                {opt.id === effectiveCategory && (
-                  <span style={{ color: CHIP_TONES.category.fg, fontSize: 11 }}>✓</span>
+                {opt.id === effectiveLocation && (
+                  <span style={{ color: CHIP_TONES.location.fg, fontSize: 11 }}>✓</span>
                 )}
               </button>
             ))}
@@ -1234,22 +1348,30 @@ function EditableScanLine({
         </ModalSheet>
       )}
 
-      {axisPicker === "location" && (
-        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="60vh">
+      {axisPicker === "tile" && (
+        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="80vh">
           <div style={pickerKicker(CHIP_TONES.location.fg)}>STORED IN</div>
           <h2 style={pickerTitle}>
-            Where does {scan.productName || scan.brand || "this"} live?
+            Which shelf does {scan.productName || scan.brand || "this"} live on?
           </h2>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
-            {LOCATION_OPTIONS.map(opt => (
+          <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888", lineHeight: 1.5, margin: "0 0 14px" }}>
+            Showing {effectiveLocation} tiles. Change the LOCATION chip to see shelves in the fridge / pantry / freezer instead.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+            {(TILES_BY_LOCATION[effectiveLocation] || []).map(tile => (
               <button
-                key={opt.id}
-                onClick={() => { onPackageChange?.({ location: opt.id }); setAxisPicker(null); }}
-                style={pickerOptionStyle(opt.id === effectiveLocation, CHIP_TONES.location)}
+                key={tile.id}
+                onClick={() => { onPackageChange?.({ tileId: tile.id }); setAxisPicker(null); }}
+                style={pickerOptionStyle(tile.id === effectiveTileId, CHIP_TONES.location)}
               >
-                <span style={{ fontSize: 20 }}>{opt.emoji}</span>
-                <span style={{ flex: 1, fontSize: 14, color: "#f0ece4" }}>{opt.label}</span>
-                {opt.id === effectiveLocation && (
+                <span style={{ fontSize: 20 }}>{tile.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, color: "#f0ece4" }}>{tile.label}</div>
+                  {tile.blurb && (
+                    <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{tile.blurb}</div>
+                  )}
+                </div>
+                {tile.id === effectiveTileId && (
                   <span style={{ color: CHIP_TONES.location.fg, fontSize: 11 }}>✓</span>
                 )}
               </button>
