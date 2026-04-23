@@ -1317,6 +1317,28 @@ Deno.serve(async (req) => {
     const promptText = basePrompt + addendum;
 
     let anthropicResp: Response;
+    // Sonnet 4.6 rejects assistant-message prefill with
+    // "The conversation must end with a user message." Haiku still
+    // accepts it. Per-model: Haiku uses prefill to force `{`-first
+    // JSON output; Sonnet folds the no-prose-no-fences instruction
+    // into the user message and relies on existing parse fallbacks
+    // (brace-slice + truncation repair) to catch any preface prose.
+    const activeModel = mode === "final" ? MODEL_FINAL : MODEL_SKETCH;
+    const usePrefill = activeModel.startsWith("claude-haiku-");
+    const anthropicMessages = usePrefill
+      ? [
+          { role: "user", content: [{ type: "text", text: promptText }] },
+          { role: "assistant", content: [{ type: "text", text: "{" }] },
+        ]
+      : [
+          {
+            role: "user",
+            content: [{
+              type: "text",
+              text: `${promptText}\n\nRESPOND WITH ONLY A JSON OBJECT. Start your response with { and end with }. Do NOT wrap in markdown code fences. Do NOT include any prose before or after.`,
+            }],
+          },
+        ];
     try {
       anthropicResp = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -1326,23 +1348,10 @@ Deno.serve(async (req) => {
           "anthropic-version": "2023-06-01",
         },
         body: JSON.stringify({
-          // Sonnet on final (better instruction-following across the
-          // dietary/locked/course/anchor/feedback/contract bundle),
-          // Haiku on sketch (simple ingredient list, fast regen).
-          model: mode === "final" ? MODEL_FINAL : MODEL_SKETCH,
-          // Both modes get the full 4000-token budget. Earlier attempts
-          // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
-          // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps
-          // with uses[] arrays). Token cost is secondary to not
-          // failing; a truncated draft is worse than an expensive one.
+          model: activeModel,
           max_tokens: 4000,
           temperature: 1,
-          messages: [
-            { role: "user", content: [{ type: "text", text: promptText }] },
-            // Prefill the assistant with "{" so Claude MUST continue
-            // from valid-JSON start. No preface, no markdown fences.
-            { role: "assistant", content: [{ type: "text", text: "{" }] },
-          ],
+          messages: anthropicMessages,
         }),
       });
     } catch (err) {
@@ -1361,7 +1370,14 @@ Deno.serve(async (req) => {
 
     const data = await anthropicResp.json();
     const rawBody = data?.content?.[0]?.text ?? "";
-    raw = rawBody ? `{${rawBody}` : "{}";
+    // With prefill (Haiku path), the response starts AFTER the prefilled
+    // `{` so we prepend it back. Without prefill (Sonnet path), the
+    // response already contains the full JSON including the leading
+    // brace. Prepending in the no-prefill case would produce `{{…` and
+    // break the parse.
+    raw = rawBody
+      ? (usePrefill ? `{${rawBody}` : rawBody)
+      : "{}";
     const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
     truncated = data?.stop_reason === "max_tokens";
     recipe = null;
