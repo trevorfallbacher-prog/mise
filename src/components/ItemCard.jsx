@@ -4127,76 +4127,101 @@ function NutritionChip({ item, getInfo, getBrandNutrition, brandNutritionRows, u
             : "";
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
         <button
           onClick={() => setExpanded(x => !x)}
           style={{
-            flex: 1, padding: "10px 12px",
+            flex: 1,
+            position: "relative",
             // Verified tier gets the full gold-gradient treatment so
             // the whole chip reads as "official / rewarded data" —
             // the blue check is the proof; the gold is the aura.
+            // Padding-top is bumped on verified rows to make room for
+            // the floating VERIFIED ribbon at top-right (so the macros
+            // never get squeezed by it).
+            padding: isVerified ? "26px 12px 12px" : "10px 12px",
             background: isVerified
-              ? "linear-gradient(135deg, #1e1a0e 0%, #1a1508 45%, #141414 100%)"
+              ? "linear-gradient(135deg, #3a2c12 0%, #2a210d 38%, #1a1508 100%)"
               : "#141414",
-            border: `1px solid ${isVerified ? "#3a2f10" : "#242424"}`,
-            borderRadius: 10,
+            border: `1px solid ${isVerified ? "#54421a" : "#242424"}`,
+            borderRadius: 12,
             display: "flex", alignItems: "center", gap: 10,
             cursor: "pointer", textAlign: "left",
-            boxShadow: isVerified ? "0 6px 22px -14px #f5c84288, inset 0 1px 0 #2a240f" : "none",
+            boxShadow: isVerified
+              ? "inset 0 1px 0 #6a5520, 0 10px 28px -12px #f5c842aa, 0 0 0 1px #1a1508"
+              : "none",
             transition: "all 0.2s ease",
+            overflow: "hidden",
           }}
         >
+          {/* Verified ribbon — absolute-positioned top-right pill so
+              the macro line below uses the chip's full width. Pinned
+              to the gold gradient on the verified tier; the blue
+              check + label sit on a deep-sky pill that pops against
+              the warm background. */}
+          {isVerified && (
+            <span style={{
+              position: "absolute",
+              top: 7, right: 8,
+              display: "inline-flex", alignItems: "center", gap: 5,
+              padding: "3px 8px 3px 6px",
+              background: "linear-gradient(135deg, #142434 0%, #0f1620 100%)",
+              border: "1px solid #2a4666",
+              borderRadius: 999,
+              boxShadow: "0 2px 10px -3px #7eb8d488, inset 0 1px 0 #224a70",
+            }}>
+              <VerifiedMark
+                size={11}
+                delay={140}
+                duration={520}
+                showLabel={false}
+              />
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+                color: "#bcd9e8", letterSpacing: "0.13em",
+              }}>
+                VERIFIED{brand ? ` · ${brand}` : ""}
+              </span>
+            </span>
+          )}
+
           <span style={{ fontSize: 16 }}>🔥</span>
           <span style={{
             flex: 1,
             fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-            color: isVerified ? "#f5e8ad" : "#f0ece4",
+            color: isVerified ? "#f7e9b3" : "#f0ece4",
             fontWeight: isVerified ? 500 : 400,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             {formatMacros(nutrition)}
           </span>
           {per && (
             <span style={{
               fontFamily: "'DM Mono',monospace", fontSize: 9,
-              color: isVerified ? "#a8a39b" : "#777", letterSpacing: "0.08em",
+              color: isVerified ? "#a89873" : "#777", letterSpacing: "0.08em",
+              flexShrink: 0,
             }}>
               {per.toUpperCase()}
             </span>
           )}
-          {isVerified ? (
-            <span style={{
-              display: "inline-flex", alignItems: "center", gap: 4,
-              padding: "3px 7px 3px 5px",
-              background: "#0f1620",
-              border: "1px solid #1f3040",
-              borderRadius: 6,
-            }}>
-              <VerifiedMark
-                size={12}
-                delay={220}
-                duration={520}
-                showLabel={false}
-              />
-              <span style={{
-                fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
-                color: "#7eb8d4", letterSpacing: "0.12em",
-              }}>
-                VERIFIED{brand ? ` · ${brand}` : ""}
-              </span>
-            </span>
-          ) : badge.label ? (
+          {!isVerified && badge.label && (
             <span style={{
               fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
               color: badge.color, background: `${badge.color}15`,
               border: `1px solid ${badge.color}55`,
               padding: "2px 6px", borderRadius: 6,
               letterSpacing: "0.1em",
+              flexShrink: 0,
             }}>
               {badge.label}
               {brand ? ` · ${brand}` : ""}
             </span>
-          ) : null}
-          <span style={{ color: isVerified ? "#a89873" : "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
+          )}
+          <span style={{
+            color: isVerified ? "#a89873" : "#555",
+            fontFamily: "'DM Mono',monospace", fontSize: 11,
+            flexShrink: 0,
+          }}>
             {expanded ? "▾" : "▸"}
           </span>
         </button>

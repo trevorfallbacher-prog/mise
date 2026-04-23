@@ -58,6 +58,7 @@ import { useUserTemplates } from "../lib/useUserTemplates";
 import { useProfile } from "../lib/useProfile";
 import { useIngredientInfo, slugifyIngredientName } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import VerifiedMark from "./VerifiedMark";
 import { useCanonicalOffTags } from "../lib/useCanonicalOffTags";
 import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
@@ -6522,25 +6523,62 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                     the six colored identity axes per CLAUDE.md. Keeps
                     "Butter · Kerrygold" scannable at the tile-card
                     level without opening the item. Hidden when brand
-                    is null (most rows). */}
-                {item.brand && (
-                  <span
-                    title={`Brand: ${item.brand}`}
-                    style={{
-                      fontFamily:"'DM Mono',monospace", fontSize:9,
-                      color:"#aaa",
-                      background:"#161616",
-                      border:"1px solid #2a2a2a",
-                      borderRadius:4,
-                      padding:"1px 6px",
-                      letterSpacing:"0.08em",
-                      flexShrink:0,
-                      textTransform:"uppercase",
-                    }}
-                  >
-                    {item.brand}
-                  </span>
-                )}
+                    is null (most rows).
+
+                    VERIFIED variant: when this jar has a per-row
+                    nutrition_override OR there's a label_scan
+                    brand_nutrition row for the (canonical, brand)
+                    pair, the pill flips to the same blue + animated
+                    check used everywhere else "verified" is signalled.
+                    Reads at-a-glance: "no doubt this brand's data is
+                    legit." */}
+                {item.brand && (() => {
+                  const brandKey = String(item.brand).trim().toLowerCase();
+                  const canonId  = item.canonicalId || item.ingredientId || null;
+                  const verifiedByOverride = !!item.nutritionOverride;
+                  const verifiedByBrand = !!(canonId && Array.isArray(brandNutritionRowsForShop)
+                    && brandNutritionRowsForShop.some(r =>
+                         r?.canonicalId === canonId
+                         && String(r?.brand).toLowerCase() === brandKey
+                         && r?.source === "label_scan"));
+                  const isBrandVerified = verifiedByOverride || verifiedByBrand;
+                  return (
+                    <span
+                      title={isBrandVerified
+                        ? `Brand: ${item.brand} — Verified from label`
+                        : `Brand: ${item.brand}`}
+                      style={{
+                        display:"inline-flex", alignItems:"center", gap:4,
+                        fontFamily:"'DM Mono',monospace", fontSize:9,
+                        color: isBrandVerified ? "#bcd9e8" : "#aaa",
+                        background: isBrandVerified
+                          ? "linear-gradient(135deg, #142434 0%, #0f1620 100%)"
+                          : "#161616",
+                        border: `1px solid ${isBrandVerified ? "#2a4666" : "#2a2a2a"}`,
+                        borderRadius:6,
+                        padding:"2px 7px 2px 5px",
+                        letterSpacing:"0.08em",
+                        flexShrink:0,
+                        textTransform:"uppercase",
+                        fontWeight: isBrandVerified ? 700 : 400,
+                        boxShadow: isBrandVerified
+                          ? "0 1px 6px -2px #7eb8d488"
+                          : "none",
+                      }}
+                    >
+                      {isBrandVerified && (
+                        <VerifiedMark
+                          size={10}
+                          delay={120}
+                          duration={460}
+                          showLabel={false}
+                          replayKey={`${item.id}-${brandKey}`}
+                        />
+                      )}
+                      {item.brand}
+                    </span>
+                  );
+                })()}
                 {item.state && (
                   <span
                     title={`State: ${stateLabel(item.state)}`}
