@@ -243,9 +243,14 @@ export default function ShopMode({
     // but we still hit OFF below so brand / productName / nutrition
     // come back fresh for brand_nutrition caching and the pair sheet
     // display. Same pattern the main Scanner uses.
+    //
+    // correction is hoisted so brand / productName / categoryHints /
+    // packageSize from the external-baseline ingest (migration 0130)
+    // can fill in below when OFF returned empty values.
     let correctionCanonicalId = null;
+    let correction = null;
     try {
-      const correction = await findBarcodeCorrection(upc);
+      correction = await findBarcodeCorrection(upc);
       if (correction?.canonicalId) {
         correctionCanonicalId = correction.canonicalId;
         console.log("[shop-mode] correction hit", {
@@ -274,14 +279,26 @@ export default function ShopMode({
     let offPayload = null;
 
     if (off?.found) {
-      brand = off.brand || null;
-      productName = off.productName || null;
+      // External-baseline fallback — when OFF didn't carry a field,
+      // fill from the correction row (USDA ingest seeded brand /
+      // package size / category hints; OFF ingest would later add
+      // name + image). Keeps the scan draft populated for UPCs OFF
+      // has spottier data on.
+      const baselineQty = (correction?.packageSizeAmount != null
+        && correction?.packageSizeUnit)
+        ? `${correction.packageSizeAmount} ${correction.packageSizeUnit}`
+        : null;
+      brand = off.brand || correction?.brand || null;
+      productName = off.productName || correction?.name || null;
+      const mergedHints = (off.categoryHints && off.categoryHints.length > 0)
+        ? off.categoryHints
+        : (correction?.categoryHints || []);
       offPayload = {
-        brand:         off.brand,
-        productName:   off.productName,
-        categoryHints: off.categoryHints || [],
+        brand,
+        productName,
+        categoryHints: mergedHints,
         nutrition:     off.nutrition || null,
-        quantity:      off.quantity || null,
+        quantity:      off.quantity || baselineQty || null,
         source:        off.source || null,
         sourceId:      off.sourceId || null,
         offUrl:        off.offUrl || null,
@@ -295,9 +312,9 @@ export default function ShopMode({
         flashColor = "green";
       } else {
         const match = resolveCanonicalFromScan({
-          brand:         off.brand,
-          productName:   off.productName,
-          categoryHints: off.categoryHints || [],
+          brand,
+          productName,
+          categoryHints: mergedHints,
           learnedTagLookup,
           findIngredient,
         });
@@ -314,6 +331,43 @@ export default function ShopMode({
       // commits with just the canonical; user can add brand later.
       canonicalId = correctionCanonicalId;
       flashColor = "green";
+    } else if (correction && (correction.brand
+        || correction.name
+        || (correction.categoryHints && correction.categoryHints.length > 0))) {
+      // OFF miss but baseline-ingest has signal for this UPC.
+      // Treat the baseline's brand / name / hints as OFF payload and
+      // run the resolver against it — fuzzy matching on "cheese"
+      // hint + "Kerrygold" brand can still land a canonical.
+      brand = correction.brand || null;
+      productName = correction.name || null;
+      const mergedHints = correction.categoryHints || [];
+      const baselineQty = (correction.packageSizeAmount != null
+        && correction.packageSizeUnit)
+        ? `${correction.packageSizeAmount} ${correction.packageSizeUnit}`
+        : null;
+      offPayload = {
+        brand,
+        productName,
+        categoryHints: mergedHints,
+        nutrition:     null,
+        quantity:      baselineQty,
+        source:        "baseline",
+        sourceId:      null,
+        offUrl:        null,
+      };
+      const match = resolveCanonicalFromScan({
+        brand,
+        productName,
+        categoryHints: mergedHints,
+        learnedTagLookup,
+        findIngredient,
+      });
+      if (match?.canonical?.id) {
+        canonicalId = match.canonical.id;
+        flashColor = "green";
+      } else {
+        flashColor = "yellow";
+      }
     }
 
     const scan = await upsertScan({

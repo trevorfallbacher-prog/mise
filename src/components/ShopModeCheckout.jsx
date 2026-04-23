@@ -828,16 +828,23 @@ export default function ShopModeCheckout({
         const displayName = canon?.shortName
           || canon?.name
           || scan.productName
+          || taught?.name
           || `UPC ${scan.barcodeUpc}`;
 
         // Package size cascade. User override (typed in the review
         // screen's inline editor) wins over everything so the user
         // can correct OFF misses without post-commit edits. Then OFF
-        // parsed quantity, then canonical defaults. qty multiplier
-        // applies to whichever package size we land on — 2 × 16oz
-        // packages → amount = 32.
+        // parsed quantity, then baseline-ingest parsed size (USDA),
+        // then canonical defaults. qty multiplier applies to whichever
+        // package size we land on — 2 × 16oz packages → amount = 32.
         const offQty = scan.offPayload?.quantity || null;
-        const offPkg = parsePackageSize(offQty);
+        let offPkg = parsePackageSize(offQty);
+        if (!offPkg && taught?.packageSizeAmount && taught?.packageSizeUnit) {
+          offPkg = {
+            amount: Number(taught.packageSizeAmount),
+            unit:   taught.packageSizeUnit,
+          };
+        }
         const override = packageOverrides.get(scan.id) || null;
         const qtyCount = scan.qty || 1;
         const pkgAmount = (override?.amount != null && override.amount > 0)
@@ -864,7 +871,13 @@ export default function ShopModeCheckout({
         //      family — critical when the canonical is BRAND NEW
         //      and has no enrichment yet)
         //   4. "pantry" default (satisfies NOT NULL constraint)
-        const offAxes = tagHintsToAxes(scan.offPayload?.categoryHints || []);
+        // Merge OFF's tags with baseline-ingest hints (USDA-derived)
+        // so tagHintsToAxes sees the union — lets a USDA row supply
+        // "cheese" when OFF returned no tags at all.
+        const mergedHintsForAxes = (scan.offPayload?.categoryHints && scan.offPayload.categoryHints.length > 0)
+          ? scan.offPayload.categoryHints
+          : (taught?.categoryHints || []);
+        const offAxes = tagHintsToAxes(mergedHintsForAxes);
         const category = override?.category
           || canon?.category
           || synthInfo?.info?.category
@@ -913,7 +926,7 @@ export default function ShopModeCheckout({
           ingredient_id:  scan.canonicalId || null,
           components:     scan.canonicalId ? [scan.canonicalId] : null,
           canonical_id:   scan.canonicalId || null,
-          brand:          scan.brand || null,
+          brand:          scan.brand || taught?.brand || null,
           barcode_upc:    scan.barcodeUpc || null,
           price_cents:    priceInfo?.priceCents ?? null,
           source_receipt_id: receiptId,
