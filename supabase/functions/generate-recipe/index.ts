@@ -152,6 +152,11 @@ type Prefs = {
     familyName?: string;
     familyExamples?: string[];
     rawPrompt?: string;
+    // Canonical ids the dish MUST contain. Classifier emits these
+    // for SPECIFIC dishes; the post-check retries when any are
+    // missing from the drafted ingredient list. Fixes the class of
+    // bug where "chicken marsala" drafts without chicken.
+    requiredIngredients?: string[];
   };
   // Anchor context for compose-a-meal drafts. When present, the draft
   // is a side / dessert / appetizer intended to be served alongside
@@ -1035,11 +1040,190 @@ type DishContract = {
   familyName?: string;
   familyExamples?: string[];
   rawPrompt?: string;
+  // Canonical ids the drafted recipe MUST contain (SPECIFIC only).
+  // Seeded by REQUIRED_INGREDIENTS_SEED for well-known dishes and
+  // augmented by the classifier for everything else. Enforced by
+  // verifyContract after the title check.
+  requiredIngredients?: string[];
 };
+
+// Required-ingredient seeds for named dishes. Case-insensitive
+// substring match on dishName — "chicken marsala" matches
+// "Creamy Chicken Marsala with Mushrooms". Each value is an array
+// of canonical slugs that MUST appear in recipe.ideal/pantry, or
+// be satisfied by a hub / cut descendant.
+//
+// Mirrors src/data/ingredientAliases.js#REQUIRED_INGREDIENTS_BY_DISH.
+// Kept inline here so the Deno edge function doesn't need to import
+// from the browser src tree; update both tables together.
+const REQUIRED_INGREDIENTS_SEED: Record<string, string[]> = {
+  "chicken marsala":    ["chicken"],
+  "chicken piccata":    ["chicken"],
+  "chicken parmesan":   ["chicken", "parmesan"],
+  "chicken parmigiana": ["chicken", "parmesan"],
+  "beef stroganoff":    ["beef"],
+  "beef wellington":    ["beef"],
+  "pork chop":          ["pork"],
+  "carbonara":          ["pasta_hub", "eggs"],
+  "cacio e pepe":       ["pasta_hub", "pecorino"],
+  "risotto":            ["arborio_rice"],
+  "lasagna":            ["pasta_hub"],
+  "mac and cheese":     ["pasta_hub", "cheddar"],
+  "shrimp scampi":      ["shrimp"],
+  "fish tacos":         ["tortillas"],
+  "bolognese":          ["ground_beef"],
+  "pad thai":           ["rice_noodles"],
+};
+
+// Minimal legacy-slug alias map — mirrors CANONICAL_ALIASES in
+// src/data/ingredients.js. The edge function only needs it to
+// resolve "chicken_breast" → "chicken" when checking whether a
+// required "chicken" ingredient is satisfied by a drafted
+// "chicken_breast" ingredient. Keep in sync with the browser table.
+const CANONICAL_ALIAS_BASE: Record<string, string> = {
+  ground_beef:        "beef",
+  ground_pork:        "pork",
+  ground_turkey:      "turkey",
+  chicken_breast:     "chicken",
+  chicken_thigh:      "chicken",
+  chicken_leg:        "chicken",
+  chicken_wing:       "chicken",
+  chicken_tenderloin: "chicken",
+  ribeye:             "beef",
+  ny_strip:           "beef",
+  sirloin:            "beef",
+  brisket:            "beef",
+  chuck_roast:        "beef",
+  pork_chop:          "pork",
+  pork_loin:          "pork",
+  pork_shoulder:      "pork",
+  turkey_breast:      "turkey",
+};
+
+// Hub parent map — "chicken_breast" has parentId "chicken_hub",
+// so a required "chicken_hub" is satisfied. Keep in sync with the
+// parentId fields in src/data/ingredients.js.
+const HUB_PARENT: Record<string, string> = {
+  chicken:            "chicken_hub",
+  chicken_breast:     "chicken_hub",
+  chicken_thigh:      "chicken_hub",
+  chicken_leg:        "chicken_hub",
+  chicken_wing:       "chicken_hub",
+  chicken_tenderloin: "chicken_hub",
+  ground_chicken:     "chicken_hub",
+  beef:               "beef_hub",
+  ground_beef:        "beef_hub",
+  ribeye:             "beef_hub",
+  ny_strip:           "beef_hub",
+  sirloin:            "beef_hub",
+  brisket:            "beef_hub",
+  chuck_roast:        "beef_hub",
+  steak:              "beef_hub",
+  pork:               "pork_hub",
+  ground_pork:        "pork_hub",
+  pork_chop:          "pork_hub",
+  pork_loin:          "pork_hub",
+  pork_shoulder:      "pork_hub",
+  spaghetti:          "pasta_hub",
+  penne:              "pasta_hub",
+  fettuccine:         "pasta_hub",
+  linguine:           "pasta_hub",
+  rigatoni:           "pasta_hub",
+  lasagna:            "pasta_hub",
+  ziti:               "pasta_hub",
+  macaroni:           "pasta_hub",
+  fusilli:            "pasta_hub",
+  farfalle:           "pasta_hub",
+  orzo:               "pasta_hub",
+  orecchiette:        "pasta_hub",
+  bucatini:           "pasta_hub",
+  cavatappi:           "pasta_hub",
+  rotini:             "pasta_hub",
+  angel_hair:         "pasta_hub",
+  tortellini:         "pasta_hub",
+  ravioli:            "pasta_hub",
+  gnocchi:            "pasta_hub",
+  rice:               "rice_hub",
+  basmati_rice:       "rice_hub",
+  jasmine_rice:       "rice_hub",
+  brown_rice:         "rice_hub",
+  arborio_rice:       "rice_hub",
+  flour:              "flour_hub",
+  almond_flour:       "flour_hub",
+  coconut_flour:      "flour_hub",
+  rice_flour:         "flour_hub",
+  bread_flour:        "flour_hub",
+  cake_flour:         "flour_hub",
+  whole_wheat_flour:  "flour_hub",
+  semolina:           "flour_hub",
+  pastry_flour:       "flour_hub",
+  zero_zero_flour:    "flour_hub",
+};
+
+function seedRequiredIngredients(dishName: string): string[] {
+  const n = (dishName || "").toLowerCase().trim();
+  if (!n) return [];
+  for (const [key, ids] of Object.entries(REQUIRED_INGREDIENTS_SEED)) {
+    if (n.includes(key)) return ids;
+  }
+  return [];
+}
+
+function extractRecipeIngredientIds(recipe: unknown): string[] {
+  if (!recipe || typeof recipe !== "object") return [];
+  const r = recipe as Record<string, unknown>;
+  const lists: unknown[] = [];
+  if (Array.isArray(r.ideal))  lists.push(...r.ideal);
+  if (Array.isArray(r.pantry)) lists.push(...r.pantry);
+  if (Array.isArray(r.ingredients)) lists.push(...r.ingredients);
+  const ids: string[] = [];
+  for (const entry of lists) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const id = typeof e.ingredientId === "string" ? e.ingredientId : null;
+    if (id) ids.push(id);
+    // Fall back to the free-text name so "chicken" as name still
+    // counts when Claude emits ingredientId: null for a canonical
+    // it couldn't echo. Normalized slug form.
+    const name = typeof e.name === "string" ? e.name.toLowerCase().trim().replace(/\s+/g, "_") : "";
+    if (name) ids.push(name);
+  }
+  return ids;
+}
+
+function checkRequiredIngredients(
+  required: string[] | undefined,
+  presentIds: string[],
+): { ok: boolean; missing: string[] } {
+  if (!Array.isArray(required) || required.length === 0) return { ok: true, missing: [] };
+  // Build the set of canonicals effectively present, expanding each
+  // drafted id to its base (via CANONICAL_ALIAS_BASE) and its hub
+  // parent (via HUB_PARENT) so "chicken_breast" counts as "chicken"
+  // and "chicken_hub", while the raw id still counts for literal
+  // matches.
+  const present = new Set<string>();
+  for (const id of presentIds) {
+    if (!id) continue;
+    present.add(id);
+    const base = CANONICAL_ALIAS_BASE[id];
+    if (base) present.add(base);
+    const hub = HUB_PARENT[id] || (base ? HUB_PARENT[base] : undefined);
+    if (hub) present.add(hub);
+    // Free-text name fallback — "chicken_marsala" substring-matches
+    // "chicken", so name-derived slugs still satisfy coarse
+    // requirements.
+    for (const req of required) {
+      if (id.includes(req)) present.add(req);
+    }
+  }
+  const missing = required.filter(req => !present.has(req));
+  return { ok: missing.length === 0, missing };
+}
 function verifyContract(
   title: unknown,
   contract: DishContract | undefined,
-): { pass: boolean; reason: string } {
+  recipe?: unknown,
+): { pass: boolean; reason: string; missingIngredients?: string[] } {
   if (!contract || contract.tier === "OPEN" || contract.tier === "FREEFORM") {
     return { pass: true, reason: "" };
   }
@@ -1050,11 +1234,32 @@ function verifyContract(
     const needles = [contract.dishName, ...aliases]
       .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       .map((s) => s.toLowerCase());
-    for (const n of needles) if (t.includes(n)) return { pass: true, reason: "" };
-    return {
-      pass: false,
-      reason: `title "${title}" does not mention "${contract.dishName}" or any alias (${needles.slice(0, 4).join(", ")})`,
-    };
+    const titleHit = needles.some(n => t.includes(n));
+    if (!titleHit) {
+      return {
+        pass: false,
+        reason: `title "${title}" does not mention "${contract.dishName}" or any alias (${needles.slice(0, 4).join(", ")})`,
+      };
+    }
+    // Title check passed. Now verify the ingredient list contains
+    // every canonical the dish is defined by (e.g. chicken in
+    // chicken marsala). Skips when there's no recipe body yet (the
+    // classifier-only flow) or when requiredIngredients is empty.
+    if (recipe) {
+      const req = Array.isArray(contract.requiredIngredients) ? contract.requiredIngredients : [];
+      if (req.length) {
+        const presentIds = extractRecipeIngredientIds(recipe);
+        const check = checkRequiredIngredients(req, presentIds);
+        if (!check.ok) {
+          return {
+            pass: false,
+            reason: `recipe "${title}" is missing required ingredient(s): ${check.missing.join(", ")}`,
+            missingIngredients: check.missing,
+          };
+        }
+      }
+    }
+    return { pass: true, reason: "" };
   }
   // FAMILY
   const family = (contract.familyName || "").toLowerCase();
@@ -1077,7 +1282,19 @@ function verifyContract(
 function buildRetryAddendum(
   priorTitle: string,
   contract: DishContract,
+  missingIngredients?: string[],
 ): string {
+  // Missing-ingredient retry takes priority when it fires — the title
+  // was right but the dish was incomplete. Specific and targeted: tell
+  // Claude exactly what it left out and why that's wrong.
+  if (missingIngredients && missingIngredients.length) {
+    const list = missingIngredients.join(", ");
+    const dish = contract.dishName || priorTitle;
+    return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS MISSING REQUIRED INGREDIENTS.
+Your prior draft was titled "${priorTitle}" but did NOT include: ${list}.
+"${dish}" without ${list} is wrong — ${list.split(", ")[0]} is a defining ingredient of this dish.
+Rewrite the full recipe. The ingredient list (ideal + pantry) MUST include ${list} as primary ingredient(s). Do NOT substitute, omit, or bury them in a garnish.`;
+  }
   if (contract.tier === "SPECIFIC") {
     const aliases = Array.isArray(contract.aliases) ? contract.aliases.slice(0, 6) : [];
     return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS OFF-CONTRACT.
@@ -1135,6 +1352,7 @@ Return ONLY a JSON object (no markdown, no prose). Schema:
   "dishName": "<canonical spelling of the dish, e.g. 'crème brûlée'>",    // SPECIFIC only
   "aliases":  ["<string>", ...],                                          // SPECIFIC only — 2-5 variant spellings the output title might use (e.g. ['creme brulee', 'crème brûlée', 'creme brulée']). Include the core dish noun(s) alone too ('brulee', 'creme').
   "rules":    "<one sentence describing what this dish MUST contain/be>", // SPECIFIC only
+  "requiredIngredients": ["<lowercase ingredient noun>", ...],            // SPECIFIC only — 1-4 lowercase ingredient names the dish is DEFINED by. Missing any makes the recipe wrong. Examples: chicken marsala → ["chicken"]; chicken parmesan → ["chicken", "parmesan"]; cacio e pepe → ["pasta", "pecorino"]; carbonara → ["pasta", "eggs"]; shrimp scampi → ["shrimp"]. Use base canonicals (e.g. "chicken" not "chicken breast"; "pasta" not "spaghetti") unless the cut or shape is part of the dish identity.
   // FAMILY when the user described a category/technique but not a
   //   specific dish (cookies, pasta, stir-fry, custard based treat,
   //   italian dinner, quick breakfast, something spicy).
@@ -1200,6 +1418,21 @@ Return the JSON object and nothing else.`;
         out.aliases.push(trimmed);
       }
       out.rules = typeof parsed.rules === "string" ? parsed.rules.slice(0, 300) : "";
+      // Required ingredients — the presence check in verifyContract
+      // uses these to catch drafts that shipped without a defining
+      // ingredient (e.g. chicken marsala without chicken). Classifier
+      // output is normalized to canonical slugs (lowercase, underscores)
+      // and then unioned with the dish-name seed table so a known dish
+      // gets its seeds even when the classifier forgot to enumerate.
+      const classifierReq = Array.isArray(parsed.requiredIngredients)
+        ? parsed.requiredIngredients
+            .filter((a: unknown): a is string => typeof a === "string" && a.trim().length > 0)
+            .map((a: string) => a.toLowerCase().trim().replace(/\s+/g, "_"))
+            .slice(0, 6)
+        : [];
+      const seededReq = seedRequiredIngredients(out.dishName || trimmed);
+      const merged = Array.from(new Set([...classifierReq, ...seededReq]));
+      if (merged.length) out.requiredIngredients = merged;
     } else if (tier === "FAMILY") {
       out.familyName = typeof parsed.familyName === "string" ? parsed.familyName : trimmed;
       out.familyExamples = Array.isArray(parsed.familyExamples)
@@ -1304,13 +1537,14 @@ Deno.serve(async (req) => {
   let contractPass = true;
   let contractReason = "";
   let priorTitle = "";
+  let priorMissing: string[] | undefined;
   let contractRetries = 0;
   const MAX_ATTEMPTS = 2;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const addendum = attempt === 0 || !contract
       ? ""
-      : buildRetryAddendum(priorTitle, contract);
+      : buildRetryAddendum(priorTitle, contract, priorMissing);
     const basePrompt = mode === "sketch"
       ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
       : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients);
@@ -1407,13 +1641,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    const check = verifyContract(recipe.title, contract);
+    const check = verifyContract(recipe.title, contract, recipe);
     contractPass = check.pass;
     contractReason = check.reason;
     if (check.pass) break;
 
     // Off-contract. If we have a retry budget, loop with the addendum.
     priorTitle = String(recipe.title || "");
+    priorMissing = check.missingIngredients;
     contractRetries = attempt + 1;
     // eslint-disable-next-line no-console
     console.warn(
