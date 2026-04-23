@@ -626,6 +626,39 @@ exact shape. Every field is REQUIRED unless marked optional.
     ...
   ],
   "tags": ["<short tag>", ...],                         // 2-5 useful tags
+  "prepSteps": [                                        // optional — OMIT entirely unless the dish genuinely needs advance prep
+    // Structured prep reminders that fire as push notifications at
+    // (scheduled meal time - leadMinutes). Use these for actions the
+    // cook must take BEFORE the main cook session starts — things
+    // that happen hours or days ahead of the burners going on. DO
+    // NOT duplicate inside-the-cook steps here; those go in `steps`.
+    //
+    // Emit a prepStep ONLY when the dish genuinely benefits from
+    // advance work. Examples worth emitting:
+    //   • Freeze butter overnight for flaky pie crust
+    //   • Marinate chicken 2-24 hours ahead
+    //   • Pull steak out 45 min ahead to temper
+    //   • Soak beans overnight
+    //   • Chill dough 4 hours
+    //   • Brine turkey 12-24 hours
+    // Examples NOT to emit (these are just cook steps, not prep):
+    //   • "Preheat oven to 400°F" — that's step 1 of the cook
+    //   • "Mince garlic" — happens during prep phase, not before it
+    //
+    // Most quick weeknight dishes have ZERO prepSteps. Don't invent
+    // them. If the recipe doesn't need advance prep, OMIT the key
+    // entirely or return an empty array.
+    {
+      "id":          "<stable short id, e.g. 'marinate' / 'freeze-butter' / 'temper'>",
+      "leadMinutes": <integer — minutes BEFORE scheduled meal time. 30 = half hour, 120 = 2 hours, 720 = overnight, 1440 = 1 day>,
+      "emoji":       "<single emoji, e.g. '🧊' for freezing, '🌶' for marinate, '🔥' for temper, '⏰' for generic>",
+      "title":       "<short push-title, imperative voice — 'Start marinating chicken', 'Freeze the butter'>",
+      "body":        "<one-sentence instruction starting with a verb — 'Toss chicken with spice rub and lime juice', 'Cube butter and put in the freezer — needs to be rock solid'>",
+      "defaultOn":   <true | false — false for genuinely optional steps like "marinade overnight for deeper flavor">,
+      "source":      "recipe_prep" | "freeze_overnight"   // 'freeze_overnight' for anything ≥6h lead, 'recipe_prep' otherwise
+    },
+    ...
+  ],
   "reheat": {                                           // REQUIRED when the dish keeps as a leftover
     "primary": {
       // The BEST method for this specific dish — not a default.
@@ -1075,6 +1108,11 @@ Deno.serve(async (req) => {
     // dropped `uses` entirely, default to an empty array (CookMode
     // falls back to the top-level ingredients list for rendering).
     steps:      normalizeSteps(recipe.steps),
+    // Structured prep reminders (migration 0134). Claude emits zero
+    // or more; the normalizer drops malformed entries and clamps
+    // leadMinutes into a sane range so a model hallucinating
+    // leadMinutes: 9999999 doesn't queue a reminder for the year 3000.
+    prepSteps:  normalizePrepSteps(recipe.prepSteps),
     tags:       Array.isArray(recipe.tags) ? recipe.tags : [],
     // Narrative "why this dish" string for the preview banner.
     // Truncated defensively so a verbose model doesn't eat the
@@ -1270,4 +1308,65 @@ function normalizeSteps(steps: unknown): unknown[] {
       doneCue:     typeof step.doneCue     === "string" ? step.doneCue     : null,
     };
   });
+}
+
+// Prep-step normalizer. prepSteps ride alongside the main `steps` array
+// but fire as pushes at (scheduled_for - leadMinutes), not as items in
+// CookMode. Bad entries are dropped silently — the worst case we want
+// to avoid is a hallucinated leadMinutes queuing a reminder decades in
+// the future or a step with no body text firing a blank push.
+//
+// Clamp: leadMinutes between 1 and 7 days (10_080 min). Anything
+// longer is almost certainly a model error (leadMinutes meant for
+// seconds, or "overnight" misread as "one week"). Anything zero or
+// negative would fire immediately, which is never what prep means.
+const MAX_LEAD_MINUTES = 7 * 24 * 60;
+
+function normalizePrepSteps(raw: unknown): unknown[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  const seenIds = new Set<string>();
+
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const s = r as Record<string, unknown>;
+
+    const id = typeof s.id === "string" && s.id.trim() ? s.id.trim().toLowerCase() : null;
+    if (!id || seenIds.has(id)) continue;
+
+    const leadRaw = Number(s.leadMinutes);
+    if (!Number.isFinite(leadRaw) || leadRaw <= 0) continue;
+    const leadMinutes = Math.min(Math.round(leadRaw), MAX_LEAD_MINUTES);
+
+    const title = typeof s.title === "string" && s.title.trim()
+      ? s.title.trim().slice(0, 80)
+      : null;
+    const body  = typeof s.body  === "string" && s.body.trim()
+      ? s.body.trim().slice(0, 280)
+      : (typeof s.text === "string" && s.text.trim()
+          ? s.text.trim().slice(0, 280)
+          : null);
+    if (!title || !body) continue;
+
+    const emoji = typeof s.emoji === "string" && s.emoji.trim()
+      ? s.emoji.trim().slice(0, 8)
+      : (leadMinutes >= 6 * 60 ? "🧊" : "⏰");
+
+    const sourceIn = typeof s.source === "string" ? s.source : null;
+    const source = sourceIn === "freeze_overnight" || sourceIn === "recipe_prep"
+      ? sourceIn
+      : (leadMinutes >= 6 * 60 ? "freeze_overnight" : "recipe_prep");
+
+    seenIds.add(id);
+    out.push({
+      id,
+      leadMinutes,
+      emoji,
+      title,
+      body,
+      defaultOn: s.defaultOn === false ? false : true,
+      source,
+    });
+  }
+  return out;
 }
