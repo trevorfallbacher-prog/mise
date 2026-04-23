@@ -68,7 +68,7 @@ function normalizeBarcode(b) {
 // receipt UPCs (raw + normalized + claimed), scan text + tokens,
 // every line's text + tokens + shared count, final reason for
 // match or no-match. Trade off console noise for diagnosability.
-function matchScanToReceiptLine(scan, receiptLines, claimed) {
+function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = null) {
   const scanUpc = normalizeBarcode(scan.barcodeUpc);
   const scanLabel = scan.productName || scan.brand || `UPC ${scan.barcodeUpc}`;
 
@@ -105,7 +105,13 @@ function matchScanToReceiptLine(scan, receiptLines, claimed) {
   }
 
   // ── Tier 2: token overlap ──────────────────────────────────
-  const scanText = [scan.productName, scan.brand].filter(Boolean).join(" ");
+  // Include the paired list item's name in the token set — covers
+  // the brand-only-productName case where OFF returned just "Daisy"
+  // for a UPC the user paired to a "Sour cream" list slot. Without
+  // this, the receipt line "SOUR CREAM 16OZ" has zero token overlap
+  // with the scan's lone "daisy" token. With this, the list slot's
+  // tokens (sour, cream) join the search and the line matches.
+  const scanText = [scan.productName, scan.brand, pairedListName].filter(Boolean).join(" ");
   const scanToks = new Set(
     normalizeName(scanText).split(" ").filter(t => t.length >= 2),
   );
@@ -251,7 +257,11 @@ export default function ShopModeCheckout({
       const claimed = new Set();
       const prices = new Map();
       for (const scan of scans) {
-        const idx = matchScanToReceiptLine(scan, lines, claimed);
+        // Pass the paired list slot's name so the matcher can use
+        // its tokens too — fixes the "scan productName is brand-
+        // only, receipt rawText is product-only" mismatch.
+        const pairedListName = nameForListId(shoppingList, scan.pairedShoppingListItemId);
+        const idx = matchScanToReceiptLine(scan, lines, claimed, pairedListName);
         if (idx >= 0) {
           claimed.add(idx);
           prices.set(scan.id, {
