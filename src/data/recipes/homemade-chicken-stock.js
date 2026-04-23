@@ -49,6 +49,26 @@ const recipe = {
 
   prepNotifications: [],
 
+  prepSteps: [
+    {
+      id: "thaw-bones",
+      leadMinutes: 12 * 60,
+      emoji: "🧊",
+      title: "Pull the frozen chicken bones out",
+      body: "Most of us build stock from carcasses saved in the freezer. Move them to the fridge overnight so they're ready to roast tomorrow — thawing them in hot water leaches flavor.",
+      defaultOn: true,
+      source: "freeze_overnight",
+    },
+    {
+      id: "chill-containers",
+      leadMinutes: 45,
+      emoji: "🥶",
+      title: "Prep cooling containers",
+      body: "Hot stock needs to hit <40°F fast. Pull quart containers or freezer bags + an ice bath so you can chill it the moment it's strained.",
+      defaultOn: false,
+    },
+  ],
+
   steps: [
     { id:1, title:"Optional: roast the bones", instruction:"For a deeper, browner stock: arrange bones on a sheet pan, roast at 400°F for 30 minutes until golden. For a cleaner, more delicate stock (fond blanc): skip this step.", icon:"🔥", animation:"brown", timer:m(30), tip:"Roasting = French fond brun (brown stock). Raw = fond blanc (white stock). Both are correct; different jobs.",
       uses:[{ amount:"2½ lb", item:"chicken bones" }],

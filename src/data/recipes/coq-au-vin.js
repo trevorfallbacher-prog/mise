@@ -38,9 +38,30 @@ const recipe = {
     { amount: "to taste", item: "salt & pepper" },
   ],
 
+  // Legacy shape — preserved; prepSteps is the new source of truth.
   prepNotifications: [
     { id: "marinate", leadTime: "T-1d", text: "Marinate the chicken in red wine overnight (optional but classic)", defaultOn: false },
     { id: "temper", leadTime: "T-30m", text: "Pull the chicken from the fridge 30 min before cooking so it browns evenly", defaultOn: true },
+  ],
+
+  prepSteps: [
+    {
+      id: "marinate",
+      leadMinutes: 24 * 60,
+      emoji: "🍷",
+      title: "Marinate the chicken overnight",
+      body: "Submerge chicken in red wine with a bay leaf, sliced onion, peppercorns. Classic move — optional but deepens the color and the body of the sauce.",
+      defaultOn: false,
+      source: "freeze_overnight",
+    },
+    {
+      id: "temper",
+      leadMinutes: 30,
+      emoji: "🧊",
+      title: "Pull the chicken from the fridge",
+      body: "Let it sit at room temp for 30 min before cooking — cold chicken steams in the pan instead of browning.",
+      defaultOn: true,
+    },
   ],
 
   steps: [

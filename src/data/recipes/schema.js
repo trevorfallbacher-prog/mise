@@ -41,6 +41,41 @@
 //                      book has that AI drafts routinely miss.
 //   prepNotifications: [{ id, leadTime, text, defaultOn }]
 //               leadTime format: "T-2h", "T-30m", "T-1d"
+//               LEGACY shape — kept for back-compat with existing recipes.
+//               New recipes should use prepSteps below instead.
+//   prepSteps:  [{ id, leadMinutes, title, body, emoji?, defaultOn?, source? }]
+//               Structured prep reminders. Each step schedules a push
+//               notification at (mealScheduledFor - leadMinutes) via the
+//               prep_notifications table (migration 0134).
+//                 id           stable key within the recipe — used as
+//                              prep_notifications.prep_key and as the
+//                              toggle key inside scheduled_meals.
+//                              notification_settings.
+//                 leadMinutes  integer minutes before the scheduled meal
+//                              time. 30 = half-hour prep ("toss the
+//                              chicken in spice rub"). 720 = overnight
+//                              ("cube butter and freeze"). 1440 = a day
+//                              ahead ("take the roast out to thaw").
+//                 title        short headline shown as the push title.
+//                 body         one-sentence actionable text. Start with
+//                              a verb — "Toss…", "Freeze…", "Pull…" —
+//                              so the notification reads as an
+//                              instruction, not a status update.
+//                 emoji        optional. Defaults to 🧊 for leadMinutes
+//                              ≥ 360 (cold-chain-sounding) and ⏰ below.
+//                 defaultOn    true by default. Set false for optional
+//                              reminders that should be off unless the
+//                              user explicitly toggles them on.
+//                 source       'recipe_prep' | 'freeze_overnight' |
+//                              'step_timing'. Classifies the reminder
+//                              for analytics + UI accent. Omit to let
+//                              resolvePrepSteps pick based on leadMinutes.
+//               Every entry becomes one prep_notifications row per
+//               scheduled meal. The drain RPC fires them when
+//               deliver_at arrives. Quiet-hours in the user's
+//               notification_preferences automatically shifts any row
+//               that would have landed in their sleep window EARLIER
+//               (so freeze-overnight at 2am surfaces as a 9:30pm ping).
 //   tags:       string[]
 //
 //   // Leftover reheat instructions. Optional; absent when the dish
