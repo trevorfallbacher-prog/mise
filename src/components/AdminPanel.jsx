@@ -82,6 +82,7 @@ export default function AdminPanel({ userId, onClose }) {
             { id: "receipts",    label: "RECEIPTS" },
             { id: "enrichments", label: "ENRICHMENTS" },
             { id: "canonicals",  label: "CANONICALS" },
+            { id: "baseline",    label: "BASELINE" },
             { id: "recipes",     label: "RECIPES" },
             { id: "xp",          label: "XP ECONOMY" },
           ].map(t => (
@@ -106,6 +107,7 @@ export default function AdminPanel({ userId, onClose }) {
         {tab === "receipts"    && <ReceiptsList viewerId={userId} />}
         {tab === "enrichments" && <PendingEnrichmentsList viewerId={userId} />}
         {tab === "canonicals"  && <CanonicalsList viewerId={userId} />}
+        {tab === "baseline"    && <BaselineCoverage viewerId={userId} />}
         {tab === "recipes"     && <RecipeSubmissionsList viewerId={userId} />}
         {tab === "xp"          && <XpEconomyStats viewerId={userId} />}
       </div>
@@ -1762,6 +1764,133 @@ function RecipePreviewModal({ row, onClose }) {
           CLOSE
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Baseline coverage ─────────────────────────────────────────────
+// Visibility into the external-ingest state of barcode_identity_
+// corrections: how many UPCs have been seeded from USDA/OFF, how
+// many still await a canonical link (admin review queue), and a
+// scrollable list of the unlinked rows so an admin can spot
+// large-volume blind spots at a glance. Write actions (linking a
+// canonical to a row, editing brand, etc.) live in the scan path
+// itself — admin scans the UPC, Kitchen.jsx's ItemCard opens with
+// the baseline fields pre-filled, the admin picks the canonical,
+// and rememberBarcodeCorrection upgrades the row's source_provenance
+// entries to "admin". That keeps the BASELINE tab read-only and the
+// write surface consistent with the normal scan flow.
+function BaselineCoverage() {
+  const [counts, setCounts] = useState(null);
+  const [queue,  setQueue]  = useState(null);
+  const [error,  setError]  = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      // Four parallel counts: total rows, rows synced from external,
+      // rows admin-curated (any field stamped "admin"), rows still
+      // awaiting a canonical link. Supabase's head+count keeps these
+      // cheap — no row data transferred.
+      const results = await Promise.all([
+        supabase.from("barcode_identity_corrections").select("id", { count: "exact", head: true }),
+        supabase.from("barcode_identity_corrections").select("id", { count: "exact", head: true })
+          .not("last_external_sync", "is", null),
+        supabase.from("barcode_identity_corrections").select("id", { count: "exact", head: true })
+          .not("source_provenance", "eq", "{}"),
+        supabase.from("barcode_identity_corrections").select("id", { count: "exact", head: true })
+          .is("canonical_id", null),
+      ]);
+      const err = results.find(r => r.error)?.error;
+      if (!alive) return;
+      if (err) { setError(err.message); return; }
+      setCounts({
+        total:        results[0].count || 0,
+        externalSynced: results[1].count || 0,
+        anyProvenance: results[2].count || 0,
+        awaitingCanonical: results[3].count || 0,
+      });
+      // Top-100 unlinked rows, most-recently-synced first. Gives an
+      // admin a visible review queue without paging UI (100 is enough
+      // to spot the high-volume misses; deeper drilldown waits on a
+      // real need).
+      const { data: q, error: qErr } = await supabase
+        .from("barcode_identity_corrections")
+        .select("id, barcode_upc, brand, name, category_hints, last_external_sync")
+        .is("canonical_id", null)
+        .not("last_external_sync", "is", null)
+        .order("last_external_sync", { ascending: false })
+        .limit(100);
+      if (!alive) return;
+      if (qErr) { setError(qErr.message); return; }
+      setQueue(q || []);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (error) return <Empty msg={`Load failed: ${error}`} />;
+  if (counts === null || queue === null) return <Loading />;
+
+  const coveragePct = counts.total > 0
+    ? Math.round(((counts.total - counts.awaitingCanonical) / counts.total) * 100)
+    : 0;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <StatRow label="UPCs seeded (total)"      value={counts.total} />
+      <StatRow label="From external baseline"   value={counts.externalSynced} sub={pctOf(counts.externalSynced, counts.total)} />
+      <StatRow label="Admin-curated fields"     value={counts.anyProvenance} sub={pctOf(counts.anyProvenance, counts.total)} />
+      <StatRow label="Awaiting canonical link"  value={counts.awaitingCanonical} sub={pctOf(counts.awaitingCanonical, counts.total)} />
+      <StatRow label="Canonical coverage"       value={`${coveragePct}%`} />
+
+      <div style={{
+        marginTop: 4,
+        fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666",
+        letterSpacing: "0.14em", padding: "0 4px",
+      }}>
+        REVIEW QUEUE · TOP {queue.length} UNLINKED
+      </div>
+      {queue.length === 0 ? (
+        <Empty msg="No unlinked external-baseline rows — every seeded UPC is linked." />
+      ) : (
+        queue.map(r => (
+          <div
+            key={r.id}
+            style={{
+              display: "flex", flexDirection: "column", gap: 4,
+              padding: "10px 12px",
+              background: "#0a0a0a", border: "1px solid #1e1e1e",
+              borderRadius: 10,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+              <div style={{
+                fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 14,
+                color: "#f0ece4",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
+                {r.name || <span style={{ color: "#666" }}>unnamed</span>}
+              </div>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#b8a878",
+                whiteSpace: "nowrap",
+              }}>
+                {r.brand || "—"}
+              </div>
+            </div>
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666",
+              letterSpacing: "0.08em",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              UPC {r.barcode_upc}
+              {r.category_hints && r.category_hints.length > 0 && (
+                <> · {r.category_hints.slice(0, 3).join(" · ")}</>
+              )}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }

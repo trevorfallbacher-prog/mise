@@ -1117,10 +1117,18 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               // only upgrades the display metadata if the registry
               // knows the canonical, but the commit never depends
               // on it.
+              //
+              // correction is hoisted out of the try block so the
+              // resolver + package-size + attributes branches below
+              // can use its external-baseline fields (brand / name /
+              // packageSize / categoryHints from USDA ingest,
+              // migration 0130) as fallbacks when OFF returned
+              // empty values for those axes.
               let correctionMatch = null;
               let hadCorrection = false;
+              let correction = null;
               try {
-                const correction = await findBarcodeCorrection(barcode);
+                correction = await findBarcodeCorrection(barcode);
                 console.log("[upc-debug] 1/lookup", {
                   barcode,
                   correction: correction
@@ -1160,15 +1168,31 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
               } catch (e) {
                 console.warn("[upc-debug] lookup threw:", e);
               }
+              // Brand fallback — baseline-ingest brand lands here
+              // when OFF had none. Keeps the ItemCard HEADER rendering
+              // "Kerrygold Butter" instead of bare "Butter" for
+              // UPCs USDA knew the brand of but OFF didn't.
+              if (!effectiveBrand && correction?.brand) {
+                effectiveBrand = correction.brand;
+              }
 
               // Canonical resolution + state + size + attributes.
               // Fall through to the resolver only when no correction
               // matched — the resolver's tiers are the cold-start
               // path for UPCs nobody's taught yet.
+              //
+              // When the baseline-ingest (migration 0130) has a row
+              // for this UPC, its brand / name / categoryHints fill
+              // in for any OFF field that came back empty. Admin-
+              // curated fields (source_provenance='admin') would
+              // still win over OFF if present — but for USDA-seeded
+              // rows they're sibling fallbacks, not overrides.
               const match = correctionMatch || resolveCanonicalFromScan({
-                brand:         res.brand,
-                productName:   res.productName,
-                categoryHints: res.categoryHints || [],
+                brand:         res.brand         || correction?.brand || null,
+                productName:   res.productName   || correction?.name  || null,
+                categoryHints: (res.categoryHints && res.categoryHints.length > 0)
+                  ? res.categoryHints
+                  : (correction?.categoryHints || []),
                 learnedTagLookup,
                 findIngredient,
               });
@@ -1177,6 +1201,21 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 ? stateForCanonical(rawState, match.canonical)
                 : null;
               let packageSize = parsePackageSize(res.quantity);
+              // External-baseline package size (USDA ingest) — same
+              // UPC = same physical package, so a baseline row's
+              // parsed package_size_amount/unit is as authoritative
+              // as OFF's quantity string. Falls in BETWEEN the OFF
+              // parse and the learned popular_package_sizes so it
+              // can rescue a UPC whose OFF row has no quantity but
+              // USDA knew the size.
+              if (!packageSize
+                  && correction?.packageSizeAmount
+                  && correction?.packageSizeUnit) {
+                packageSize = {
+                  amount: Number(correction.packageSizeAmount),
+                  unit:   correction.packageSizeUnit,
+                };
+              }
               // When OFF has no quantity string (common for
               // user-contributed entries), fall back to the learned
               // popular_package_sizes for this (brand, canonical)
