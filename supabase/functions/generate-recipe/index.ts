@@ -45,10 +45,17 @@ const CORS_HEADERS = {
 };
 const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
-// Haiku 4.5 — same model the rest of the app uses. Recipe drafting is
-// well within its headroom; keeping everything on one model keeps
-// behavior consistent.
-const MODEL = "claude-haiku-4-5-20251001";
+// Model split — Haiku 4.5 for the sketch pass (simple task: pick a
+// dish + list ingredients) and the classifier (trivially structured
+// output). Sonnet 4.6 for the final pass, where instruction-following
+// matters most (juggling dietary + locked ingredients + course +
+// sketch anchor + feedback + dish contract at once, plus step-quality
+// — timer semantics, reheat logic, prep). Sonnet on final delivers
+// materially better compliance and step writing for ~3x the per-call
+// cost on a pass users actually read.
+const MODEL_SKETCH = "claude-haiku-4-5-20251001";
+const MODEL_FINAL  = "claude-sonnet-4-6";
+const MODEL_CLASSIFIER = "claude-haiku-4-5-20251001";
 
 type PantryItem = {
   name?: string;
@@ -291,13 +298,37 @@ function assemblePromptHeader(
   // block (with explicit violation callouts) makes breakfast-vs-dinner and
   // main-vs-side-vs-dessert actually swing the output.
   const hardConstraintLines: string[] = [];
-  // Hoist the user's typed mealPrompt when it looks like a directive
-  // ask (names a dish, protein, cuisine, or technique). Buried at the
-  // bottom of USER PREFERENCES the model was treating the user's
-  // literal words as soft — "italian pasta" got overridden by pantry
-  // pressure toward whatever was expiring. Quoting the ask verbatim
-  // and putting it in HARD CONSTRAINTS makes it land.
-  if (mealPrompt && mealPrompt.trim().length > 0) {
+  // Dish contract — classifier output shapes the mealPrompt framing.
+  // SPECIFIC: inject aliases + rules, strict "this dish or nothing".
+  // FAMILY:   creative freedom WITHIN the family, list examples.
+  // OPEN:     no mealPrompt framing; the dream-mode block below handles
+  //           the pantry-free instruction.
+  // FREEFORM: fall back to the old "quote the user verbatim" behavior.
+  const contract = prefs.dishContract;
+  if (contract?.tier === "SPECIFIC" && contract.dishName) {
+    const aliases = Array.isArray(contract.aliases) && contract.aliases.length
+      ? contract.aliases.slice(0, 6).join('", "')
+      : contract.dishName;
+    const rulesLine = contract.rules ? ` The classical rules of this dish: ${contract.rules}` : "";
+    hardConstraintLines.push(
+      `- USER ASK (SPECIFIC DISH): "${contract.dishName}". The output MUST be this exact dish. The title MUST contain one of: "${aliases}".${rulesLine} Do NOT draft a related-but-different dish (if asked for "creme brulee" do NOT draft panna cotta; if asked for "lasagna" do NOT draft spaghetti bolognese). Pantry availability does NOT override this — if the pantry lacks key ingredients, list them as shopping items and draft the canonical recipe anyway.`,
+    );
+  } else if (contract?.tier === "FAMILY" && contract.familyName) {
+    const examples = Array.isArray(contract.familyExamples) && contract.familyExamples.length
+      ? contract.familyExamples.slice(0, 8).join(", ")
+      : "";
+    hardConstraintLines.push(
+      `- USER ASK (FAMILY): "${contract.familyName}". The output MUST be a ${contract.familyName}. You have creative freedom to pick any specific dish within this family${examples ? ` — e.g. ${examples}, or another member of the family` : ""}. Do NOT drift outside the family (if asked for "cookies" do NOT emit a cake; if asked for "custard based treat" do NOT emit a sorbet).`,
+    );
+  } else if (contract?.tier === "OPEN") {
+    // OPEN mode banner. The PANTRY block will already have been
+    // skipped by the client (empty array) and the main instruction
+    // below tells Claude to work from dietary + history alone.
+    hardConstraintLines.push(
+      `- DREAM MODE: the user typed no specific ask and wants you to surprise them. IGNORE the pantry entirely — pretend the user has access to any grocery store. Draft the dish you think they'd most love based on their dietary constraints, cook history, and cuisines they lean into. Every ingredient becomes a shopping item; that's expected and correct in this mode. Be ambitious — a weeknight-boring draft is a failure.`,
+    );
+  } else if (mealPrompt && mealPrompt.trim().length > 0) {
+    // FREEFORM fallback — trust the user's words verbatim.
     const quoted = mealPrompt.trim().replace(/"/g, '\\"');
     hardConstraintLines.push(
       `- USER ASK: "${quoted}". This is the user's direct instruction — treat every noun as a hard requirement. If they named a dish, draft that dish. If they named a protein or cuisine, honor it even if the pantry doesn't support it (non-pantry items become shopping items, not substitutions). Pantry availability does NOT override the user's words.`,
@@ -1042,7 +1073,7 @@ Return the JSON object and nothing else.`;
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: MODEL_CLASSIFIER,
         max_tokens: 400,
         temperature: 0,   // classification wants determinism
         messages: [
@@ -1177,7 +1208,10 @@ Deno.serve(async (req) => {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: MODEL,
+        // Sonnet on final (better instruction-following across the
+        // dietary/locked/course/anchor/feedback/contract bundle),
+        // Haiku on sketch (simple ingredient list, fast regen).
+        model: mode === "final" ? MODEL_FINAL : MODEL_SKETCH,
         // Both modes get the full 4000-token budget. Earlier attempts
         // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
         // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps

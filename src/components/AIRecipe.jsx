@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { generateRecipe } from "../lib/generateRecipe";
+import { generateRecipe, classifyDishPrompt } from "../lib/generateRecipe";
 import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
@@ -342,6 +342,17 @@ export default function AIRecipe({
   // signal that the user is DIRECTING an AI, not scribbling a
   // secondary note. Lives at the top of the setup screen.
   const [mealPrompt, setMealPrompt] = useState("");
+  // Dish contract (classified from mealPrompt). Session-cached so
+  // regens don't re-classify. Three tiers:
+  //   SPECIFIC  → aliases + rules injected into the prompt; deterministic
+  //               post-check enforces that the output title matches.
+  //   FAMILY    → family + examples injected; output must fit the family.
+  //   OPEN      → (empty mealPrompt) drop pantry entirely, dream mode.
+  //   FREEFORM  → (unrecognizable text) fall back to verbatim quoting.
+  // classifiedPromptRef tracks which mealPrompt produced the current
+  // contract so re-typing the SAME text doesn't refire the Haiku call.
+  const [dishContract, setDishContract] = useState(null);
+  const [classifiedFrom, setClassifiedFrom] = useState("");
   const [mealTiming, setMealTiming] = useState("any");
   const [course,     setCourse]     = useState("any");
   // Priority mode — which side of the "I want X / I have Y" tension
@@ -463,6 +474,18 @@ export default function AIRecipe({
     };
   };
 
+  // Resolve the dish contract for the current mealPrompt. Cached by
+  // the exact string so re-typing the same prompt doesn't refire the
+  // Haiku call; regens within a session reuse the contract.
+  const ensureContract = async () => {
+    const target = (mealPrompt || "").trim();
+    if (dishContract && classifiedFrom === target) return dishContract;
+    const c = await classifyDishPrompt(target);
+    setDishContract(c);
+    setClassifiedFrom(target);
+    return c;
+  };
+
   // Phase 2 entry — kicks off the cheap sketch pass. User lands on
   // the tweak screen with the rough draft + dual IDEAL/PANTRY lists,
   // can swap / remove / add / promote-to-shopping / type feedback,
@@ -472,6 +495,8 @@ export default function AIRecipe({
     setErrMsg("");
     try {
       const isRegen = previousTitles.length > 0;
+      const contract = await ensureContract();
+      const isDreamMode = contract?.tier === "OPEN";
       const built = buildAIContext({
         pantry, profile, ingredientInfo, cookLogs,
         mode: isRegen ? "lean" : "rich",
@@ -484,8 +509,14 @@ export default function AIRecipe({
       });
       const payload = {
         mode: "sketch",
-        pantry: built.pantry,
-        prefs: buildPrefs({ pantryFiltered: built.pantryFiltered }),
+        // OPEN/dream mode: drop the pantry entirely — Claude dreams
+        // without any "use what's here" pressure. User's dietary
+        // constraints + cook history still ride through `context`.
+        pantry: isDreamMode ? [] : built.pantry,
+        prefs: buildPrefs({
+          pantryFiltered: isDreamMode ? false : built.pantryFiltered,
+          dishContract: contract || undefined,
+        }),
         avoidTitles: previousTitles,
         context: built.context,
       };
@@ -607,6 +638,8 @@ export default function AIRecipe({
     setPhase("final_loading");
     setErrMsg("");
     try {
+      const contract = await ensureContract();
+      const isDreamMode = contract?.tier === "OPEN";
       const built = buildAIContext({
         pantry, profile, ingredientInfo, cookLogs,
         mode: "rich",
@@ -621,10 +654,10 @@ export default function AIRecipe({
       const locked = buildLockedIngredients();
       const payload = {
         mode: "final",
-        pantry: built.pantry,
+        pantry: isDreamMode ? [] : built.pantry,
         prefs: buildPrefs({
           recipeFeedback: recipeFeedback.trim() || undefined,
-          pantryFiltered: built.pantryFiltered,
+          pantryFiltered: isDreamMode ? false : built.pantryFiltered,
           // Anchor the final pass to the sketch's dish identity —
           // without this the final pass saw the locked ingredient
           // list but had no binding to what dish they belonged to,
@@ -633,6 +666,7 @@ export default function AIRecipe({
           sketchTitle:     sketch?.title || undefined,
           sketchSubtitle:  sketch?.subtitle || undefined,
           sketchRationale: sketch?.aiRationale || undefined,
+          dishContract:    contract || undefined,
         }),
         avoidTitles: previousTitles,
         context: built.context,
