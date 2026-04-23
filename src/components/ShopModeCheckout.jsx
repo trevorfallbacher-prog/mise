@@ -1534,6 +1534,12 @@ const EditableScanLine = memo(function EditableScanLine({
   scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair,
   packageOverride = null, onPackageChange, onTeach,
 }) {
+  // ingredientDbMap = synthetic / family-created canonical enrichment
+  // payloads, keyed by slug. Pulled here (not passed as a prop) so
+  // React.memo still skips re-renders on props equality — calling the
+  // context hook inside the memo'd body is cheap and the map ref is
+  // stable between enrichment updates.
+  const { dbMap: ingredientDbMap } = useIngredientInfo();
   // Name + brand are UNCONTROLLED — defaultValue + ref + onBlur. Was
   // previously controlled (useState + onChange) but every keystroke
   // triggered a full row re-render, which on a 10-item trip with all
