@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
 import { findIngredient, unitLabel, compareQty, inferCanonicalFromName } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
@@ -8,6 +8,7 @@ import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
+import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 
 // ── Animations ────────────────────────────────────────────────────────────────
@@ -302,6 +303,69 @@ export default function CookMode({
   useEffect(() => {
     resetSession();
   }, [recipe?.slug, resetSession]);
+
+  // ── Cook telemetry + timer pushes (migration 0136 / 0137) ─────────
+  // Records per-step durations and queues mid-cook timer notifications
+  // so a user who locks their phone during a 30-min braise still gets
+  // pinged when it's time to act. All side-effects fire-and-forget;
+  // failures inside useCookTelemetry log + swallow.
+  const telemetry = useCookTelemetry(userId);
+  const lastStartedStepRef = useRef(null);
+  // Guards the unmount-cleanup so a user who finalized the cook
+  // doesn't ALSO get a competing endCook(abandoned) racing with
+  // their endCook(finished) write.
+  const finalizedRef = useRef(false);
+
+  // Open a cook_sessions row the first time the user enters the live
+  // cook view. Gated on the session not already existing so toggling
+  // back to overview and forward again doesn't open duplicates.
+  useEffect(() => {
+    if (view !== "cook" || !recipe?.slug || telemetry.session) return;
+    telemetry.startCook({
+      recipeSlug:  recipe.slug,
+      recipeTitle: recipe.title,
+      recipeEmoji: recipe.emoji,
+    });
+  }, [view, recipe?.slug, recipe?.title, recipe?.emoji, telemetry]);
+
+  // Each time activeStep changes (and we're inside a live session),
+  // start a new cook_session_steps row + queue a timer push when the
+  // step has a nominal timer. The hook auto-finishes the previous
+  // step + cancels its pending push, so back-and-forth nav between
+  // steps stays clean.
+  useEffect(() => {
+    if (view !== "cook" || !telemetry.session) return;
+    const recipeSteps = recipe?.steps || [];
+    const step = recipeSteps[activeStep];
+    if (!step) return;
+    const key = `${telemetry.session.id}:${step.id}`;
+    if (lastStartedStepRef.current === key) return;
+    lastStartedStepRef.current = key;
+    telemetry.startStep({
+      stepId:         step.id,
+      stepTitle:      step.title,
+      nominalSeconds: Number.isFinite(step.timer) ? step.timer : 0,
+      timerBody:      step.title
+        ? `Step ${step.id}: ${step.title} — timer's up`
+        : null,
+    });
+  }, [view, activeStep, telemetry, recipe]);
+
+  // Best-effort abandon: if the user navigates away (back button,
+  // parent unmounts CookMode) without going through the green CTA →
+  // CookComplete path, mark the session abandoned so the analytics
+  // view doesn't count its half-recorded durations. Skipped when the
+  // user already finalized — finalizedRef guards against the race
+  // where endCook(finished) is still in flight when unmount fires.
+  useEffect(() => {
+    return () => {
+      if (finalizedRef.current) return;
+      telemetry.endCook({ status: "abandoned" });
+    };
+    // Mount-only; we want the cleanup to capture the final ref value.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
   const [swapSearch, setSwapSearch] = useState("");
   const openSwapPicker = (idx) => { setSwapOpenIdx(idx); setSwapSearch(""); };
@@ -498,6 +562,10 @@ export default function CookMode({
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
+    // Stamp the step as finished + cancel any pending timer push.
+    // No-op if telemetry isn't tracking this step (e.g. session
+    // creation hasn't landed yet on a fast-tap user).
+    telemetry.finishStep({});
     if (activeStep < steps.length - 1) setTimeout(() => setActiveStep(s => s + 1), 300);
   };
 
@@ -1062,7 +1130,19 @@ export default function CookMode({
             {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
           </button>
         ) : (
-          <button onClick={() => setCompleting(true)} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+          <button onClick={() => {
+            // Stamp the final step done + close the telemetry session
+            // before handing off to CookComplete. finalizedRef stops
+            // the unmount cleanup from racing an abandon write against
+            // this finished write. cookLogId stays null here — the log
+            // row is created inside CookComplete on save; a follow-up
+            // pass can thread the new id back to stamp the session
+            // row's cook_log_id.
+            finalizedRef.current = true;
+            telemetry.finishStep({});
+            telemetry.endCook({ status: "finished" });
+            setCompleting(true);
+          }} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
             🍝 DONE! LOG IT →
           </button>
         )}
