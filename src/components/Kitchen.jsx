@@ -5127,6 +5127,21 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
 export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed, pendingPantryAction, onPendingActionConsumed }) {
   const [scanning, setScanning] = useState(false);
+  // The raw `shoppingList` prop includes items already marked
+  // purchased via Shop Mode checkout (we keep the rows for audit —
+  // purchasedAt + purchasedPantryItemId + purchasedTripId tie them
+  // to the trip / pantry row). Every user-facing "to buy" surface
+  // (Shopping view counter, nav badge, list render, Shop Mode) must
+  // filter these OUT, or the user sees items they already bought
+  // lingering on the list. ShopMode.jsx already filters internally;
+  // Kitchen.jsx was the surface that wasn't, which is why purchased
+  // items "weren't removed after submitting the receipt" — they
+  // were removed from ShopMode but the shopping-tab listing still
+  // showed them.
+  const toBuy = useMemo(
+    () => (shoppingList || []).filter(i => !i.purchasedAt),
+    [shoppingList],
+  );
   // Shop Mode — persistent-scanner + pair-to-list feature (migrations
   // 0126/0127/0128). Two pieces of state:
   //   shopModeOpen      → full-screen ShopMode overlay is mounted
@@ -7091,7 +7106,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           <div style={{ textAlign:"right" }}>
             {view === "shopping" ? (
               <>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{shoppingList.length}</div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{toBuy.length}</div>
                 <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>TO BUY</div>
               </>
             ) : (
@@ -7177,8 +7192,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           style={{ flex:1, padding:"10px", background: view==="shopping"?"#1e1e1e":"transparent", border:"none", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color: view==="shopping"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em", transition:"all 0.2s", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}
         >
           SHOPPING LIST
-          {shoppingList.length > 0 && (
-            <span style={{ background:"#f5c842", color:"#111", borderRadius:10, padding:"1px 7px", fontSize:10, fontWeight:700 }}>{shoppingList.length}</span>
+          {toBuy.length > 0 && (
+            <span style={{ background:"#f5c842", color:"#111", borderRadius:10, padding:"1px 7px", fontSize:10, fontWeight:700 }}>{toBuy.length}</span>
           )}
         </button>
       </div>
@@ -7633,7 +7648,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             <div style={{ fontSize: 20, color: "#b8a878" }}>→</div>
           </div>
 
-          {shoppingList.length === 0 ? (
+          {toBuy.length === 0 ? (
             <div style={{ margin:"30px 20px 0", padding:"40px 20px", textAlign:"center", background:"#0f0f0f", border:"1px dashed #222", borderRadius:16 }}>
               <div style={{ fontSize:40, marginBottom:12, opacity:0.6 }}>🛒</div>
               <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#888", marginBottom:6 }}>Your list is empty</div>
@@ -7643,7 +7658,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           ) : (
             <div style={{ padding:"18px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
-              {shoppingList.map(item => (
+              {toBuy.map(item => (
                 <div key={item.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:"#141414", border:"1px solid #1e1e1e", borderRadius:14 }}>
                   <button
                     onClick={() => checkOffShoppingItem(item)}

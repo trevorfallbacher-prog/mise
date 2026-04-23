@@ -960,6 +960,37 @@ export default function ShopModeCheckout({
         });
       await Promise.all([...tripScanUpdates, ...listItemUpdates]);
 
+      // Optimistically mirror the DB updates into the parent's
+      // shoppingList state so the caller (Kitchen) sees paired
+      // items as purchased IMMEDIATELY on close, without waiting
+      // for the Supabase realtime UPDATE event to round-trip. The
+      // realtime path is still our source-of-truth consistency
+      // backstop, but relying on it alone was causing paired items
+      // to linger in Shop Mode after a successful commit whenever
+      // realtime lagged or dropped the event. useSyncedList's
+      // persistDiff detects the change and fires a second UPDATE
+      // with the same values — idempotent on the DB side, so the
+      // only cost is one extra row-touch per paired list item.
+      if (typeof setShoppingList === "function") {
+        const paidMap = new Map(); // listItemId → pantry id (or null)
+        for (const scan of scans) {
+          if (!scan.pairedShoppingListItemId) continue;
+          paidMap.set(scan.pairedShoppingListItemId, newPantryIds.get(scan.id) || null);
+        }
+        if (paidMap.size > 0) {
+          setShoppingList(prev => prev.map(item =>
+            paidMap.has(item.id)
+              ? {
+                  ...item,
+                  purchasedAt: nowIso,
+                  purchasedPantryItemId: paidMap.get(item.id),
+                  purchasedTripId: trip.id,
+                }
+              : item,
+          ));
+        }
+      }
+
       // 5. Checkout trip.
       await supabase.from("shopping_trips").update({
         status: "checked_out",
