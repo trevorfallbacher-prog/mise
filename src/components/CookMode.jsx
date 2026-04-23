@@ -135,6 +135,16 @@ function Timer({ seconds, onDone }) {
   const [remaining, setRemaining] = useState(seconds);
   const [running, setRunning] = useState(false);
   const [done, setDone] = useState(false);
+  // Reset to the step's full duration. Fires when the cook needs to
+  // re-run a step ("pulled the chicken too early, sear another 3
+  // minutes") or after a timer completes and they want to go again
+  // without advancing to the next step.
+  const reset = () => { setRemaining(seconds); setRunning(false); setDone(false); };
+  // Clamp remaining back to `seconds` whenever the step's own
+  // duration changes (e.g. calibration updated mid-cook). Also handles
+  // the step-navigation case where a new Timer mounts with a different
+  // seconds prop — the initial useState(seconds) only runs on mount.
+  useEffect(() => { setRemaining(seconds); setRunning(false); setDone(false); }, [seconds]);
   useEffect(() => {
     if (!running || remaining <= 0) return;
     const id = setTimeout(() => setRemaining(r => { if(r<=1){setRunning(false);setDone(true);onDone?.();return 0;} return r-1; }), 1000);
@@ -142,6 +152,7 @@ function Timer({ seconds, onDone }) {
   }, [running, remaining]);
   const mins=Math.floor(remaining/60), secs=remaining%60;
   const pct=((seconds-remaining)/seconds)*100;
+  const showReset = done || remaining !== seconds;
   return (
     <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12 }}>
       <div style={{ position:"relative", width:52, height:52 }}>
@@ -162,6 +173,14 @@ function Timer({ seconds, onDone }) {
           border:"none", borderRadius:8, padding:"8px 16px", fontFamily:"'DM Mono',monospace",
           fontSize:12, cursor:"pointer", fontWeight:600, letterSpacing:"0.05em", transition:"all 0.2s"
         }}>{running ? "⏸ PAUSE" : remaining===seconds ? "▶ START" : "▶ RESUME"}</button>
+      )}
+      {showReset && (
+        <button onClick={reset} style={{
+          background: "transparent", color: "#9a9a9a",
+          border: "1px solid #3a3a3a", borderRadius: 8, padding: "8px 14px",
+          fontFamily: "'DM Mono',monospace", fontSize: 12, cursor: "pointer",
+          fontWeight: 600, letterSpacing: "0.05em", transition: "all 0.2s",
+        }}>↻ RESET</button>
       )}
     </div>
   );
