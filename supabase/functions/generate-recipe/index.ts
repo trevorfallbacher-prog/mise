@@ -238,7 +238,7 @@ function assemblePromptHeader(
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
-          if (amount) lines.push(`  Amount: ${amount}`);
+          if (amount) lines.push(`  On-hand stock (NOT the recipe amount): ${amount}`);
           if (p.category) lines.push(`  Category: ${p.category}`);
           if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
@@ -729,7 +729,7 @@ exact shape. Every field is REQUIRED unless marked optional.
   "tools":      ["<short name>", ...],                  // pans, knives, etc
   "ingredients": [
     {
-      "amount":       "<display string in STANDARD US CUSTOMARY UNITS. Rules by ingredient type:\n        • Cutlet-style meats (chicken breast / thigh / wing / tenderloin, pork chop, steak, cutlets) → PIECE COUNT: '2 breasts', '4 thighs', '3 chops', '2 ribeyes'. Americans almost never buy these by weight; piece counts match how the cook actually grabs them out of the fridge.\n        • Roasts and large cuts (brisket, pork shoulder, chuck roast, whole chicken, turkey breast) → POUNDS: '3 lb brisket', '4 lb pork shoulder'. You buy these by weight at the counter.\n        • Ground meats → pounds or ounces: '1 lb ground beef'.\n        • Dry goods, liquids, dairy → cups / tablespoons / teaspoons / ounces: '2 tbsp', '1 cup', '½ cup', '8 oz'. Never emit grams or milliliters by default — the user can rotate to metric in the UI if they prefer.\n        • Produce → pieces or by eye: '2 cloves garlic', '1 onion', '1 bunch parsley'.\n      NEVER emit a blank amount. NEVER emit 'to taste' except for salt/pepper/pepper flakes on active-seasoning steps (even then, prefer 'pinch' or '¼ tsp' when you can estimate). NEVER emit 'a drizzle' / 'a splash' / 'a dash' — give a real measurement the cook can work with.>",
+      "amount":       "<THIS IS THE RECIPE REQUIREMENT — how much the recipe NEEDS. It is NOT the user's on-hand stock. If the pantry block says 'On-hand stock: 29.3545 oz' for garlic and the recipe needs 2 cloves, you emit '2 cloves', NOT '29.3545 oz'. Never echo the pantry's on-hand stock into the recipe amount. Use CLEAN ROUND NUMBERS — halves, quarters, thirds at most; never emit weird precision like '29.3545 oz' or more than one decimal place.\n\n      Rules by ingredient type (STANDARD US CUSTOMARY UNITS):\n        • Cutlet-style meats (chicken breast / thigh / wing / tenderloin, pork chop, steak, cutlets) → PIECE COUNT: '2 breasts', '4 thighs', '3 chops', '2 ribeyes'. Americans almost never buy these by weight; piece counts match how the cook actually grabs them out of the fridge.\n        • Roasts and large cuts (brisket, pork shoulder, chuck roast, whole chicken, turkey breast) → POUNDS: '3 lb brisket', '4 lb pork shoulder'. You buy these by weight at the counter.\n        • Ground meats → pounds or ounces: '1 lb ground beef'.\n        • Dry goods, liquids, dairy → cups / tablespoons / teaspoons / ounces: '2 tbsp', '1 cup', '½ cup', '8 oz'. Never emit grams or milliliters by default — the user can rotate to metric in the UI if they prefer.\n        • Flour → cups, not ounces ('2 cups flour', not '9 oz flour').\n        • Aromatics (garlic, ginger, shallot, herbs) → cloves / inches / sprigs / tbsp: '2 cloves garlic', '1 inch ginger', '2 sprigs thyme', '2 tbsp chopped parsley'. NEVER emit garlic in ounces or pounds — a clove is ~3g / 0.1 oz; anything over 6 cloves for a home recipe is a bug.\n        • Produce → pieces or by eye: '1 onion', '1 bunch parsley', '2 tomatoes'.\n      NEVER emit a blank amount. NEVER emit 'to taste' except for salt/pepper/pepper flakes on active-seasoning steps (even then, prefer 'pinch' or '¼ tsp' when you can estimate). NEVER emit 'a drizzle' / 'a splash' / 'a dash' — give a real measurement the cook can work with.>",
       "item":         "<CLEAN CANONICAL NAME ONLY — e.g. 'olive oil', 'chicken breast', 'mozzarella'. Do NOT stuff prep ('cut into bite-sized pieces', 'chopped fine'), brand ('Kerrygold'), or counts ('4 count') into this field. Prep goes in the step instruction; identity lives here.>",
       "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
       "cut":          "<optional: anatomical cut for meats — 'breast', 'thigh', 'ribeye', 'brisket', 'loin', 'shoulder' — null for non-meats>",
@@ -2154,6 +2154,50 @@ function defaultAmountForCanonical(canonicalId: string | null): string {
 // "1" otherwise). Vague phrasings ("a drizzle", "a splash", "a dash")
 // are rewritten to a concrete starting measurement.
 const VAGUE_AMOUNT_RE = /^\s*(a\s+)?(drizzle|splash|dash|bit|touch|pinch|handful|few|some)(\s+of)?\s*$/i;
+
+// Per-canonical sanity caps for home-scale recipes. When Claude echoes
+// the user's pantry stock (e.g. the full jar weight) into the recipe
+// amount, we clamp to a sane default. Keys are canonical ids; value is
+// the suspect threshold in a common unit and the replacement string.
+// Units converted to oz for comparison via COMMON_UNIT_TO_OZ below.
+const SANITY_CAP_OZ: Record<string, { maxOz: number; fallback: string }> = {
+  garlic:         { maxOz: 1.5,  fallback: "2 cloves" },
+  ginger:         { maxOz: 1.5,  fallback: "1 inch" },
+  shallot:        { maxOz: 3,    fallback: "1 shallot" },
+  basil:          { maxOz: 1,    fallback: "2 tbsp chopped" },
+  thyme:          { maxOz: 0.25, fallback: "2 sprigs" },
+  parsley:        { maxOz: 1,    fallback: "2 tbsp chopped" },
+  cilantro:       { maxOz: 1,    fallback: "2 tbsp chopped" },
+  salt:           { maxOz: 0.5,  fallback: "¼ tsp" },
+  black_pepper:   { maxOz: 0.25, fallback: "¼ tsp" },
+  butter:         { maxOz: 8,    fallback: "4 tbsp" },
+  olive_oil:      { maxOz: 4,    fallback: "2 tbsp" },
+};
+
+const COMMON_UNIT_TO_OZ: Record<string, number> = {
+  oz: 1, ounce: 1, ounces: 1,
+  lb: 16, lbs: 16, pound: 16, pounds: 16,
+  g: 0.0353, gram: 0.0353, grams: 0.0353,
+  kg: 35.27, kilogram: 35.27,
+  tbsp: 0.5, tablespoon: 0.5, tablespoons: 0.5,
+  tsp: 0.167, teaspoon: 0.167, teaspoons: 0.167,
+  cup: 8, cups: 8,
+};
+
+// Attempt to parse an amount string like "29.3545 oz" or "2 tbsp" into
+// its ounce-equivalent for sanity comparison. Returns null for amounts
+// we can't compare (pieces, cloves, bunches — those have their own
+// per-canonical rules above).
+function amountToOz(raw: string): number | null {
+  const m = raw.match(/^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const u = m[2].toLowerCase();
+  const factor = COMMON_UNIT_TO_OZ[u];
+  if (!Number.isFinite(n) || !factor) return null;
+  return n * factor;
+}
+
 function normalizeIngredientAmount(raw: unknown, canonicalId: string | null): string {
   const s = typeof raw === "string" ? raw.trim() : "";
   if (!s) return defaultAmountForCanonical(canonicalId);
@@ -2162,6 +2206,23 @@ function normalizeIngredientAmount(raw: unknown, canonicalId: string | null): st
     const m = s.match(/drizzle|splash/i);
     if (m) return "1 tbsp";
     return "¼ tsp";
+  }
+  // Absurd-precision guard. A weighed pantry stock leaks as e.g.
+  // "29.3545 oz" — real home recipes never specify more than one
+  // decimal. Two or more decimals → treat as a pantry echo and fall
+  // back to the canonical default.
+  if (/^\s*\d+\.\d{2,}/.test(s)) {
+    return canonicalId && SANITY_CAP_OZ[canonicalId]
+      ? SANITY_CAP_OZ[canonicalId].fallback
+      : defaultAmountForCanonical(canonicalId);
+  }
+  // Per-canonical sanity clamp. If the amount parses to an ounce
+  // equivalent above the canonical's home-scale cap, replace.
+  if (canonicalId && SANITY_CAP_OZ[canonicalId]) {
+    const oz = amountToOz(s);
+    if (oz !== null && oz > SANITY_CAP_OZ[canonicalId].maxOz) {
+      return SANITY_CAP_OZ[canonicalId].fallback;
+    }
   }
   return s;
 }
