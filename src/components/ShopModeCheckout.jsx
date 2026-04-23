@@ -23,6 +23,9 @@ import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { compressImage } from "../lib/compressImage";
 import { findIngredient } from "../data/ingredients";
+import { parsePackageSize } from "../lib/canonicalResolver";
+import { defaultLocationForCategory } from "../lib/usePantry";
+import { useIngredientInfo } from "../lib/useIngredientInfo";
 import LinkIngredient from "./LinkIngredient";
 
 const FLASH_COLORS = {
@@ -214,6 +217,10 @@ export default function ShopModeCheckout({
   // Map<scanId, { priceCents, lineIndex }> — which receipt line
   // each scan paired to, and what price to stamp on the pantry row.
   const [priceByScan, setPriceByScan] = useState(new Map());
+  // ingredient_info dbMap — used to pull synthetic canonical info
+  // (storage, category, units) for family-created canonicals that
+  // aren't in the bundled INGREDIENTS registry.
+  const { dbMap: ingredientDbMap } = useIngredientInfo();
   // Local editable copy of the scans array. Edits in the summary
   // phase (name, brand, qty, unpair, delete) write through to DB
   // AND mutate this state so the commit pass + re-renders pick up
@@ -405,20 +412,54 @@ export default function ShopModeCheckout({
         // brand+name. CLAUDE.md identity hierarchy: brand is its
         // own axis, never inline-prefixed into name.
         const canon = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
+        const synthInfo = !canon && scan.canonicalId ? ingredientDbMap?.[scan.canonicalId] : null;
         const displayName = canon?.shortName
           || canon?.name
           || scan.productName
           || `UPC ${scan.barcodeUpc}`;
+
+        // Package size from OFF (e.g. "16 oz", "946 ml", "24 × 12 fl_oz")
+        // — prefer this over bare qty because it encodes the physical
+        // container. parsePackageSize returns { amount, unit } or
+        // null. When OFF didn't give us anything usable, fall back
+        // to the canonical's defaultUnit + qty count.
+        const offQty = scan.offPayload?.quantity || null;
+        const pkg = parsePackageSize(offQty);
+        const qtyCount = scan.qty || 1;
+        const amount = pkg?.amount != null ? pkg.amount * qtyCount : qtyCount;
+        const unit = pkg?.unit || canon?.defaultUnit || "package";
+        // max (the "full package" baseline the consumption slider
+        // walks down from) = the amount we just decided. User
+        // adjusts later as they eat.
+        const maxValue = amount;
+
+        // Category — canonical wins, then synthetic canonical info,
+        // else default "pantry" so the NOT NULL constraint is
+        // satisfied. Categories: dairy | produce | dry | meat |
+        // pantry | frozen.
+        const category = canon?.category
+          || synthInfo?.info?.category
+          || "pantry";
+
+        // Storage location — canonical's storage.location wins,
+        // else category-based default. Ensures fridge/pantry/freezer
+        // match the identity (butter → fridge, flour → pantry,
+        // ice cream → freezer) without the user picking manually.
+        const canonStorage = canon?.storage?.location
+          || synthInfo?.info?.storage?.location
+          || null;
+        const location = canonStorage || defaultLocationForCategory(category);
+
         const row = {
           id,
           user_id: userId,
           name:           displayName,
           emoji:          canon?.emoji || "🛒",
-          amount:         scan.qty || 1,
-          unit:           "package",
-          max:            null,
-          category:       "pantry",
-          low_threshold:  null,
+          amount,
+          unit,
+          max:            maxValue,
+          category,
+          low_threshold:  0.25,
           // Composition array (migration 0056 renamed ingredient_ids
           // → components). ingredient_id stays as the scalar mirror
           // so legacy readers still resolve identity.
@@ -430,7 +471,7 @@ export default function ShopModeCheckout({
           price_cents:    priceInfo?.priceCents ?? null,
           source_receipt_id: receiptId,
           source_shopping_list_item_id: scan.pairedShoppingListItemId || null,
-          location:       "pantry",
+          location,
           purchased_at:   nowIso,
         };
         // Trace the UPC end-to-end so mismatches between what the
