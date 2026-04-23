@@ -104,8 +104,8 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
   // Suppression windows for continuous mode — match the values used
   // by the native BarcodeDetector path in BarcodeScanner.jsx so both
   // live decoders behave identically across devices.
-  const SAME_UPC_SUPPRESSION_MS = 3000;
-  const GLOBAL_COOLDOWN_MS      = 3000;
+  const SAME_UPC_SUPPRESSION_MS = 10000;
+  const GLOBAL_COOLDOWN_MS      = 10000;
   let browser;
   try {
     browser = await loadReader();

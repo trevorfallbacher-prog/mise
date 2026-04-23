@@ -688,7 +688,7 @@ export default function ShopMode({
         )}
 
         {/* Cooldown overlay — slow fade from the last scan's status
-            color to transparent over the full 3s scanner cooldown.
+            color to transparent over the full 10s scanner cooldown.
             Gives the user a visual countdown: while there's color
             on the pane, the scanner is dropping scans; when it's
             clear, the next scan will register. Sits under the quick
@@ -701,7 +701,7 @@ export default function ShopMode({
               position: "absolute", inset: 0, zIndex: 3,
               background: FLASH_COLORS[lastScan.flashColor]?.bg || "#444",
               pointerEvents: "none",
-              animation: "shop-mode-cooldown 3000ms linear forwards",
+              animation: "shop-mode-cooldown 10000ms linear forwards",
               mixBlendMode: "screen",
             }}
           />

@@ -37,8 +37,8 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 // camera focus jitter and sweeping across multiple items fast).
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
-const SAME_UPC_SUPPRESSION_MS = 3000;
-const GLOBAL_COOLDOWN_MS      = 3000;
+const SAME_UPC_SUPPRESSION_MS = 10000;
+const GLOBAL_COOLDOWN_MS      = 10000;
 // Exported so ShopMode can match the cooldown overlay's fade
 // duration to the scanner's actual ready window.
 export { GLOBAL_COOLDOWN_MS as SCANNER_COOLDOWN_MS };
@@ -143,13 +143,13 @@ export default function BarcodeScanner({ onDetected, onCancel, mode = "single", 
         const caps = track.getCapabilities();
         if (caps?.zoom && typeof caps.zoom.min === "number") {
           setZoomCaps({ min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
-          // Default to 1.5x (clamped into the supported range) so
+          // Default to 2x (clamped into the supported range) so
           // products land at a natural framing — at 1x, the wide-
           // angle phone lens flattens perspective enough that small
-          // UPCs can read as low-contrast smudges. 1.5x gives the
+          // UPCs can read as low-contrast smudges. 2x gives the
           // decoder more pixels per bar without forcing the user
           // to fiddle with the slider.
-          const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 1.5));
+          const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 2));
           setZoomValue(target);
           videoTrackRef.current = track;
           // Apply the constraint so the stream actually shifts. Do
