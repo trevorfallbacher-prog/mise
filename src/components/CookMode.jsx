@@ -370,7 +370,8 @@ export default function CookMode({
       telemetry.endCook({ status: "abandoned" });
     };
     // Mount-only; we want the cleanup to capture the final ref value.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // (Project's eslint config doesn't load react-hooks/exhaustive-deps,
+    // so no disable pragma — see Cookbook.jsx line 69 for the same note.)
   }, []);
 
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
