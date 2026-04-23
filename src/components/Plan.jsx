@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import CookMode from "./CookMode";
 import SchedulePicker from "./SchedulePicker";
 import IAteThisSheet from "./IAteThisSheet";
+import MealPrepTimeline from "./MealPrepTimeline";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { useMealPrepQueue } from "../lib/useMealPrepQueue";
 import { RECIPES, findRecipe, totalTimeMin, difficultyLabel } from "../data/recipes";
 import { supabase } from "../lib/supabase";
 import { scaleRecipe } from "../lib/recipeScaling";
@@ -250,7 +252,7 @@ function RecipePickerModal({ userRecipes = [], leftovers = [], onPick, onClose }
 // Scheduled meal detail drawer (shown when tapping an existing meal)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNow, onClaim, onUnclaim, onChangeCook, onChangeServings, onDelete, onClose }) {
+function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], prepRows = [], onDismissPrep, onUndismissPrep, onCookNow, onClaim, onUnclaim, onChangeCook, onChangeServings, onDelete, onClose }) {
   const [confirming, setConfirming] = useState(false);
   if (!recipe) {
     return (
@@ -407,7 +409,24 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], onCookNo
           </div>
         )}
 
-        {totalNotifs > 0 && (
+        {/* What's-coming timeline — the queued prep_notifications rows
+            for this specific meal, rendered as tappable chips so the
+            user can see (and disable) each reminder before it fires.
+            Replaces the earlier "N of M reminders on" summary — the
+            timeline carries the same info plus timing, body text, and
+            delivery state.
+
+            Falls back to the legacy counter when the prep_notifications
+            queue is empty (e.g. recipe has no prepSteps authored) so
+            older recipes still surface their reminder toggle count. */}
+        {prepRows.length > 0 ? (
+          <MealPrepTimeline
+            meal={meal}
+            rows={prepRows}
+            onDismiss={onDismissPrep}
+            onUndismiss={onUndismissPrep}
+          />
+        ) : totalNotifs > 0 && (
           <div style={{
             marginTop: 14, padding: "10px 12px",
             background: "#0f0f0f", border: "1px solid #1e1e1e",
@@ -581,6 +600,14 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     // so custom recipes also get prep reminders queued.
     recipeResolver: (slug) => findRecipe(slug, findUserRecipe),
   });
+
+  // Queued prep_notifications for the meals currently on the Plan
+  // timeline — drives the "what's coming" panel inside MealDetailDrawer
+  // and any future per-tile indicator. One subscription covers every
+  // visible meal at once so we don't pay for per-drawer open/close.
+  const mealIds = useMemo(() => meals.map(m => m.id), [meals]);
+  const { byMeal: prepByMeal, dismiss: dismissPrep, undismiss: undismissPrep } =
+    useMealPrepQueue(userId, mealIds);
 
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we
@@ -904,7 +931,16 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                                   ? (pantry || []).find(p => p.id === meal.from_pantry_row_id)
                                   : null;
                                 const isIngredientEat = !meal.recipe_slug && !!meal.from_pantry_row_id;
-                                const activeNotifs = Object.values(meal.notification_settings || {}).filter(Boolean).length;
+                                // Live queue counts beat the static notification_settings
+                                // toggle count when the prep queue has been populated
+                                // (migration 0134). Pending = about to ping; delivered =
+                                // already pinged (shown so the tile's history reads).
+                                const queueRows = prepByMeal.get(meal.id) || [];
+                                const queuePending = queueRows.filter(r => !r.delivered_at && !r.dismissed_at).length;
+                                const queueDelivered = queueRows.filter(r => r.delivered_at).length;
+                                const activeNotifs = queueRows.length
+                                  ? queuePending
+                                  : Object.values(meal.notification_settings || {}).filter(Boolean).length;
                                 const isRequest = meal.cook_id == null && !isIngredientEat;
                                 const cookLabel = isIngredientEat
                                   ? "Eat from pantry"
@@ -956,7 +992,9 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                                         {isRequest && "🙋 "}{cookLabel}
                                         {meal.servings != null && !isIngredientEat && ` · 👥 ${meal.servings}`}
                                         {recipe && ` · ${totalTimeMin(recipe)} MIN`}
-                                        {activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
+                                        {queuePending > 0 && ` · 🔔 ${queuePending} QUEUED`}
+                                        {queuePending === 0 && queueDelivered > 0 && ` · 🔔 ${queueDelivered} SENT`}
+                                        {queueRows.length === 0 && activeNotifs > 0 && ` · 🔔 ${activeNotifs}`}
                                         {meal.note && " · 📝"}
                                       </div>
                                     </div>
@@ -1042,6 +1080,9 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
           userId={userId}
           nameFor={nameFor}
           family={family}
+          prepRows={prepByMeal.get(openMeal.id) || []}
+          onDismissPrep={dismissPrep}
+          onUndismissPrep={undismissPrep}
           onClose={() => setOpenMeal(null)}
           onCookNow={() => {
             // Leftover branch — the scheduled slot references a
