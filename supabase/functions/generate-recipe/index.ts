@@ -232,20 +232,33 @@ function assemblePromptHeader(
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
         .map((p, i) => {
-          // Pantry stock amounts are deliberately NOT sent to the
-          // model. Claude's job is "pick a dish + draft amounts the
-          // recipe needs"; how much of a jar the user weighed on a
-          // kitchen scale is irrelevant to that, and shipping it
-          // invited Claude to echo pantry precision ("29.3545 oz
-          // SPICE WORLD garlic") verbatim as the recipe requirement.
-          // Category, brand, expiry, starred status — all useful
-          // signal. Raw quantity — noise. Kept out entirely.
+          // Per-item pantry data is kept tight — only fields that
+          // genuinely change the dish-picking decision ship to the
+          // model. What we deliberately leave out:
+          //
+          //   • Raw stock quantity (weighed oz / count) — Claude
+          //     isn't doing inventory math, and shipping it invited
+          //     precision echoes like "29.3545 oz garlic" into
+          //     recipe requirements.
+          //   • Category — the canonical_id already encodes it
+          //     ("chicken_breast" is obviously meat); sending a
+          //     second "Category: meat" label is redundant noise.
+          //   • Diet enrichment — Claude already knows butter is
+          //     dairy, chicken isn't vegan. Dietary constraints
+          //     enter the prompt via the user's PROFILE.dietary
+          //     field, which is the right level.
+          //
+          // Kept: identity axes (canonical/cut/state/brand), shelf
+          // location (useful for "use the X from your fridge"
+          // phrasing), kind (compound / leftover differ), expiry
+          // (use-soon signal), starred, and enrichment hints that
+          // add NEW info (flavor / pairs for user-minted or unusual
+          // ingredients Claude might not know from training).
           const lines: string[] = [`Pantry Item ${i + 1}:`];
           lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
-          if (p.category) lines.push(`  Category: ${p.category}`);
           if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
           if (typeof p.daysToExpiry === "number") {
@@ -260,8 +273,6 @@ function assemblePromptHeader(
           if (enr) {
             if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
             if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
-            const diet = dietSummary(enr.diet);
-            if (diet) lines.push(`  Diet: ${diet}`);
           }
           return lines.join("\n");
         })
