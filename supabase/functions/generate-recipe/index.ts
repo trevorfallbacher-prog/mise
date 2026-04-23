@@ -1717,23 +1717,59 @@ function normForLockMatch(s: unknown): string {
   if (typeof s !== "string") return "";
   return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 }
-// Head-noun + subset match — mirrors recipePairing.namesMatch so
-// "heavy cream" ↔ "heavy whipping cream" pass (both share head
-// "cream" and {heavy,cream} ⊆ {heavy,whipping,cream}) while
-// "tortilla chip" ↛ "tortilla" fails (different heads). Used by
-// the locked-ingredient filter so a slight name drift between
-// Claude's output and the locked entry doesn't drop the row.
+// Disqualifying modifiers on ambiguous head nouns. Mirrors the
+// HEAD_NOUN_MODIFIER_EXCLUSIONS map in src/data/ingredients.js so the
+// edge function makes the same identity calls as the client. Without
+// this, "peanut butter" would pass head-noun/subset matching against
+// locked "butter" (both share head "butter", {butter} ⊆ {peanut,
+// butter}) and Claude's invented peanut-butter-in-chicken-marsala
+// would slip past the locked-set filter. Keep these in sync with
+// the client-side set; drift means the two matchers disagree on
+// what counts as a legit substitution.
+const EDGE_HEAD_NOUN_EXCLUSIONS: Record<string, Set<string>> = {
+  butter: new Set(["peanut", "almond", "cashew", "sunflower", "apple", "cocoa"]),
+  milk:   new Set(["coconut", "almond", "soy", "oat", "rice", "cashew", "hemp", "pea"]),
+  cream:  new Set(["sour", "ice", "whipped"]),
+  cheese: new Set(["cream"]),
+  oil:    new Set(["sesame", "truffle", "chili", "essential"]),
+  sauce:  new Set(["soy", "fish", "hot", "bbq", "barbecue", "tartar", "tomato", "pasta", "pizza", "steak", "worcestershire"]),
+  powder: new Set(["baking", "curry", "cocoa", "chili", "garlic", "onion", "protein", "espresso"]),
+  salt:   new Set(["garlic", "onion", "celery", "seasoning"]),
+  sugar:  new Set(["brown", "powdered", "confectioners", "coconut"]),
+  flour:  new Set(["almond", "coconut", "rice", "oat", "tapioca", "corn"]),
+  water:  new Set(["rose", "coconut", "sparkling", "tonic"]),
+  juice:  new Set(["pickle"]),
+};
+function edgeSharesDisqualifyingModifier(small: Set<string>, big: Set<string>, head: string): boolean {
+  const modifiers = EDGE_HEAD_NOUN_EXCLUSIONS[head];
+  if (!modifiers) return false;
+  for (const t of big) {
+    if (t === head) continue;
+    if (modifiers.has(t) && !small.has(t)) return true;
+  }
+  return false;
+}
+
+// Head-noun + subset match — mirrors recipePairing.namesMatch (incl.
+// the disqualifying-modifier gate) so "heavy cream" ↔ "heavy whipping
+// cream" passes but "peanut butter" ↛ "butter" fails even though
+// they'd otherwise share head "butter" with subset containment.
+// Used by the locked-ingredient filter to handle name drift between
+// Claude's output and the locked entry without waving through sub
+// products as legit identity matches.
 function locksMatchByName(a: string, b: string): boolean {
   if (!a || !b) return false;
   if (a === b) return true;
   const ta = a.split(" ").filter(Boolean);
   const tb = b.split(" ").filter(Boolean);
   if (!ta.length || !tb.length) return false;
-  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false;
+  const head = ta[ta.length - 1];
+  if (head !== tb[tb.length - 1]) return false;
   const sa = new Set(ta);
   const sb = new Set(tb);
   const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
   for (const t of small) if (!big.has(t)) return false;
+  if (edgeSharesDisqualifyingModifier(small, big, head)) return false;
   return true;
 }
 function filterToLockedIngredients(
