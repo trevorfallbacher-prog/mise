@@ -100,6 +100,23 @@ For each item, return TWO name fields:
     unambiguous match in the canonical registry below. When in doubt,
     canonicalId = null.
 
+  * barcode: the UPC / EAN digit string printed on that receipt
+    line, if visible. US receipts commonly print the 11-13 digit
+    barcode between the item text and the price; some stores put
+    it at the end of the line. Extract just the digit string — no
+    spaces, no hyphens, no store-internal prefix characters. Length
+    must be 8–14 digits. If nothing matches that shape, barcode = null.
+
+    Examples of what to extract:
+      - "MILK 2% GAL  0070038000563  4.29"      → barcode:"0070038000563"
+      - "TOSTITOS SCOOPS 028400647465 4.99"     → barcode:"028400647465"
+      - "041287305201 EGGS LG 18CT 6.53"        → barcode:"041287305201"
+
+    Examples of what NOT to extract:
+      - item-code IDs that look like 4-6 digit PLU codes on produce
+        ("#4011 BANANAS" — that's a produce PLU, not a UPC) → null
+      - dept numbers, register numbers, short SKU codes → null
+
   * brand: the manufacturer label, canonicalized to its full brand
     name, only when you recognize a brand abbreviation in rawText.
     Receipts abbreviate aggressively — the brand almost never appears
@@ -193,11 +210,14 @@ Return ONLY a JSON object — no markdown fences, no prose — with this shape:
   "date": "2026-04-14" | null,
   "totalCents": 4523 | null,
   "items": [
-    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","brand":null,"emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429,"confidence":"high"},
-    {"rawText":"GV GRN BNS 14OZ","name":"Green Beans","canonicalId":"green_beans","brand":"Great Value","emoji":"🫛","amount":1,"unit":"can","category":"pantry","priceCents":129,"confidence":"high"},
-    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"brand":null,"emoji":"🥫","amount":1,"unit":"count","category":"pantry","priceCents":399,"confidence":"low"}
+    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","barcode":"0070038000563","brand":null,"emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429,"confidence":"high"},
+    {"rawText":"GV GRN BNS 14OZ","name":"Green Beans","canonicalId":"green_beans","barcode":null,"brand":"Great Value","emoji":"🫛","amount":1,"unit":"can","category":"pantry","priceCents":129,"confidence":"high"},
+    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"barcode":null,"brand":null,"emoji":"🥫","amount":1,"unit":"count","category":"pantry","priceCents":399,"confidence":"low"}
   ]
 }
+
+EVERY item must include the "barcode" field — set it to null when
+no UPC/EAN-shaped digit string appears on that line, never omit it.
 
 If the image clearly is not a grocery receipt or you can't read any items,
 return {"store":null,"date":null,"totalCents":null,"items":[]}.`;

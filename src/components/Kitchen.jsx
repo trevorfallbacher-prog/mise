@@ -62,6 +62,10 @@ import { useCanonicalOffTags } from "../lib/useCanonicalOffTags";
 import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import { lookupBarcode } from "../lib/lookupBarcode";
 import BarcodeScanner from "./BarcodeScanner";
+import ShopMode from "./ShopMode";
+import ShopModeCheckout from "./ShopModeCheckout";
+import ShoppingQuickAdd from "./ShoppingQuickAdd";
+import { useShopMode } from "../lib/useShopMode";
 import CanonicalSuggestionCard from "./CanonicalSuggestionCard";
 import {
   resolveCanonicalFromScan,
@@ -5123,6 +5127,17 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
 export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed, pendingPantryAction, onPendingActionConsumed }) {
   const [scanning, setScanning] = useState(false);
+  // Shop Mode — persistent-scanner + pair-to-list feature (migrations
+  // 0126/0127/0128). Two pieces of state:
+  //   shopModeOpen      → full-screen ShopMode overlay is mounted
+  //   pendingTripCtx    → trip context handed off to the receipt scanner
+  //                       when the user taps DONE in ShopMode. Cleared
+  //                       once the receipt commits and commitShopModeTrip
+  //                       has paired everything up.
+  const [shopModeOpen, setShopModeOpen] = useState(false);
+  const [pendingTripCtx, setPendingTripCtx] = useState(null); // { trip, scans }
+  const { rows: brandNutritionRowsForShop } = useBrandNutrition();
+  const shopLearnedTagLookup = useCanonicalOffTags();
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
   const { profile } = useProfile(userId);
@@ -6170,6 +6185,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       bumpTemplateUse(tid);
     }
 
+    // (Shop Mode commit now lives in src/components/ShopModeCheckout.jsx.
+    // This receipt/shelf path is the generic flow; trip checkouts take
+    // the dedicated route that treats trip_scans as the identity source.)
+
     setScanning(false);
   };
 
@@ -7017,6 +7036,42 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     );
   };
 
+  if (shopModeOpen) return (
+    <ShopMode
+      userId={userId}
+      shoppingList={shoppingList}
+      setShoppingList={setShoppingList}
+      brandNutritionRows={brandNutritionRowsForShop}
+      learnedTagLookup={shopLearnedTagLookup}
+      onClose={() => setShopModeOpen(false)}
+      onCheckoutRequest={({ trip, scans }) => {
+        // Hand off to the dedicated trip checkout — trip_scans are
+        // the identity source, receipt only contributes price + id.
+        setPendingTripCtx({ trip, scans });
+        setShopModeOpen(false);
+      }}
+    />
+  );
+
+  if (pendingTripCtx) return (
+    <ShopModeCheckout
+      trip={pendingTripCtx.trip}
+      scans={pendingTripCtx.scans || []}
+      userId={userId}
+      shoppingList={shoppingList}
+      setShoppingList={setShoppingList}
+      onCancel={() => {
+        // Back out to ShopMode — trip stays active, user can scan
+        // more / edit pairing / hit DONE again.
+        setPendingTripCtx(null);
+        setShopModeOpen(true);
+      }}
+      onDone={() => {
+        setPendingTripCtx(null);
+      }}
+    />
+  );
+
   if (scanning) return <Scanner
     userId={userId}
     shoppingList={shoppingList}
@@ -7549,6 +7604,35 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             <div style={{ fontSize:20, color:"#f5c842" }}>→</div>
           </div>
 
+          {/* SHOP MODE entry point — persistent-scanner flow during a
+              trip. Tan palette (canonical color) since the button is
+              about identity capture, not shopping-list yellow. */}
+          <div
+            onClick={() => setShopModeOpen(true)}
+            style={{
+              margin: "10px 20px 0",
+              padding: "16px 20px",
+              background: "linear-gradient(135deg, #1c160c 0%, #120d05 100%)",
+              border: "1px solid #b8a87855",
+              borderRadius: 16,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+            }}
+          >
+            <div style={{ fontSize: 28 }}>🛒</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontFamily: "'Fraunces',serif", fontSize: 17, color: "#b8a878", fontStyle: "italic", marginBottom: 3 }}>
+                Shop Mode
+              </div>
+              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#888" }}>
+                Scan every item at the store, pair to list, commit at checkout.
+              </div>
+            </div>
+            <div style={{ fontSize: 20, color: "#b8a878" }}>→</div>
+          </div>
+
           {shoppingList.length === 0 ? (
             <div style={{ margin:"30px 20px 0", padding:"40px 20px", textAlign:"center", background:"#0f0f0f", border:"1px dashed #222", borderRadius:16 }}>
               <div style={{ fontSize:40, marginBottom:12, opacity:0.6 }}>🛒</div>
@@ -7598,31 +7682,38 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         </>
       )}
 
-      {addingTo && (
+      {/* Shopping list = bare-bones: ShoppingQuickAdd is just a
+          name field + optional qty + ADD. The full AddItemModal
+          (brand, axes, package size, expiry, …) is for pantry rows
+          only — forcing it on shopping list entries killed the
+          "jot it down fast" pitch the list is supposed to deliver. */}
+      {addingTo === "shopping" && (
+        <ShoppingQuickAdd
+          onClose={() => { setAddingTo(null); setAddingToTile(null); }}
+          onAdd={item => setShoppingList(prev => [...prev, { ...item, source: item.source || "manual" }])}
+        />
+      )}
+      {addingTo === "pantry" && (
         <AddItemModal
           target={addingTo}
-          tileContext={addingTo === "pantry" ? addingToTile : null}
+          tileContext={addingToTile}
           userId={userId}
           isAdmin={isAdmin}
           shoppingList={shoppingList}
           onClose={() => { setAddingTo(null); setAddingToTile(null); }}
           onAdd={item => {
-            if (addingTo === "shopping") {
-              setShoppingList(prev => [...prev, { ...item, source: "manual" }]);
-            } else {
-              // Suggest a location: registry's storage.location wins
-              // (butter→fridge, flour→pantry), then the current tab the
-              // user is viewing, then the category heuristic. Everything
-              // honors an explicit location the modal may have set.
-              // When the modal was opened from a tile drill-down, the
-              // caller's tab is what we want — if they're in the Fridge
-              // tab's Condiments tile adding mustard, it goes in the
-              // fridge even though mustard's registry location is pantry.
-              const canon = findIngredient(item.ingredientId);
-              const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
-              const location = item.location || (addingToTile ? addingToTile.tabId : null) || regLocation || storageTab;
-              setPantry(prev => [...prev, { ...item, location }]);
-            }
+            // Suggest a location: registry's storage.location wins
+            // (butter→fridge, flour→pantry), then the current tab the
+            // user is viewing, then the category heuristic. Everything
+            // honors an explicit location the modal may have set.
+            // When the modal was opened from a tile drill-down, the
+            // caller's tab is what we want — if they're in the Fridge
+            // tab's Condiments tile adding mustard, it goes in the
+            // fridge even though mustard's registry location is pantry.
+            const canon = findIngredient(item.ingredientId);
+            const regLocation = canon ? getIngredientInfo(canon)?.storage?.location : null;
+            const location = item.location || (addingToTile ? addingToTile.tabId : null) || regLocation || storageTab;
+            setPantry(prev => [...prev, { ...item, location }]);
           }}
         />
       )}

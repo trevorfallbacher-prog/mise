@@ -14,6 +14,12 @@ function fromDb(row) {
     priceCents: row.price_cents ?? null,
     // user_id of the family member who added this row (or the current user).
     ownerId: row.user_id,
+    // Shop Mode pairs a scan to a list item and marks it purchased
+    // instead of deleting — these carry the audit trail. Null on rows
+    // that haven't been checked out yet.
+    purchasedAt: row.purchased_at || null,
+    purchasedPantryItemId: row.purchased_pantry_item_id || null,
+    purchasedTripId: row.purchased_trip_id || null,
   };
 }
 
@@ -27,6 +33,9 @@ function toDb(item) {
     category: item.category,
     source: item.source || "manual",
     price_cents: item.priceCents ?? null,
+    purchased_at: item.purchasedAt || null,
+    purchased_pantry_item_id: item.purchasedPantryItemId || null,
+    purchased_trip_id: item.purchasedTripId || null,
   };
 }
 

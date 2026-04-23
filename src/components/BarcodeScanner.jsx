@@ -27,10 +27,35 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 // caller with duplicates). `onCancel` closes without firing. The
 // component renders as a full-screen overlay; the caller decides
 // when to mount/unmount it.
+//
+// mode="rapid" keeps the stream open after each detect so Shop Mode
+// can fire item after item without closing / reopening the camera.
+// The caller is responsible for deciding when to unmount (e.g. when
+// the user taps DONE SHOPPING). A 3000ms same-UPC suppression window
+// prevents double-fires on the same product; an 800ms GLOBAL cooldown
+// blocks any scan from firing too soon after any other scan (covers
+// camera focus jitter and sweeping across multiple items fast).
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
+const SAME_UPC_SUPPRESSION_MS = 10000;
+const GLOBAL_COOLDOWN_MS      = 10000;
+// Exported so ShopMode can match the cooldown overlay's fade
+// duration to the scanner's actual ready window.
+export { GLOBAL_COOLDOWN_MS as SCANNER_COOLDOWN_MS };
 
-export default function BarcodeScanner({ onDetected, onCancel }) {
+export default function BarcodeScanner({ onDetected, onCancel, mode = "single", embedded = false, paused = false }) {
+  const rapidMode = mode === "rapid";
+  // lastRapidRef tracks same-UPC suppression; lastAnyScanRef tracks
+  // the global cooldown across all UPCs (prevents double-scanning a
+  // different item if the user sweeps the camera quickly).
+  const lastRapidRef = useRef({ upc: "", at: 0 });
+  const lastAnyScanRef = useRef(0);
+  // pausedRef mirrors the `paused` prop so the polling loops (native
+  // + zxing) can check a stable reference inside setTimeout
+  // continuations without re-binding the loop on every re-render.
+  // When paused, loops skip the decode step but keep ticking so
+  // resume is instant.
+  const pausedRef = useRef(paused);
   const videoRef   = useRef(null);
   const streamRef  = useRef(null);
   const detectorRef = useRef(null);
@@ -118,8 +143,22 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
         const caps = track.getCapabilities();
         if (caps?.zoom && typeof caps.zoom.min === "number") {
           setZoomCaps({ min: caps.zoom.min, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
-          setZoomValue(caps.zoom.min);
+          // Default to 2x (clamped into the supported range) so
+          // products land at a natural framing — at 1x, the wide-
+          // angle phone lens flattens perspective enough that small
+          // UPCs can read as low-contrast smudges. 2x gives the
+          // decoder more pixels per bar without forcing the user
+          // to fiddle with the slider.
+          const target = Math.max(caps.zoom.min, Math.min(caps.zoom.max, 2));
+          setZoomValue(target);
           videoTrackRef.current = track;
+          // Apply the constraint so the stream actually shifts. Do
+          // this inline rather than going through applyZoom() — the
+          // component's zoomCaps / videoTrackRef state hasn't been
+          // committed yet (setState is async), so applyZoom would
+          // early-return.
+          track.applyConstraints({ advanced: [{ zoom: target }] })
+            .catch(e => console.warn("[barcode] initial zoom apply failed:", e));
         }
         if (caps?.torch) {
           setTorchSupported(true);
@@ -163,10 +202,18 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
         videoRef.current,
         (digits) => {
           if (cancelledRef.current) return;
+          if (rapidMode) {
+            // Keep the stream alive — just bubble the digits up. The
+            // zxing wrapper already suppresses same-UPC dupes within
+            // 1500ms when opts.continuous is set.
+            onDetected?.(digits);
+            return;
+          }
           stopStream();
           onDetected?.(digits);
         },
         (err) => { console.warn("[barcode] zxing live error:", err); },
+        { continuous: rapidMode, isPaused: () => pausedRef.current },
       );
       zxingStopRef.current = scanner;
     } catch (err) {
@@ -184,6 +231,12 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
   function startNativePolling() {
     const tick = async () => {
       if (cancelledRef.current) return;
+      // Paused: skip the decode step but keep ticking so resume is
+      // instant when the caller clears the pause flag.
+      if (pausedRef.current) {
+        tickRef.current = window.setTimeout(tick, 350);
+        return;
+      }
       const video = videoRef.current;
       const detector = detectorRef.current;
       if (video && detector && video.readyState >= 2) {
@@ -192,6 +245,26 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
           if (codes && codes.length > 0) {
             const raw = String(codes[0].rawValue || "").trim();
             if (/^\d{8,14}$/.test(raw)) {
+              if (rapidMode) {
+                // Suppress same-UPC re-fires within SAME_UPC_SUPPRESSION_MS
+                // and any scan within GLOBAL_COOLDOWN_MS. Covers the
+                // two common sources of duplicate bubbles: camera
+                // stayed on the same barcode after the pair sheet
+                // dismissed (same-UPC window) and user swept the
+                // scanner across two items too fast (global cooldown).
+                const now = Date.now();
+                const sameUpcRecent = raw === lastRapidRef.current.upc
+                  && (now - lastRapidRef.current.at) < SAME_UPC_SUPPRESSION_MS;
+                const cooldownActive = (now - lastAnyScanRef.current) < GLOBAL_COOLDOWN_MS;
+                if (!sameUpcRecent && !cooldownActive) {
+                  lastRapidRef.current = { upc: raw, at: now };
+                  lastAnyScanRef.current = now;
+                  if (!cancelledRef.current) onDetected?.(raw);
+                }
+                // Keep scanning — don't stopStream in rapid mode.
+                tickRef.current = window.setTimeout(tick, 350);
+                return;
+              }
               stopStream();
               if (!cancelledRef.current) onDetected?.(raw);
               return;
@@ -222,6 +295,10 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
       stopStream();
     };
   }, []);
+
+  // Keep pausedRef in sync with the prop so the next polling tick
+  // picks up the new state without a re-bind.
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
 
   function stopStream() {
     if (tickRef.current) {
@@ -390,7 +467,17 @@ export default function BarcodeScanner({ onDetected, onCancel }) {
   const showTyped = state === "native_unavailable" || state === "camera_denied" || state === "error" || state === "verify_photo";
 
   return (
-    <div style={{
+    <div style={embedded ? {
+      // Embedded: fills its parent container. ShopMode uses this so
+      // the scanner can share the screen with a live shopping-list
+      // preview (top half scanner, bottom half list). No fixed /
+      // inset / zIndex — the host layout controls placement.
+      position: "relative",
+      width: "100%", height: "100%",
+      background: "#000",
+      display: "flex", flexDirection: "column",
+      overflow: "hidden",
+    } : {
       // Full-screen overlay — must win over every possible parent
       // modal (AddItemModal = 160, ItemCard = 320, LinkIngredient = 340).
       // Confirm layer (350) is the next tier up; stay just below so

@@ -42,9 +42,112 @@
 //   3. Bump package.json's version to match
 //   4. Ship — users get the notification on next app open
 
-export const CURRENT_VERSION = "0.14.0";
+export const CURRENT_VERSION = "0.15.0";
 
 export const RELEASE_NOTES = [
+  {
+    version: "0.15.0",
+    date:    "2026-04-22",
+    title:   "Reheat mode, EAT intent, cut-aware nutrition, self-teaching scans",
+    summary:
+      "Three big arcs this release. First, leftovers finally know how to " +
+      "come back — every cook stamps reheat instructions onto the leftover " +
+      "ItemCard, and a new REHEAT MODE walks you through step by step. " +
+      "Second, eating a pantry item got a proper sheet: tap EAT to pick " +
+      "REHEAT FIRST or JUST LOG, see macros inline, and schedule a " +
+      "leftover as a future meal without opening the planner. Third, " +
+      "nutrition finally respects the cut and state of meat — chicken " +
+      "thigh and chicken breast resolve to different calories, ground " +
+      "beef differs from chuck roast, and the enrichment pipeline fills " +
+      "in the matrix automatically. Scan corrections now self-teach: " +
+      "fix a UPC once and every future scan of the same product lands " +
+      "pre-resolved, per-family and globally per-UPC.",
+    shipped: [
+      { kind: "feature",
+        text: "REHEAT MODE. Every cook auto-stamps a recipe-shape reheat block onto the leftover ItemCard. Tap REHEAT FIRST on any leftover meal to open a full-screen guided walkthrough — same step flow as Cook Mode, tuned for reheating.",
+        commits: ["19e839b", "050b245", "248d567", "a46aaad"] },
+      { kind: "feature",
+        text: "EAT intent sheet. The pantry button flipped from I ATE THIS to EAT — tapping opens a sheet with REHEAT FIRST / JUST LOG branches, macro totals visible on the sheet when the canonical has them, and a SCHEDULE affordance so you can queue a leftover for tomorrow's dinner without leaving the kitchen.",
+        commits: ["7e69788", "219c209", "fda3609", "c9a70d1"] },
+      { kind: "feature",
+        text: "AI-generated cook instructions per pantry item. Tap SUGGEST on the mini-recipe field and the AI drafts a per-item reheat or cook block that you can edit and save. Canonical-level autofill fills in stubs for common items the first time you eat them.",
+        commits: ["ef4d8a3", "050b245"] },
+      { kind: "feature",
+        text: "Cut-aware nutrition. Chicken breast, chicken thigh, chuck roast, ribeye, pork shoulder, and every other cut now resolves its own per-100g calories and macros instead of falling back to a generic meat canonical. The state axis (ground, minced, cubed, sliced) layers on top via cutNutrition + stateNutrition in the enrichment schema.",
+        commits: ["84e4539", "ab8bd37", "dc0c2eb", "b0c46bd"] },
+      { kind: "feature",
+        text: "Recipe brand projection in Cook Mode. When your pantry has Kerrygold butter, the recipe prose now reads 'Kerrygold butter' in tan tokens instead of the plain canonical name, so you can see exactly which jar the step is calling for. Forked recipes rewrite step prose to match the v2 canonicals.",
+        commits: ["b20044a", "2e22bbe", "905c024", "ca82cc4", "16e3229"] },
+      { kind: "feature",
+        text: "Scan corrections self-teach. A new tier-1 learned-tag map remembers your fixes: correct a UPC's canonical once and the next scan of the same product (by you, by anyone in your family, or anywhere in the world if admin promotes it) lands pre-resolved. No more re-fixing the same Trader Joe's pack month after month.",
+        commits: ["c299bec", "0617073", "8fcee1e"] },
+      { kind: "feature",
+        text: "Per-row canonical rewire on the admin CANONICALS tab. Select any pantry_items row from the admin panel and switch its canonical binding in place — all canonical-tied fields (nutrition, units, storage) drop and re-resolve from the new canonical. Inline OFF TAGS editor on each canonical card lets admins attach categoryHints without a round-trip to Open Food Facts.",
+        commits: ["02851cf", "fff897c", "1179fea", "08906c0"] },
+      { kind: "feature",
+        text: "STACKING ×N stepper on the draft ItemCard. Scan the same UPC twice (or more) before stocking and the draft collapses into one stacked entry with a ×N count, matching the stack-drilldown pattern from the main ItemCard.",
+        commits: ["cebd7a1", "26076cb"] },
+      { kind: "ux",
+        text: "OFF categoryHints pre-fill axes on first-time scans. A yogurt UPC arrives with dairy already checked, a tortilla with dry already checked, so the draft ItemCard needs fewer taps before STOCK.",
+        commits: ["5165f65"] },
+      { kind: "ux",
+        text: "Swap-content in Cook Mode renders in tan, not yellow — matches the CANONICAL axis color instead of the INGREDIENTS axis, so brand upgrades read as identity shifts, not composition changes.",
+        commits: ["cd383f8"] },
+      { kind: "ux",
+        text: "Daily-roll avatar cosmetic (FlairHalo) lights up when you complete a cook on a streak day. Streak revive modal on the DailyRollCard lets you keep a broken streak alive with a one-time recovery.",
+        commits: [] },
+      { kind: "ux",
+        text: "Avatar catalog with 8 starter pinned avatars; canonical images render sticker-style in the tan + cream palette. Bell icon moved to the profile header; Settings decluttered.",
+        commits: ["1347d53", "18f89c1"] },
+      { kind: "fix",
+        text: "I ATE THIS decrement finally works in every corner case. Package-unit-first default so a scan of 'eggs · 12 count' decrements one egg at a time. Row deletes when it hits zero. Canonical-ladder bridging so compound items (burrito, sandwich) decrement even when the canonical chain can't fully resolve. Post-cook slider UI ported from CookMode. Brand included in search so 'Kerrygold butter' matches a 'butter' recipe call.",
+        commits: ["f9bc281", "71d6d20", "7297c83", "3567d35", "1dfe657"] },
+      { kind: "fix",
+        text: "Admin canonical rewire drops every canonical-tied field on the row so nothing inherits stale nutrition or units from the previous canonical. Richer synthetic stubs land on rewire so the ItemCard renders cleanly even when the target canonical is a user-taught slug not in the bundled registry.",
+        commits: ["1179fea", "08906c0"] },
+      { kind: "fix",
+        text: "Cook session resets when the cooked recipe changes — no more ghost step-complete marks leaking from a previous recipe. Session markers strip on fork-save and on recipe load so a v2 of a recipe starts clean.",
+        commits: ["4244062", "4bf1a35"] },
+      { kind: "fix",
+        text: "Scanner reliability pass: setPantry is now pure (no mutation of the previous state); persistDiff dedups against the same prev so rapid re-scans don't double-write; STOCK tap no longer double-enters when the debounce window overlaps a re-render.",
+        commits: ["868f9da", "1dfe657"] },
+      { kind: "fix",
+        text: "Meal leftovers on the ItemCard now surface REHEAT, I ATE THIS, and the recipe's reheat block together — before, leftovers only showed one of the three depending on which field populated first.",
+        commits: ["a46aaad"] },
+      { kind: "fix",
+        text: "AI-recipe chain now calls suggest-cook-instructions so the very first save carries a rich reheat block. suggest-cook-instructions no longer requires JWT (the chain calls it server-to-server).",
+        commits: ["43952bb", "76dfa2e"] },
+      { kind: "fix",
+        text: "generate-recipe passes the reheat block through to the saved recipe — before, the AI would draft a reheat section that never reached the DB. enrich-ingredient escapes unbalanced backticks in its prompt template so recipe text with code-fence characters no longer breaks the prompt.",
+        commits: ["e4dd512", "639ae9a"] },
+      { kind: "fix",
+        text: "ItemCard tag slug fallback: unresolvable composition tags render as a humanized slug pill instead of getting filtered out, so a row with a mix of resolvable and unresolvable ingredients still shows everything the user taught.",
+        commits: ["785471f"] },
+      { kind: "fix",
+        text: "Pairing: compound and leftover pantry rows no longer satisfy a plain-ingredient call (a 'chicken sandwich' row doesn't count as 'chicken' for a separate recipe). Composition-match tier for compounds that explicitly contain the target. Category-lineage gate so cheese-hub and dairy-hub don't cross-pair.",
+        commits: ["c04b64c", "c2bec54", "f0ac4f5"] },
+      { kind: "fix",
+        text: "CookComplete's step-2 now shows the matched pantry row (case-insensitive planner lookup) and flags substitutes visibly, so you can see which of your jars counted for which recipe call.",
+        commits: ["caf37d8", "e4c6495"] },
+      { kind: "fix",
+        text: "LinkIngredient saves now stick on rows where ingredientIds and components had drifted apart — both columns write together so the next render re-reads a coherent row.",
+        commits: ["d96aff3"] },
+      { kind: "fix",
+        text: "ItemCard renders a synthetic canonical stub with a default units[] array when the canonical was taught via a UPC correction and doesn't exist in the bundled registry — before, the render would crash on the missing units array.",
+        commits: ["13eabf9"] },
+      { kind: "fix",
+        text: "Leftover-scheduling useStates moved above the Cook-Now early return in the Plan view so the hook order stays stable when the branch flips — before, a Cook-Now flip would change hook count and throw in development.",
+        commits: ["0d8affe"] },
+      { kind: "architecture",
+        text: "Migrations 0119 – 0125 land: consumption_logs (the source of truth for I ATE THIS), scheduled_meals_from_leftover + scheduled_meals_ingredient_eat (scheduler entries for reheat), count_weight_g (grams-per-count override so eggs / slices / cloves resolve to per-100g nutrition), pantry_item_cut_column (seventh identity axis, chicken_breast → chicken + cut=breast), off_category_tag_canonicals (canonical → OFF categoryHints mapping for first-scan axis pre-fill), pantry_item_cook_instructions (per-item reheat mini-recipe storage).",
+        commits: [] },
+    ],
+    coming_soon: [
+      "Shop Mode. Open a persistent barcode scanner at the store — every item you scan pairs to a line on your bare-bones shopping list with one tap, binding the rich OFF brand + canonical data to that slot. At checkout you scan the receipt and everything commits: paired pantry rows with full identity AND accurate prices AND provenance back to the list item that prompted the purchase.",
+      "Offline scan queue for Shop Mode so spotty store Wi-Fi doesn't cost you a trip's worth of data.",
+      "Macro breakdown per meal on the cookbook detail view — see exactly what a specific cook contributed to your daily numbers.",
+    ],
+  },
   {
     version: "0.14.0",
     date:    "2026-04-20",

@@ -89,7 +89,23 @@ function loadImage(src) {
 // requests its own getUserMedia stream, which conflicts with the
 // BarcodeScanner component's already-running stream. Easier to
 // decode off the existing video element.
-export async function createZxingLiveScanner(videoElement, onDetected, onError) {
+export async function createZxingLiveScanner(videoElement, onDetected, onError, opts = {}) {
+  // opts.continuous — when true, keep scanning after each detect
+  //                   instead of stopping. Shop Mode uses this so the
+  //                   user can fire off item after item without a
+  //                   close/reopen of the camera between each. A
+  //                   1500ms suppression window prevents the same UPC
+  //                   from re-firing while the pair sheet is up.
+  // opts.isPaused — () => boolean. When it returns true, the decoder
+  //                   skips decoding on this tick but keeps the loop
+  //                   alive so resume is instant. Stream stays up.
+  const continuous = !!opts.continuous;
+  const isPaused = typeof opts.isPaused === "function" ? opts.isPaused : () => false;
+  // Suppression windows for continuous mode — match the values used
+  // by the native BarcodeDetector path in BarcodeScanner.jsx so both
+  // live decoders behave identically across devices.
+  const SAME_UPC_SUPPRESSION_MS = 10000;
+  const GLOBAL_COOLDOWN_MS      = 10000;
   let browser;
   try {
     browser = await loadReader();
@@ -100,8 +116,18 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError) 
   const { BrowserMultiFormatReader } = browser;
   const reader = new BrowserMultiFormatReader();
   let stopped = false;
+  let lastText = "";
+  let lastAt   = 0;
+  let lastAnyAt = 0;
   const tick = async () => {
     if (stopped) return;
+    if (isPaused()) {
+      // Caller has the scanner blocked (e.g. red-scan name prompt).
+      // Skip the decode but keep the loop ticking so resume is
+      // instant when isPaused() flips back to false.
+      setTimeout(tick, 250);
+      return;
+    }
     if (!videoElement || videoElement.readyState < 2) {
       // Video not yet painting frames — retry next tick.
       setTimeout(tick, 250);
@@ -112,8 +138,24 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError) 
       if (stopped) return;
       const text = (result?.getText?.() || "").trim();
       if (/^\d{8,14}$/.test(text)) {
-        stopped = true;
-        onDetected?.(text);
+        const now = Date.now();
+        const sameUpcRecent = continuous && text === lastText
+          && (now - lastAt) < SAME_UPC_SUPPRESSION_MS;
+        const cooldownActive = continuous
+          && (now - lastAnyAt) < GLOBAL_COOLDOWN_MS;
+        if (!sameUpcRecent && !cooldownActive) {
+          lastText = text;
+          lastAt   = now;
+          lastAnyAt = now;
+          onDetected?.(text);
+        }
+        if (!continuous) {
+          stopped = true;
+          return;
+        }
+        // Continuous: keep looking after a short gap so the focus /
+        // frame can settle on the next item before the decoder fires.
+        setTimeout(tick, 400);
         return;
       }
       // Non-digit format (QR pointing to a URL, etc) — ignore and

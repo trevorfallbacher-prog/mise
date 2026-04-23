@@ -253,6 +253,30 @@ export default function LinkIngredient({ item, mode = "multi", onLink, onClose }
       }).catch(err => {
         console.warn("[auto-enrich] failed for", id, err?.message);
       });
+      // Also push a row into pending_ingredient_info so the admin
+      // console has a record of every user-created canonical for
+      // review / refinement. The enrich edge function bypasses this
+      // queue (writes ingredient_info directly), which makes the
+      // canonical work immediately for the family — but admins lose
+      // visibility into what's being created. Writing the pending
+      // row in parallel restores the audit trail without blocking
+      // the user's flow. RLS (migration 0047) gates UPSERT to the
+      // owning user; admin SELECT covers everyone.
+      (async () => {
+        try {
+          const { data: { user } } = await supabase.auth.getUser();
+          if (!user) return;
+          await supabase.from("pending_ingredient_info").upsert({
+            user_id:     user.id,
+            slug:        id,
+            source_name: name,
+            info:        {},
+            status:      "pending",
+          }, { onConflict: "user_id,slug" });
+        } catch (e) {
+          console.warn("[linkIngredient] pending row write failed:", e?.message || e);
+        }
+      })();
     }
   };
 
