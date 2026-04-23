@@ -247,6 +247,15 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
   });
   console.log("Token tier", { scanText, scanTokens: Array.from(scanToks), lines: tokenAttempts });
 
+  // Require >= 2 shared tokens for a token-fuzzy match to count.
+  // Single-word overlaps (e.g. Danish scan tokens {cream, cheese,
+  // danish} sharing only "cream" with SOUR CREAM) wrongly pair
+  // Danish to sour cream while the actual CHEEZ DANIS receipt
+  // line has zero overlap because Walmart truncated both words.
+  // Pushing the bar to 2 means matches must have enough signal
+  // to really mean the same product. Unpaired scans get fixed
+  // manually on the ItemCard.
+  const MIN_SHARED_TOKENS = 2;
   if (scanToks.size > 0) {
     let best = -1;
     let bestShared = 0;
@@ -257,10 +266,13 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
         best = a.i;
       }
     }
-    if (best >= 0 && bestShared > 0) {
+    if (best >= 0 && bestShared >= MIN_SHARED_TOKENS) {
       console.log(`✅ MATCH via tokens at line ${best} (shared ${bestShared}: ${tokenAttempts[best].sharedTokens.join(", ")}): "${tokenAttempts[best].rawText}"`);
       console.groupEnd();
       return best;
+    }
+    if (best >= 0 && bestShared > 0) {
+      console.log(`⚠ token match for line ${best} had only ${bestShared} shared token(s) — below the ${MIN_SHARED_TOKENS} threshold, skipping (generic tokens like "cream" cause false pairs).`);
     }
   }
 
