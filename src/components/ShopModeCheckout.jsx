@@ -35,7 +35,7 @@ import { FREEZER_TILES } from "../lib/freezerTiles";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../lib/barcodeCorrections";
-import { usePopularPackages } from "../lib/usePopularPackages";
+import { usePopularPackages, clearPopularPackagesCache } from "../lib/usePopularPackages";
 import { useProfile } from "../lib/useProfile";
 
 const FLASH_COLORS = {
@@ -400,6 +400,15 @@ export default function ShopModeCheckout({
       next.delete(scanId);
       return next;
     });
+  }, []);
+  // Stable `onManualPair` — the inline `() => setManualPairScanId(s.id)`
+  // per-row callback was recreated every render, busting React.memo on
+  // TripScanLine and causing the whole review list to re-render on
+  // every state tick. Hoist the "open picker for scanId" logic into a
+  // single stable callback that accepts the scanId as an argument,
+  // and have TripScanLine call it with its own scan.id.
+  const openManualPair = useCallback((scanId) => {
+    setManualPairScanId(scanId);
   }, []);
   // ingredient_info dbMap — used to pull synthetic canonical info
   // (storage, category, units) for family-created canonicals that
@@ -960,6 +969,17 @@ export default function ShopModeCheckout({
         });
       await Promise.all([...tripScanUpdates, ...listItemUpdates]);
 
+      // Flush the popular-package-sizes in-memory cache for every
+      // (brand, canonical) pair we just wrote a pantry_items row
+      // for. Without this, the 60-second cache TTL swallows the
+      // user's just-typed package size — they'd open the same UPC
+      // on the next trip and see POPULAR: still empty because the
+      // module-level cache still holds the pre-commit empty result.
+      // Cheap synchronous op; no network.
+      for (const { scan, row } of builtRows) {
+        if (row.canonical_id) clearPopularPackagesCache(scan.brand || null, row.canonical_id);
+      }
+
       // Optimistically mirror the DB updates into the parent's
       // shoppingList state so the caller (Kitchen) sees paired
       // items as purchased IMMEDIATELY on close, without waiting
@@ -1283,8 +1303,9 @@ export default function ShopModeCheckout({
                       : null
                   }
                   diagnostic={diag || null}
-                  onManualPair={() => setManualPairScanId(s.id)}
-                  onUnpair={priceInfo ? () => unpairScan(s.id) : null}
+                  canUnpair={!!priceInfo}
+                  onManualPair={openManualPair}
+                  onUnpair={unpairScan}
                 />
               );
             })}
@@ -1497,7 +1518,11 @@ const EditableScanLine = memo(function EditableScanLine({
   // — the prior controlled-input sync was overkill for the cost.
 
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
-  const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
+  // `label` derived below, AFTER the cascade resolves currentCanonical
+  // — so a paired canonical's short name wins over the OFF product
+  // name. Per CLAUDE.md identity hierarchy: HEADER is derived from
+  // `[Brand] [Canonical]`, falling back to Canonical alone, falling
+  // back to the user-typed / OFF productName only for free-text rows.
 
   // The full resolve cascade — memoized on the real inputs so we
   // don't re-run findIngredient / tagHintsToAxes /
@@ -1558,6 +1583,19 @@ const EditableScanLine = memo(function EditableScanLine({
     effectiveLocation,
     effectiveTileId, effectiveTile,
   } = resolved;
+
+  // Display label — prefer canonical's short name once the scan has
+  // been paired to one (CLAUDE.md identity hierarchy: Canonical
+  // drives the HEADER, typed productName only fills in pre-canonical
+  // rows). Without this, picking a canonical via LinkIngredient
+  // silently updates the cascade but the big header text stays
+  // stuck on the OFF productName — user saw the pairing "not stick."
+  const label =
+    currentCanonical?.shortName
+    || currentCanonical?.name
+    || scan.productName
+    || scan.brand
+    || `UPC ${scan.barcodeUpc.slice(-6)}`;
 
   // Effective package size for the collapsed preview.
   const effectiveSize = useMemo(() => {
@@ -2093,18 +2131,31 @@ const editBtn = {
   cursor: "pointer",
 };
 
-function TripScanLine({
+const TripScanLine = memo(function TripScanLine({
   scan, listName, priceCents,
   reason = null, matchedRawText = null,
   diagnostic = null,
+  canUnpair = false,
   onManualPair, onUnpair,
 }) {
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
-  const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
-  const offParsed = parsePackageSize(scan.offPayload?.quantity || null);
-  const sizeLabel = offParsed
-    ? `${offParsed.amount}${offParsed.unit ? " " + offParsed.unit : ""}`
-    : "";
+  // Resolve canonical + parse OFF quantity ONCE per identity change
+  // (not on every parent render of the review phase). Was recomputing
+  // parsePackageSize + findIngredient per row per state tick, which
+  // compounds when you have 10 rows × N renders in review.
+  const { label, sizeLabel } = useMemo(() => {
+    const canon = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
+    const l = canon?.shortName
+      || canon?.name
+      || scan.productName
+      || scan.brand
+      || `UPC ${scan.barcodeUpc.slice(-6)}`;
+    const parsed = parsePackageSize(scan.offPayload?.quantity || null);
+    const s = parsed
+      ? `${parsed.amount}${parsed.unit ? " " + parsed.unit : ""}`
+      : "";
+    return { label: l, sizeLabel: s };
+  }, [scan.canonicalId, scan.productName, scan.brand, scan.barcodeUpc, scan.offPayload]);
   const isUnmatched = typeof priceCents !== "number";
   return (
     <div style={{
@@ -2185,9 +2236,9 @@ function TripScanLine({
           }}>
             ↪ {matchedRawText}
           </span>
-          {onUnpair && (
+          {canUnpair && onUnpair && (
             <button
-              onClick={onUnpair}
+              onClick={() => onUnpair(scan.id)}
               style={{
                 background: "transparent", border: "1px solid #444",
                 color: "#aaa", borderRadius: 4,
@@ -2231,7 +2282,7 @@ function TripScanLine({
           )}
           {onManualPair && (
             <button
-              onClick={onManualPair}
+              onClick={() => onManualPair(scan.id)}
               style={{
                 alignSelf: "flex-start",
                 background: "#1e1a0e",
@@ -2247,7 +2298,7 @@ function TripScanLine({
       )}
     </div>
   );
-}
+});
 
 const headerStyle = {
   padding: "18px 18px 10px",
