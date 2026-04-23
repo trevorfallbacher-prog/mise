@@ -51,29 +51,47 @@ export async function findBarcodeCorrection(barcodeUpc) {
   const upc = String(barcodeUpc).trim();
   if (!upc) return null;
 
+  // Build a list of equivalent UPC forms to query against. Different
+  // scanners / migrations / vendors stored the same physical code
+  // in a few different digit-counts (11-short, 12-UPC-A, 13-EAN-13).
+  // Querying with .in() against all variants finds the row no matter
+  // which form it was originally written under, so users don't have
+  // to re-teach corrections after the canonicalize-at-capture
+  // change.
+  const variants = (() => {
+    const d = upc.replace(/\D+/g, "");
+    if (d.length < 8 || d.length > 14) return [upc];
+    if (d.length === 8) return [d];                 // EAN-8 separate family
+    const stripped = d.replace(/^0+/, "") || d;
+    const padded12 = stripped.padStart(12, "0");
+    const padded13 = stripped.padStart(13, "0");
+    // De-dup with a Set in case the input was already canonical.
+    return Array.from(new Set([upc, d, stripped, padded12, padded13]));
+  })();
+
   // Tier 1 — global. One row per UPC (unique constraint). Any
   // auth'd user reads (public-read RLS).
   {
     const { data, error } = await supabase
       .from("barcode_identity_corrections")
       .select("*")
-      .eq("barcode_upc", upc)
-      .maybeSingle();
+      .in("barcode_upc", variants)
+      .limit(1);
     if (error) {
       console.warn("[barcode_identity_corrections] select failed:", error.message);
-    } else if (data) {
-      return fromGlobal(data);
+    } else if (data && data.length > 0) {
+      return fromGlobal(data[0]);
     }
   }
 
   // Tier 2 — family-scoped. RLS from 0046 limits to self+family.
   // May return multiple rows (one per family member who corrected
-  // the same UPC); pick the most recently used.
+  // the same UPC); pick the most recently used across any variant.
   {
     const { data, error } = await supabase
       .from("user_scan_corrections")
       .select("*")
-      .eq("barcode_upc", upc)
+      .in("barcode_upc", variants)
       .order("last_used_at", { ascending: false })
       .limit(1);
     if (error) {

@@ -188,21 +188,18 @@ export default function ShopMode({
 
   async function handleDetected(rawUpc) {
     if (!activeTrip?.id || !rawUpc) return;
-    // Normalize the UPC once at capture — strip leading zeros after
-    // validating length. Different scanners / libraries return the
-    // same physical barcode in three different digit counts (EAN-13
-    // prefixed, UPC-A 12, short 11). Without normalization, storing
-    // one form and later querying corrections or receipt lines in
-    // another form silently misses: "0070038000563" ≠ "70038000563"
-    // under strict equality even though they're the same product.
-    // Normalizing at the edge means every downstream comparison
-    // (correction lookup, duplicate detection, receipt pair) works
-    // off the same key.
+    // Store the raw scanner output verbatim — DO NOT trim leading
+    // zeros. Different scanners / decoders return the same physical
+    // code in 11/12/13-digit forms; we preserve whatever the
+    // scanner actually saw so the database row matches the package
+    // label visually. Equivalence across digit-counts is handled
+    // at LOOKUP time (findBarcodeCorrection.in([variants]),
+    // matchScanToReceiptLine via normalizeBarcode), not at write
+    // time. Just sanitize away non-digits + length-validate.
     const upc = (() => {
       const d = String(rawUpc).replace(/\D+/g, "");
       if (d.length < 8 || d.length > 14) return String(rawUpc);
-      const stripped = d.replace(/^0+/, "");
-      return stripped || d;
+      return d;
     })();
     // Read via ref — BarcodeScanner captured handleDetected at mount
     // time, so `scans` from the closure scope is always the initial
@@ -221,7 +218,12 @@ export default function ShopMode({
     // package to the cart, or was this a bumped-scanner dupe? Flash
     // fires so they see the recognition, then the add-another sheet
     // takes over until they answer.
-    const existing = currentScans.find(s => s.barcodeUpc === upc);
+    //
+    // Match across digit-count variants so re-scanning with a
+    // different decoder (different leading-zero count) still
+    // correctly identifies the duplicate.
+    const upcKey = upcDigitsKey(upc);
+    const existing = currentScans.find(s => upcDigitsKey(s.barcodeUpc) === upcKey);
     if (existing) {
       setAddAnotherPrompt({ scan: existing });
       setLastScan({ scan: existing, flashColor: existing.status });
@@ -1146,6 +1148,16 @@ export default function ShopMode({
       </div>
     </div>
   );
+}
+
+// Strip a UPC down to its non-zero digit run for duplicate-detection
+// equality. "70038000563" / "070038000563" / "0070038000563" all
+// reduce to the same key. Used purely for in-memory comparison; the
+// stored barcode_upc keeps whatever form the scanner returned.
+function upcDigitsKey(b) {
+  const d = String(b || "").replace(/\D+/g, "");
+  if (!d) return "";
+  return d.replace(/^0+/, "") || d;
 }
 
 function pairedCount(scans) {
