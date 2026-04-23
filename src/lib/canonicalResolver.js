@@ -371,7 +371,16 @@ export function resolveCanonicalFromScan({
         reason: `tag:${tag}`,
         matchedOn: phrase,
         score: hit.score,
-        autoApply: hit.score >= 95 && i === 0,
+        // Ghost-pair fix: auto-apply every non-null match. The resolver's
+        // 70-floor is already the "confident enough to pair" threshold;
+        // gating autoApply on an additional 95+ score + index===0 was
+        // producing matches the UI displayed as suggestions but the DB
+        // field stayed null until the user tapped USE. Per CLAUDE.md
+        // minimal-data-entry rule: trust the confidence tier, apply
+        // silently. If the match is wrong, the user corrects via the
+        // canonical chip — which now teaches the correction memory so
+        // the next scan of the same UPC lands on the right answer.
+        autoApply: true,
       };
     }
   }
@@ -429,18 +438,19 @@ export function resolveCanonicalFromScan({
     }
   }
 
-  // Tier 3 — fuzzy match the cleaned productName. Lower floor (60)
-  // because we're matching against a denser, messier phrase.
-  // autoApply trips at 95+: a scan where cleanProductName returns
-  // the exact canonical name ("Heavy Cream" → "heavy cream" →
-  // Heavy Cream canonical norm'd "heavy cream") — no tap needed.
-  // Same family guard as the weak-fallback below: an OFF signal of
-  // "beverages / sodas / colas" overrides a productName-token match
-  // against the pantry `sugar` canonical, so a product with those
-  // hints can't silently land on sugar even if the cleaned phrase
-  // happened to contain "sugar".
+  // Tier 3 — fuzzy match the cleaned productName. Floor bumped from
+  // 60 → 75 now that we auto-apply all returned matches. At 60 the
+  // old "tap USE to confirm" UI gave us a safety net against weak
+  // hits (e.g. "cream cheese danish" at 80 matching "cream cheese").
+  // With aggressive auto-apply we need to front-load the confidence
+  // bar so only truly close string matches silently land — bad auto-
+  // applies cost the user a correction tap. 75 is empirically where
+  // the false-positive rate stops being annoying while still catching
+  // the long-tail of off-by-a-word product names. Family guard still
+  // applies: an OFF signal of "beverages / sodas / colas" overrides a
+  // productName-token match against the pantry `sugar` canonical.
   if (cleaned) {
-    const hit = bestMatchAboveFloor(cleaned, 60);
+    const hit = bestMatchAboveFloor(cleaned, 75);
     const tier3Family = detectOffFamily(categoryHints);
     if (hit && (!tier3Family || canonicalFitsFamily(hit.ingredient, tier3Family))) {
       return {
@@ -449,7 +459,7 @@ export function resolveCanonicalFromScan({
         reason: "name-cleaned",
         matchedOn: cleaned,
         score: hit.score,
-        autoApply: hit.score >= 95,
+        autoApply: true,
       };
     }
   }
