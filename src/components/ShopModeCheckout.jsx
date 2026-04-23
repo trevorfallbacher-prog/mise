@@ -192,12 +192,23 @@ const CHIP_TONES = {
   locationMuted: { fg: "#7eb8d4aa", bg: "#0d1218", border: "#1a2430" }, // muted blue (LOCATION — fridge/pantry/freezer)
 };
 
+// Verbose match-attempt logging is gated behind a localStorage flag.
+// Was previously unconditional — every commit emitted N × M log
+// groups (N scans × M receipt lines) plus a top-level group per
+// scan. Turn on with `localStorage.setItem("debug_receipt_match", "1")`
+// when diagnosing a missed pair.
+const DEBUG_RECEIPT_MATCH = typeof localStorage !== "undefined"
+  && localStorage.getItem("debug_receipt_match") === "1";
+const dbgLog      = DEBUG_RECEIPT_MATCH ? console.log.bind(console)      : () => {};
+const dbgGroup    = DEBUG_RECEIPT_MATCH ? console.group.bind(console)    : () => {};
+const dbgGroupEnd = DEBUG_RECEIPT_MATCH ? console.groupEnd.bind(console) : () => {};
+
 function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = null) {
   const scanUpc = normalizeBarcode(scan.barcodeUpc);
   const scanLabel = scan.productName || scan.brand || `UPC ${scan.barcodeUpc}`;
 
-  console.group(`[shop-checkout] match attempt: ${scanLabel}`);
-  console.log("scan", {
+  dbgGroup(`[shop-checkout] match attempt: ${scanLabel}`);
+  dbgLog("scan", {
     id: scan.id,
     barcodeUpc: scan.barcodeUpc,
     barcodeUpcNormalized: scanUpc,
@@ -216,13 +227,13 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
     upcMatches: !!scanUpc && !claimed.has(i)
       && upcsEquivalent(l?.barcode, scan.barcodeUpc),
   }));
-  console.log("UPC tier", { scanUpc, lines: upcAttempts });
+  dbgLog("UPC tier", { scanUpc, lines: upcAttempts });
 
   if (scanUpc) {
     const byUpc = upcAttempts.findIndex(a => a.upcMatches);
     if (byUpc >= 0) {
-      console.log(`✅ MATCH via UPC at line ${byUpc}: "${upcAttempts[byUpc].rawText}"`);
-      console.groupEnd();
+      dbgLog(`✅ MATCH via UPC at line ${byUpc}: "${upcAttempts[byUpc].rawText}"`);
+      dbgGroupEnd();
       return byUpc;
     }
   }
@@ -246,7 +257,7 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
       claimed: claimed.has(i),
     };
   });
-  console.log("Token tier", { scanText, scanTokens: Array.from(scanToks), lines: tokenAttempts });
+  dbgLog("Token tier", { scanText, scanTokens: Array.from(scanToks), lines: tokenAttempts });
 
   // Require >= 2 shared tokens for a token-fuzzy match to count.
   // Single-word overlaps (e.g. Danish scan tokens {cream, cheese,
@@ -268,17 +279,17 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
       }
     }
     if (best >= 0 && bestShared >= MIN_SHARED_TOKENS) {
-      console.log(`✅ MATCH via tokens at line ${best} (shared ${bestShared}: ${tokenAttempts[best].sharedTokens.join(", ")}): "${tokenAttempts[best].rawText}"`);
-      console.groupEnd();
+      dbgLog(`✅ MATCH via tokens at line ${best} (shared ${bestShared}: ${tokenAttempts[best].sharedTokens.join(", ")}): "${tokenAttempts[best].rawText}"`);
+      dbgGroupEnd();
       return best;
     }
     if (best >= 0 && bestShared > 0) {
-      console.log(`⚠ token match for line ${best} had only ${bestShared} shared token(s) — below the ${MIN_SHARED_TOKENS} threshold, skipping (generic tokens like "cream" cause false pairs).`);
+      dbgLog(`⚠ token match for line ${best} had only ${bestShared} shared token(s) — below the ${MIN_SHARED_TOKENS} threshold, skipping (generic tokens like "cream" cause false pairs).`);
     }
   }
 
-  console.log(`❌ NO MATCH for ${scanLabel}.`);
-  console.groupEnd();
+  dbgLog(`❌ NO MATCH for ${scanLabel}.`);
+  dbgGroupEnd();
   return -1;
 }
 
@@ -338,12 +349,64 @@ export default function ShopModeCheckout({
   const scansRef = useRef(scans);
   useEffect(() => { scansRef.current = scans; }, [scans]);
 
-  // CENTRAL edit handler — single source of truth for both local
-  // override state AND teach-on-edit UPC writes. Fires a
-  // rememberBarcodeCorrection the moment the user picks a chip so
-  // the correction lives in Supabase before commit, surviving a
-  // back-out or crash. Per CLAUDE.md minimal-data-entry rule: every
-  // identity-axis edit teaches. Commit-time is too late for UX.
+  // Per-scan-axis teach error tracker. Keyed by `${scanId}:${axis}`
+  // → error message. Surfaces in a top-level toast so the user
+  // sees when a chip pick FAILED to save instead of guessing.
+  // Cleared automatically on the next successful teach for that key.
+  const [teachErrors, setTeachErrors] = useState(() => new Map());
+
+  // teachUpc — the central identity-correction write. Fires
+  // rememberBarcodeCorrection for whatever axes the caller passes,
+  // surfaces failures into teachErrors so the UI can show a banner.
+  // Both handlePackageChange (chip picks) and onCanonicalPicked
+  // (LinkIngredient) route through here — no caller writes
+  // corrections directly.
+  const teachUpc = useCallback((scanId, teach) => {
+    const scan = scansRef.current.find(s => s.id === scanId);
+    if (!scan?.barcodeUpc) return;
+    if (!teach || Object.keys(teach).length === 0) return;
+    const errKey = `${scanId}:${Object.keys(teach).join("+")}`;
+    rememberBarcodeCorrection({
+      userId, isAdmin,
+      barcodeUpc: scan.barcodeUpc,
+      ...teach,
+      ingredientIds: teach.canonicalId
+        ? [teach.canonicalId]
+        : (scan.canonicalId ? [scan.canonicalId] : []),
+      categoryHints: scan.offPayload?.categoryHints || null,
+    })
+      .then(r => {
+        if (r?.error) {
+          const msg = r.error.message || String(r.error);
+          console.warn("[shop-checkout] teach-on-edit DB error:", msg);
+          setTeachErrors(prev => {
+            const next = new Map(prev);
+            next.set(errKey, msg);
+            return next;
+          });
+        } else {
+          setTeachErrors(prev => {
+            if (!prev.has(errKey)) return prev;
+            const next = new Map(prev);
+            next.delete(errKey);
+            return next;
+          });
+        }
+      })
+      .catch(e => {
+        const msg = e?.message || String(e);
+        console.warn("[shop-checkout] teach-on-edit threw:", msg);
+        setTeachErrors(prev => {
+          const next = new Map(prev);
+          next.set(errKey, msg);
+          return next;
+        });
+      });
+  }, [userId, isAdmin]);
+
+  // CENTRAL edit handler — local override state + teach via teachUpc.
+  // Per CLAUDE.md minimal-data-entry rule: every identity-axis edit
+  // teaches. Commit-time is too late for UX.
   const handlePackageChange = useCallback((scanId, patch) => {
     setPackageOverrides(prev => {
       const next = new Map(prev);
@@ -351,28 +414,18 @@ export default function ShopModeCheckout({
       next.set(scanId, { ...current, ...patch });
       return next;
     });
-    const scan = scansRef.current.find(s => s.id === scanId);
-    if (!scan?.barcodeUpc) return;
     const teach = {};
-    if (patch.typeId)     teach.typeId = patch.typeId;
-    if (patch.tileId)     teach.tileId = patch.tileId;
-    if (patch.location)   teach.location = patch.location;
-    if (scan.canonicalId) teach.canonicalId = scan.canonicalId;
-    if (Object.keys(teach).length === 0) return;
-    rememberBarcodeCorrection({
-      userId, isAdmin,
-      barcodeUpc: scan.barcodeUpc,
-      ...teach,
-      ingredientIds: scan.canonicalId ? [scan.canonicalId] : [],
-      categoryHints: scan.offPayload?.categoryHints || null,
-    })
-      .then(r => {
-        if (r?.error) {
-          console.warn("[shop-checkout] teach-on-edit DB error:", r.error.message || r.error);
-        }
-      })
-      .catch(e => console.warn("[shop-checkout] teach-on-edit threw:", e?.message || e));
-  }, [userId, isAdmin]);
+    if (patch.typeId)   teach.typeId   = patch.typeId;
+    if (patch.tileId)   teach.tileId   = patch.tileId;
+    if (patch.location) teach.location = patch.location;
+    // Carry the canonical so the teach also stamps it (a chip pick
+    // for a row that already has a green canonical should keep that
+    // pairing in memory too — defensive against partial rows where
+    // typeId teaches without a canonical anchor).
+    const scan = scansRef.current.find(s => s.id === scanId);
+    if (scan?.canonicalId) teach.canonicalId = scan.canonicalId;
+    teachUpc(scanId, teach);
+  }, [teachUpc]);
 
   async function handlePhotoSelect(e) {
     const file = e?.target?.files?.[0];
@@ -428,9 +481,17 @@ export default function ShopModeCheckout({
         totalCents: typeof data?.totalCents === "number" ? data.totalCents : null,
       });
 
-      // Pair trip_scans to receipt lines for price attachment.
+      // Pair trip_scans to receipt lines for price attachment AND
+      // pull the receipt-line qty multiplier across when it's larger
+      // than what the user scanned in-aisle. The receipt is the
+      // ground truth for "how many did you actually buy" — if you
+      // scanned ONE jar in the aisle but the receipt shows "3 @"
+      // then you bought three. Defensive: only ever bump UP, never
+      // down (so a user who manually set qty=5 on a row before
+      // scanning the receipt isn't trampled by a misread "QTY 1").
       const claimed = new Set();
       const prices = new Map();
+      const qtyBumps = []; // [{ scanId, fromQty, toQty }]
       for (const scan of scans) {
         // Pass the paired list slot's name so the matcher can use
         // its tokens too — fixes the "scan productName is brand-
@@ -443,9 +504,23 @@ export default function ShopModeCheckout({
             priceCents: typeof lines[idx].priceCents === "number" ? lines[idx].priceCents : null,
             lineIndex:  idx,
           });
+          const lineQty = Number(lines[idx].qty);
+          const currentQty = scan.qty || 1;
+          if (Number.isFinite(lineQty) && lineQty > currentQty) {
+            qtyBumps.push({ scanId: scan.id, fromQty: currentQty, toQty: lineQty });
+          }
         }
       }
       setPriceByScan(prices);
+      // Apply qty bumps in parallel — each is a small DB write, and
+      // patchScan is optimistic so the UI updates immediately. Don't
+      // await: by the time the user reviews the receipt, the bumps
+      // have already landed locally; the DB write catches up.
+      if (qtyBumps.length > 0) {
+        console.log("[shop-checkout] receipt qty multipliers found:", qtyBumps);
+        Promise.all(qtyBumps.map(b => patchScan(b.scanId, { qty: b.toQty })))
+          .catch(e => console.warn("[shop-checkout] qty bump failed:", e?.message || e));
+      }
       setPhase("review");
     } catch (e) {
       console.warn("[shop-checkout] parse failed:", e);
@@ -553,7 +628,14 @@ export default function ShopModeCheckout({
           if (corr) correctionByUpc.set(s.barcodeUpc, corr);
         } catch { /* best-effort */ }
       }));
-      for (const scan of scans) {
+      // Build every pantry_items row synchronously first, then fan
+      // out the inserts in parallel. Was previously a serial
+      // for-await loop — N round-trips at network latency before the
+      // user got past "Stocking…". Per-row build is still inline
+      // (the cascade is per-scan and references closed-over
+      // ingredientDbMap / packageOverrides etc.), but the awaits
+      // now stack up on the network instead of the JS thread.
+      const builtRows = scans.map(scan => {
         const priceInfo = priceByScan.get(scan.id);
         const taught = correctionByUpc.get(scan.barcodeUpc) || null;
         const id = (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -672,42 +754,46 @@ export default function ShopModeCheckout({
             || null,
           purchased_at:   nowIso,
         };
-        // Trace the UPC end-to-end so mismatches between what the
-        // scanner read and what lands in pantry_items are visible
-        // in the console without firing up the DB client.
-        console.log("[shop-checkout] insert pantry row", {
-          scanId: scan.id,
-          scannedUpc: scan.barcodeUpc,
-          writingUpc: row.barcode_upc,
-          canonical: row.canonical_id,
-          brand: row.brand,
-          qty: row.amount,
-          price: row.price_cents,
-          listSlot: row.source_shopping_list_item_id,
-        });
-        const { error: piErr } = await supabase.from("pantry_items").insert(row);
-        if (piErr) {
-          console.error("[shop-checkout] pantry insert FAILED", piErr.message, { scan, row });
-          insertErrors.push({ scan, message: piErr.message });
-        } else {
-          newPantryIds.set(scan.id, id);
+        return { scan, row, id };
+      });
 
-          // Teach UPC → identity memory for EVERY committed pantry
-          // row, not just the ones where the user explicitly
-          // overrode an axis. The cascade above has already resolved
-          // the best value we know for typeId/tileId/location; that
-          // resolved answer IS what the next scanner should see. The
-          // previous gate (`correctionPatch.length > 0`) silently
-          // skipped rows where the user accepted inferred defaults,
-          // which is why the same UPCs kept re-prompting on every
-          // trip. teach-on-edit in handlePackageChange covers the
-          // in-flight chip picks; this covers commit-time finalization.
-          const correctionPatch = {};
-          if (row.type_id)      correctionPatch.typeId      = row.type_id;
-          if (row.tile_id)      correctionPatch.tileId      = row.tile_id;
-          if (row.location)     correctionPatch.location    = row.location;
-          if (scan.canonicalId) correctionPatch.canonicalId = scan.canonicalId;
-          if (scan.barcodeUpc && Object.keys(correctionPatch).length > 0) {
+      // Fan out the inserts in parallel. Each insert is independent
+      // (no FK between rows in this batch), so this is safe and
+      // takes max(latency) instead of sum(latency).
+      const insertResults = await Promise.all(builtRows.map(({ scan, row, id }) =>
+        supabase.from("pantry_items").insert(row).then(
+          res => ({ scan, row, id, error: res.error }),
+          err => ({ scan, row, id, error: err })
+        )
+      ));
+      // Per-row settle pass: collect successes into newPantryIds and
+      // failures into insertErrors. Then queue every successful row's
+      // teach in parallel (rememberBarcodeCorrection is fire-and-
+      // forget; the .catch() surfaces failures into teachErrors and
+      // the console).
+      const teachQueue = [];
+      for (const { scan, row, id, error } of insertResults) {
+        if (error) {
+          console.error("[shop-checkout] pantry insert FAILED", error.message, { scan, row });
+          insertErrors.push({ scan, message: error.message });
+          continue;
+        }
+        newPantryIds.set(scan.id, id);
+        // Teach UPC → identity memory for EVERY committed pantry
+        // row, not just the ones where the user explicitly overrode
+        // an axis. The cascade above has already resolved the best
+        // value we know for typeId/tileId/location; that resolved
+        // answer IS what the next scanner should see. teach-on-edit
+        // in handlePackageChange covers in-flight chip picks; this
+        // covers commit-time finalization for rows the user never
+        // touched.
+        const correctionPatch = {};
+        if (row.type_id)      correctionPatch.typeId      = row.type_id;
+        if (row.tile_id)      correctionPatch.tileId      = row.tile_id;
+        if (row.location)     correctionPatch.location    = row.location;
+        if (scan.canonicalId) correctionPatch.canonicalId = scan.canonicalId;
+        if (scan.barcodeUpc && Object.keys(correctionPatch).length > 0) {
+          teachQueue.push(
             rememberBarcodeCorrection({
               userId,
               isAdmin,
@@ -720,10 +806,16 @@ export default function ShopModeCheckout({
               .then(r => {
                 if (r?.error) console.warn("[shop-checkout] rememberBarcodeCorrection DB error:", r.error.message || r.error);
               })
-              .catch(e => console.warn("[shop-checkout] rememberBarcodeCorrection threw:", e?.message || e));
-          }
+              .catch(e => console.warn("[shop-checkout] rememberBarcodeCorrection threw:", e?.message || e))
+          );
         }
       }
+      // Don't await the teach queue — it's fire-and-forget by
+      // design (CLAUDE.md: "Fire-and-forget with a `.catch`. A
+      // correction write failing should never block the user's
+      // main flow"). Just hold the references so console output
+      // sequences correctly within this commit.
+      void teachQueue;
 
       // If any pantry row failed to insert, surface it visibly instead
       // of pretending the commit succeeded. The most likely cause
@@ -741,28 +833,35 @@ export default function ShopModeCheckout({
         );
       }
 
-      // 3. Update trip_scans with paired_pantry_item_id +
-      //    paired_receipt_line_index for audit.
-      for (const scan of scans) {
-        const patch = {};
-        const pid = newPantryIds.get(scan.id);
-        if (pid) patch.paired_pantry_item_id = pid;
-        const priceInfo = priceByScan.get(scan.id);
-        if (priceInfo) patch.paired_receipt_line_index = priceInfo.lineIndex;
-        if (Object.keys(patch).length === 0) continue;
-        await supabase.from("trip_scans").update(patch).eq("id", scan.id);
-      }
-
-      // 4. Mark shopping list items purchased.
-      for (const scan of scans) {
-        if (!scan.pairedShoppingListItemId) continue;
-        const pid = newPantryIds.get(scan.id);
-        await supabase.from("shopping_list_items").update({
-          purchased_at: nowIso,
-          purchased_pantry_item_id: pid || null,
-          purchased_trip_id: trip.id,
-        }).eq("id", scan.pairedShoppingListItemId);
-      }
+      // 3 + 4. Fan out trip_scans audit updates and shopping list
+      // mark-purchased updates in parallel. Was previously two
+      // sequential await-per-scan loops (so a 10-item trip = 20
+      // round-trips serially), turning the "Stocking your kitchen…"
+      // pause into something that felt frozen on cellular. Each
+      // update still keys on a single id, so RLS + indexes are
+      // unchanged — only the wall-clock improves.
+      const tripScanUpdates = scans
+        .map(scan => {
+          const patch = {};
+          const pid = newPantryIds.get(scan.id);
+          if (pid) patch.paired_pantry_item_id = pid;
+          const priceInfo = priceByScan.get(scan.id);
+          if (priceInfo) patch.paired_receipt_line_index = priceInfo.lineIndex;
+          if (Object.keys(patch).length === 0) return null;
+          return supabase.from("trip_scans").update(patch).eq("id", scan.id);
+        })
+        .filter(Boolean);
+      const listItemUpdates = scans
+        .filter(scan => scan.pairedShoppingListItemId)
+        .map(scan => {
+          const pid = newPantryIds.get(scan.id);
+          return supabase.from("shopping_list_items").update({
+            purchased_at: nowIso,
+            purchased_pantry_item_id: pid || null,
+            purchased_trip_id: trip.id,
+          }).eq("id", scan.pairedShoppingListItemId);
+        });
+      await Promise.all([...tripScanUpdates, ...listItemUpdates]);
 
       // 5. Checkout trip.
       await supabase.from("shopping_trips").update({
@@ -781,11 +880,28 @@ export default function ShopModeCheckout({
     }
   }
 
-  // Edit handlers — write through to DB first, then mutate local
-  // state. Wrapped in useCallback so EditableScanLine's React.memo
-  // actually catches: a fresh function every render would break the
-  // shallow prop compare.
+  // Edit handlers — OPTIMISTIC. The previous version awaited the
+  // round-trip before the UI moved, so qty bumps and chip picks
+  // felt laggy on cellular and made the screen feel "stuck." Now:
+  // apply the patch to local state immediately, fire the DB write,
+  // roll back if it fails. Wrapped in useCallback so React.memo on
+  // EditableScanLine catches.
   const patchScan = useCallback(async (scanId, patch) => {
+    // Translate DB-shape patch (snake_case) into the camelCase local
+    // scan shape so the optimistic apply matches the eventual DB
+    // round-trip. Keep this list in sync with remapFromDb if more
+    // fields become editable.
+    const localPatch = {};
+    if ("product_name" in patch)                  localPatch.productName              = patch.product_name;
+    if ("brand" in patch)                         localPatch.brand                    = patch.brand;
+    if ("qty" in patch)                           localPatch.qty                      = patch.qty;
+    if ("canonical_id" in patch)                  localPatch.canonicalId              = patch.canonical_id;
+    if ("status" in patch)                        localPatch.status                   = patch.status;
+    if ("paired_shopping_list_item_id" in patch)  localPatch.pairedShoppingListItemId = patch.paired_shopping_list_item_id;
+
+    const snapshot = scansRef.current;
+    setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...localPatch } : s));
+
     const { data, error: e } = await supabase
       .from("trip_scans")
       .update(patch)
@@ -793,9 +909,12 @@ export default function ShopModeCheckout({
       .select("*")
       .single();
     if (e) {
-      console.warn("[shop-checkout] patchScan failed:", e.message, patch);
+      console.warn("[shop-checkout] patchScan failed, rolling back:", e.message, patch);
+      setScans(snapshot);
+      setError(`Couldn't save change: ${e.message}`);
       return false;
     }
+    // Reconcile with server (server may apply defaults/triggers).
     setScans(prev => prev.map(s => s.id === scanId ? { ...s, ...remapFromDb(data) } : s));
     return true;
   }, []);
@@ -803,13 +922,17 @@ export default function ShopModeCheckout({
   const deleteScan = useCallback(async (scanId) => {
     const ok = window.confirm("Remove this scan from the trip? It won't be stocked on commit.");
     if (!ok) return;
-    const { error: e } = await supabase.from("trip_scans").delete().eq("id", scanId);
-    if (e) {
-      console.warn("[shop-checkout] deleteScan failed:", e.message);
-      return;
-    }
+    // Optimistic remove: hide the row immediately so the tap feels
+    // instant. Roll back on DB failure.
+    const snapshot = scansRef.current;
     setScans(prev => prev.filter(s => s.id !== scanId));
     setEditingScanId(prev => prev === scanId ? null : prev);
+    const { error: e } = await supabase.from("trip_scans").delete().eq("id", scanId);
+    if (e) {
+      console.warn("[shop-checkout] deleteScan failed, rolling back:", e.message);
+      setScans(snapshot);
+      setError(`Couldn't delete scan: ${e.message}`);
+    }
   }, []);
 
   const handleToggleEdit = useCallback((scanId) => {
@@ -859,6 +982,7 @@ export default function ShopModeCheckout({
                 onUnpair={handleUnpair}
                 packageOverride={packageOverrides.get(s.id) || null}
                 onPackageChange={handlePackageChange}
+                onTeach={teachUpc}
               />
             ))}
           </div>
@@ -869,6 +993,25 @@ export default function ShopModeCheckout({
               background: "#2b1818", border: "1px solid #8a3030",
               borderRadius: 8, color: "#f8c7c7", fontSize: 13,
             }}>{error}</div>
+          )}
+          {teachErrors.size > 0 && (
+            <div style={{
+              marginTop: 14, padding: "10px 12px",
+              background: "#2b2418", border: "1px solid #8a6a30",
+              borderRadius: 8, color: "#f8e0a0", fontSize: 12,
+              fontFamily: "'DM Sans',sans-serif",
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                {teachErrors.size} pairing{teachErrors.size === 1 ? "" : "s"} didn't save to memory
+              </div>
+              <div style={{ fontSize: 11, color: "#d8c890", lineHeight: 1.5 }}>
+                The pantry rows will still commit with the values you chose, but
+                the UPC won't auto-resolve next time. Most common cause: a database
+                migration hasn't been applied. First error: <span style={{ fontFamily: "'DM Mono',monospace" }}>
+                {Array.from(teachErrors.values())[0]}
+                </span>
+              </div>
+            </div>
           )}
 
           <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
@@ -1009,23 +1152,27 @@ function remapFromDb(row) {
 // state on success.
 const EditableScanLine = memo(function EditableScanLine({
   scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair,
-  packageOverride = null, onPackageChange,
+  packageOverride = null, onPackageChange, onTeach,
 }) {
-  const [name, setName]   = useState(scan.productName || "");
-  const [brand, setBrand] = useState(scan.brand || "");
+  // Name + brand are UNCONTROLLED — defaultValue + ref + onBlur. Was
+  // previously controlled (useState + onChange) but every keystroke
+  // triggered a full row re-render, which on a 10-item trip with all
+  // the chip JSX still mounted made typing feel like wading through
+  // mud. The browser handles per-keystroke text natively here; React
+  // only sees the value on blur, so mid-typing renders are zero.
+  const nameRef  = useRef(null);
+  const brandRef = useRef(null);
   // Package size — default to OFF-parsed when blank. offParsed is
   // memoized below so the useState initializer doesn't recompute.
   const offParsed = useMemo(
     () => parsePackageSize(scan.offPayload?.quantity || null),
     [scan.offPayload],
   );
-  const [pkgAmount, setPkgAmount] = useState(() =>
-    packageOverride?.amount != null ? String(packageOverride.amount)
-      : (offParsed?.amount != null ? String(offParsed.amount) : "")
-  );
-  const [pkgUnit, setPkgUnit] = useState(() =>
-    packageOverride?.unit || offParsed?.unit || ""
-  );
+  // Package size inputs use the same uncontrolled pattern as name/
+  // brand. The popular-size chips below need to programmatically
+  // overwrite these inputs (tap-to-fill), which is why we hold refs.
+  const pkgAmountRef = useRef(null);
+  const pkgUnitRef   = useRef(null);
   // LinkIngredient picker — embedded as a full-screen modal on tap.
   // Covers bundled fuzzy match + admin-approved synthetics + the
   // ⭐ create-new-canonical flow. Picked id writes to trip_scans.canonical_id.
@@ -1036,9 +1183,11 @@ const EditableScanLine = memo(function EditableScanLine({
   // picker rather than revealing inline dropdowns.
   const [axisPicker, setAxisPicker] = useState(null);
 
-  // Reset the text fields when the scan identity changes under us
-  // (realtime tick from a different client, for instance).
-  useEffect(() => { setName(scan.productName || ""); setBrand(scan.brand || ""); }, [scan.productName, scan.brand]);
+  // Uncontrolled inputs reset only when their `key` changes (we
+  // re-key on scan.id so a different scan replaces the input
+  // instances entirely). Within the same scan, realtime updates
+  // from a different client are extremely unlikely during checkout
+  // — the prior controlled-input sync was overkill for the cost.
 
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
   const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
@@ -1120,17 +1269,27 @@ const EditableScanLine = memo(function EditableScanLine({
 
   // Popular package sizes for this (brand, canonical). Cached one
   // minute in usePopularPackages. Surfaced as tap-to-fill chips below
-  // the amount/unit inputs — turns a typing chore into a tap.
-  const { rows: popularRows } = usePopularPackages(scan.brand || null, scan.canonicalId || null, 5);
+  // the amount/unit inputs — turns a typing chore into a tap. Gated
+  // on isOpen: the chips only render inside the expanded editor, so
+  // there's no point firing the RPC for collapsed rows. With 10
+  // items in a trip that's the difference between 10 fetches on
+  // mount and 0; the hook re-fires the instant the user taps in.
+  const { rows: popularRows } = usePopularPackages(
+    isOpen ? (scan.brand || null) : null,
+    isOpen ? (scan.canonicalId || null) : null,
+    5,
+  );
   const top3 = useMemo(() => (popularRows || []).slice(0, 3), [popularRows]);
 
   const saveTextFields = useCallback(async () => {
+    const nextName  = nameRef.current?.value  ?? "";
+    const nextBrand = brandRef.current?.value ?? "";
     const patch = {};
-    if ((name || "") !== (scan.productName || "")) patch.product_name = name.trim() || null;
-    if ((brand || "") !== (scan.brand || ""))     patch.brand        = brand.trim() || null;
+    if (nextName  !== (scan.productName || "")) patch.product_name = nextName.trim()  || null;
+    if (nextBrand !== (scan.brand || ""))       patch.brand        = nextBrand.trim() || null;
     if (Object.keys(patch).length === 0) return;
     await onPatch(scan.id, patch);
-  }, [name, brand, scan.id, scan.productName, scan.brand, onPatch]);
+  }, [scan.id, scan.productName, scan.brand, onPatch]);
 
   const bumpQty = useCallback(async (delta) => {
     const next = Math.max(1, (scan.qty || 1) + delta);
@@ -1139,7 +1298,10 @@ const EditableScanLine = memo(function EditableScanLine({
   }, [scan.id, scan.qty, onPatch]);
 
   // LinkIngredient picked a canonical (single-mode → first id is the
-  // pick). Write it + re-classify status.
+  // pick). Write it + re-classify status + teach the UPC immediately
+  // so the next scan of the same product auto-resolves. Was previously
+  // only taught at commit-time; if the user picked a canonical and
+  // backed out before commit, the teaching never happened.
   const onCanonicalPicked = useCallback(async (ids) => {
     const next = Array.isArray(ids) && ids.length ? ids[0] : null;
     const patch = { canonical_id: next };
@@ -1147,7 +1309,8 @@ const EditableScanLine = memo(function EditableScanLine({
     else if (scan.offPayload) patch.status = "yellow";
     await onPatch(scan.id, patch);
     setPickerOpen(false);
-  }, [scan.id, scan.offPayload, onPatch]);
+    if (next) onTeach?.(scan.id, { canonicalId: next });
+  }, [scan.id, scan.offPayload, onPatch, onTeach]);
 
   return (
     <div style={{
@@ -1280,8 +1443,8 @@ const EditableScanLine = memo(function EditableScanLine({
             <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>WHAT IS IT? (NAME)</span>
             <input
               type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
+              ref={nameRef}
+              defaultValue={scan.productName || ""}
               onBlur={saveTextFields}
               placeholder="Display name"
               style={textInput}
@@ -1322,8 +1485,8 @@ const EditableScanLine = memo(function EditableScanLine({
             <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>BRAND</span>
             <input
               type="text"
-              value={brand}
-              onChange={e => setBrand(e.target.value)}
+              ref={brandRef}
+              defaultValue={scan.brand || ""}
               onBlur={saveTextFields}
               placeholder="Brand (optional)"
               style={textInput}
@@ -1344,13 +1507,17 @@ const EditableScanLine = memo(function EditableScanLine({
                 type="number"
                 min="0"
                 step="0.1"
-                value={pkgAmount}
-                onChange={e => setPkgAmount(e.target.value)}
+                ref={pkgAmountRef}
+                defaultValue={
+                  packageOverride?.amount != null ? String(packageOverride.amount)
+                    : (offParsed?.amount != null ? String(offParsed.amount) : "")
+                }
                 onBlur={() => {
-                  const n = Number(pkgAmount);
+                  const v = pkgAmountRef.current?.value ?? "";
+                  const n = Number(v);
                   if (Number.isFinite(n) && n > 0) {
                     onPackageChange?.(scan.id, { amount: n });
-                  } else if (!pkgAmount) {
+                  } else if (!v) {
                     onPackageChange?.(scan.id, { amount: null });
                   }
                 }}
@@ -1359,9 +1526,12 @@ const EditableScanLine = memo(function EditableScanLine({
               />
               <input
                 type="text"
-                value={pkgUnit}
-                onChange={e => setPkgUnit(e.target.value)}
-                onBlur={() => onPackageChange?.(scan.id, { unit: pkgUnit.trim() || null })}
+                ref={pkgUnitRef}
+                defaultValue={packageOverride?.unit || offParsed?.unit || ""}
+                onBlur={() => {
+                  const v = pkgUnitRef.current?.value ?? "";
+                  onPackageChange?.(scan.id, { unit: v.trim() || null });
+                }}
                 placeholder="oz / ml / count"
                 style={{ ...textInput, flex: 1 }}
               />
@@ -1378,14 +1548,22 @@ const EditableScanLine = memo(function EditableScanLine({
                   alignSelf: "center",
                 }}>POPULAR:</span>
                 {top3.map((p, i) => {
-                  const active = Number(pkgAmount) === p.amount && pkgUnit === p.unit;
+                  // Active = the override (or OFF baseline) currently
+                  // matches this chip. Reading from packageOverride is
+                  // fine because we update it on tap. Avoids relying
+                  // on the now-uncontrolled input refs at render time.
+                  const currentAmount = packageOverride?.amount != null
+                    ? packageOverride.amount
+                    : offParsed?.amount;
+                  const currentUnit   = packageOverride?.unit ?? offParsed?.unit;
+                  const active = currentAmount === p.amount && currentUnit === p.unit;
                   return (
                     <button
                       key={`${p.amount}-${p.unit}-${i}`}
                       type="button"
                       onClick={() => {
-                        setPkgAmount(String(p.amount));
-                        setPkgUnit(p.unit);
+                        if (pkgAmountRef.current) pkgAmountRef.current.value = String(p.amount);
+                        if (pkgUnitRef.current)   pkgUnitRef.current.value   = p.unit;
                         onPackageChange?.(scan.id, { amount: p.amount, unit: p.unit });
                       }}
                       style={{
