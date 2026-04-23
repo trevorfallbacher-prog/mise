@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { generateRecipe, classifyDishPrompt } from "../lib/generateRecipe";
+import { loadDraft, saveDraft, clearDraft, draftAgeLabel } from "../lib/aiRecipeDraft";
 import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
@@ -544,6 +545,17 @@ export default function AIRecipe({
   const [pickExistingFor, setPickExistingFor] = useState(null);
   //   null | "side" | "dessert" | "appetizer"
 
+  // Draft persistence. When the user is mid-tweak and leaves the page,
+  // we stash the sketch + all editable state in localStorage so they
+  // can pick up where they were without burning another Claude call.
+  // userId keys the entry per-account so multi-user devices don't
+  // cross-contaminate drafts. Hydration happens once via a ref-guarded
+  // effect; save runs debounced on any tweak-phase state change; clear
+  // fires on successful final cook or explicit "start fresh."
+  const userId = profile?.id || profile?.user_id || null;
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState(null);
+
   // Protein picker source — collapse the pantry to one chip per
   // canonical (5 cans of tuna = one TUNA chip, not five) and group
   // by category so the user can scan MEAT / POULTRY / SEAFOOD /
@@ -658,6 +670,91 @@ export default function AIRecipe({
   // Resolve the dish contract for the current mealPrompt. Cached by
   // the exact string so re-typing the same prompt doesn't refire the
   // Haiku call; regens within a session reuse the contract.
+  // Hydrate a saved draft on first mount. Runs once per userId — we
+  // gate on draftHydrated so a remount (hot reload, parent re-render)
+  // doesn't re-restore over in-flight user edits. Drops the user
+  // straight into the tweak phase when a draft is present so the
+  // resume experience is "click AI Recipe, your sketch is back."
+  useEffect(() => {
+    if (draftHydrated) return;
+    if (!userId) { setDraftHydrated(true); return; }
+    const d = loadDraft(userId);
+    setDraftHydrated(true);
+    if (!d) return;
+    // Only hydrate when the setup screen is still fresh — if the
+    // user has already typed into mealPrompt or picked a course, they
+    // started a new draft and we shouldn't clobber it.
+    if (mealPrompt || starIngredientIds.length > 0 || course !== "any") return;
+    setSketch(d.sketch);
+    setPantryEdits(d.pantryEdits);
+    setRecipeFeedback(d.recipeFeedback);
+    setPreviousTitles(d.previousTitles);
+    setMealPrompt(d.mealPrompt);
+    setMealTiming(d.mealTiming);
+    setCourse(d.course);
+    setPriority(d.priority);
+    setStarIngredientIds(d.starIngredientIds);
+    setCuisine(d.cuisine);
+    setTime(d.time);
+    setDifficulty(d.difficulty);
+    setDishContract(d.dishContract);
+    setClassifiedFrom(d.classifiedFrom);
+    setDraftSavedAt(d.savedAt);
+    setPhase("tweak");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, draftHydrated]);
+
+  // Auto-save on any tweak-phase state change, debounced so rapid
+  // typing / swap toggles don't thrash localStorage. 500ms matches the
+  // human "paused thinking" threshold — saves feel instant without
+  // writing 10× per second. Only runs when phase === "tweak" (where
+  // the draft is salvageable); other phases clear or no-op.
+  const draftTimerRef = useRef(null);
+  useEffect(() => {
+    if (!draftHydrated || !userId) return;
+    if (phase !== "tweak") return;
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      saveDraft(userId, {
+        sketch, pantryEdits, recipeFeedback, previousTitles,
+        mealPrompt, mealTiming, course, priority, starIngredientIds,
+        cuisine, time, difficulty, dishContract, classifiedFrom,
+      });
+      setDraftSavedAt(new Date().toISOString());
+    }, 500);
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  }, [
+    userId, draftHydrated, phase, sketch, pantryEdits, recipeFeedback,
+    previousTitles, mealPrompt, mealTiming, course, priority,
+    starIngredientIds, cuisine, time, difficulty, dishContract,
+    classifiedFrom,
+  ]);
+
+  // Explicit abandon — drops the saved draft and resets tweak state
+  // back to a blank setup screen. Wired into the "Start fresh" banner
+  // that shows when the user has an un-consumed resume offer.
+  const abandonDraft = () => {
+    if (userId) clearDraft(userId);
+    setDraftSavedAt(null);
+    setSketch(null);
+    setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
+    setRecipeFeedback("");
+    setPreviousTitles([]);
+    setMealPrompt("");
+    setMealTiming("any");
+    setCourse("any");
+    setPriority("category");
+    setStarIngredientIds([]);
+    setCuisine("any");
+    setTime("medium");
+    setDifficulty("medium");
+    setDishContract(null);
+    setClassifiedFrom("");
+    setPhase("setup");
+  };
+
   const ensureContract = async () => {
     const target = (mealPrompt || "").trim();
     if (dishContract && classifiedFrom === target) return dishContract;
@@ -974,6 +1071,11 @@ export default function AIRecipe({
         })));
       }
       setPhase("preview");
+      // Final succeeded — draft's job is done, clear it so the next
+      // AIRecipe open starts fresh instead of restoring a stale sketch
+      // that no longer matches what the user cooked.
+      if (userId) clearDraft(userId);
+      setDraftSavedAt(null);
     } catch (e) {
       console.error("AI recipe final failed:", e);
       setErrMsg(e?.message || "Final cook failed");
@@ -2382,6 +2484,49 @@ export default function AIRecipe({
             ? "Your pantry is empty — I'll lean on staples."
             : `I'll look at ${pantryCount} pantry ${pantryCount === 1 ? "item" : "items"} and shape the recipe around what you tell me below.`}
         </div>
+
+        {/* Resume-draft banner — only surfaces when the user has a
+            saved draft but is back on the setup screen (usually via
+            the "back" button from the tweak screen). If they're
+            actively hydrating a draft into tweak phase the banner
+            doesn't show. Gives them an easy "throw it out" button
+            without forcing a navigate. */}
+        {draftSavedAt && phase === "setup" && sketch && (
+          <div style={{
+            marginTop: 12, padding: "10px 12px",
+            background: "#16121a", border: "1px solid #3a2f40",
+            borderRadius: 8,
+            display: "flex", alignItems: "center", gap: 12,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#c7a8d4",
+          }}>
+            <span>Draft saved {draftAgeLabel(draftSavedAt)} — resume in progress</span>
+            <button
+              onClick={() => setPhase("tweak")}
+              style={{
+                marginLeft: "auto",
+                padding: "4px 10px",
+                background: "#2a1e2e", border: "1px solid #c7a8d4",
+                color: "#c7a8d4", borderRadius: 6,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.1em", cursor: "pointer",
+              }}
+            >
+              RESUME
+            </button>
+            <button
+              onClick={abandonDraft}
+              style={{
+                padding: "4px 10px",
+                background: "transparent", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 6,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.1em", cursor: "pointer",
+              }}
+            >
+              START FRESH
+            </button>
+          </div>
+        )}
 
         {/* MEAL PROMPT — hero input, top of the screen. The user is
             directing an AI that's looking into their kitchen; this is
