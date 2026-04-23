@@ -68,9 +68,6 @@ function matchScanToReceiptLine(scan, receiptLines, claimed) {
     const byUpc = receiptLines.findIndex(
       (line, i) => !claimed.has(i) && normalizeBarcode(line?.barcode) === scanUpc,
     );
-    // Trace so mismatches are visible in the console — users report
-    // "the UPCs match" but the code wasn't seeing them as equal; log
-    // lets us see the exact normalized forms side by side.
     console.log("[shop-checkout] UPC match attempt", {
       scanUpc,
       scanRaw: scan.barcodeUpc,
@@ -85,23 +82,37 @@ function matchScanToReceiptLine(scan, receiptLines, claimed) {
     if (byUpc >= 0) return byUpc;
   }
   // Token overlap on productName + brand vs receipt rawText + name.
+  // Accepts len>=2 tokens (down from 3) so short but meaningful
+  // tokens ("ox", "gv", "pb", canonical abbreviations) can still
+  // carry a match.
   const scanText = [scan.productName, scan.brand].filter(Boolean).join(" ");
-  const scanToks = tokens(scanText);
-  if (scanToks.size === 0) return -1;
-  let best = -1;
-  let bestShared = 0;
-  for (let i = 0; i < receiptLines.length; i++) {
-    if (claimed.has(i)) continue;
-    const line = receiptLines[i];
-    const lineToks = tokens([line?.rawText, line?.name].filter(Boolean).join(" "));
-    let shared = 0;
-    for (const t of lineToks) if (scanToks.has(t)) shared++;
-    if (shared > bestShared) {
-      bestShared = shared;
-      best = i;
+  const scanToks = new Set(
+    normalizeName(scanText).split(" ").filter(t => t.length >= 2),
+  );
+  if (scanToks.size > 0) {
+    let best = -1;
+    let bestShared = 0;
+    for (let i = 0; i < receiptLines.length; i++) {
+      if (claimed.has(i)) continue;
+      const line = receiptLines[i];
+      const lineToks = normalizeName([line?.rawText, line?.name].filter(Boolean).join(" "))
+        .split(" ").filter(t => t.length >= 2);
+      let shared = 0;
+      for (const t of lineToks) if (scanToks.has(t)) shared++;
+      if (shared > bestShared) {
+        bestShared = shared;
+        best = i;
+      }
     }
+    console.log("[shop-checkout] token match attempt", {
+      scanText,
+      scanTokens: Array.from(scanToks),
+      bestIndex: best,
+      bestShared,
+    });
+    if (bestShared > 0) return best;
   }
-  return bestShared > 0 ? best : -1;
+  return -1;
 }
 
 async function fileToBase64(file) {

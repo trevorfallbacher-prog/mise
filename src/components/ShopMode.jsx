@@ -186,8 +186,24 @@ export default function ShopMode({
     alreadyPairedListIdsRef.current = s;
   }, [pairedByListId]);
 
-  async function handleDetected(upc) {
-    if (!activeTrip?.id || !upc) return;
+  async function handleDetected(rawUpc) {
+    if (!activeTrip?.id || !rawUpc) return;
+    // Normalize the UPC once at capture — strip leading zeros after
+    // validating length. Different scanners / libraries return the
+    // same physical barcode in three different digit counts (EAN-13
+    // prefixed, UPC-A 12, short 11). Without normalization, storing
+    // one form and later querying corrections or receipt lines in
+    // another form silently misses: "0070038000563" ≠ "70038000563"
+    // under strict equality even though they're the same product.
+    // Normalizing at the edge means every downstream comparison
+    // (correction lookup, duplicate detection, receipt pair) works
+    // off the same key.
+    const upc = (() => {
+      const d = String(rawUpc).replace(/\D+/g, "");
+      if (d.length < 8 || d.length > 14) return String(rawUpc);
+      const stripped = d.replace(/^0+/, "");
+      return stripped || d;
+    })();
     // Read via ref — BarcodeScanner captured handleDetected at mount
     // time, so `scans` from the closure scope is always the initial
     // empty array. scansRef.current stays in sync via the mirroring
