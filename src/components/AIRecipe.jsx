@@ -254,22 +254,31 @@ function renderStarPicker({
   setStarSearch,
 }) {
   const q = starSearch.trim().toLowerCase();
+  // Default state (empty search) shows NOTHING — a 100-row pantry
+  // dumped as chips is unusable. The user either searches for
+  // something specific ("crisco", "ricotta") or taps one of their
+  // already-selected chips. Matching groups only render while a
+  // search is active.
   const filteredGroups = q
     ? starOptionGroups
         .map(g => ({ ...g, items: g.items.filter(o => o.label.toLowerCase().includes(q)) }))
         .filter(g => g.items.length > 0)
-    : starOptionGroups;
-  // Pinned chips: any currently-selected star that doesn't match the
-  // filter still renders at the top so the user doesn't lose track
-  // of their picks while searching.
-  const matchedIds = new Set(filteredGroups.flatMap(g => g.items.map(o => o.id)));
-  const allOptions = starOptionGroups.flatMap(g => g.items);
-  const hiddenSelections = q
-    ? starIngredientIds
-        .filter(id => !matchedIds.has(id))
-        .map(id => allOptions.find(o => o.id === id))
-        .filter(Boolean)
     : [];
+  const allOptions = starOptionGroups.flatMap(g => g.items);
+  // Currently-selected chips always pin at the top — they're the
+  // user's own picks, not noise, and they need to be tappable to
+  // remove without re-searching.
+  const selectedOptions = starIngredientIds
+    .map(id => allOptions.find(o => o.id === id))
+    .filter(Boolean);
+  // Drop the search id set from result groups so a selected chip
+  // doesn't render twice (once in SELECTED, once in search results).
+  const selectedIdSet = new Set(starIngredientIds);
+  const visibleGroups = filteredGroups.map(g => ({
+    ...g,
+    items: g.items.filter(o => !selectedIdSet.has(o.id)),
+  })).filter(g => g.items.length > 0);
+
   return (
     <Section label="MUST INCLUDE — star any pantry item">
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -286,17 +295,20 @@ function renderStarPicker({
             outline: "none",
           }}
         />
-        {hiddenSelections.length > 0 && (
+        {/* SELECTED chips always pin at the top once they've been
+            added — independent of what's in the search box. Tapping
+            removes. */}
+        {selectedOptions.length > 0 && (
           <div>
             <div style={{
               fontFamily: "'DM Mono',monospace", fontSize: 9,
               color: "#f5c842", letterSpacing: "0.1em",
               marginBottom: 6,
             }}>
-              SELECTED (HIDDEN BY SEARCH)
+              SELECTED ({selectedOptions.length})
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {hiddenSelections.map(o => (
+              {selectedOptions.map(o => (
                 <button
                   key={o.id}
                   onClick={() => setStarIngredientIds(prev => prev.filter(id => id !== o.id))}
@@ -319,7 +331,19 @@ function renderStarPicker({
             </div>
           </div>
         )}
-        {q && filteredGroups.length === 0 && (
+        {/* Empty state: nothing searched AND nothing selected → a
+            one-liner hint instead of a wall of chips. Users asked
+            explicitly NOT to dump the whole pantry by default. */}
+        {!q && selectedOptions.length === 0 && (
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#666", fontStyle: "italic",
+          }}>
+            Type to search your pantry — e.g. &quot;crisco&quot;, &quot;ricotta&quot;,
+            &quot;gochujang&quot;. Pick anything the dish MUST include.
+          </div>
+        )}
+        {q && visibleGroups.length === 0 && (
           <div style={{
             fontFamily: "'DM Sans',sans-serif", fontSize: 12,
             color: "#666", fontStyle: "italic",
@@ -327,7 +351,7 @@ function renderStarPicker({
             No pantry items match &quot;{starSearch}&quot;.
           </div>
         )}
-        {filteredGroups.map(group => (
+        {visibleGroups.map(group => (
           <div key={group.key}>
             <div style={{
               fontFamily: "'DM Mono',monospace", fontSize: 9,
