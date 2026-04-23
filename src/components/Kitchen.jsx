@@ -5415,6 +5415,38 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // wired yet (freezer) — the render path falls back to a flat list.
   const { tiles: currentTiles, classify: currentClassify } = tilesForTab(storageTab);
 
+  // Per-item classification cache. Computes once per pantry change:
+  // each row's effective location AND its tile id for all three
+  // location tile sets. Downstream render-time aggregates
+  // (searchResults, tileCounts, visibleItems) read from this map
+  // instead of re-running classify + findIngredient + hubForIngredient
+  // per item per render.
+  //
+  // The classify functions are pure + deterministic w.r.t. (p,
+  // findIngredient, hubForIngredient); the latter two are stable
+  // module imports, so memoizing on `pantry` alone is safe. For a
+  // 100-item pantry this is ~300 classify calls ONCE per pantry
+  // change vs 100+ per render otherwise — typing in the tile search
+  // used to re-walk the pantry every keystroke.
+  const itemMeta = useMemo(() => {
+    const fridgeClassify  = tilesForTab("fridge").classify;
+    const pantryClassify  = tilesForTab("pantry").classify;
+    const freezerClassify = tilesForTab("freezer").classify;
+    const ctx = { findIngredient, hubForIngredient };
+    const map = new Map();
+    for (const p of pantry) {
+      map.set(p.id, {
+        location: effectiveLocation(p),
+        tileByLoc: {
+          fridge:  fridgeClassify  ? fridgeClassify(p, ctx)  : null,
+          pantry:  pantryClassify  ? pantryClassify(p, ctx)  : null,
+          freezer: freezerClassify ? freezerClassify(p, ctx) : null,
+        },
+      });
+    }
+    return map;
+  }, [pantry]);
+
   // Global search — runs when tileSearch is non-empty AND we're on the tile
   // grid (not drilled into a tile). Matches across the WHOLE pantry (all
   // three storage tabs), not just the active tab, so a user hunting for
@@ -5426,11 +5458,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     if (!trimmedSearch) return [];
     const out = [];
     for (const p of pantry) {
-      const loc = effectiveLocation(p);
-      const { tiles: locTiles, classify: locClassify } = tilesForTab(loc);
-      const tileId = (locTiles && locClassify)
-        ? locClassify(p, { findIngredient, hubForIngredient })
-        : null;
+      const meta = itemMeta.get(p.id);
+      if (!meta) continue;
+      const loc = meta.location;
+      const { tiles: locTiles } = tilesForTab(loc);
+      const tileId = meta.tileByLoc[loc];
       const tile = tileId ? (locTiles?.find(t => t.id === tileId) || null) : null;
       // Match against everything textual we carry on the row: name,
       // brand, emoji, ingredient id, canonical name, category, and
@@ -5452,31 +5484,35 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
     return out;
-  }, [trimmedSearch, pantry]);
+  }, [trimmedSearch, pantry, itemMeta]);
 
   // Count items per tile (regardless of drill state) for the active tab
   // — powers the grid's badge numbers and the "empty tile" greyed-out
-  // treatment. Returns {} when the tab has no tile set.
+  // treatment. Reads from itemMeta instead of re-classifying per render.
   const tileCounts = useMemo(() => {
     if (!currentTiles || !currentClassify) return {};
     const counts = {};
     for (const p of pantry) {
-      if (effectiveLocation(p) !== storageTab) continue;
-      const tid = currentClassify(p, { findIngredient, hubForIngredient });
+      const meta = itemMeta.get(p.id);
+      if (!meta || meta.location !== storageTab) continue;
+      const tid = meta.tileByLoc[storageTab];
+      if (tid == null) continue;
       counts[tid] = (counts[tid] || 0) + 1;
     }
     return counts;
-  }, [pantry, storageTab, currentTiles, currentClassify]);
+  }, [pantry, storageTab, currentTiles, currentClassify, itemMeta]);
 
-  // Items visible in the current tab/drill context. The grouped list below
-  // renders from this subset instead of the whole pantry.
+  // Items visible in the current tab/drill context. Reads classification
+  // from itemMeta — O(N) is unavoidable (we filter the full pantry) but
+  // per-item work drops from "classify + findIngredient + hubForIngredient"
+  // to a single Map.get.
   const visibleItems = useMemo(() => {
-    let v = pantry.filter(p => effectiveLocation(p) === storageTab);
+    let v = pantry.filter(p => itemMeta.get(p.id)?.location === storageTab);
     if (currentClassify && drilledTile) {
-      v = v.filter(p => currentClassify(p, { findIngredient, hubForIngredient }) === drilledTile);
+      v = v.filter(p => itemMeta.get(p.id)?.tileByLoc[storageTab] === drilledTile);
     }
     return v;
-  }, [pantry, storageTab, drilledTile, currentClassify]);
+  }, [pantry, storageTab, drilledTile, currentClassify, itemMeta]);
 
   // Group visible items under their ingredient hub (Chicken, Cheese, …) when
   // they have one — otherwise they render as standalone rows. `search` filters
