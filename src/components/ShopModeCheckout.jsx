@@ -298,9 +298,22 @@ function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = nu
   // showing it priceless and silent.
   const diagnostic = {
     scanUpc,
+    scanUpcRaw: scan.barcodeUpc,
     scanText,
     scanTokens: Array.from(scanToks),
     receiptHadAnyUpc,
+    // Full inventory of UPCs Vision returned per receipt line —
+    // both raw and normalized — so the review UI can render them
+    // inline next to the scan's UPC for eyeball-level comparison.
+    // Answers "Vision and our UPC LOOK identical, why no pair?"
+    // without making the user hunt through the collapsed report.
+    receiptUpcs: upcAttempts
+      .filter(a => a.barcodeRaw)
+      .map(a => ({
+        raw: a.barcodeRaw,
+        normalized: a.barcodeNormalized,
+        rawText: a.rawText,
+      })),
     bestFuzzyLineIdx: best,
     bestFuzzySharedCount: bestShared,
     bestFuzzySharedTokens: bestSharedTokens,
@@ -2264,20 +2277,53 @@ const TripScanLine = memo(function TripScanLine({
             {explainMissedMatch(diagnostic)}
           </div>
           {/* Vision UPC inventory — show what Claude actually returned
-              for receipt-line UPCs so the user can compare against
-              the scan UPC and see whether Vision read the digits or
-              dropped them entirely. The first time you spot "Vision
-              returned no UPCs at all" you know the prompt or the
-              receipt photo quality is the issue, not the matcher. */}
+              for receipt-line UPCs, side-by-side with the scan UPC,
+              so the user can EYEBALL whether they're identical but
+              the matcher failed (normalization bug) or just different
+              (Vision read a different UPC than what was scanned). */}
           {diagnostic && diagnostic.scanUpc && (
             <div style={{
               fontFamily: "'DM Mono',monospace", fontSize: 10,
-              color: diagnostic.receiptHadAnyUpc ? "#888" : "#d88a8a",
-              lineHeight: 1.4,
+              color: "#999",
+              lineHeight: 1.5,
             }}>
-              {diagnostic.receiptHadAnyUpc
-                ? "Vision read UPCs on other lines but not a match for this scan."
-                : "Vision returned NO UPCs on this receipt — the digits weren't extracted from any line."}
+              <div style={{ color: "#b8a878", marginBottom: 3 }}>
+                scan UPC (raw):        {diagnostic.scanUpcRaw || "(none)"}
+              </div>
+              <div style={{ color: "#b8a878", marginBottom: 6 }}>
+                scan UPC (normalized): {diagnostic.scanUpc}
+              </div>
+              {diagnostic.receiptUpcs && diagnostic.receiptUpcs.length > 0 ? (
+                <div>
+                  <div style={{ color: "#7eb8d4", marginBottom: 3 }}>
+                    Vision returned {diagnostic.receiptUpcs.length} UPC{diagnostic.receiptUpcs.length === 1 ? "" : "s"}:
+                  </div>
+                  {diagnostic.receiptUpcs.map((u, i) => {
+                    // Highlight a match-by-digits to catch the
+                    // "looks identical but didn't match" case —
+                    // if normalized strings equal, the matcher
+                    // should have paired them. If you see green
+                    // here the bug is in upcsEquivalent.
+                    const looksEqual =
+                      u.normalized && u.normalized === diagnostic.scanUpc;
+                    return (
+                      <div key={i} style={{
+                        color: looksEqual ? "#9bd89b" : "#888",
+                        paddingLeft: 8,
+                      }}>
+                        {looksEqual ? "⚠ " : "  "}
+                        {u.raw}
+                        {u.normalized !== u.raw ? ` → ${u.normalized}` : ""}
+                        <span style={{ color: "#555" }}> · {u.rawText}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div style={{ color: "#d88a8a" }}>
+                  Vision returned NO UPCs on this receipt — digits weren't extracted from any line.
+                </div>
+              )}
             </div>
           )}
           {onManualPair && (
