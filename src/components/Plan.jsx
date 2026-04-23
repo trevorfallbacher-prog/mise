@@ -549,7 +549,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], prepRows
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook }) {
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook, deepLink, onDeepLinkConsumed }) {
   // 21-day rolling window: past 7 days for week-in-review + today + next 14.
   // Chronological order (oldest past on top, future on bottom) so users
   // scroll down through time the same way the eye reads a diary.
@@ -608,6 +608,49 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   const mealIds = useMemo(() => meals.map(m => m.id), [meals]);
   const { byMeal: prepByMeal, dismiss: dismissPrep, undismiss: undismissPrep } =
     useMealPrepQueue(userId, mealIds);
+
+  // Deep-link consumer — a push tap on a prep reminder or cook-timer
+  // hands us { kind, id } via the App-level deepLink prop. We resolve
+  // it once the meals list is in-hand so the drawer opens on the
+  // actual row (not a placeholder). The cook_session path looks up
+  // the session's scheduled_meal via its FK chain to open the same
+  // drawer — identical UX to tapping the meal tile directly, just
+  // arrived-at via push.
+  useEffect(() => {
+    if (!deepLink || meals.length === 0) return;
+    const consume = () => onDeepLinkConsumed?.();
+    if (deepLink.kind === "scheduled_meal") {
+      const meal = meals.find(m => m.id === deepLink.id);
+      if (meal) {
+        setOpenMeal(meal);
+        consume();
+      }
+      return;
+    }
+    if (deepLink.kind === "cook_session") {
+      // Look up the session to get its scheduled_meal_id (if any) or
+      // its recipe_slug (abandoned/resumed cooks). async → fire-and-
+      // forget; consume once we've navigated.
+      (async () => {
+        const { data } = await supabase
+          .from("cook_sessions")
+          .select("id, recipe_slug, status")
+          .eq("id", deepLink.id)
+          .maybeSingle();
+        if (!data) { consume(); return; }
+        // Prefer matching a scheduled meal for this recipe so the
+        // drawer lands with full scheduling context; fall back to
+        // just opening CookMode against the recipe if none matches.
+        const meal = meals.find(m => m.recipe_slug === data.recipe_slug);
+        if (meal) setOpenMeal(meal);
+        else if (data.recipe_slug) {
+          const recipe = findRecipe(data.recipe_slug, findUserRecipe);
+          if (recipe) setCookingRecipe(recipe);
+        }
+        consume();
+      })();
+    }
+  }, [deepLink, meals, onDeepLinkConsumed, findUserRecipe]);
 
   // Past cooks — cook_logs with cooked_at in the past-portion of the window.
   // RLS already restricts to self + family + diners-of-me (see 0013), so we

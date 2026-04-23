@@ -47,6 +47,34 @@ export function useCookTelemetry(userId) {
   const startCook = useCallback(async ({ recipeSlug, recipeTitle, recipeEmoji } = {}) => {
     if (!userId || !recipeSlug) return null;
     try {
+      // Resume if an active session for this user + recipe was opened
+      // within the last 2 hours. Covers page refresh mid-cook, tab
+      // swap, accidental navigation away, browser crash. Window cap
+      // keeps long-abandoned active sessions from being resurrected
+      // the next time the user cooks the same dish.
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const { data: existing } = await supabase
+        .from("cook_sessions")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("recipe_slug", recipeSlug)
+        .eq("status", "active")
+        .gte("started_at", twoHoursAgo)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existing?.id) {
+        // Adopt the session without restoring the step pointer. The
+        // consumer's own activeStep state drives which step is shown;
+        // when they advance, our startStep auto-finishes any lingering
+        // open rows from before the refresh so cook_duration_stats
+        // stays clean. Attempting to auto-resume to the "right" step
+        // index fights React's effect ordering in the consumer for
+        // minimal UX gain.
+        setSession(existing);
+        return existing;
+      }
+
       const { data, error } = await supabase
         .from("cook_sessions")
         .insert({
@@ -71,20 +99,28 @@ export function useCookTelemetry(userId) {
     const cur = sessionRef.current;
     if (!userId || !cur?.id || stepId == null) return null;
     try {
-      // Auto-finish any still-open step — "tap next before timer rang"
-      // would otherwise leave a dangling row that corrupts percentile math.
-      // Also dismiss any pending timer push on the old step so a late
-      // drain doesn't fire for a step the user already left behind.
-      const open = activeStepRef.current;
-      if (open?.id) {
-        if (!open.finished_at) {
-          await supabase.from("cook_session_steps")
-            .update({ finished_at: new Date().toISOString() })
-            .eq("id", open.id);
-        }
+      // Close any open step rows in this session. Covers:
+      //   1. normal flow — the previous step's row is held in activeStepRef
+      //   2. resume flow — activeStepRef is null after remount, but a
+      //      refresh mid-cook leaves dangling open rows in the DB; find
+      //      them by session_id and close them so cook_duration_stats
+      //      doesn't exclude them forever.
+      // Also delete any pending timer push tied to those rows so a late
+      // drain doesn't fire for a step the user has already left behind.
+      const { data: openRows } = await supabase
+        .from("cook_session_steps")
+        .select("id")
+        .eq("cook_session_id", cur.id)
+        .is("finished_at", null);
+      if (openRows?.length) {
+        const ids = openRows.map(r => r.id);
+        const nowIso = new Date().toISOString();
+        await supabase.from("cook_session_steps")
+          .update({ finished_at: nowIso })
+          .in("id", ids);
         await supabase.from("cook_step_notifications")
           .delete()
-          .eq("step_row_id", open.id)
+          .in("step_row_id", ids)
           .is("delivered_at", null);
       }
 
@@ -107,11 +143,34 @@ export function useCookTelemetry(userId) {
       // point. Body: "Step 4: Flip the steak" unless the caller passed
       // something richer.
       if (Number.isFinite(nominalSeconds) && nominalSeconds > 0) {
+        // Calibration lookup (migration 0138) — if the global corpus
+        // has enough observations for this recipe+step, use the p50
+        // observed duration instead of the recipe author's nominal.
+        // Threshold 5 is arbitrary but reasonable: small enough that
+        // popular recipes calibrate fast, large enough that one fast-
+        // cook outlier doesn't drag everyone's timer low. Fallback on
+        // any RPC hiccup preserves the nominal — never ring the timer
+        // shorter than the recipe says just because the lookup failed.
+        let effectiveSeconds = nominalSeconds;
+        try {
+          const { data: obs } = await supabase.rpc("observed_step_duration", {
+            p_recipe_slug: cur.recipe_slug,
+            p_step_id:     String(stepId),
+          });
+          const row = Array.isArray(obs) ? obs[0] : obs;
+          if (row && Number(row.sample_count) >= 5 && Number.isFinite(Number(row.p50_seconds))) {
+            effectiveSeconds = Number(row.p50_seconds);
+          }
+        } catch (e) {
+          // Calibration is best-effort; fall through to the nominal.
+          console.warn("[cookTelemetry] calibration lookup skipped:", e?.message || e);
+        }
+
         const body = (timerBody && String(timerBody).trim())
           || (stepTitle
                 ? `Timer's up — ${stepTitle}`
                 : `Step ${stepId} — timer's up`);
-        const deliverAt = new Date(Date.now() + nominalSeconds * 1000).toISOString();
+        const deliverAt = new Date(Date.now() + effectiveSeconds * 1000).toISOString();
         const { error: pushErr } = await supabase
           .from("cook_step_notifications")
           .insert({
@@ -123,7 +182,7 @@ export function useCookTelemetry(userId) {
             recipe_title:    cur.recipe_title || null,
             recipe_emoji:    cur.recipe_emoji || null,
             body,
-            timer_seconds:   nominalSeconds,
+            timer_seconds:   effectiveSeconds,
             deliver_at:      deliverAt,
           });
         if (pushErr) console.warn("[cookTelemetry] queue timer push failed:", pushErr);

@@ -328,6 +328,17 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
       setNotifsOpen(false);
       return;
     }
+    // Prep reminders (migration 0134) stamp scheduled_meal / the
+    // cook-timer pushes (migration 0137) stamp cook_session. Both
+    // route to the Plan tab; Plan consumes deepLink and opens the
+    // matching meal drawer (for scheduled_meal) or auto-opens
+    // CookMode against the live session's recipe (for cook_session).
+    if (targetKind === "scheduled_meal" || targetKind === "cook_session") {
+      setDeepLink({ kind: targetKind, id: targetId });
+      setTab("plan");
+      setNotifsOpen(false);
+      return;
+    }
   }, []);
 
   // Lazy permission request — only on explicit bell click so we don't prompt
@@ -478,6 +489,8 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                 setShoppingList={setShoppingList}
                 onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
                 onOpenCook={openCook}
+                deepLink={deepLink}
+                onDeepLinkConsumed={() => setDeepLink(null)}
               />
             )}
             {tab === "pantry"   && (

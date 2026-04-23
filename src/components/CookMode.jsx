@@ -315,6 +315,13 @@ export default function CookMode({
   // doesn't ALSO get a competing endCook(abandoned) racing with
   // their endCook(finished) write.
   const finalizedRef = useRef(false);
+  // Captured at the "DONE! LOG IT" moment so CookComplete can stamp
+  // cook_log_id onto the session row AFTER it creates the cook_log.
+  // endCook is async + sets session → null on re-render; grabbing the
+  // id synchronously on the button click keeps the thread-back correct
+  // even if the endCook write is still in flight when CookComplete
+  // mounts.
+  const [completingSessionId, setCompletingSessionId] = useState(null);
 
   // Open a cook_sessions row the first time the user enters the live
   // cook view. Gated on the session not already existing so toggling
@@ -1131,16 +1138,14 @@ export default function CookMode({
           </button>
         ) : (
           <button onClick={() => {
-            // Stamp the final step done + close the telemetry session
-            // before handing off to CookComplete. finalizedRef stops
-            // the unmount cleanup from racing an abandon write against
-            // this finished write. cookLogId stays null here — the log
-            // row is created inside CookComplete on save; a follow-up
-            // pass can thread the new id back to stamp the session
-            // row's cook_log_id.
+            // Capture the session id synchronously before endCook sets
+            // session → null, so CookComplete can stamp cook_log_id
+            // onto it after the cook_log insert lands.
+            const sid = telemetry.session?.id || null;
             finalizedRef.current = true;
             telemetry.finishStep({});
             telemetry.endCook({ status: "finished" });
+            setCompletingSessionId(sid);
             setCompleting(true);
           }} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
             🍝 DONE! LOG IT →
@@ -1165,6 +1170,11 @@ export default function CookMode({
           // screen now carries through to the "What did you use?"
           // screen so the deduction hits the row they actually used.
           cookSession={cookSession}
+          // Telemetry session id — CookComplete stamps cook_log_id
+          // onto this row after the cook_log insert so cook_duration_stats
+          // joins cleanly. Null when telemetry couldn't start (e.g.
+          // missing userId).
+          telemetrySessionId={completingSessionId}
           // Threaded so CookComplete can call recipeNutrition() at
           // save time to stamp cook_logs.nutrition (migration 0068).
           // CookMode already reads both for its own meta-row card; no

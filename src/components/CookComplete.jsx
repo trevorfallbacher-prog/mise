@@ -382,7 +382,7 @@ export function buildRemovalPlan(usedItems, extraRemovals, pantry) {
   return out;
 }
 
-export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish, cookSession = null, onForkRecipe = null }) {
+export default function CookComplete({ recipe, userId, family = [], friends = [], pantry = [], setPantry, ingredientInfo, brandNutrition, onFinish, cookSession = null, telemetrySessionId = null, onForkRecipe = null }) {
   const [phase, setPhase] = useState("celebrate");
   const [selectedDiners, setSelectedDiners] = useState(() => new Set());
   const [rating, setRating] = useState(null);
@@ -610,6 +610,19 @@ export default function CookComplete({ recipe, userId, family = [], friends = []
       return;
     }
     const cookLogId = logRow?.id || null;
+
+    // Link the cook_sessions row (migration 0136) to this cook_log so
+    // cook_duration_stats can JOIN without a recipe_slug + time-window
+    // heuristic. Fire-and-forget — failure here doesn't affect the
+    // cook log save, just mildly degrades analytics.
+    if (cookLogId && telemetrySessionId) {
+      supabase.from("cook_sessions")
+        .update({ cook_log_id: cookLogId })
+        .eq("id", telemetrySessionId)
+        .then(({ error }) => {
+          if (error) console.warn("[cook_logs] session link failed:", error);
+        });
+    }
 
     // 1b) Fire the XP ledger via award_xp() and AWAIT the breakdown.
     //     Phase-5 evolution from P1's fire-and-forget: the breakdown
