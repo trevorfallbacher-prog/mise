@@ -232,13 +232,19 @@ function assemblePromptHeader(
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
         .map((p, i) => {
-          const amount = p.amount != null ? `${p.amount}${p.unit ? ` ${p.unit}` : ""}` : "";
+          // Pantry stock amounts are deliberately NOT sent to the
+          // model. Claude's job is "pick a dish + draft amounts the
+          // recipe needs"; how much of a jar the user weighed on a
+          // kitchen scale is irrelevant to that, and shipping it
+          // invited Claude to echo pantry precision ("29.3545 oz
+          // SPICE WORLD garlic") verbatim as the recipe requirement.
+          // Category, brand, expiry, starred status — all useful
+          // signal. Raw quantity — noise. Kept out entirely.
           const lines: string[] = [`Pantry Item ${i + 1}:`];
           lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
-          if (amount) lines.push(`  On-hand stock (NOT the recipe amount): ${amount}`);
           if (p.category) lines.push(`  Category: ${p.category}`);
           if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
@@ -607,7 +613,6 @@ Rules:
           Pantry Item 3:
             Canonical [id]: tortillas
             Brand: Mission
-            Amount: 8 count
         → PANTRY entry: { name: "tortillas", ingredientId: "tortillas", subbedFrom: null }
       Example 2 (WRONG):
         Same inputs
@@ -729,7 +734,7 @@ exact shape. Every field is REQUIRED unless marked optional.
   "tools":      ["<short name>", ...],                  // pans, knives, etc
   "ingredients": [
     {
-      "amount":       "<THIS IS THE RECIPE REQUIREMENT — how much the recipe NEEDS. It is NOT the user's on-hand stock. If the pantry block says 'On-hand stock: 29.3545 oz' for garlic and the recipe needs 2 cloves, you emit '2 cloves', NOT '29.3545 oz'. Never echo the pantry's on-hand stock into the recipe amount. Use CLEAN ROUND NUMBERS — halves, quarters, thirds at most; never emit weird precision like '29.3545 oz' or more than one decimal place.\n\n      Rules by ingredient type (STANDARD US CUSTOMARY UNITS):\n        • Cutlet-style meats (chicken breast / thigh / wing / tenderloin, pork chop, steak, cutlets) → PIECE COUNT: '2 breasts', '4 thighs', '3 chops', '2 ribeyes'. Americans almost never buy these by weight; piece counts match how the cook actually grabs them out of the fridge.\n        • Roasts and large cuts (brisket, pork shoulder, chuck roast, whole chicken, turkey breast) → POUNDS: '3 lb brisket', '4 lb pork shoulder'. You buy these by weight at the counter.\n        • Ground meats → pounds or ounces: '1 lb ground beef'.\n        • Dry goods, liquids, dairy → cups / tablespoons / teaspoons / ounces: '2 tbsp', '1 cup', '½ cup', '8 oz'. Never emit grams or milliliters by default — the user can rotate to metric in the UI if they prefer.\n        • Flour → cups, not ounces ('2 cups flour', not '9 oz flour').\n        • Aromatics (garlic, ginger, shallot, herbs) → cloves / inches / sprigs / tbsp: '2 cloves garlic', '1 inch ginger', '2 sprigs thyme', '2 tbsp chopped parsley'. NEVER emit garlic in ounces or pounds — a clove is ~3g / 0.1 oz; anything over 6 cloves for a home recipe is a bug.\n        • Produce → pieces or by eye: '1 onion', '1 bunch parsley', '2 tomatoes'.\n      NEVER emit a blank amount. NEVER emit 'to taste' except for salt/pepper/pepper flakes on active-seasoning steps (even then, prefer 'pinch' or '¼ tsp' when you can estimate). NEVER emit 'a drizzle' / 'a splash' / 'a dash' — give a real measurement the cook can work with.>",
+      "amount":       "<How much THIS RECIPE needs. Pick a sensible home-scale quantity; do not weigh-or-measure real-world precision, use CLEAN ROUND NUMBERS (halves, quarters, thirds at most). Never emit more than one decimal place of precision.\n\n      Rules by ingredient type (STANDARD US CUSTOMARY UNITS):\n        • Cutlet-style meats (chicken breast / thigh / wing / tenderloin, pork chop, steak, cutlets) → PIECE COUNT: '2 breasts', '4 thighs', '3 chops', '2 ribeyes'. Americans almost never buy these by weight; piece counts match how the cook actually grabs them out of the fridge.\n        • Roasts and large cuts (brisket, pork shoulder, chuck roast, whole chicken, turkey breast) → POUNDS: '3 lb brisket', '4 lb pork shoulder'. You buy these by weight at the counter.\n        • Ground meats → pounds or ounces: '1 lb ground beef'.\n        • Dry goods, liquids, dairy → cups / tablespoons / teaspoons / ounces: '2 tbsp', '1 cup', '½ cup', '8 oz'. Never emit grams or milliliters by default — the user can rotate to metric in the UI if they prefer.\n        • Flour → cups, not ounces ('2 cups flour', not '9 oz flour').\n        • Aromatics (garlic, ginger, shallot, herbs) → cloves / inches / sprigs / tbsp: '2 cloves garlic', '1 inch ginger', '2 sprigs thyme', '2 tbsp chopped parsley'. NEVER emit garlic in ounces or pounds — a clove is ~3g / 0.1 oz; anything over 6 cloves for a home recipe is a bug.\n        • Produce → pieces or by eye: '1 onion', '1 bunch parsley', '2 tomatoes'.\n      NEVER emit a blank amount. NEVER emit 'to taste' except for salt/pepper/pepper flakes on active-seasoning steps (even then, prefer 'pinch' or '¼ tsp' when you can estimate). NEVER emit 'a drizzle' / 'a splash' / 'a dash' — give a real measurement the cook can work with.>",
       "item":         "<CLEAN CANONICAL NAME ONLY — e.g. 'olive oil', 'chicken breast', 'mozzarella'. Do NOT stuff prep ('cut into bite-sized pieces', 'chopped fine'), brand ('Kerrygold'), or counts ('4 count') into this field. Prep goes in the step instruction; identity lives here.>",
       "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
       "cut":          "<optional: anatomical cut for meats — 'breast', 'thigh', 'ribeye', 'brisket', 'loin', 'shoulder' — null for non-meats>",
