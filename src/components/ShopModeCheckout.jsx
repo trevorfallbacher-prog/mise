@@ -841,6 +841,20 @@ function EditableScanLine({
       ? scan.canonicalId
       : null;
 
+  // Effective package size for the collapsed preview — mirrors the
+  // cascade doCommit uses: user override > OFF parsed > canonical
+  // default. Empty string when nothing's resolved (preview hides it).
+  const effectiveSize = (() => {
+    if (packageOverride?.amount != null && packageOverride.amount > 0) {
+      return { amount: packageOverride.amount, unit: packageOverride.unit || offParsed?.unit || currentCanonical?.defaultUnit || "" };
+    }
+    if (offParsed?.amount != null) return offParsed;
+    return null;
+  })();
+  const sizeLabel = effectiveSize
+    ? `${effectiveSize.amount}${effectiveSize.unit ? " " + effectiveSize.unit : ""}`
+    : "";
+
   async function saveTextFields() {
     const patch = {};
     if ((name || "") !== (scan.productName || "")) patch.product_name = name.trim() || null;
@@ -886,25 +900,57 @@ function EditableScanLine({
           color: "#f0ece4", cursor: "pointer", textAlign: "left",
         }}
       >
-        <span style={{ color, fontSize: 14 }}>●</span>
+        <span style={{ color, fontSize: 14, flexShrink: 0 }}>●</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {label}{scan.qty > 1 ? `  ×${scan.qty}` : ""}
+          {/* Row 1: name + package-size badge inline so the user
+              can see "Sour Cream · 16 oz" at a glance without
+              opening the editor. The ×qty multiplier shows after
+              the size when > 1 so "×2" reads as "two of the 16oz
+              packages" not "two of the product." */}
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+            <div style={{
+              fontSize: 15, color: "#f0ece4",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              flex: "1 1 auto", minWidth: 0,
+            }}>
+              {label}
+            </div>
+            {sizeLabel && (
+              <div style={{
+                flex: "0 0 auto",
+                fontSize: 11,
+                color: "#b8a878",
+                fontFamily: "'DM Mono',monospace",
+                letterSpacing: 0.3,
+              }}>
+                {sizeLabel}{scan.qty > 1 ? ` ×${scan.qty}` : ""}
+              </div>
+            )}
+            {!sizeLabel && scan.qty > 1 && (
+              <div style={{ flex: "0 0 auto", fontSize: 11, color: "#888" }}>
+                ×{scan.qty}
+              </div>
+            )}
           </div>
-          {/* UPC directly under the name — pre-receipt review needs
-              to see exactly what the scanner captured so the user can
-              verify identity before the pantry row commits. Mono
-              font to keep digit shape legible at small sizes. */}
-          <div style={{ color: "#b8a878aa", fontSize: 10, fontFamily: "'DM Mono',monospace", marginTop: 2, letterSpacing: 0.4 }}>
-            UPC {scan.barcodeUpc}
-          </div>
-          <div style={{ color: "#888", fontSize: 11, marginTop: 2 }}>
+          {/* Row 2: pair + identity metadata in a single muted line.
+              list slot · brand · canonical. Falls through gracefully
+              when pieces are null. */}
+          <div style={{ color: "#888", fontSize: 11, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
             {listName ? `→ ${listName}` : "unpaired"}
-            {scan.brand && scan.productName ? ` · ${scan.brand}` : ""}
+            {scan.brand ? ` · ${scan.brand}` : ""}
             {canonicalLabel ? ` · ${canonicalLabel}` : ""}
           </div>
+          {/* Row 3: UPC, mono, very muted — verification signal
+              rather than primary content. */}
+          <div style={{
+            color: "#666", fontSize: 10,
+            fontFamily: "'DM Mono',monospace",
+            marginTop: 3, letterSpacing: 0.4,
+          }}>
+            {scan.barcodeUpc}
+          </div>
         </div>
-        <span style={{ color: "#666", fontSize: 11 }}>{isOpen ? "▲" : "EDIT ▼"}</span>
+        <span style={{ color: "#666", fontSize: 11, flexShrink: 0 }}>{isOpen ? "▲" : "EDIT ▼"}</span>
       </button>
 
       {isOpen && (
@@ -1075,6 +1121,10 @@ const editBtn = {
 function TripScanLine({ scan, listName, priceCents }) {
   const color = FLASH_COLORS[scan.status]?.bg || "#444";
   const label = scan.productName || scan.brand || `UPC ${scan.barcodeUpc.slice(-6)}`;
+  const offParsed = parsePackageSize(scan.offPayload?.quantity || null);
+  const sizeLabel = offParsed
+    ? `${offParsed.amount}${offParsed.unit ? " " + offParsed.unit : ""}`
+    : "";
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 10,
@@ -1083,18 +1133,39 @@ function TripScanLine({ scan, listName, priceCents }) {
       border: `1px solid ${color}55`,
       borderRadius: 10,
     }}>
-      <span style={{ color, fontSize: 14 }}>●</span>
+      <span style={{ color, fontSize: 14, flexShrink: 0 }}>●</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ color: "#f0ece4", fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {label}{scan.qty > 1 ? `  ×${scan.qty}` : ""}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          <div style={{
+            color: "#f0ece4", fontSize: 14,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            flex: "1 1 auto", minWidth: 0,
+          }}>
+            {label}
+          </div>
+          {sizeLabel && (
+            <div style={{
+              flex: "0 0 auto", fontSize: 11,
+              color: "#b8a878",
+              fontFamily: "'DM Mono',monospace",
+              letterSpacing: 0.3,
+            }}>
+              {sizeLabel}{scan.qty > 1 ? ` ×${scan.qty}` : ""}
+            </div>
+          )}
+          {!sizeLabel && scan.qty > 1 && (
+            <div style={{ flex: "0 0 auto", fontSize: 11, color: "#888" }}>
+              ×{scan.qty}
+            </div>
+          )}
         </div>
-        <div style={{ color: "#888", fontSize: 11, marginTop: 2 }}>
+        <div style={{ color: "#888", fontSize: 11, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {listName ? `→ ${listName}` : "unpaired"}
-          {scan.brand && scan.productName ? ` · ${scan.brand}` : ""}
+          {scan.brand ? ` · ${scan.brand}` : ""}
         </div>
       </div>
       {typeof priceCents === "number" && (
-        <div style={{ color: "#f5c842", fontSize: 13, fontFamily: "'DM Mono',monospace" }}>
+        <div style={{ color: "#f5c842", fontSize: 13, fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>
           ${(priceCents / 100).toFixed(2)}
         </div>
       )}
