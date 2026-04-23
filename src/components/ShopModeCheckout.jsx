@@ -89,22 +89,36 @@ function normalizeBarcode(b) {
 //     the 10-digit data prefix 6811313546.
 //
 // Match strategy: strip leading zeros from both, then either direct
-// equality OR one is a substring of the other with >= 10 digit
-// overlap. 10 digits of UPC-A data are effectively unique per
-// product (100-billion space), and 10 is the floor of what Vision
-// reliably extracts — going tighter re-introduces the ghost misses
-// we just fixed.
+// equality OR shorter is a PREFIX of longer with >= 9 digit overlap.
+//
+// Why prefix (not substring): UPC-A data portions align at the left
+// after leading-zero strip — both scan forms and Walmart's shifted
+// form share the same prefix, they just diverge at the end where
+// Vision's OCR dropped one or two digits. Matching on a prefix is
+// dramatically less collision-prone than "substring anywhere"
+// because it pins the match origin. A 9-char prefix of UPC-A data
+// is effectively unique per product (1-billion space).
+//
+// Why 9 (not 10): seen two classes of Vision truncation on thermal
+// receipts:
+//   - "drops one": 12-digit scan vs 11-digit vision → 10-char overlap
+//     (Cremini Mushrooms: 681131354684 vs 6811313546)
+//   - "drops two": 12-digit scan vs Vision's 11-digit form where
+//     BOTH leading zeros are stripped by normalizeBarcode → 9-char
+//     overlap (Sandwich/Hawaiian Bread: 24126017186 vs 241260171,
+//     because Vision returned "00241260171" and normalizeBarcode
+//     stripped "00" → "241260171").
+// 9 catches both without relaxing into noise. Below 9 we'd start
+// matching EAN-8 collisions against 12-digit UPCs that happen to
+// contain the 8 digits, which is a real risk.
 function upcsEquivalent(a, b) {
   const an = normalizeBarcode(a);
   const bn = normalizeBarcode(b);
   if (!an || !bn) return false;
   if (an === bn) return true;
   const [shorter, longer] = an.length <= bn.length ? [an, bn] : [bn, an];
-  // Require 10+ shared digits. UPC-A data portions are 11; EAN-13
-  // is 12. Accepting a 10-digit substring catches Vision's "lost
-  // one digit" case without relaxing to noise territory.
-  if (shorter.length < 10) return false;
-  return longer.includes(shorter);
+  if (shorter.length < 9) return false;
+  return longer.startsWith(shorter);
 }
 
 // Match a trip_scan to a receipt line. UPC direct match wins (the
@@ -1554,7 +1568,24 @@ const EditableScanLine = memo(function EditableScanLine({
   // keystroke anywhere in the checkout = phone hot enough to fry an
   // egg.
   const resolved = useMemo(() => {
+    // Bundled canonical (findIngredient) + synthetic family canonical
+    // (ingredientDbMap) are both legitimate identity anchors. Old
+    // cascade only consulted findIngredient, so family-created
+    // canonicals came back null — no fallback rung fired — and the
+    // CATEGORY / STORED IN chips stayed unset even after the
+    // correction was taught. Pull BOTH so the cascade treats family
+    // canonicals as first-class.
     const currentCanonical = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
+    const synthInfo = !currentCanonical && scan.canonicalId
+      ? ingredientDbMap?.[scan.canonicalId] || null
+      : null;
+    // Name for display + for inferFoodTypeFromName on synthetics
+    // (where the registry lookup will miss but an alias on the slug
+    // often hits — "cheez_danish" → includes "danish" → wweia_pastries).
+    const canonicalName = currentCanonical?.shortName
+      || currentCanonical?.name
+      || scan.canonicalId
+      || null;
     const canonicalLabel = currentCanonical
       ? `${currentCanonical.emoji || ""} ${currentCanonical.shortName || currentCanonical.name}`
       : scan.canonicalId || null;
@@ -1563,48 +1594,55 @@ const EditableScanLine = memo(function EditableScanLine({
     try { offCategoryAxes = tagHintsToAxes(scan.offPayload?.categoryHints || []); }
     catch { offCategoryAxes = { category: null, tileId: null, typeId: null }; }
 
+    // Canonical-derived typeId: bundled gets the exact FOOD_TYPES
+    // reverse-lookup (clean 1:1 bridge), synthetic falls through
+    // typeIdForCanonical's string path which aliases on the slug.
+    const canonicalTypeId = currentCanonical
+      ? typeIdForCanonical(currentCanonical)
+      : (synthInfo?.info?.typeId
+        || (scan.canonicalId ? typeIdForCanonical(scan.canonicalId) : null));
     const inferredTypeId = inferFoodTypeFromName(scan.productName || scan.brand || "") || null;
-    // typeIdForCanonical inverts the FOOD_TYPES registry: given a
-    // bundled canonical ("sweet_corn"), return the WWEIA food type
-    // it belongs to ("wweia_vegetables_starchy"). Critical rung of
-    // the cascade — once a canonical is linked, the CATEGORY chip
-    // should snap to the right food type WITHOUT the user having to
-    // tap it. Previously the cascade only fell through
-    // inferFoodTypeFromName(productName/brand) which doesn't always
-    // alias-match on the OFF product text ("Great Value Sweet Corn"
-    // against the "sweet corn" alias list). Hoisting
-    // typeIdForCanonical ABOVE the productName path makes the chip
-    // auto-fill whenever the row has a canonical.
-    const canonicalTypeId = currentCanonical ? typeIdForCanonical(currentCanonical) : null;
+    // Cascade priority — canonical-derived typeId BEATS raw OFF
+    // category hints. Old order let OFF's noisy parents ("beverages"
+    // on a sandwich bread scan because Pepsi was sold at the same
+    // store) override a confirmed canonical pair. Canonical is the
+    // strongest signal we have after a user-set override; OFF hints
+    // are last-resort when no canonical is bound.
     const effectiveTypeId = packageOverride?.typeId
-      || offCategoryAxes.typeId
       || canonicalTypeId
+      || offCategoryAxes.typeId
       || inferredTypeId
       || null;
     const effectiveType = effectiveTypeId ? findFoodType(effectiveTypeId) : null;
     const effectiveCategory = effectiveType?.defaultTileId
       ? tileToCategory(effectiveType.defaultTileId)
       : (currentCanonical?.category
+        || synthInfo?.info?.category
         || offCategoryAxes.category
         || "pantry");
+    // LOCATION cascade: synthInfo.info.storage.location is admin-
+    // enriched metadata on family canonicals — equivalent authority
+    // to bundled canonical.storage.location. Slot it right next to
+    // the bundled path so both work identically.
     const effectiveLocation = packageOverride?.location
       || currentCanonical?.storage?.location
+      || synthInfo?.info?.storage?.location
       || defaultLocationForCategory(effectiveCategory);
-    // STORED IN tile cascade gets the food type's defaultTileId too
-    // — same rung the TypePicker uses for auto-fill. Without this,
-    // Sweet Corn / Cantaloupe / Mayonnaise / Soda showed "+ set
-    // stored in" even with a canonical AND a resolved food type,
-    // because bundled canonicals don't all have storage.tileId
-    // populated (only the ones with explicit fridge/pantry homes).
+    // STORED IN tile cascade: same treatment — synthInfo carries
+    // storage.tileId when admin has enriched it, and the food type's
+    // defaultTileId is the TypePicker's own auto-fill source, so
+    // it's a valid fallback either way.
     const effectiveTileId = packageOverride?.tileId
       || currentCanonical?.storage?.tileId
+      || synthInfo?.info?.storage?.tileId
       || effectiveType?.defaultTileId
       || offCategoryAxes.tileId
       || null;
     const effectiveTile = tileById(effectiveTileId);
 
     return {
-      currentCanonical, canonicalLabel,
+      currentCanonical, canonicalLabel, canonicalName,
+      synthInfo,
       inferredTypeId,
       effectiveTypeId, effectiveType,
       effectiveCategory, effectiveLocation,
@@ -1612,6 +1650,7 @@ const EditableScanLine = memo(function EditableScanLine({
     };
   }, [
     scan.canonicalId,
+    ingredientDbMap,
     scan.offPayload,
     scan.productName,
     scan.brand,
