@@ -1117,6 +1117,30 @@ export default function AIRecipe({
   const handleSchedule = handleAction("schedule", onSchedule);
   const handleCookIt   = handleAction("cook",     onSaveAndCook);
 
+  // Preview-phase add: user spotted a missing ingredient after the
+  // final recipe generated. Append to pantryEdits.adds (same shape
+  // the tweak-phase addPantryRow uses) then fire cookFinal() again
+  // — the lockedIngredients flow picks up the new entry and the
+  // regeneration integrates it into the steps. Another Sonnet call,
+  // but intentional and deterministic (sketch anchor keeps the dish
+  // identity). Shape matches addPantryRow in the tweak phase.
+  const addIngredientAndRegen = async (row) => {
+    if (!row || !sketch || busy) return;
+    const pendingAdd = {
+      name: row.name,
+      amount: `${row.amount ?? 1}${row.unit ? ` ${row.unit}` : ""}`,
+      ingredientId: row.ingredientId || row.canonicalId || null,
+      pantryItemId: row.id || null,
+      emoji: row.emoji,
+    };
+    setPantryEdits(prev => ({ ...prev, adds: [...prev.adds, pendingAdd] }));
+    // cookFinal reads state — we've set pantryEdits via the setter
+    // above, but React batches; call cookFinal on the NEXT tick so
+    // buildLockedIngredients sees the new adds. setTimeout(0) is the
+    // simplest way to defer past the setState queue.
+    setTimeout(() => { cookFinal(); }, 0);
+  };
+
   // ── Compose-a-meal handlers ─────────────────────────────────────
 
   // Derive ingredient descriptors for the pairWith payload. Trims to
@@ -2666,6 +2690,19 @@ export default function AIRecipe({
               pantry={pantry}
               onShoppingAdd={onShoppingAdd}
             />
+            {/* Forgot-something escape hatch — user noticed a missing
+                ingredient after the draft (e.g. "oh I wanted heavy
+                whipping cream"). Toggle opens a default-empty search
+                over the full pantry; picking appends to
+                pantryEdits.adds and re-fires the final pass so the
+                new ingredient is integrated into the steps. Another
+                Sonnet call, but targeted and explicit. */}
+            {sketch && !busy && (
+              <PreviewAddIngredient
+                pantry={pantry}
+                onAdd={addIngredientAndRegen}
+              />
+            )}
           </Section>
 
           <Section label={`STEPS · ${recipe.steps?.length || 0}`}>
@@ -3164,6 +3201,64 @@ function AiRationaleBanner({ text }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Preview-phase "forgot an ingredient" picker. Identical UI to the
+// tweak-phase "+ ADD INGREDIENT FROM PANTRY" control — same toggle
+// button, same scrollable chip list, same dedupe-by-canonical rule.
+// Exists on preview so users who notice something missing after
+// the final pass can add it without navigating back to tweak.
+function PreviewAddIngredient({ pantry, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const candidates = (() => {
+    const seenCanon = new Set();
+    return (pantry || []).filter(p => {
+      if (!p) return false;
+      if (p.kind && p.kind !== "ingredient") return false;
+      const canonId = p.ingredientId || p.canonicalId || p.name?.toLowerCase();
+      if (canonId && seenCanon.has(canonId)) return false;
+      if (canonId) seenCanon.add(canonId);
+      return true;
+    });
+  })();
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={open ? addBtnActive : addBtn}
+      >
+        {open ? "× CLOSE" : "+ ADD INGREDIENT FROM PANTRY"}
+      </button>
+      {open && (
+        <div style={{
+          marginTop: 8, padding: "10px 12px",
+          background: "#0a0a0a", border: "1px solid #242424", borderRadius: 10,
+          maxHeight: 240, overflowY: "auto",
+          display: "flex", flexDirection: "column", gap: 6,
+        }}>
+          {candidates.length === 0 ? (
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic", padding: "12px 0", textAlign: "center" }}>
+              No pantry items available.
+            </div>
+          ) : candidates.map(p => (
+            <button
+              key={p.id}
+              onClick={() => { onAdd(p); setOpen(false); }}
+              style={swapOptionBtn}
+            >
+              <span style={{ fontSize: 16 }}>{p.emoji || "🥫"}</span>
+              <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                {p.name}
+              </span>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                {p.amount}{p.unit ? ` ${p.unit}` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
