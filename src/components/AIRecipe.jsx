@@ -701,8 +701,11 @@ export default function AIRecipe({
     setClassifiedFrom(d.classifiedFrom);
     setDraftSavedAt(d.savedAt);
     setPhase("tweak");
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, draftHydrated]);
+    // Deps intentionally include the setup-state we read in the
+    // freshness guard — when they change, the effect re-runs and
+    // the draftHydrated flag short-circuits it on line 1. Cheap
+    // no-op after the first hydration.
+  }, [userId, draftHydrated, mealPrompt, starIngredientIds, course]);
 
   // Auto-save on any tweak-phase state change, debounced so rapid
   // typing / swap toggles don't thrash localStorage. 500ms matches the
