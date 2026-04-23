@@ -440,6 +440,17 @@ export default function ShopMode({
       console.warn("[shop-mode] handleListTap: ignoring tap on id-less list item");
       return;
     }
+    // Trace what state we read at the moment of tap so we can
+    // debug "tap arms instead of pairs" reports — covers the race
+    // where a fresh scan landed mid-tap and cleared pendingPairScanId
+    // before this handler observed it.
+    console.log("[shop-mode] handleListTap", {
+      listItemId,
+      pendingPairScanId,
+      recentScanId,
+      armedListItemId,
+      scansCount: scans.length,
+    });
     // Scan-first flow — pair the pending scan.
     if (pendingPairScanId) {
       const pending = scans.find(s => s.id === pendingPairScanId);
@@ -501,8 +512,14 @@ export default function ShopMode({
         markRecentScan(null);
         return;
       }
-      // recent scan gone (deleted?) — fall through to arm.
+      // Recent scan went missing (deleted, or scans state hasn't
+      // hydrated yet). Clear the window but DON'T fall through to
+      // arm — the user's intent was almost certainly to pair, and
+      // arming "cucumber" right after they scanned cucumber surprises
+      // them. Leave the tap as a no-op; they can re-tap to arm.
+      console.log("[shop-mode] recentScan id missing in scans — no-op tap");
       markRecentScan(null);
+      return;
     }
     // Tap-first flow — arm / disarm.
     setArmedListItemId(prev => (prev === listItemId ? null : listItemId));
