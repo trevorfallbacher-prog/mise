@@ -26,6 +26,7 @@ import { findIngredient } from "../data/ingredients";
 import { parsePackageSize } from "../lib/canonicalResolver";
 import { defaultLocationForCategory } from "../lib/usePantry";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
+import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import LinkIngredient from "./LinkIngredient";
 
 const FLASH_COLORS = {
@@ -418,33 +419,45 @@ export default function ShopModeCheckout({
           || scan.productName
           || `UPC ${scan.barcodeUpc}`;
 
-        // Package size from OFF (e.g. "16 oz", "946 ml", "24 × 12 fl_oz")
-        // — prefer this over bare qty because it encodes the physical
-        // container. parsePackageSize returns { amount, unit } or
-        // null. When OFF didn't give us anything usable, fall back
-        // to the canonical's defaultUnit + qty count.
+        // Package size — try OFF first, then "popular packages"
+        // corpus (learned from past family scans of same canonical+
+        // brand), then canonical default. When nothing resolves,
+        // fall back to { amount: qty, unit: canonical.defaultUnit
+        // || "package" }. The pantry row still commits; user can
+        // refine on the ItemCard later.
         const offQty = scan.offPayload?.quantity || null;
         const pkg = parsePackageSize(offQty);
         const qtyCount = scan.qty || 1;
         const amount = pkg?.amount != null ? pkg.amount * qtyCount : qtyCount;
-        const unit = pkg?.unit || canon?.defaultUnit || "package";
+        const unit = pkg?.unit
+          || canon?.defaultUnit
+          || (Array.isArray(canon?.units) && canon.units[0]?.id)
+          || "package";
         // max (the "full package" baseline the consumption slider
         // walks down from) = the amount we just decided. User
         // adjusts later as they eat.
         const maxValue = amount;
 
-        // Category — canonical wins, then synthetic canonical info,
-        // else default "pantry" so the NOT NULL constraint is
-        // satisfied. Categories: dairy | produce | dry | meat |
-        // pantry | frozen.
+        // Category — cascade:
+        //   1. bundled canonical.category
+        //   2. synthetic canonical info (family-created, enriched)
+        //   3. OFF categoryHints → tagHintsToAxes (dairy / produce /
+        //      meat / frozen / beverage inference from OFF's tag
+        //      family — critical when the canonical is BRAND NEW
+        //      and has no enrichment yet)
+        //   4. "pantry" default (satisfies NOT NULL constraint)
+        const offAxes = tagHintsToAxes(scan.offPayload?.categoryHints || []);
         const category = canon?.category
           || synthInfo?.info?.category
+          || offAxes.category
           || "pantry";
 
         // Storage location — canonical's storage.location wins,
-        // else category-based default. Ensures fridge/pantry/freezer
-        // match the identity (butter → fridge, flour → pantry,
-        // ice cream → freezer) without the user picking manually.
+        // else derived from the category. Ensures fridge/pantry/
+        // freezer match the identity (butter → fridge, flour →
+        // pantry, ice cream → freezer) even for brand-new synthetic
+        // canonicals whose enrichment hasn't filled storage yet —
+        // the category we just inferred from OFF carries us there.
         const canonStorage = canon?.storage?.location
           || synthInfo?.info?.storage?.location
           || null;
