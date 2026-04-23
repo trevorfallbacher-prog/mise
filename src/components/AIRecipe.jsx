@@ -1076,19 +1076,13 @@ export default function AIRecipe({
       if (enriched?.title) {
         setPreviousTitles(prev => (prev.includes(enriched.title) ? prev : [...prev, enriched.title]));
       }
-      // Push shopping-source locked items into the parent's shopping
-      // list. Happens only after the final cook actually lands so a
-      // user who cancels mid-tweak doesn't pollute their list.
-      const shoppingItems = locked.filter(l => l.source === "shopping");
-      if (shoppingItems.length > 0 && onShoppingAdd) {
-        onShoppingAdd(shoppingItems.map(l => ({
-          name: l.name,
-          amount: typeof l.amount === "string" ? parseFloat(l.amount) || 1 : (Number(l.amount) || 1),
-          unit: l.unit || (typeof l.amount === "string" ? String(l.amount).replace(/[\d.\s]+/, "").trim() : "") || "count",
-          ingredientId: l.ingredientId || null,
-          source: "ai-recipe",
-        })));
-      }
+      // No automatic shopping-list push. Users explicitly don't want
+      // the final cook to silently dump items into their cart — that
+      // was happening AFTER the recipe was drafted, surprising the
+      // user. If/when they want shopping items added, the preview
+      // screen's ingredient panel exposes per-row "+ SHOP" controls
+      // (see IngredientsWithPairing → showShop) that hit onShoppingAdd
+      // directly. Keeps consent explicit and per-item.
       setPhase("preview");
       // Preview landed, but the user hasn't saved yet — keep the
       // draft alive so "I closed the tab before hitting SAVE" still

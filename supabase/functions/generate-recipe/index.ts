@@ -1500,6 +1500,13 @@ Deno.serve(async (req) => {
       lockedFilter.dropped.map((d) => d.item),
     );
   }
+  if (lockedFilter.forced.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[generate-recipe] force-added locked ingredients the model dropped:",
+      lockedFilter.forced.map((f) => f.item),
+    );
+  }
   // Reconcile integer-counted ingredients against step quantities.
   // Raises the ingredient count when steps consume more than the
   // header declares (the "4 eggs header, 6 eggs in step 2" class of
@@ -1568,6 +1575,13 @@ Deno.serve(async (req) => {
       // was enforced, not silently obeyed.
       droppedIngredients: lockedFilter.dropped.length > 0
         ? lockedFilter.dropped
+        : null,
+      // forcedIngredients — locked items Claude dropped that we
+      // force-added back into the recipe. The user's intent wins;
+      // the client can surface "we kept your added heavy whipping
+      // cream even though Claude left it out" if it wants.
+      forcedIngredients: lockedFilter.forced.length > 0
+        ? lockedFilter.forced
         : null,
     }),
     { headers: JSON_HEADERS },
@@ -1703,22 +1717,44 @@ function normForLockMatch(s: unknown): string {
   if (typeof s !== "string") return "";
   return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 }
+// Head-noun + subset match — mirrors recipePairing.namesMatch so
+// "heavy cream" ↔ "heavy whipping cream" pass (both share head
+// "cream" and {heavy,cream} ⊆ {heavy,whipping,cream}) while
+// "tortilla chip" ↛ "tortilla" fails (different heads). Used by
+// the locked-ingredient filter so a slight name drift between
+// Claude's output and the locked entry doesn't drop the row.
+function locksMatchByName(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const ta = a.split(" ").filter(Boolean);
+  const tb = b.split(" ").filter(Boolean);
+  if (!ta.length || !tb.length) return false;
+  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false;
+  const sa = new Set(ta);
+  const sb = new Set(tb);
+  const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+  for (const t of small) if (!big.has(t)) return false;
+  return true;
+}
 function filterToLockedIngredients(
   ingredients: Array<Record<string, unknown>>,
   lockedIngredients: LockedIngredient[],
-): { ingredients: Array<Record<string, unknown>>; dropped: Array<{ item: string; reason: string }> } {
+): {
+  ingredients: Array<Record<string, unknown>>;
+  dropped: Array<{ item: string; reason: string }>;
+  forced: Array<{ item: string; reason: string }>;
+} {
   if (!Array.isArray(ingredients) || !Array.isArray(lockedIngredients) || lockedIngredients.length === 0) {
-    return { ingredients: ingredients || [], dropped: [] };
+    return { ingredients: ingredients || [], dropped: [], forced: [] };
   }
-  // Build two lookup sets: canonical-id (tight) and normalized name
-  // (loose — catches the "Kerrygold butter" → "butter" case where the
-  // names differ but identity is the same).
+  // Build lookup sets for the gate direction (drop-extras): canonical-
+  // id tight + normalized-name loose.
   const lockedIds = new Set<string>();
-  const lockedNames = new Set<string>();
+  const lockedNormNames: string[] = [];
   for (const l of lockedIngredients) {
     if (l?.ingredientId && typeof l.ingredientId === "string") lockedIds.add(l.ingredientId);
     const n = normForLockMatch(l?.name);
-    if (n) lockedNames.add(n);
+    if (n) lockedNormNames.push(n);
   }
   const kept: Array<Record<string, unknown>> = [];
   const dropped: Array<{ item: string; reason: string }> = [];
@@ -1727,11 +1763,14 @@ function filterToLockedIngredients(
     const id = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
     const nn = normForLockMatch(name);
     if (id && lockedIds.has(id)) { kept.push(ing); continue; }
-    if (nn && lockedNames.has(nn)) { kept.push(ing); continue; }
+    // Name match: exact OR head-noun/subset. Catches "heavy cream" vs
+    // "heavy whipping cream", "flour tortilla" vs "tortilla", etc.
+    if (nn && lockedNormNames.some((ln) => ln === nn || locksMatchByName(nn, ln))) {
+      kept.push(ing);
+      continue;
+    }
     // Staple allowlist — the prompt explicitly says salt/pepper/oil/
-    // water/butter are OK. Match by normalized name, including
-    // head-noun fallback ("olive oil" contains "oil"; "kosher salt"
-    // contains "salt").
+    // water/butter are OK even if not locked.
     if (nn && STAPLE_ALLOWLIST.has(nn)) { kept.push(ing); continue; }
     const tokens = nn.split(" ").filter(Boolean);
     if (tokens.length > 0 && STAPLE_ALLOWLIST.has(tokens[tokens.length - 1])) {
@@ -1739,7 +1778,41 @@ function filterToLockedIngredients(
     }
     dropped.push({ item: name || id || "(unnamed)", reason: "not in locked set" });
   }
-  return { ingredients: kept, dropped };
+  // Force-include direction: any locked ingredient that DID NOT land
+  // in the model's output gets force-appended. Previously if Claude
+  // decided the user's added ingredient (e.g. heavy whipping cream on
+  // a chicken marsala) "didn't fit the dish," it silently dropped it
+  // and the user burned a Sonnet call only to see their add missing.
+  // The user's locked list is explicit intent — respect it.
+  const keptIds = new Set<string>();
+  const keptNorms: string[] = [];
+  for (const ing of kept) {
+    const id = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
+    const nn = normForLockMatch(typeof ing.item === "string" ? ing.item : "");
+    if (id) keptIds.add(id);
+    if (nn) keptNorms.push(nn);
+  }
+  const forced: Array<{ item: string; reason: string }> = [];
+  for (const l of lockedIngredients) {
+    const lid = typeof l?.ingredientId === "string" ? l.ingredientId : "";
+    const lnn = normForLockMatch(l?.name);
+    const alreadyKept = (lid && keptIds.has(lid))
+      || (lnn && keptNorms.some((kn) => kn === lnn || locksMatchByName(kn, lnn)));
+    if (alreadyKept) continue;
+    if (!l?.name) continue;
+    kept.push({
+      item: l.name,
+      ingredientId: l.ingredientId ?? null,
+      amount: l.amount ?? null,
+      unit: l.unit ?? null,
+      state: null,
+      cut: null,
+      qty: undefined,
+      role: undefined,
+    });
+    forced.push({ item: l.name, reason: "locked but dropped by model — force-added" });
+  }
+  return { ingredients: kept, dropped, forced };
 }
 
 function slugify(s: string): string {

@@ -38,17 +38,21 @@ function fromDb(row) {
     ? rawArr
     : (singleId ? [singleId] : []);
   // Primary identity: canonical_id (what this thing IS) wins over
-  // composition. Composition[0] is only a sane primary when the row
-  // has no canonical identity AND the composition is a single-item
-  // shortcut (raw flour row with composition ["all_purpose_flour"]
-  // and no canonical_id — same thing, use it). For compound products
-  // (Ritz Butter Crackers: canonical_id="crackers", composition=
-  // ["all_purpose_flour"]) composition[0] is NOT the identity, and
-  // promoting it produces the "Ritz pinned for flour recipe" bug
-  // the audit caught. canonical_id is always the right answer when
-  // present.
+  // composition. When canonical_id is set, use it — that's the fix
+  // for "Ritz Butter Crackers pinned for a flour recipe" (Ritz had
+  // canonical_id="crackers" and composition=["all_purpose_flour"];
+  // prior code promoted composition[0] and broke pairing). When
+  // canonical_id is absent, fall back to components[0] regardless of
+  // composition length — most rows without an explicit identity are
+  // "plain ingredient, optional extra composition tags" (cremini
+  // mushrooms with a "mushrooms" tag, canola oil with oil-family
+  // tags). Restricting that fallback to single-component rows
+  // silently hid those from the picker, which was the "program can't
+  // read my list" regression. Callers that need STRICT identity (and
+  // want to reject implicit-composition fallbacks) can read
+  // `canonicalId` directly instead of `ingredientId`.
   const primaryId = row.canonical_id
-    || (components.length === 1 ? components[0] : null)
+    || components[0]
     || null;
 
   const item = {
@@ -207,15 +211,16 @@ function toDb(item) {
   // Primary identity on the wire: canonicalId (the "what this thing
   // IS" signal) wins over composition. When canonicalId is present,
   // `ingredient_id` mirrors it — legacy SQL keyed on the scalar still
-  // resolves to the identity, not to composition[0]. Single-component
-  // rows without canonicalId fall through to composition[0] (a raw
-  // flour row with one component IS flour). Multi-component rows
-  // without canonicalId get null — compound products need an explicit
-  // identity, and silently promoting composition[0] was the root of
-  // the "Ritz Butter Crackers paired for flour recipe" bug.
+  // resolves to the identity, not to composition[0]. When absent,
+  // fall back to components[0] regardless of composition length so
+  // multi-tag rows stay visible to the pairer. The Ritz regression
+  // is blocked at the canonical_id level (Ritz has canonical_id=
+  // "crackers", so the fallback never runs); true identity-less
+  // compound rows still surface their first composition tag — same
+  // as pre-fix behavior, which was fine for everything except Ritz.
   const primaryId = item.canonicalId
     || item.ingredientId
-    || (hasArray && arr.length === 1 ? (arr[0] || null) : null)
+    || (hasArray && arr.length > 0 ? (arr[0] || null) : null)
     || null;
   return {
     ingredient_id: primaryId,
