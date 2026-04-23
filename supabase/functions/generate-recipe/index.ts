@@ -232,37 +232,34 @@ function assemblePromptHeader(
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
         .map((p, i) => {
-          // Per-item pantry data is kept tight — only fields that
-          // genuinely change the dish-picking decision ship to the
-          // model. Everything else is cut because it's either
-          // redundant with what Claude already knows from training
-          // or it's decorative detail that doesn't move the draft.
+          // Per-item pantry data sent to the model. Two fields are
+          // deliberately NOT sent:
           //
-          // Dropped (redundant / decorative):
-          //   • Stock quantity — invited precision echoes
-          //     ("29.3545 oz garlic") into recipe amounts.
-          //   • Category — canonical_id already encodes it.
-          //   • Location (fridge/pantry/freezer) — Claude infers.
-          //   • Flavor profile — Claude knows for common canonicals.
-          //   • Pairs — Claude knows classic pairings from training.
+          //   • Stock quantity (raw weighed oz / count) — Claude
+          //     isn't doing inventory math, and shipping it invited
+          //     precision echoes ("29.3545 oz garlic") into recipe
+          //     amounts. The sanity clamps in normalizeIngredientAmount
+          //     are defense in depth.
+          //   • Category ("meat" / "dairy") — the canonical_id
+          //     already encodes it; a second label per row was
+          //     redundant.
           //
-          // Kept:
-          //   • Identity axes (canonical / cut / state / brand) —
-          //     what the thing IS, including the brand that step
-          //     instructions reference inline.
-          //   • Kind (when non-default) — compound / leftover
-          //     behaves differently from a raw ingredient.
-          //   • Expiry — use-soon signal the model genuinely acts on.
-          //   • Starred — user preference weight.
-          //   • Diet enrichment — actionable per-item dietary
-          //     information (allergens, vegan / keto / gluten-free
-          //     flags). Especially important for user-minted
-          //     canonicals where Claude's training has no prior.
+          // Everything else is load-bearing: identity axes
+          // (canonical / cut / state / brand), shelf location
+          // (drives "use X from your fridge" phrasing + refrigerated
+          // vs dry disambiguation), kind (compound / leftover behave
+          // differently from raw ingredients), expiry (use-soon
+          // signal the model genuinely acts on), starred (user
+          // preference weight), and the enrichment fields — flavor
+          // profile, classic pairings, and per-item dietary flags —
+          // each of which biases dish choice, especially on
+          // user-minted canonicals where Claude has no training prior.
           const lines: string[] = [`Pantry Item ${i + 1}:`];
           lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
+          if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
           if (typeof p.daysToExpiry === "number") {
             lines.push(
@@ -272,8 +269,13 @@ function assemblePromptHeader(
             );
           }
           if (p.star) lines.push(`  ★ STARRED BY USER`);
-          const diet = p.enrichment ? dietSummary(p.enrichment.diet) : "";
-          if (diet) lines.push(`  Diet: ${diet}`);
+          const enr = p.enrichment;
+          if (enr) {
+            if (enr.flavorProfile) lines.push(`  Flavor: ${enr.flavorProfile}`);
+            if (enr.pairs && enr.pairs.length) lines.push(`  Pairs: ${enr.pairs.join(", ")}`);
+            const diet = dietSummary(enr.diet);
+            if (diet) lines.push(`  Diet: ${diet}`);
+          }
           return lines.join("\n");
         })
         .join("\n");
