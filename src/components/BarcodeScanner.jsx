@@ -38,7 +38,10 @@ import { decodeImageFileWithZxing, createZxingLiveScanner } from "../lib/zxing";
 
 const BARCODE_FORMATS = ["ean_13", "ean_8", "upc_a", "upc_e", "itf"];
 const SAME_UPC_SUPPRESSION_MS = 3000;
-const GLOBAL_COOLDOWN_MS      = 800;
+const GLOBAL_COOLDOWN_MS      = 3000;
+// Exported so ShopMode can match the cooldown overlay's fade
+// duration to the scanner's actual ready window.
+export { GLOBAL_COOLDOWN_MS as SCANNER_COOLDOWN_MS };
 
 export default function BarcodeScanner({ onDetected, onCancel, mode = "single", embedded = false, paused = false }) {
   const rapidMode = mode === "rapid";

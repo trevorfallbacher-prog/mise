@@ -105,7 +105,7 @@ export async function createZxingLiveScanner(videoElement, onDetected, onError, 
   // by the native BarcodeDetector path in BarcodeScanner.jsx so both
   // live decoders behave identically across devices.
   const SAME_UPC_SUPPRESSION_MS = 3000;
-  const GLOBAL_COOLDOWN_MS      = 800;
+  const GLOBAL_COOLDOWN_MS      = 3000;
   let browser;
   try {
     browser = await loadReader();

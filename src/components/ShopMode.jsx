@@ -497,30 +497,18 @@ export default function ShopMode({
       markRecentScan(null);
       return;
     }
-    // Post-scan correction window — if a scan landed within the
-    // last 4s, this tap re-pairs it instead of arming. Covers the
-    // "wrong auto-pair, move it" case + the "I want this tap to
-    // pair, not arm" user expectation right after any scan.
-    if (recentScanId) {
-      const recent = scans.find(s => s.id === recentScanId);
-      if (recent) {
-        if (listItemId === "__impulse__") {
-          await doImpulseAdd(recent);
-        } else {
-          await pairScanToList(recent.id, listItemId);
-        }
-        markRecentScan(null);
-        return;
-      }
-      // Recent scan went missing (deleted, or scans state hasn't
-      // hydrated yet). Clear the window but DON'T fall through to
-      // arm — the user's intent was almost certainly to pair, and
-      // arming "cucumber" right after they scanned cucumber surprises
-      // them. Leave the tap as a no-op; they can re-tap to arm.
-      console.log("[shop-mode] recentScan id missing in scans — no-op tap");
-      markRecentScan(null);
-      return;
-    }
+    // Post-scan correction window REMOVED. The window was set for
+    // EVERY scan (including auto-paired ones), which meant a tap
+    // intended to ARM a different list item for the next scan got
+    // hijacked into "move the just-paired scan to this item." Net
+    // effect: user-perceived "fewer scans pair" because their
+    // tap-ahead arms got silently re-routed into pair-moves.
+    //
+    // If a scan auto-pairs to the wrong list item, the user can
+    // still correct via the RECENT SCANS chips (UNPAIR) at the
+    // bottom of the list, or on the checkout summary's inline
+    // editor. pendingPairScanId still handles the in-aisle pickmode
+    // case (scan with no auto-match → tap to pair).
     // Tap-first flow — arm / disarm.
     setArmedListItemId(prev => (prev === listItemId ? null : listItemId));
   }
@@ -618,10 +606,12 @@ export default function ShopMode({
       background: "#000",
       display: "flex", flexDirection: "column",
     }}>
-      {/* Keyframes for the scan flashes. shop-mode-flash drives the
-          text banner at the top of the scanner; shop-mode-panel-flash
-          drives the full-panel color wash behind it. Both share the
-          same 900ms envelope so they land and clear together. */}
+      {/* Keyframes for the scan visuals.
+          shop-mode-flash       — quick text-banner punch (~900ms)
+          shop-mode-panel-flash — quick full-panel wash (~900ms)
+          shop-mode-cooldown    — slow fade matching the scanner's
+                                  3s global cooldown so users can SEE
+                                  when the scanner is ready again. */}
       <style>{`
         @keyframes shop-mode-flash {
           0%   { opacity: 0; transform: translateY(-4px); }
@@ -633,6 +623,10 @@ export default function ShopMode({
           0%   { opacity: 0; }
           12%  { opacity: 0.65; }
           55%  { opacity: 0.45; }
+          100% { opacity: 0; }
+        }
+        @keyframes shop-mode-cooldown {
+          0%   { opacity: 0.45; }
           100% { opacity: 0; }
         }
       `}</style>
@@ -670,6 +664,26 @@ export default function ShopMode({
               background: flash.bg,
               pointerEvents: "none",
               animation: "shop-mode-panel-flash 900ms ease-out",
+              mixBlendMode: "screen",
+            }}
+          />
+        )}
+
+        {/* Cooldown overlay — slow fade from the last scan's status
+            color to transparent over the full 3s scanner cooldown.
+            Gives the user a visual countdown: while there's color
+            on the pane, the scanner is dropping scans; when it's
+            clear, the next scan will register. Sits under the quick
+            flash via lower zIndex so the flash punch is still
+            visible on top. */}
+        {lastScan?.scan?.id && lastScan.flashColor && (
+          <div
+            key={`cooldown-${lastScan.scan.id}`}
+            style={{
+              position: "absolute", inset: 0, zIndex: 3,
+              background: FLASH_COLORS[lastScan.flashColor]?.bg || "#444",
+              pointerEvents: "none",
+              animation: "shop-mode-cooldown 3000ms linear forwards",
               mixBlendMode: "screen",
             }}
           />

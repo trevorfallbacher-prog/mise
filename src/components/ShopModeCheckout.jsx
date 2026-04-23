@@ -306,11 +306,25 @@ export default function ShopModeCheckout({
         const id = (typeof crypto !== "undefined" && crypto.randomUUID)
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        // Display name: prefer the canonical's shortName (so the
+        // HEADER renders "Butter" not "Kerrygold Unsalted Butter
+        // 8oz"), then fall back to OFF productName, then UPC. The
+        // brand goes into the BRAND column where the ItemCard
+        // header derives "Kerrygold Butter" — falling back to
+        // scan.brand for `name` was forcing brand into the display
+        // name slot AND duplicating it once HEADER tried to derive
+        // brand+name. CLAUDE.md identity hierarchy: brand is its
+        // own axis, never inline-prefixed into name.
+        const canon = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
+        const displayName = canon?.shortName
+          || canon?.name
+          || scan.productName
+          || `UPC ${scan.barcodeUpc}`;
         const row = {
           id,
           user_id: userId,
-          name:           scan.productName || scan.brand || `UPC ${scan.barcodeUpc}`,
-          emoji:          "🛒",
+          name:           displayName,
+          emoji:          canon?.emoji || "🛒",
           amount:         scan.qty || 1,
           unit:           "package",
           max:            null,
