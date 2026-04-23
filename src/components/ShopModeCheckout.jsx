@@ -524,11 +524,20 @@ export default function ShopModeCheckout({
     setError(null);
     setPhase("parsing");
     try {
-      // compressImage returns { base64, mediaType, size }. Use the
-      // compressed output directly — previously we were pulling
-      // .blob off it which doesn't exist, so the raw file was being
-      // re-encoded every time.
-      const compressed = await compressImage(file).catch(() => null);
+      // compressImage returns { base64, mediaType, size }. Receipt
+      // mode passes higher fidelity than the default item-label
+      // settings: 2000px / quality 0.92. Receipts are text-heavy
+      // and the UPCs are printed at ~6-7pt; default 1600/0.72 was
+      // turning the digits into a smear that Vision couldn't OCR.
+      // Token cost on Haiku 4.5 goes from ~$0.0036 to ~$0.0058
+      // per receipt — negligible against the value of an actual
+      // UPC pairing. Higher imageSmoothingQuality is set inside
+      // compressImage so the canvas downscale doesn't undo the
+      // win on the way through.
+      const compressed = await compressImage(file, {
+        maxDimension: 2000,
+        jpegQuality:  0.92,
+      }).catch(() => null);
       let base64;
       let mediaType;
       if (compressed?.base64) {
