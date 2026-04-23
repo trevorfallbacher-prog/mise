@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import CookMode from "./CookMode";
+// CookMode is mounted at the App level now so the resume-cook banner
+// can reopen it from any tab. Plan hands the recipe off via onStartCook
+// passed from App. The old inline-CookMode render was removed —
+// Plan no longer imports CookMode.
 import SchedulePicker from "./SchedulePicker";
 import IAteThisSheet from "./IAteThisSheet";
 import MealPrepTimeline from "./MealPrepTimeline";
@@ -549,7 +552,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], prepRows
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook, deepLink, onDeepLinkConsumed }) {
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook, onStartCook, deepLink, onDeepLinkConsumed }) {
   // 21-day rolling window: past 7 days for week-in-review + today + next 14.
   // Chronological order (oldest past on top, future on bottom) so users
   // scroll down through time the same way the eye reads a diary.
@@ -645,7 +648,12 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         if (meal) setOpenMeal(meal);
         else if (data.recipe_slug) {
           const recipe = findRecipe(data.recipe_slug, findUserRecipe);
-          if (recipe) setCookingRecipe(recipe);
+          // App owns CookMode now — hand it the recipe and let the
+          // App-level effect open the overlay. Works from any tab, so
+          // taps from Home / Kitchen deep-links land on the same
+          // resume flow. Fallback: no-op if the host didn't wire the
+          // handler (older App bundles).
+          if (recipe) onStartCook?.(recipe);
         }
         consume();
       })();
@@ -684,7 +692,6 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   const [recipeToSchedule, setRecipeToSchedule] = useState(null); // Recipe picked from modal
   const [isRequesting, setIsRequesting] = useState(false);       // "Request" mode vs. "I'll cook"
   const [openMeal, setOpenMeal] = useState(null);                // Meal tapped to view
-  const [cookingRecipe, setCookingRecipe] = useState(null);      // Recipe now in CookMode
 
   // Auto-scroll the TODAY card into view on first mount — with 7 past
   // days above today, the default scroll-top lands on a week ago, which
@@ -754,34 +761,11 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // so the sheet renders above the whole view, not inside MealDetail.
   const [eatingLeftover, setEatingLeftover] = useState(null);
 
-  // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
-  // Pantry + shoppingList wiring is identical to the Cook tab's path so
-  // "ADD MISSING TO SHOPPING LIST" works regardless of where you started.
-  // This early return lives AFTER every hook call — moving it earlier
-  // drops the cooksByDay useMemo on Cook-Now transition and trips
-  // "rendered fewer hooks than expected".
-  if (cookingRecipe) {
-    return (
-      <CookMode
-        recipe={cookingRecipe}
-        onExit={() => setCookingRecipe(null)}
-        onDone={() => setCookingRecipe(null)}
-        pantry={pantry}
-        setPantry={setPantry}
-        shoppingList={shoppingList}
-        setShoppingList={setShoppingList}
-        onGoToShopping={onGoToShopping}
-        userId={userId}
-        family={family}
-        friends={friends}
-        // Fork-to-new-recipe handler for CookComplete's "SAVE CHANGES
-        // AS NEW RECIPE" action. Wraps useUserRecipes.saveRecipe —
-        // unique-slug logic in that hook means forking beef-wellington
-        // lands as beef-wellington-2, leaving the original untouched.
-        onForkRecipe={saveUserRecipe}
-      />
-    );
-  }
+  // CookMode is now mounted at the App level so a pinned "resume
+  // cook" banner can pop it back open from any tab. Plan hands the
+  // recipe off via onStartCook; App owns the lifecycle. Previously
+  // this component did an early return into an inline CookMode which
+  // made resume impossible (unmounting Plan = losing the cook view).
   const onPickRecipe = (recipe, opts = {}) => {
     setRecipeToSchedule(recipe);
     setScheduleFromPantryRowId(opts.fromPantryRowId || null);
@@ -1155,7 +1139,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
             const scaled = openMeal.servings && openMeal.servings !== r.serves
               ? scaleRecipe(r, openMeal.servings)
               : r;
-            setCookingRecipe(scaled);
+            onStartCook?.(scaled);
           }}
           onClaim={async () => {
             const updated = await claim(openMeal.id);
