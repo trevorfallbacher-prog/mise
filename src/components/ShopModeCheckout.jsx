@@ -230,11 +230,11 @@ export default function ShopModeCheckout({
   const [scans, setScans] = useState(initialScans);
   // Which scan, if any, has its inline editor open. null = closed.
   const [editingScanId, setEditingScanId] = useState(null);
-  // Per-scan package-size overrides the user sets in the inline
-  // editor before commit. Keyed by scan id → { amount, unit }.
-  // Overrides win over OFF / canonical defaults when the pantry
-  // row is built in doCommit. Kept in local state (not persisted)
-  // — edits are lost if the user backs out of checkout.
+  // Per-scan field overrides the user sets in the inline editor
+  // before commit. Keyed by scan id → { amount, unit, category,
+  // location }. Overrides win over OFF / canonical defaults when
+  // the pantry row is built in doCommit. Kept in local state (not
+  // persisted) — edits are lost if the user backs out of checkout.
   const [packageOverrides, setPackageOverrides] = useState(() => new Map());
   function setPackageOverride(scanId, patch) {
     setPackageOverrides(prev => {
@@ -459,6 +459,7 @@ export default function ShopModeCheckout({
         const maxValue = amount;
 
         // Category — cascade:
+        //   0. user override from the review-screen picker (wins)
         //   1. bundled canonical.category
         //   2. synthetic canonical info (family-created, enriched)
         //   3. OFF categoryHints → tagHintsToAxes (dairy / produce /
@@ -467,21 +468,24 @@ export default function ShopModeCheckout({
         //      and has no enrichment yet)
         //   4. "pantry" default (satisfies NOT NULL constraint)
         const offAxes = tagHintsToAxes(scan.offPayload?.categoryHints || []);
-        const category = canon?.category
+        const category = override?.category
+          || canon?.category
           || synthInfo?.info?.category
           || offAxes.category
           || "pantry";
 
-        // Storage location — canonical's storage.location wins,
-        // else derived from the category. Ensures fridge/pantry/
-        // freezer match the identity (butter → fridge, flour →
-        // pantry, ice cream → freezer) even for brand-new synthetic
-        // canonicals whose enrichment hasn't filled storage yet —
-        // the category we just inferred from OFF carries us there.
+        // Storage location cascade:
+        //   0. user override from the review-screen picker (wins)
+        //   1. canonical.storage.location (bundled)
+        //   2. synthetic canonical info
+        //   3. defaultLocationForCategory(category) — derived from
+        //      the category chosen above
         const canonStorage = canon?.storage?.location
           || synthInfo?.info?.storage?.location
           || null;
-        const location = canonStorage || defaultLocationForCategory(category);
+        const location = override?.location
+          || canonStorage
+          || defaultLocationForCategory(category);
 
         const row = {
           id,
@@ -855,6 +859,23 @@ function EditableScanLine({
     ? `${effectiveSize.amount}${effectiveSize.unit ? " " + effectiveSize.unit : ""}`
     : "";
 
+  // Effective category + location — same cascade doCommit uses.
+  // Exposed in the preview as axis-colored chips so the user can
+  // confirm at-a-glance where the pantry row will land (category
+  // = orange, stored-in = blue, per CLAUDE.md reserved colors).
+  const offCategoryAxes = (() => {
+    try { return tagHintsToAxes(scan.offPayload?.categoryHints || []); }
+    catch { return { category: null }; }
+  })();
+  const effectiveCategory = packageOverride?.category
+    || currentCanonical?.category
+    || offCategoryAxes.category
+    || "pantry";
+  const canonStorage = currentCanonical?.storage?.location || null;
+  const effectiveLocation = packageOverride?.location
+    || canonStorage
+    || defaultLocationForCategory(effectiveCategory);
+
   async function saveTextFields() {
     const patch = {};
     if ((name || "") !== (scan.productName || "")) patch.product_name = name.trim() || null;
@@ -940,12 +961,39 @@ function EditableScanLine({
             {scan.brand ? ` · ${scan.brand}` : ""}
             {canonicalLabel ? ` · ${canonicalLabel}` : ""}
           </div>
-          {/* Row 3: UPC, mono, very muted — verification signal
+          {/* Row 3: axis chips — CATEGORIES (orange) + STORED IN
+              (blue). Uses the reserved CLAUDE.md axis colors so
+              the user can confirm at-a-glance that the pantry row
+              will land in the right bucket. Tapping EDIT lets them
+              override either. */}
+          <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
+            <span style={{
+              fontSize: 9, letterSpacing: 0.9, fontWeight: 600,
+              color: "#e07a3a",
+              background: "#e07a3a1a",
+              border: "1px solid #e07a3a55",
+              borderRadius: 4,
+              padding: "2px 6px",
+            }}>
+              {effectiveCategory.toUpperCase()}
+            </span>
+            <span style={{
+              fontSize: 9, letterSpacing: 0.9, fontWeight: 600,
+              color: "#7eb8d4",
+              background: "#7eb8d41a",
+              border: "1px solid #7eb8d455",
+              borderRadius: 4,
+              padding: "2px 6px",
+            }}>
+              {effectiveLocation.toUpperCase()}
+            </span>
+          </div>
+          {/* Row 4: UPC, mono, very muted — verification signal
               rather than primary content. */}
           <div style={{
             color: "#666", fontSize: 10,
             fontFamily: "'DM Mono',monospace",
-            marginTop: 3, letterSpacing: 0.4,
+            marginTop: 4, letterSpacing: 0.4,
           }}>
             {scan.barcodeUpc}
           </div>
@@ -1057,6 +1105,39 @@ function EditableScanLine({
             <span style={{ minWidth: 30, textAlign: "center", color: "#f0ece4", fontSize: 15 }}>×{scan.qty || 1}</span>
             <button onClick={() => bumpQty(1)} style={qtyBtn} aria-label="Increase">+</button>
           </div>
+
+          {/* Category + stored-in pickers. Reserved axis colors:
+              orange for category, blue for stored-in (CLAUDE.md).
+              Commits via onPackageChange into packageOverrides. */}
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#e07a3a" }}>CATEGORY</span>
+            <select
+              value={effectiveCategory}
+              onChange={e => onPackageChange?.({ category: e.target.value })}
+              style={{ ...textInput, cursor: "pointer", color: "#e07a3a" }}
+            >
+              <option value="dairy">dairy</option>
+              <option value="produce">produce</option>
+              <option value="meat">meat</option>
+              <option value="dry">dry</option>
+              <option value="pantry">pantry</option>
+              <option value="frozen">frozen</option>
+              <option value="beverage">beverage</option>
+            </select>
+          </label>
+
+          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#7eb8d4" }}>STORED IN</span>
+            <select
+              value={effectiveLocation}
+              onChange={e => onPackageChange?.({ location: e.target.value })}
+              style={{ ...textInput, cursor: "pointer", color: "#7eb8d4" }}
+            >
+              <option value="fridge">fridge</option>
+              <option value="pantry">pantry</option>
+              <option value="freezer">freezer</option>
+            </select>
+          </label>
 
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             {scan.pairedShoppingListItemId && (
