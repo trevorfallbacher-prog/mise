@@ -133,6 +133,19 @@ type Prefs = {
   sketchTitle?: string;
   sketchSubtitle?: string;
   sketchRationale?: string;
+  // Dish contract from the classifier. Passed on sketch + final. Shapes
+  // the prompt (SPECIFIC → inject rules; FAMILY → stay-in-family; OPEN
+  // → drop pantry, dream mode). The edge fn also uses it for the
+  // deterministic post-check that reject-retries when Claude drifts.
+  dishContract?: {
+    tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM";
+    dishName?: string;
+    aliases?: string[];
+    rules?: string;
+    familyName?: string;
+    familyExamples?: string[];
+    rawPrompt?: string;
+  };
   // Anchor context for compose-a-meal drafts. When present, the draft
   // is a side / dessert / appetizer intended to be served alongside
   // `pairWith.title`. Claude uses it for contrast/complement — don't
@@ -952,6 +965,132 @@ function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): st
   return `\nRECENT HISTORY:\n${lines.join("\n")}\n`;
 }
 
+// ── dish contract classifier ────────────────────────────────────────
+//
+// Three tiers — lifted out of the user's own wording:
+//   SPECIFIC — they named a real dish ("creme brulee", "lasagna",
+//              "brown butter m&m cookies"). Rules of that dish are
+//              authoritative; the output title must include one of the
+//              aliases Claude identifies, or we retry.
+//   FAMILY   — they described a category ("custard based treat",
+//              "cookies", "quick stir-fry"). Claude has creative freedom
+//              within that family; the output title must fit one of
+//              the family examples Claude lists.
+//   OPEN     — they typed nothing. Dream mode: drop the pantry entirely
+//              from the prompt, use only dietary constraints + cook
+//              history + tastes. The user signaled "surprise me."
+//
+// Classification is ONE Haiku call, cached by the client for the
+// session so regens reuse the same contract. ~$0.0001, ~300ms.
+type DishContract = {
+  tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM";
+  dishName?: string;
+  aliases?: string[];
+  rules?: string;
+  familyName?: string;
+  familyExamples?: string[];
+  rawPrompt?: string;
+};
+
+async function classifyDishPrompt(
+  apiKey: string,
+  mealPrompt: string,
+): Promise<DishContract> {
+  const trimmed = (mealPrompt || "").trim();
+  if (!trimmed) return { tier: "OPEN" };
+
+  const classifierPrompt = `Classify this user prompt for a recipe-generation system. The user will get a drafted recipe; we need to know whether they named a specific dish (rules of that dish apply), a family/category (creative freedom within the family), or freeform text we can't categorize.
+
+User prompt: "${trimmed.replace(/"/g, '\\"').slice(0, 300)}"
+
+Return ONLY a JSON object (no markdown, no prose). Schema:
+
+{
+  "tier": "SPECIFIC" | "FAMILY" | "FREEFORM",
+  // SPECIFIC when the user named a real dish with known conventions
+  //   (creme brulee, lasagna, pad thai, brown butter m&m cookies, shakshuka).
+  //   Multi-word specifics like "brown butter m&m cookies" are SPECIFIC —
+  //   the modifiers ARE part of the dish identity, not category hints.
+  "dishName": "<canonical spelling of the dish, e.g. 'crème brûlée'>",    // SPECIFIC only
+  "aliases":  ["<string>", ...],                                          // SPECIFIC only — 2-5 variant spellings the output title might use (e.g. ['creme brulee', 'crème brûlée', 'creme brulée']). Include the core dish noun(s) alone too ('brulee', 'creme').
+  "rules":    "<one sentence describing what this dish MUST contain/be>", // SPECIFIC only
+  // FAMILY when the user described a category/technique but not a
+  //   specific dish (cookies, pasta, stir-fry, custard based treat,
+  //   italian dinner, quick breakfast, something spicy).
+  "familyName":     "<short family label, e.g. 'cookies', 'custard dessert', 'italian pasta'>",  // FAMILY only
+  "familyExamples": ["<dish>", ...],  // FAMILY only — 4-8 concrete dishes that fit
+  // FREEFORM for anything else: vague adjectives only ('something good',
+  //   'delicious'), unrecognizable text, foreign words you can't map.
+}
+
+Examples:
+  "creme brulee"            → SPECIFIC, dishName: "crème brûlée", aliases: ["creme brulee","crème brûlée","brulee","creme bruelee"]
+  "brown butter m&m cookies"→ SPECIFIC, dishName: "brown butter M&M cookies", aliases: ["brown butter m&m cookies","brown butter mm cookies","brown butter cookies","m&m cookies"]
+  "cookies"                 → FAMILY,   familyName: "cookies", familyExamples: ["chocolate chip cookies","snickerdoodles","oatmeal raisin cookies","peanut butter cookies","shortbread","macarons","gingersnaps"]
+  "custard based treat"     → FAMILY,   familyName: "custard dessert", familyExamples: ["crème brûlée","panna cotta","flan","pot de crème","crème caramel","bread pudding"]
+  "italian pasta"           → FAMILY,   familyName: "italian pasta", familyExamples: ["cacio e pepe","carbonara","bolognese","cacciatore","lasagna","puttanesca"]
+  "something good"          → FREEFORM
+
+Return the JSON object and nothing else.`;
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        temperature: 0,   // classification wants determinism
+        messages: [
+          { role: "user", content: [{ type: "text", text: classifierPrompt }] },
+          { role: "assistant", content: [{ type: "text", text: "{" }] },
+        ],
+      }),
+    });
+    if (!resp.ok) return { tier: "FREEFORM", rawPrompt: trimmed };
+    const data = await resp.json();
+    const raw = "{" + (data?.content?.[0]?.text ?? "");
+    const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const first = cleaned.indexOf("{");
+      const last  = cleaned.lastIndexOf("}");
+      if (first < 0 || last <= first) return { tier: "FREEFORM", rawPrompt: trimmed };
+      parsed = JSON.parse(cleaned.slice(first, last + 1));
+    }
+    const tier = parsed.tier === "SPECIFIC" || parsed.tier === "FAMILY" || parsed.tier === "FREEFORM"
+      ? parsed.tier as DishContract["tier"]
+      : "FREEFORM";
+    const out: DishContract = { tier, rawPrompt: trimmed };
+    if (tier === "SPECIFIC") {
+      out.dishName = typeof parsed.dishName === "string" ? parsed.dishName : trimmed;
+      out.aliases = Array.isArray(parsed.aliases)
+        ? parsed.aliases.filter((a): a is string => typeof a === "string" && a.trim().length > 0).slice(0, 8)
+        : [trimmed];
+      // Always include the raw prompt as a low-case alias so misspellings
+      // the classifier didn't echo still get post-checked.
+      if (!out.aliases.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
+        out.aliases.push(trimmed);
+      }
+      out.rules = typeof parsed.rules === "string" ? parsed.rules.slice(0, 300) : "";
+    } else if (tier === "FAMILY") {
+      out.familyName = typeof parsed.familyName === "string" ? parsed.familyName : trimmed;
+      out.familyExamples = Array.isArray(parsed.familyExamples)
+        ? parsed.familyExamples.filter((a): a is string => typeof a === "string" && a.trim().length > 0).slice(0, 10)
+        : [];
+    }
+    return out;
+  } catch {
+    return { tier: "FREEFORM", rawPrompt: trimmed };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
@@ -963,7 +1102,7 @@ Deno.serve(async (req) => {
   }
 
   let body: {
-    mode?: "sketch" | "final";
+    mode?: "sketch" | "final" | "classify";
     pantry?: PantryItem[];
     prefs?: Prefs;
     avoidTitles?: string[];
@@ -980,22 +1119,42 @@ Deno.serve(async (req) => {
 
   // Default mode = "final" so existing callers (and the legacy
   // single-pass flow) keep working unchanged. Sketch mode is opt-in
-  // from the new tweak-loop UI.
-  const mode: "sketch" | "final" = body.mode === "sketch" ? "sketch" : "final";
+  // from the new tweak-loop UI. Classify mode is a cheap pre-step
+  // that turns a user's typed mealPrompt into a dish contract the
+  // sketch + final prompts can enforce against.
+  const mode: "sketch" | "final" | "classify" =
+    body.mode === "sketch" ? "sketch"
+    : body.mode === "classify" ? "classify"
+    : "final";
   const pantry = Array.isArray(body.pantry) ? body.pantry : [];
   const prefs = body.prefs || {};
   const context = body.context || null;
   const lockedIngredients = Array.isArray(body.lockedIngredients)
     ? body.lockedIngredients.filter((x): x is LockedIngredient => !!x && typeof x === "object")
     : [];
-  // Truncate the avoid list so a long regen session doesn't blow out
-  // the prompt. The last five titles are plenty to steer away from
-  // whatever the user actually saw most recently.
+  // 15 recent titles — bumped from 5 because regen sessions past the
+  // first five drafts started cycling dishes back as "available again."
+  // Prompt-budget cost is negligible (one short title per line).
   const avoidTitles = Array.isArray(body.avoidTitles)
     ? body.avoidTitles
         .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-        .slice(-5)
+        .slice(-15)
     : [];
+
+  // Classify-only short-circuit. The client calls this once per
+  // AIRecipe session (or whenever mealPrompt changes) and caches the
+  // result across sketch + final.
+  if (mode === "classify") {
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: "server is missing ANTHROPIC_API_KEY" }),
+        { status: 500, headers: JSON_HEADERS },
+      );
+    }
+    const contract = await classifyDishPrompt(apiKey, prefs.mealPrompt || prefs.notes || "");
+    return new Response(JSON.stringify({ contract }), { headers: JSON_HEADERS });
+  }
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {

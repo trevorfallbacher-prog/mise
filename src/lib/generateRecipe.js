@@ -37,6 +37,35 @@ import { supabase } from "./supabase";
  * @returns {Promise<{ recipe?: object, sketch?: object }>}
  *          — `recipe` when mode = "final", `sketch` when mode = "sketch"
  */
+/**
+ * Classify a user's mealPrompt into a dish contract. Called once per
+ * AIRecipe session (and re-called when mealPrompt changes) so sketch
+ * and final both enforce against the same contract. Caching is the
+ * caller's responsibility — the edge function does a ~300ms Haiku
+ * call and doesn't cache server-side.
+ *
+ * @param {string} mealPrompt — the user's typed ask (may be "")
+ * @returns {Promise<{
+ *   tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM",
+ *   dishName?: string, aliases?: string[], rules?: string,
+ *   familyName?: string, familyExamples?: string[], rawPrompt?: string,
+ * }>}
+ */
+export async function classifyDishPrompt(mealPrompt) {
+  const { data, error } = await supabase.functions.invoke("generate-recipe", {
+    body: {
+      mode: "classify",
+      prefs: { mealPrompt: typeof mealPrompt === "string" ? mealPrompt : "" },
+    },
+  });
+  if (error || !data?.contract) {
+    // Classifier failure is non-fatal — fall through to FREEFORM so
+    // the draft still runs (just without deterministic post-check).
+    return { tier: mealPrompt?.trim() ? "FREEFORM" : "OPEN", rawPrompt: mealPrompt || "" };
+  }
+  return data.contract;
+}
+
 export async function generateRecipe({
   mode = "final",
   pantry = [],
