@@ -72,6 +72,8 @@ export default function NutritionOverrideSheet({
   onSave,
   initialValues = null,
   initialPer = null,
+  initialIngredientsText = null,
+  initialAllergens = null,
   provenance = null,
   packageInfo = null,
   photoPreviewUrl = null,
@@ -117,6 +119,21 @@ export default function NutritionOverrideSheet({
   const [calciumMg, setCalciumMg]         = useState(seed?.calcium_mg ?? "");
   const [ironMg, setIronMg]               = useState(seed?.iron_mg ?? "");
   const [potassiumMg, setPotassiumMg]     = useState(seed?.potassium_mg ?? "");
+
+  // Ingredients panel + allergens — sibling metadata on the same
+  // per-jar nutrition jsonb, and shared columns on brand_nutrition.
+  // Seed from: explicit initialIngredientsText (scan path) >
+  //             existing override's ingredients_text >
+  //             empty string.
+  const [ingredientsText, setIngredientsText] = useState(
+    initialIngredientsText ?? seed?.ingredients_text ?? "",
+  );
+  const [allergens, setAllergens] = useState(
+    Array.isArray(initialAllergens) && initialAllergens.length
+      ? initialAllergens
+      : (Array.isArray(seed?.allergens) ? seed.allergens : []),
+  );
+  const [ingredientsEditing, setIngredientsEditing] = useState(false);
 
   // Collapse "MORE NUTRIENTS" unless any extended field already has
   // a value (scan path or prior detailed entry).
@@ -219,6 +236,14 @@ export default function NutritionOverrideSheet({
       const n = toNum(v);
       if (n !== undefined) block[k] = n;
     }
+    // Ingredients panel metadata — rides on the same jsonb so a
+    // single write populates everything. Trimmed to collapse
+    // accidental paste-noise; empty string = not-set.
+    const trimmedIngredients = (ingredientsText || "").trim();
+    if (trimmedIngredients) block.ingredients_text = trimmedIngredients;
+    if (Array.isArray(allergens) && allergens.length) {
+      block.allergens = allergens.map(a => String(a).trim().toLowerCase()).filter(Boolean);
+    }
     return block;
   };
 
@@ -233,11 +258,13 @@ export default function NutritionOverrideSheet({
     setSaving(true);
     try {
       await onSave?.({
-        nutrition:   block,
-        packageInfo: applyPackageInfo ? packageInfo : null,
-        provenance:  isScan ? "label_scan" : null,
-        dirtyCount:  countDirty(),
-        scanId:      scanId || null,
+        nutrition:       block,
+        packageInfo:     applyPackageInfo ? packageInfo : null,
+        ingredientsText: (ingredientsText || "").trim() || null,
+        allergens:       Array.isArray(allergens) && allergens.length ? allergens : null,
+        provenance:      isScan ? "label_scan" : null,
+        dirtyCount:      countDirty(),
+        scanId:          scanId || null,
       });
       onClose?.();
     } catch (e) {
@@ -464,6 +491,143 @@ export default function NutritionOverrideSheet({
               <Field label="POTASSIUM (mg)"  value={potassiumMg} onChange={setPotassiumMg} highlighted={isScan && potassiumMg !== ""} />
             </div>
           </div>
+        )}
+
+        {/* INGREDIENTS + ALLERGENS — shown when scanner extracted
+            them OR user had prior detailed entry. Allergens render
+            as pill chips; ingredients text is a readonly preview
+            that taps to edit. */}
+        {(ingredientsText || (allergens && allergens.length)) && (
+          <div style={{
+            marginBottom: 14, padding: "12px 14px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e",
+            borderRadius: 12,
+            animation: "nutritionScanDrop 360ms cubic-bezier(0.16, 1, 0.3, 1) 220ms backwards",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+            }}>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                color: "#c8c4bd", letterSpacing: "0.12em", fontWeight: 700,
+              }}>
+                📋 INGREDIENTS {isScan ? "· READ FROM LABEL" : ""}
+              </span>
+            </div>
+
+            {allergens && allergens.length > 0 && (
+              <div style={{
+                display: "flex", gap: 6, flexWrap: "wrap",
+                marginBottom: ingredientsText ? 10 : 0,
+              }}>
+                <span style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                  color: "#f59e0b", letterSpacing: "0.1em", fontWeight: 700,
+                  alignSelf: "center",
+                }}>
+                  CONTAINS:
+                </span>
+                {allergens.map(a => (
+                  <span key={a} style={{
+                    fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+                    color: "#f59e0b",
+                    background: "#1e1608",
+                    border: "1px solid #3a2a10",
+                    borderRadius: 4,
+                    padding: "3px 7px",
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                  }}>
+                    {a}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {ingredientsEditing ? (
+              <>
+                <textarea
+                  value={ingredientsText}
+                  onChange={e => setIngredientsText(e.target.value)}
+                  rows={5}
+                  placeholder="Water, sugar, salt, …"
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    background: "#141414", border: `1px solid ${SCAN_GOLD}55`,
+                    borderRadius: 10,
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                    color: "#f0ece4", lineHeight: 1.5,
+                    outline: "none", boxSizing: "border-box",
+                    resize: "vertical",
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setIngredientsEditing(false)}
+                  style={{
+                    marginTop: 8, padding: "6px 12px",
+                    background: "transparent", border: "1px solid #2a2a2a",
+                    color: "#c8c4bd", borderRadius: 8,
+                    fontFamily: "'DM Mono',monospace", fontSize: 9,
+                    letterSpacing: "0.1em", cursor: "pointer",
+                  }}
+                >
+                  DONE
+                </button>
+              </>
+            ) : ingredientsText ? (
+              <div
+                onClick={() => setIngredientsEditing(true)}
+                style={{
+                  padding: "8px 10px",
+                  background: "#0a0a0a", border: "1px solid #1e1e1e",
+                  borderRadius: 8,
+                  fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+                  color: "#a8a39b", lineHeight: 1.55,
+                  cursor: "pointer",
+                  maxHeight: 140, overflowY: "auto",
+                  position: "relative",
+                }}
+              >
+                {ingredientsText}
+                <span style={{
+                  position: "absolute", top: 6, right: 8,
+                  fontSize: 10, color: "#555",
+                }}>✎</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIngredientsEditing(true)}
+                style={{
+                  width: "100%", padding: "8px 10px",
+                  background: "transparent", border: "1px dashed #2a2a2a",
+                  color: "#666", borderRadius: 8,
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  letterSpacing: "0.08em", cursor: "pointer",
+                }}
+              >
+                + ADD INGREDIENT LIST
+              </button>
+            )}
+          </div>
+        )}
+        {!ingredientsText && (!allergens || allergens.length === 0) && !isScan && (
+          <button
+            type="button"
+            onClick={() => setIngredientsEditing(true)}
+            style={{
+              width: "100%", padding: "10px 12px", marginBottom: 14,
+              background: "transparent", border: "1px dashed #2a2a2a",
+              color: "#666", borderRadius: 10,
+              fontFamily: "'DM Mono',monospace", fontSize: 10,
+              letterSpacing: "0.1em", cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            📋 + ADD INGREDIENT LIST
+          </button>
         )}
 
         {error && (

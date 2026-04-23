@@ -192,6 +192,17 @@ export default function NutritionLabelScanner({
         }
       : null;
 
+    // Ingredients + allergens ride alongside the nutrition block.
+    // Kept separate from `block` so the override jsonb carries them
+    // as sibling keys cleanly (the parent wires both into the pantry
+    // override and into the shared brand_nutrition row).
+    const ingredientsText = typeof data.ingredients_text === "string" && data.ingredients_text.trim()
+      ? data.ingredients_text.trim()
+      : null;
+    const allergens = Array.isArray(data.allergen_contains) && data.allergen_contains.length
+      ? data.allergen_contains
+      : null;
+
     const scanId = (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID()
       : `scan_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
@@ -199,6 +210,8 @@ export default function NutritionLabelScanner({
     onComplete?.({
       nutritionBlock:  block,
       packageInfo,
+      ingredientsText,
+      allergens,
       scanId,
       photoPreviewUrl: previewUrl,
       confidence:      data.confidence || "medium",

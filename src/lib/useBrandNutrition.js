@@ -30,17 +30,25 @@ const BrandNutritionContext = createContext({
 
 function fromDb(row) {
   return {
-    canonicalId:   row.canonical_id,
-    brand:         row.brand,          // normalized lowercase
-    displayBrand:  row.display_brand,  // original casing for UI
-    nutrition:     row.nutrition || {},
-    barcode:       row.barcode || null,
-    source:        row.source,
-    sourceId:      row.source_id || null,
-    confidence:    row.confidence ?? 80,
-    createdBy:     row.created_by || null,
-    createdAt:     row.created_at,
-    updatedAt:     row.updated_at,
+    canonicalId:    row.canonical_id,
+    brand:          row.brand,          // normalized lowercase
+    displayBrand:   row.display_brand,  // original casing for UI
+    nutrition:      row.nutrition || {},
+    // Migration 0132 — ingredients panel + allergen summary, shared
+    // across every household via the brand_nutrition row. Nullable;
+    // the scan path populates them when the photo captures those
+    // sub-panels. OFF ingest can populate ingredients_text
+    // opportunistically from the `ingredients_text` field OFF
+    // returns per product.
+    ingredientsText: row.ingredients_text || null,
+    allergens:       Array.isArray(row.allergens) ? row.allergens : null,
+    barcode:        row.barcode || null,
+    source:         row.source,
+    sourceId:       row.source_id || null,
+    confidence:     row.confidence ?? 80,
+    createdBy:      row.created_by || null,
+    createdAt:      row.created_at,
+    updatedAt:      row.updated_at,
   };
 }
 
@@ -139,6 +147,11 @@ export function BrandNutritionProvider({ children }) {
   const upsert = useCallback(async ({
     canonicalId, brand, nutrition,
     barcode = null, source = "user", sourceId = null, confidence = 80,
+    // Migration 0132 additions — optional; passed through from the
+    // label scanner. OFF lookup / manual entry pass null and the
+    // existing row's value (if any) is preserved.
+    ingredientsText = null,
+    allergens = null,
   }) => {
     if (!canonicalId || !brand || !nutrition) {
       throw new Error("brand_nutrition upsert needs canonicalId + brand + nutrition");
@@ -171,6 +184,12 @@ export function BrandNutritionProvider({ children }) {
       source,
       source_id:     sourceId,
       confidence,
+      // Only include the ingredient fields when the caller supplied
+      // them — merging `null` into an upsert would overwrite an
+      // existing row's data. jsonb-style "leave unchanged unless
+      // explicitly provided" semantics via conditional spread.
+      ...(ingredientsText != null ? { ingredients_text: ingredientsText } : {}),
+      ...(allergens != null ? { allergens } : {}),
       ...(user?.id ? { created_by: user.id } : {}),
     };
     const { data, error } = await supabase

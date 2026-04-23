@@ -37,6 +37,8 @@
 //       protein_g,
 //       vitamin_d_mcg, calcium_mg, iron_mg, potassium_mg
 //     },  // each value: number | null
+//     ingredients_text: string | null,      // raw "Ingredients:" panel
+//     allergen_contains: string[] | null,   // parsed "Contains:" line
 //     confidence: "high" | "medium" | "low",
 //     notes: string | null
 //   }
@@ -103,6 +105,8 @@ THE OUTPUT SHAPE (return exactly this)
     "iron_mg":           <number or null>,
     "potassium_mg":      <number or null>
   },
+  "ingredients_text":  <string or null>,
+  "allergen_contains": <array of lowercase strings, or null>,
   "confidence": "high" | "medium" | "low",
   "notes": "<one-line caveat or null>"
 }
@@ -172,6 +176,21 @@ FRACTIONS:
   - "2/3 cup" → 0.67. "1/4 cup" → 0.25. "1½ tbsp" → 1.5.
   - Unicode fractions (¼ ½ ¾ ⅓ ⅔ ⅛ ⅜ ⅝ ⅞) count the same way.
 
+INGREDIENTS PANEL (often printed next to or below the Nutrition Facts):
+  - ingredients_text: the full ingredient declaration, VERBATIM as
+    printed. Preserve legal disclosures ("with 2% or less of…",
+    "processed in a facility that also handles…") as-is. Collapse
+    newlines to single spaces but keep the text otherwise untouched.
+    Not visible in the photo → null. Do NOT invent — only include
+    what you can read on the package.
+  - allergen_contains: the FDA-required "Contains: …" bold summary
+    line, parsed into a lowercase array of the 9 major allergens.
+    Example: "Contains: Milk, Soy, Wheat." → ["milk","soy","wheat"].
+    Use singular lowercase (milk not Milks, tree nuts → "tree nuts",
+    peanuts stays "peanuts"). If the label has no "Contains:" line
+    → null (don't infer from ingredients_text; US labels call it
+    out explicitly).
+
 NON-NUTRITION OR UNREADABLE IMAGE:
   Return { "ok": false, "reason": "<short description>" } with NO
   other fields. Examples of reasons:
@@ -198,6 +217,9 @@ Example 1 — Standard US label (cereal):
    Added Sugars) | Protein 5g | Vitamin D 2mcg | Calcium 100mg | Iron
    8mg | Potassium 170mg."
   Net Wt 14 oz (397g) on the front panel.
+  Ingredients: "WHOLE GRAIN OATS, SUGAR, CORN STARCH, HONEY, BROWN
+  SUGAR SYRUP, SALT, TRIPOTASSIUM PHOSPHATE. CONTAINS WHEAT INGREDIENTS."
+  Contains: Wheat.
   →
   {
     "ok": true, "per": "serving", "serving_g": 40, "servings_per_container": 10,
@@ -209,6 +231,8 @@ Example 1 — Standard US label (cereal):
       "protein_g": 5,
       "vitamin_d_mcg": 2, "calcium_mg": 100, "iron_mg": 8, "potassium_mg": 170
     },
+    "ingredients_text": "WHOLE GRAIN OATS, SUGAR, CORN STARCH, HONEY, BROWN SUGAR SYRUP, SALT, TRIPOTASSIUM PHOSPHATE. CONTAINS WHEAT INGREDIENTS.",
+    "allergen_contains": ["wheat"],
     "confidence": "high", "notes": null
   }
 
@@ -439,6 +463,46 @@ Deno.serve(async (req) => {
       : "medium";
   const notes = typeof p.notes === "string" && p.notes.trim() ? p.notes.trim() : null;
 
+  // Ingredients panel — free text, trimmed + collapsed whitespace.
+  // Cap length defensively (legal disclosures on specialty / multi-
+  // component packages can run 2-3 KB; we accept up to 4 KB to cover
+  // the worst real-world case and reject anything beyond as likely
+  // model-hallucinated).
+  let ingredients_text: string | null = null;
+  if (typeof p.ingredients_text === "string") {
+    const cleaned = p.ingredients_text.replace(/\s+/g, " ").trim();
+    if (cleaned.length > 0 && cleaned.length <= 4000) ingredients_text = cleaned;
+  }
+
+  // Allergens — normalize to a deduped lowercase array of the 9 FDA
+  // major allergens. Reject free-text that isn't recognizably an
+  // allergen token.
+  const ALLERGEN_SET = new Set([
+    "milk", "eggs", "egg", "fish", "shellfish", "crustacean", "crustacean shellfish",
+    "tree nuts", "treenuts", "peanuts", "peanut", "wheat", "soy", "soybeans", "sesame",
+    "gluten",
+  ]);
+  const ALLERGEN_CANONICAL: Record<string, string> = {
+    "egg": "eggs",
+    "peanut": "peanuts",
+    "soybeans": "soy",
+    "treenuts": "tree nuts",
+    "crustacean": "shellfish",
+    "crustacean shellfish": "shellfish",
+  };
+  let allergens: string[] | null = null;
+  if (Array.isArray(p.allergen_contains)) {
+    const out = new Set<string>();
+    for (const raw of p.allergen_contains) {
+      if (typeof raw !== "string") continue;
+      const t = raw.trim().toLowerCase().replace(/[^a-z ]/g, "");
+      if (!t) continue;
+      if (!ALLERGEN_SET.has(t)) continue;
+      out.add(ALLERGEN_CANONICAL[t] || t);
+    }
+    if (out.size > 0) allergens = Array.from(out);
+  }
+
   const payload = {
     ok: true,
     per,
@@ -446,6 +510,8 @@ Deno.serve(async (req) => {
     servings_per_container,
     net_weight,
     nutrition,
+    ingredients_text,
+    allergen_contains: allergens,
     confidence,
     notes,
   };

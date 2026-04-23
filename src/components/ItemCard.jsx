@@ -33,6 +33,8 @@ import ReheatMode from "./ReheatMode";
 import EatIntentSheet from "./EatIntentSheet";
 import NutritionOverrideSheet from "./NutritionOverrideSheet";
 import NutritionLabelScanner from "./NutritionLabelScanner";
+import ScanRewardSheet from "./ScanRewardSheet";
+import VerifiedMark from "./VerifiedMark";
 import { clearPopularPackagesCache } from "../lib/usePopularPackages";
 import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { findRecipe } from "../data/recipes";
@@ -45,7 +47,7 @@ import { findFoodType, inferFoodTypeFromName, canonicalIdForType, typeIdForCanon
 import { useUserTypes } from "../lib/useUserTypes";
 import { LABELS, LABEL_KICKER } from "../lib/schemaLabels";
 import AddItemOutcome from "./AddItemOutcome";
-import { pantryItemNutrition, formatMacros, sourceBadge, effectiveCountWeightG } from "../lib/nutrition";
+import { pantryItemNutrition, formatMacros, sourceBadge, effectiveCountWeightG, resolveIngredients } from "../lib/nutrition";
 import { canonicalImageUrlFor } from "../lib/canonicalIcons";
 import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
 
@@ -1335,6 +1337,7 @@ export default function ItemCard({ item: itemProp, pantry = [], userId, isAdmin 
             item={item}
             getInfo={getDbInfo}
             getBrandNutrition={getBrandNutrition}
+            brandNutritionRows={brandNutritionRows}
             upsertBrandNutrition={upsertBrandNutrition}
             onUpdate={onUpdate}
           />
@@ -3816,7 +3819,7 @@ const brandChooserBlurbStyle = {
 // fill the gap lives behind "+ ADD BRAND" in the identity stack, not
 // as a standalone CTA here (keeps the nutrition band uncluttered and
 // one discoverable entry point for data enrichment).
-function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition, onUpdate }) {
+function NutritionChip({ item, getInfo, getBrandNutrition, brandNutritionRows, upsertBrandNutrition, onUpdate }) {
   const [expanded, setExpanded] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   // Scanner flow state. scanPayload holds what NutritionLabelScanner
@@ -3825,6 +3828,10 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
   // review sheet closes.
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scanPayload, setScanPayload] = useState(null);
+  // Post-save celebration. Populated when a scan-sourced save lands;
+  // triggers the ScanRewardSheet overlay that congratulates the user
+  // on turning a label photo into shared, verified data.
+  const [rewardState, setRewardState] = useState(null);
 
   // Wrap the brand-lookup function in a Map-like shape so the resolver
   // can stay signature-agnostic (accepts any `.get(key)`-shaped thing).
@@ -3835,16 +3842,29 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
   // default. Without these axes the chip silently showed the wrong
   // fallback, and the I-ATE-THIS sheet (which passes the full row)
   // would surface different numbers than the card above it.
+  const resolverRow = {
+    ingredientId: item?.ingredientId || item?.canonicalId || null,
+    canonicalId: item?.canonicalId || null,
+    brand: item?.brand || null,
+    nutritionOverride: item?.nutritionOverride || null,
+    state: item?.state || null,
+    cut: item?.cut || null,
+  };
   const { nutrition, source, brand } = pantryItemNutrition(
-    {
-      ingredientId: item?.ingredientId || item?.canonicalId || null,
-      canonicalId: item?.canonicalId || null,
-      brand: item?.brand || null,
-      nutritionOverride: item?.nutritionOverride || null,
-      state: item?.state || null,
-      cut: item?.cut || null,
-    },
+    resolverRow,
     { getInfo, brandNutrition: brandNutritionMap },
+  );
+  // Ingredients + allergens ride on the same resolver cascade as
+  // nutrition but through the dedicated resolveIngredients call
+  // (brand-specific; no canonical averaging). Surfaced in the
+  // expanded view below the macro grid.
+  const brandMapForIngredients = useMemo(() => ({
+    get: (k) => getBrandNutrition?.(k) || null,
+    rows: Array.isArray(brandNutritionRows) ? brandNutritionRows : undefined,
+  }), [getBrandNutrition, brandNutritionRows]);
+  const { ingredientsText, allergens, source: ingredientsSource } = resolveIngredients(
+    resolverRow,
+    { brandNutrition: brandMapForIngredients },
   );
 
   // Unified save path — handles both the scan-review payload and the
@@ -3877,17 +3897,33 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
     const {
       nutrition: block,
       packageInfo,
+      ingredientsText: payloadIngredientsText,
+      allergens: payloadAllergens,
       provenance,
       dirtyCount,
       scanId,
     } = typeof payload === "object" && payload && "nutrition" in payload
       ? payload
-      : { nutrition: payload, packageInfo: null, provenance: null, dirtyCount: 0, scanId: null };
+      : {
+          nutrition: payload, packageInfo: null,
+          ingredientsText: null, allergens: null,
+          provenance: null, dirtyCount: 0, scanId: null,
+        };
+
+    // Enrich the per-jar override jsonb with ingredients + allergens
+    // as sibling keys. Keeps a single source of truth on the row —
+    // the same blob the resolver reads for macros also carries the
+    // ingredient declaration and the "Contains:" list.
+    const enrichedBlock = { ...block };
+    if (payloadIngredientsText) enrichedBlock.ingredients_text = payloadIngredientsText;
+    if (Array.isArray(payloadAllergens) && payloadAllergens.length) {
+      enrichedBlock.allergens = payloadAllergens;
+    }
 
     // Build the pantry_items patch. Package-size fields only apply
     // when the user kept the "also fill in package size" checkbox on
     // inside NutritionOverrideSheet (parent passed packageInfo).
-    const patch = { nutritionOverride: block };
+    const patch = { nutritionOverride: enrichedBlock };
     if (packageInfo) {
       const nw = packageInfo.net_weight;
       if (nw && nw.amount && nw.unit) {
@@ -3914,20 +3950,52 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
     //     heavy corrections might be row-specific)
     const canonicalId = item?.ingredientId || item?.canonicalId || null;
     const itemBrand = item?.brand || null;
-    if (provenance === "label_scan" && canonicalId && itemBrand && dirtyCount <= 3 && upsertBrandNutrition) {
+    const willTeachBrand = provenance === "label_scan" && canonicalId && itemBrand && dirtyCount <= 3 && !!upsertBrandNutrition;
+    if (willTeachBrand) {
       upsertBrandNutrition({
         canonicalId,
-        brand:      itemBrand,
-        nutrition:  block,
-        barcode:    item?.barcodeUpc || null,
-        source:     "label_scan",
-        sourceId:   scanId || null,
-        confidence: 90,
+        brand:           itemBrand,
+        nutrition:       enrichedBlock,
+        barcode:         item?.barcodeUpc || null,
+        source:          "label_scan",
+        sourceId:        scanId || null,
+        confidence:      90,
+        ingredientsText: payloadIngredientsText || null,
+        allergens:       Array.isArray(payloadAllergens) && payloadAllergens.length ? payloadAllergens : null,
       }).catch(e => console.warn("[brand_nutrition] scan teach failed:", e));
     }
 
     if (patch.amount && canonicalId) {
       clearPopularPackagesCache(itemBrand, canonicalId);
+    }
+
+    // Reward moment — fire the celebration sheet when a scan save
+    // lands. The user just turned a dead-end label into shared data;
+    // make that feel like an achievement, not a transaction.
+    if (provenance === "label_scan") {
+      const fieldKeys = [
+        "kcal", "protein_g", "fat_g", "carb_g", "fiber_g", "sugar_g", "sodium_mg",
+        "saturated_fat_g", "trans_fat_g", "cholesterol_mg", "added_sugar_g",
+        "vitamin_d_mcg", "calcium_mg", "iron_mg", "potassium_mg",
+      ];
+      const fieldsCount = fieldKeys.reduce(
+        (n, k) => n + (typeof enrichedBlock[k] === "number" ? 1 : 0),
+        0,
+      );
+      const canonLabel = item?.name || item?.canonicalId || "this food";
+      // Capitalize the brand for display — pantry_items.brand stores
+      // lowercase-normalized form. Simple Title Case is fine for the
+      // common "kerrygold" / "great value" case.
+      const brandTitle = itemBrand
+        ? String(itemBrand).replace(/\b\w/g, c => c.toUpperCase())
+        : null;
+      const brandLabel = brandTitle ? `${brandTitle} ${canonLabel}` : canonLabel;
+      setRewardState({
+        brandLabel,
+        nutrition: enrichedBlock,
+        fieldsCount,
+        taughtShared: willTeachBrand,
+      });
     }
 
     setScanPayload(null);
@@ -4030,10 +4098,21 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
             onSave={saveOverride}
             initialValues={scanPayload?.nutritionBlock || null}
             initialPer={scanPayload?.nutritionBlock?.per || null}
+            initialIngredientsText={scanPayload?.ingredientsText || null}
+            initialAllergens={scanPayload?.allergens || null}
             provenance={scanPayload ? "label_scan" : null}
             packageInfo={scanPayload?.packageInfo || null}
             photoPreviewUrl={scanPayload?.photoPreviewUrl || null}
             scanId={scanPayload?.scanId || null}
+          />
+        )}
+        {rewardState && (
+          <ScanRewardSheet
+            brandLabel={rewardState.brandLabel}
+            nutrition={rewardState.nutrition}
+            fieldsCount={rewardState.fieldsCount}
+            taughtShared={rewardState.taughtShared}
+            onClose={() => setRewardState(null)}
           />
         )}
       </>
@@ -4041,6 +4120,7 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
   }
 
   const badge = sourceBadge(source);
+  const isVerified = source === "pantry";  // user-verified (override) tier
   const per = nutrition.per === "100g" ? "per 100g"
             : nutrition.per === "count" ? "per item"
             : nutrition.per === "serving" && nutrition.serving_g ? `per ${nutrition.serving_g}g serving`
@@ -4052,29 +4132,59 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
           onClick={() => setExpanded(x => !x)}
           style={{
             flex: 1, padding: "10px 12px",
-            background: "#141414",
-            border: "1px solid #242424",
+            // Verified tier gets the full gold-gradient treatment so
+            // the whole chip reads as "official / rewarded data" —
+            // the blue check is the proof; the gold is the aura.
+            background: isVerified
+              ? "linear-gradient(135deg, #1e1a0e 0%, #1a1508 45%, #141414 100%)"
+              : "#141414",
+            border: `1px solid ${isVerified ? "#3a2f10" : "#242424"}`,
             borderRadius: 10,
             display: "flex", alignItems: "center", gap: 10,
             cursor: "pointer", textAlign: "left",
+            boxShadow: isVerified ? "0 6px 22px -14px #f5c84288, inset 0 1px 0 #2a240f" : "none",
+            transition: "all 0.2s ease",
           }}
         >
           <span style={{ fontSize: 16 }}>🔥</span>
           <span style={{
             flex: 1,
-            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4",
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+            color: isVerified ? "#f5e8ad" : "#f0ece4",
+            fontWeight: isVerified ? 500 : 400,
           }}>
             {formatMacros(nutrition)}
           </span>
           {per && (
             <span style={{
               fontFamily: "'DM Mono',monospace", fontSize: 9,
-              color: "#777", letterSpacing: "0.08em",
+              color: isVerified ? "#a8a39b" : "#777", letterSpacing: "0.08em",
             }}>
               {per.toUpperCase()}
             </span>
           )}
-          {badge.label && (
+          {isVerified ? (
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 4,
+              padding: "3px 7px 3px 5px",
+              background: "#0f1620",
+              border: "1px solid #1f3040",
+              borderRadius: 6,
+            }}>
+              <VerifiedMark
+                size={12}
+                delay={220}
+                duration={520}
+                showLabel={false}
+              />
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+                color: "#7eb8d4", letterSpacing: "0.12em",
+              }}>
+                VERIFIED{brand ? ` · ${brand}` : ""}
+              </span>
+            </span>
+          ) : badge.label ? (
             <span style={{
               fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
               color: badge.color, background: `${badge.color}15`,
@@ -4085,8 +4195,8 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
               {badge.label}
               {brand ? ` · ${brand}` : ""}
             </span>
-          )}
-          <span style={{ color: "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
+          ) : null}
+          <span style={{ color: isVerified ? "#a89873" : "#555", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>
             {expanded ? "▾" : "▸"}
           </span>
         </button>
@@ -4152,6 +4262,81 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
           {typeof nutrition.potassium_mg    === "number" && <MacroCell label="POTASSIUM"     value={nutrition.potassium_mg}    unit="mg" />}
         </div>
       )}
+      {/* INGREDIENTS panel — brand-resolved. Reads from the same
+          cascade as nutrition but only exposes tier 1 (per-jar
+          override) + tier 2 (brand_nutrition); averaging across
+          canonicals makes no sense for ingredient lists. Collapsed
+          by default, tap to reveal the full declaration. */}
+      {expanded && (allergens?.length || ingredientsText) && (
+        <div style={{
+          marginTop: 6, padding: "10px 12px",
+          background: "#0f0f0f", border: "1px solid #1e1e1e",
+          borderRadius: 10,
+        }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6, marginBottom: 8,
+          }}>
+            <span style={{ fontSize: 11 }}>📋</span>
+            <span style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 8,
+              color: "#888", letterSpacing: "0.12em", fontWeight: 700,
+            }}>
+              INGREDIENTS
+            </span>
+            {ingredientsSource === "brand" && (
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 7,
+                color: "#c7a8d4", background: "#16101e",
+                border: "1px solid #2f2440",
+                padding: "1px 5px", borderRadius: 4,
+                letterSpacing: "0.1em", fontWeight: 700,
+              }}>
+                BRAND
+              </span>
+            )}
+            {ingredientsSource === "pantry" && (
+              <VerifiedMark size={11} delay={150} duration={420} showLabel={false} />
+            )}
+          </div>
+          {allergens && allergens.length > 0 && (
+            <div style={{
+              display: "flex", gap: 5, flexWrap: "wrap", marginBottom: ingredientsText ? 8 : 0,
+              alignItems: "center",
+            }}>
+              <span style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 8,
+                color: "#f59e0b", letterSpacing: "0.1em", fontWeight: 700,
+              }}>
+                CONTAINS:
+              </span>
+              {allergens.map(a => (
+                <span key={a} style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 8, fontWeight: 700,
+                  color: "#f59e0b",
+                  background: "#1e1608",
+                  border: "1px solid #3a2a10",
+                  borderRadius: 4,
+                  padding: "2px 6px",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                }}>
+                  {a}
+                </span>
+              ))}
+            </div>
+          )}
+          {ingredientsText && (
+            <div style={{
+              fontFamily: "'DM Sans',sans-serif", fontSize: 11,
+              color: "#a8a39b", lineHeight: 1.55,
+              maxHeight: 120, overflowY: "auto",
+              padding: "4px 2px",
+            }}>
+              {ingredientsText}
+            </div>
+          )}
+        </div>
+      )}
       {scannerOpen && (
         <NutritionLabelScanner
           item={item}
@@ -4167,10 +4352,21 @@ function NutritionChip({ item, getInfo, getBrandNutrition, upsertBrandNutrition,
           onSave={saveOverride}
           initialValues={scanPayload?.nutritionBlock || null}
           initialPer={scanPayload?.nutritionBlock?.per || null}
+          initialIngredientsText={scanPayload?.ingredientsText || null}
+          initialAllergens={scanPayload?.allergens || null}
           provenance={scanPayload ? "label_scan" : null}
           packageInfo={scanPayload?.packageInfo || null}
           photoPreviewUrl={scanPayload?.photoPreviewUrl || null}
           scanId={scanPayload?.scanId || null}
+        />
+      )}
+      {rewardState && (
+        <ScanRewardSheet
+          brandLabel={rewardState.brandLabel}
+          nutrition={rewardState.nutrition}
+          fieldsCount={rewardState.fieldsCount}
+          taughtShared={rewardState.taughtShared}
+          onClose={() => setRewardState(null)}
         />
       )}
     </div>

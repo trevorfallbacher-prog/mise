@@ -642,11 +642,85 @@ export function formatMacros(macros, { verbose = false } = {}) {
   return `${kcal} kcal · ${p}p · ${c}c · ${f}f`;
 }
 
+// Ingredients + allergens resolver — same two-tier cascade as the
+// nutrition resolver, minus the canonical tiers (ingredient lists
+// are brand-specific — "Kerrygold Butter" and "Land O'Lakes Butter"
+// have different ingredient statements, so averaging across canonicals
+// would be wrong).
+//
+// Reads per-jar first (pantry_items.nutrition_override jsonb carries
+// `ingredients_text` and `allergens` as sibling keys to the macros
+// block), then brand_nutrition's first-class columns.
+//
+// Returns { ingredientsText, allergens, source }:
+//   - ingredientsText: string | null  — raw declaration, as printed
+//   - allergens: string[] | null      — parsed "Contains:" line
+//   - source: "pantry" | "brand" | null
+export function resolveIngredients(pantryRow, { brandNutrition } = {}) {
+  if (!pantryRow) return { ingredientsText: null, allergens: null, source: null };
+  // Tier 1 — per-jar override. Fields ride on the same jsonb block
+  // as macros; sibling keys next to kcal / protein_g / etc.
+  const override = pantryRow.nutritionOverride;
+  if (override && typeof override === "object") {
+    const text = typeof override.ingredients_text === "string" && override.ingredients_text.trim()
+      ? override.ingredients_text.trim() : null;
+    const all = Array.isArray(override.allergens) && override.allergens.length
+      ? override.allergens : null;
+    if (text || all) return { ingredientsText: text, allergens: all, source: "pantry" };
+  }
+  // Tier 2 — brand_nutrition shared row. Same prefix-matching rules
+  // as resolveNutrition (exact key first, word-boundary prefix fallback).
+  const canonId = pantryRow.ingredientId || pantryRow.canonicalId || null;
+  if (canonId && pantryRow.brand && brandNutrition) {
+    const brandKey = String(pantryRow.brand).trim().toLowerCase();
+    let hit = brandNutrition.get?.(`${canonId}::${brandKey}`);
+    if (!(hit?.ingredientsText || hit?.allergens) && Array.isArray(brandNutrition.rows)) {
+      const candidates = brandNutrition.rows.filter(
+        r => r?.canonicalId === canonId
+          && (r?.ingredientsText || r?.allergens)
+          && isBrandPrefixMatchForIngredients(brandKey, r.brand),
+      );
+      if (candidates.length) {
+        candidates.sort((a, b) => (a.brand || "").length - (b.brand || "").length);
+        hit = candidates[0];
+      }
+    }
+    if (hit && (hit.ingredientsText || hit.allergens)) {
+      return {
+        ingredientsText: hit.ingredientsText || null,
+        allergens:       hit.allergens || null,
+        source:          "brand",
+      };
+    }
+  }
+  return { ingredientsText: null, allergens: null, source: null };
+}
+
+// Same shape as isBrandPrefixMatch above — inlined here to avoid
+// exporting it twice. Kept local to the ingredients resolver so
+// future reshuffles don't accidentally break the nutrition resolver's
+// matching rules.
+function isBrandPrefixMatchForIngredients(a, b) {
+  if (!a || !b) return false;
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (!longer.startsWith(shorter)) return false;
+  if (longer.length === shorter.length) return true;
+  return /\s/.test(longer[shorter.length]);
+}
+
 // Source badge label + color. Keeps the hierarchy legible on the UI
 // without the user having to guess where a number came from.
+//
+// "pantry" tier was previously labeled "YOU" — accurate but reads as
+// "this is just your local data." Relabeled to "VERIFIED" with the
+// sky-blue accent so the user feels they've made the data OFFICIAL
+// (the scan-then-save flow IS a verification pass — a human
+// confirmed every field against the physical label). Callers render
+// an animated checkmark alongside the label via <VerifiedMark>. The
+// color + icon hint tells the chip to render the check.
 export function sourceBadge(source) {
   switch (source) {
-    case "pantry":     return { label: "YOU",      color: "#7ec87e" };
+    case "pantry":     return { label: "VERIFIED", color: "#7eb8d4", icon: "check" };
     case "brand":      return { label: "BRAND",    color: "#c7a8d4" };
     case "canonical":  return { label: "CANONICAL", color: "#b8a878" };
     case "cut":        return { label: "CUT",      color: "#a8553a" };
