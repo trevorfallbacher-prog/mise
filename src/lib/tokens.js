@@ -189,16 +189,24 @@ export const SET_CHIP = (tone) => ({
   fontFamily: FONT.mono, fontSize: 9,
   color: tone.fg, background: tone.bg,
   border: `1px solid ${tone.border}`,
-  borderRadius: RADIUS.sm, padding: "2px 6px",
+  borderRadius: RADIUS.sm, padding: "3px 7px",
+  minHeight: 22,
   letterSpacing: "0.08em", cursor: "pointer",
   transition: `background ${MOTION.fast}, border-color ${MOTION.fast}, transform ${MOTION.fast}`,
 });
+// UNSET_CHIP — dashed affordance for unset identity axes. Kept visually
+// quieter than SET_CHIP so a scan-draft row's filled chips read first
+// and the gaps stay clearly secondary — but bumped from #666 on
+// #2a2a2a (ratio ~3:1, failing WCAG and awful on OLED) to dim on a
+// warmer dashed border so kids and tired adults can actually see
+// where the tap-targets are.
 export const UNSET_CHIP = {
   display: "inline-flex", alignItems: "center",
   fontFamily: FONT.mono, fontSize: 9,
-  color: COLOR.muted, background: "transparent",
-  border: `1px dashed ${COLOR.border}`,
-  borderRadius: RADIUS.sm, padding: "1px 6px",
+  color: COLOR.dim, background: "transparent",
+  border: `1px dashed #3a3a3a`,
+  borderRadius: RADIUS.sm, padding: "2px 7px",
+  minHeight: 22,
   letterSpacing: "0.08em", cursor: "pointer",
   transition: `border-color ${MOTION.fast}, color ${MOTION.fast}, background ${MOTION.fast}`,
 };

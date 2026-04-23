@@ -15,6 +15,39 @@
       input[type=number]::-webkit-outer-spin-button,
       input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
       input[type=number] { -moz-appearance: textfield; }
+
+      /* Tap feedback — every button in the app gets a subtle press-down
+         scale so taps feel tactile instead of dead-flat. Kept tiny (4%
+         scale) and brief (80ms) so it reads as feedback, not animation
+         theater. Also applied to role=button for the places we render
+         tappable divs. Honors prefers-reduced-motion so users with
+         vestibular sensitivity get instant state changes. */
+      button,
+      [role="button"] {
+        transition: transform 0.08s ease, opacity 0.12s ease;
+        -webkit-tap-highlight-color: transparent;
+      }
+      button:active:not(:disabled),
+      [role="button"]:active:not([aria-disabled="true"]) {
+        transform: scale(0.96);
+      }
+
+      /* Focus ring — shows only on keyboard focus so touch users don't
+         see a lingering outline after every tap. Modern browsers only. */
+      button:focus-visible,
+      [role="button"]:focus-visible {
+        outline: 2px solid #f5c842;
+        outline-offset: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+          scroll-behavior: auto !important;
+        }
+      }
     </style>
   </head>
   <body>
