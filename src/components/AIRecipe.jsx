@@ -2134,20 +2134,20 @@ export default function AIRecipe({
                         >
                           ⇌ SWAP
                         </button>
-                        {/* BUY REAL — only surfaces on substitution rows
-                            (isSub). Drops the sub and promotes the classical
-                            ideal to the shopping list, so users aren't trapped
-                            into cooking with ingredients they don't want.
-                            Example: Ritz auto-paired as "flour"; user taps
-                            BUY REAL → Ritz removed, "all-purpose flour" lands
-                            on the shopping list. */}
+                        {/* USE ORIGINAL — only surfaces on substitution
+                            rows (isSub). Drops the sub and carries the
+                            classical ideal forward as a shopping item, so
+                            users aren't trapped cooking with ingredients
+                            they don't want. Example: Ritz auto-paired as
+                            "flour"; user taps USE ORIGINAL → Ritz removed,
+                            "all-purpose flour" lands on the shopping list. */}
                         {isSub && idealRef && (
                           <button
                             onClick={() => rejectSubForShopping(pantryIdx, entry.idealIdx)}
                             style={buyRealBtn}
-                            title={`Drop this sub and add ${idealRef.name} to your shopping list`}
+                            title={`Drop this sub and use ${idealRef.name} instead`}
                           >
-                            🛒 BUY REAL
+                            USE ORIGINAL
                           </button>
                         )}
                         <button onClick={() => toggleRemove(pantryIdx)} style={removeBtn}>×</button>
