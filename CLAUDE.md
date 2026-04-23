@@ -67,6 +67,102 @@ the storage.
 Never swap these. Never introduce a new axis without picking a color
 that doesn't collide with the above.
 
+## Item-reference rows — canonical visual pattern
+
+Every surface that shows a scanned / stocked / committed pantry item
+(ItemCard, scan-draft rows, checkout review rows, etc.) MUST follow
+the same visual pattern so the app reads as one app. Reference
+implementation: `src/components/Kitchen.jsx` lines ~1647–1900
+(the scan-draft row) and the ItemCard in the same file.
+
+### Layout skeleton (top-down)
+
+1. **HEADER** — item display name. Fraunces serif italic.
+   - Name left-aligned with `whiteSpace: nowrap; textOverflow: ellipsis`
+   - Package size as a right-aligned DM Mono chip on the same row
+     ("16 oz" in tan `#b8a878`), with the `×N` stacking multiplier
+     appended when qty > 1
+2. **PAIR / IDENTITY LINE** — one muted 11px line summarizing
+   the pair target + brand + canonical. Nowrap + ellipsis.
+3. **AXIS CHIP ROW** — horizontal flex, gap 6, flex-wrap.
+   One chip per identity axis in reserved color order
+   (canonical → category → stored-in → state → ingredients).
+4. **UPC / provenance** — DM Mono 10px in `#666`, bottom of the row.
+
+### Chip style (reused everywhere)
+
+```js
+const SET_CHIP = (tone) => ({
+  display: "inline-flex", alignItems: "center", gap: 4,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  color: tone.fg, background: tone.bg,
+  border: `1px solid ${tone.border}`,
+  borderRadius: 4, padding: "2px 6px",
+  letterSpacing: "0.08em", cursor: "pointer",
+});
+const UNSET_CHIP = {
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  color: "#666", background: "transparent",
+  border: "1px dashed #2a2a2a",
+  borderRadius: 4, padding: "1px 6px",
+  letterSpacing: "0.08em", cursor: "pointer",
+};
+```
+
+- **Set chip label** — `{emoji} {LABEL.toUpperCase()}`, e.g. `🧈 BUTTER`
+- **Unset chip label** — `+ set <axis>` (lowercase "set"), e.g. `+ set category`
+- **Tone table** — muted tints of the reserved axis colors:
+  ```
+  canonical:    fg: "#b8a878", bg: "#1a1508", border: "#3a2f10"
+  cut:          fg: "#a8553a", bg: "#1a0c07", border: "#3a1a10"
+  category:     fg: "#e07a3a", bg: "#1a0f08", border: "#3a1f0e"
+  location:     fg: "#7eb8d4", bg: "#0f1620", border: "#1f3040"
+  state:        fg: "#c7a8d4", bg: "#16101e", border: "#2f2440"
+  ingredients:  fg: "#f5c842", bg: "#1e1a0e", border: "#3a3010"
+  ```
+
+### Picker pattern (never use `<select>`)
+
+Every chip is a button. Tapping it opens a `ModalSheet` containing a
+searchable list of options. Inside the sheet:
+
+```jsx
+<ModalSheet onClose={close} maxHeight="70vh">
+  <div style={pickerKicker(toneFg)}>CATEGORY</div>
+  <h2 style={pickerTitle}>What category does X belong to?</h2>
+  <ul>
+    {options.map(opt => (
+      <button key={opt.id} onClick={pick}>
+        {opt.emoji} {opt.label} {active && "✓"}
+      </button>
+    ))}
+  </ul>
+</ModalSheet>
+```
+
+- `pickerKicker` = `DM Mono 10px, axisColor, letterSpacing 0.12em`
+- `pickerTitle` = `Fraunces serif 20px italic, color #f0ece4`
+- Option rows are fullwidth tap targets in DM Sans, with the
+  active one tinted in the axis color + ✓ marker
+- Long lists add a sticky search input at the top (see
+  `LinkIngredient` / `TypePicker` / `IdentifiedAsPicker`)
+
+### Hard rules
+
+- **NEVER `<select>` or `<input type="range">` dropdowns for axes.**
+  Always chip → ModalSheet → list.
+- **NEVER inline expand a picker into the row.** ModalSheets stack
+  vertically; inline expansion shifts surrounding rows and kills
+  the user's eye-tracking.
+- **ALWAYS reuse `SET_CHIP` / `UNSET_CHIP` styling** — don't
+  re-roll button styles per component. If you find yourself writing
+  `background: "#e07a3a1a"` or similar, stop and reach for the
+  shared style constants.
+- **ALWAYS reference Kitchen.jsx's scan-draft row** before building
+  a new item-reference surface. Typography, chip order, and modal
+  patterns should match; if they drift, the app feels stitched
+  together from different design systems.
+
 ## Other standing rules
 
 - Pickers open as stacked ModalSheets — never as inline expanders

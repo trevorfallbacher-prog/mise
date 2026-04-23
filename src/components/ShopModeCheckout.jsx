@@ -28,6 +28,7 @@ import { defaultLocationForCategory } from "../lib/usePantry";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { tagHintsToAxes } from "../lib/tagHintsToAxes";
 import LinkIngredient from "./LinkIngredient";
+import ModalSheet from "./ModalSheet";
 
 const FLASH_COLORS = {
   green:  { bg: "#1f6b3a", label: "MATCHED" },
@@ -115,6 +116,49 @@ function upcsEquivalent(a, b) {
 //      ("Daisy") and the receipt is product-only ("SOUR CREAM"),
 //      so the user's pair intent ("Sour cream" list slot) bridges
 //      the vocabularies.
+// Axis option lists — each entry's emoji matches the emoji used
+// elsewhere for that axis so the chips read consistently with
+// ItemCard. Categories drawn from the canonical registry set;
+// locations are the three physical storage shelves.
+const CATEGORY_OPTIONS = [
+  { id: "dairy",    label: "Dairy",    emoji: "🧀" },
+  { id: "produce",  label: "Produce",  emoji: "🥦" },
+  { id: "meat",     label: "Meat",     emoji: "🥩" },
+  { id: "dry",      label: "Dry",      emoji: "🌾" },
+  { id: "pantry",   label: "Pantry",   emoji: "🫙" },
+  { id: "frozen",   label: "Frozen",   emoji: "🧊" },
+  { id: "beverage", label: "Beverage", emoji: "🥤" },
+];
+const LOCATION_OPTIONS = [
+  { id: "fridge",  label: "Fridge",  emoji: "❄️" },
+  { id: "pantry",  label: "Pantry",  emoji: "🫙" },
+  { id: "freezer", label: "Freezer", emoji: "🧊" },
+];
+
+// Reusable chip styles matching the scan-draft / ItemCard pattern
+// (DM Mono 9px, letter-spaced, emoji + UPPERCASE when set, dashed
+// grey "+ set <axis>" when unset). Keyed by axis color.
+const SET_CHIP = (tone) => ({
+  display: "inline-flex", alignItems: "center", gap: 4,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  color: tone.fg, background: tone.bg,
+  border: `1px solid ${tone.border}`,
+  borderRadius: 4, padding: "2px 6px",
+  letterSpacing: "0.08em", cursor: "pointer",
+});
+const UNSET_CHIP = {
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  color: "#666", background: "transparent",
+  border: "1px dashed #2a2a2a",
+  borderRadius: 4, padding: "1px 6px",
+  letterSpacing: "0.08em", cursor: "pointer",
+};
+const CHIP_TONES = {
+  canonical: { fg: "#b8a878", bg: "#1a1508", border: "#3a2f10" }, // tan
+  category:  { fg: "#e07a3a", bg: "#1a0f08", border: "#3a1f0e" }, // orange
+  location:  { fg: "#7eb8d4", bg: "#0f1620", border: "#1f3040" }, // blue
+};
+
 function matchScanToReceiptLine(scan, receiptLines, claimed, pairedListName = null) {
   const scanUpc = normalizeBarcode(scan.barcodeUpc);
   const scanLabel = scan.productName || scan.brand || `UPC ${scan.barcodeUpc}`;
@@ -827,6 +871,11 @@ function EditableScanLine({
   // Covers bundled fuzzy match + admin-approved synthetics + the
   // ⭐ create-new-canonical flow. Picked id writes to trip_scans.canonical_id.
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Axis picker ModalSheets. null = closed; "category" / "location"
+  // opens the respective list. Matches the scan-draft pattern in
+  // Kitchen.jsx where tapping a chip swaps to a ModalSheet-wrapped
+  // picker rather than revealing inline dropdowns.
+  const [axisPicker, setAxisPicker] = useState(null);
 
   // Reset the text fields when the scan identity changes under us
   // (realtime tick from a different client, for instance).
@@ -961,32 +1010,27 @@ function EditableScanLine({
             {scan.brand ? ` · ${scan.brand}` : ""}
             {canonicalLabel ? ` · ${canonicalLabel}` : ""}
           </div>
-          {/* Row 3: axis chips — CATEGORIES (orange) + STORED IN
-              (blue). Uses the reserved CLAUDE.md axis colors so
-              the user can confirm at-a-glance that the pantry row
-              will land in the right bucket. Tapping EDIT lets them
-              override either. */}
+          {/* Row 3: axis chips — CATEGORY (orange) + STORED IN
+              (blue), matching the scan-draft chip style from
+              Kitchen.jsx (DM Mono 9px, letter-spaced, emoji +
+              UPPERCASE label). Tap EDIT to change. */}
           <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
-            <span style={{
-              fontSize: 9, letterSpacing: 0.9, fontWeight: 600,
-              color: "#e07a3a",
-              background: "#e07a3a1a",
-              border: "1px solid #e07a3a55",
-              borderRadius: 4,
-              padding: "2px 6px",
-            }}>
-              {effectiveCategory.toUpperCase()}
-            </span>
-            <span style={{
-              fontSize: 9, letterSpacing: 0.9, fontWeight: 600,
-              color: "#7eb8d4",
-              background: "#7eb8d41a",
-              border: "1px solid #7eb8d455",
-              borderRadius: 4,
-              padding: "2px 6px",
-            }}>
-              {effectiveLocation.toUpperCase()}
-            </span>
+            {(() => {
+              const entry = CATEGORY_OPTIONS.find(o => o.id === effectiveCategory);
+              return (
+                <span style={SET_CHIP(CHIP_TONES.category)}>
+                  {entry?.emoji || "🫙"} {(entry?.label || effectiveCategory).toUpperCase()}
+                </span>
+              );
+            })()}
+            {(() => {
+              const entry = LOCATION_OPTIONS.find(o => o.id === effectiveLocation);
+              return (
+                <span style={SET_CHIP(CHIP_TONES.location)}>
+                  {entry?.emoji || "🫙"} {(entry?.label || effectiveLocation).toUpperCase()}
+                </span>
+              );
+            })()}
           </div>
           {/* Row 4: UPC, mono, very muted — verification signal
               rather than primary content. */}
@@ -1106,38 +1150,38 @@ function EditableScanLine({
             <button onClick={() => bumpQty(1)} style={qtyBtn} aria-label="Increase">+</button>
           </div>
 
-          {/* Category + stored-in pickers. Reserved axis colors:
-              orange for category, blue for stored-in (CLAUDE.md).
-              Commits via onPackageChange into packageOverrides. */}
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {/* Category + stored-in — chip buttons that open ModalSheet
+              pickers, matching the scan-draft and ItemCard pattern
+              used everywhere else in the app. No inline dropdowns. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#e07a3a" }}>CATEGORY</span>
-            <select
-              value={effectiveCategory}
-              onChange={e => onPackageChange?.({ category: e.target.value })}
-              style={{ ...textInput, cursor: "pointer", color: "#e07a3a" }}
-            >
-              <option value="dairy">dairy</option>
-              <option value="produce">produce</option>
-              <option value="meat">meat</option>
-              <option value="dry">dry</option>
-              <option value="pantry">pantry</option>
-              <option value="frozen">frozen</option>
-              <option value="beverage">beverage</option>
-            </select>
-          </label>
+            {(() => {
+              const entry = CATEGORY_OPTIONS.find(o => o.id === effectiveCategory);
+              return (
+                <button
+                  onClick={() => setAxisPicker("category")}
+                  style={{ ...SET_CHIP(CHIP_TONES.category), alignSelf: "flex-start" }}
+                >
+                  {entry?.emoji || "🫙"} {(entry?.label || effectiveCategory).toUpperCase()}
+                </button>
+              );
+            })()}
+          </div>
 
-          <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#7eb8d4" }}>STORED IN</span>
-            <select
-              value={effectiveLocation}
-              onChange={e => onPackageChange?.({ location: e.target.value })}
-              style={{ ...textInput, cursor: "pointer", color: "#7eb8d4" }}
-            >
-              <option value="fridge">fridge</option>
-              <option value="pantry">pantry</option>
-              <option value="freezer">freezer</option>
-            </select>
-          </label>
+            {(() => {
+              const entry = LOCATION_OPTIONS.find(o => o.id === effectiveLocation);
+              return (
+                <button
+                  onClick={() => setAxisPicker("location")}
+                  style={{ ...SET_CHIP(CHIP_TONES.location), alignSelf: "flex-start" }}
+                >
+                  {entry?.emoji || "🫙"} {(entry?.label || effectiveLocation).toUpperCase()}
+                </button>
+              );
+            })()}
+          </div>
 
           <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
             {scan.pairedShoppingListItemId && (
@@ -1162,8 +1206,84 @@ function EditableScanLine({
           onClose={() => setPickerOpen(false)}
         />
       )}
+
+      {/* Category + Stored-in pickers — ModalSheet wraps a list of
+          tap targets matching the TypePicker / IdentifiedAsPicker
+          style used in Kitchen.jsx. No dropdowns. */}
+      {axisPicker === "category" && (
+        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="70vh">
+          <div style={pickerKicker(CHIP_TONES.category.fg)}>CATEGORY</div>
+          <h2 style={pickerTitle}>
+            What category does {scan.productName || scan.brand || "this"} belong to?
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+            {CATEGORY_OPTIONS.map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => { onPackageChange?.({ category: opt.id }); setAxisPicker(null); }}
+                style={pickerOptionStyle(opt.id === effectiveCategory, CHIP_TONES.category)}
+              >
+                <span style={{ fontSize: 20 }}>{opt.emoji}</span>
+                <span style={{ flex: 1, fontSize: 14, color: "#f0ece4" }}>{opt.label}</span>
+                {opt.id === effectiveCategory && (
+                  <span style={{ color: CHIP_TONES.category.fg, fontSize: 11 }}>✓</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </ModalSheet>
+      )}
+
+      {axisPicker === "location" && (
+        <ModalSheet onClose={() => setAxisPicker(null)} maxHeight="60vh">
+          <div style={pickerKicker(CHIP_TONES.location.fg)}>STORED IN</div>
+          <h2 style={pickerTitle}>
+            Where does {scan.productName || scan.brand || "this"} live?
+          </h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+            {LOCATION_OPTIONS.map(opt => (
+              <button
+                key={opt.id}
+                onClick={() => { onPackageChange?.({ location: opt.id }); setAxisPicker(null); }}
+                style={pickerOptionStyle(opt.id === effectiveLocation, CHIP_TONES.location)}
+              >
+                <span style={{ fontSize: 20 }}>{opt.emoji}</span>
+                <span style={{ flex: 1, fontSize: 14, color: "#f0ece4" }}>{opt.label}</span>
+                {opt.id === effectiveLocation && (
+                  <span style={{ color: CHIP_TONES.location.fg, fontSize: 11 }}>✓</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </ModalSheet>
+      )}
     </div>
   );
+}
+
+// Shared ModalSheet picker styles — mirror the scan-draft pickers
+// in Kitchen.jsx so CATEGORY / STORED IN pickers here feel like the
+// same component.
+const pickerKicker = (color) => ({
+  fontFamily: "'DM Mono',monospace", fontSize: 10,
+  color, letterSpacing: "0.12em",
+  marginBottom: 10,
+});
+const pickerTitle = {
+  fontFamily: "'Fraunces',serif", fontSize: 20,
+  fontStyle: "italic", color: "#f0ece4",
+  fontWeight: 400, margin: "0 0 6px", lineHeight: 1.2,
+};
+function pickerOptionStyle(active, tone) {
+  return {
+    display: "flex", alignItems: "center", gap: 10,
+    padding: "12px 14px",
+    background: active ? tone.bg : "#141414",
+    border: `1px solid ${active ? tone.border : "#1e1e1e"}`,
+    borderRadius: 10,
+    textAlign: "left", cursor: "pointer",
+    fontFamily: "'DM Sans',sans-serif",
+  };
 }
 
 const textInput = {
