@@ -37,7 +37,23 @@ function fromDb(row) {
   const components = rawArr && rawArr.length
     ? rawArr
     : (singleId ? [singleId] : []);
-  const primaryId = components[0] || null;
+  // Primary identity: canonical_id (what this thing IS) wins over
+  // composition. When canonical_id is set, use it — that's the fix
+  // for "Ritz Butter Crackers pinned for a flour recipe" (Ritz had
+  // canonical_id="crackers" and composition=["all_purpose_flour"];
+  // prior code promoted composition[0] and broke pairing). When
+  // canonical_id is absent, fall back to components[0] regardless of
+  // composition length — most rows without an explicit identity are
+  // "plain ingredient, optional extra composition tags" (cremini
+  // mushrooms with a "mushrooms" tag, canola oil with oil-family
+  // tags). Restricting that fallback to single-component rows
+  // silently hid those from the picker, which was the "program can't
+  // read my list" regression. Callers that need STRICT identity (and
+  // want to reject implicit-composition fallbacks) can read
+  // `canonicalId` directly instead of `ingredientId`.
+  const primaryId = row.canonical_id
+    || components[0]
+    || null;
 
   const item = {
     id: row.id,
@@ -192,9 +208,20 @@ function toDb(item) {
     ? item.components
     : (Array.isArray(item.ingredientIds) ? item.ingredientIds : null);
   const hasArray = Array.isArray(arr);
-  const primaryId = hasArray && arr.length
-    ? (arr[0] || null)
-    : (item.ingredientId || null);
+  // Primary identity on the wire: canonicalId (the "what this thing
+  // IS" signal) wins over composition. When canonicalId is present,
+  // `ingredient_id` mirrors it — legacy SQL keyed on the scalar still
+  // resolves to the identity, not to composition[0]. When absent,
+  // fall back to components[0] regardless of composition length so
+  // multi-tag rows stay visible to the pairer. The Ritz regression
+  // is blocked at the canonical_id level (Ritz has canonical_id=
+  // "crackers", so the fallback never runs); true identity-less
+  // compound rows still surface their first composition tag — same
+  // as pre-fix behavior, which was fine for everything except Ritz.
+  const primaryId = item.canonicalId
+    || item.ingredientId
+    || (hasArray && arr.length > 0 ? (arr[0] || null) : null)
+    || null;
   return {
     ingredient_id: primaryId,
     ...(hasArray ? { components: arr.filter(Boolean) } : {}),

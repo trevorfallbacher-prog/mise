@@ -21,6 +21,7 @@ import {
   fuzzyMatchIngredient,
   ALL_STATE_TOKENS,
   cutLabel,
+  sharesDisqualifyingModifier,
 } from "../data/ingredients";
 
 // ── dietary modifiers ────────────────────────────────────────────────
@@ -118,7 +119,9 @@ export function normalizeForMatch(name) {
 // tortilla", "whole wheat tortilla" all share head=tortilla and
 // are legitimate subs; "tortilla chip" has head=chip, a different
 // ingredient entirely. We require (a) heads match AND (b) the
-// shorter side's token set is fully contained in the longer's.
+// shorter side's token set is fully contained in the longer's AND
+// (c) no disqualifying modifier (see HEAD_NOUN_MODIFIER_EXCLUSIONS
+// — blocks peanut-butter-as-butter, coconut-milk-as-milk, etc.).
 export function namesMatch(a, b) {
   const na = normalizeForMatch(a);
   const nb = normalizeForMatch(b);
@@ -127,11 +130,13 @@ export function namesMatch(a, b) {
   const ta = na.split(/\s+/).filter(Boolean);
   const tb = nb.split(/\s+/).filter(Boolean);
   if (!ta.length || !tb.length) return false;
-  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false;
+  const head = ta[ta.length - 1];
+  if (head !== tb[tb.length - 1]) return false;
   const sa = new Set(ta);
   const sb = new Set(tb);
   const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
   for (const t of small) if (!big.has(t)) return false;
+  if (sharesDisqualifyingModifier(small, big, head)) return false;
   return true;
 }
 
@@ -370,6 +375,7 @@ export function pairRecipeIngredients(ingredients, pantry) {
       const ingTokens = new Set(
         normalizeForMatch(ingName).split(/\s+/).filter(Boolean),
       );
+      const ingHead = [...ingTokens].slice(-1)[0];
       closestMatch = (pantry || []).find(p => {
         if (!rowIsRawIngredient(p)) return false;
         const pCanonId = p.ingredientId || p.canonicalId || null;
@@ -382,7 +388,20 @@ export function pairRecipeIngredients(ingredients, pantry) {
         const pTokens = new Set(
           normalizeForMatch(p.name || "").split(/\s+/).filter(Boolean),
         );
-        for (const t of ingTokens) if (pTokens.has(t)) return true;
+        // Token-overlap fallback, but blocked by the head-noun
+        // exclusion list — prevents peanut-butter-as-butter and kin
+        // from sneaking in as a "closest match" even when the hub
+        // check misses.
+        for (const t of ingTokens) {
+          if (!pTokens.has(t)) continue;
+          if (ingHead) {
+            const [small, big] = ingTokens.size <= pTokens.size
+              ? [ingTokens, pTokens]
+              : [pTokens, ingTokens];
+            if (sharesDisqualifyingModifier(small, big, ingHead)) continue;
+          }
+          return true;
+        }
         return false;
       }) || null;
     }

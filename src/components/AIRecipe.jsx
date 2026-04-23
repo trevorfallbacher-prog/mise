@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
-import { generateRecipe } from "../lib/generateRecipe";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { generateRecipe, classifyDishPrompt } from "../lib/generateRecipe";
+import { loadDraft, saveDraft, clearDraft, draftAgeLabel } from "../lib/aiRecipeDraft";
 import { suggestCookInstructions } from "../lib/suggestCookInstructions";
 import { buildAIContext } from "../lib/aiContext";
 import { totalTimeMin, difficultyLabel } from "../data/recipes";
@@ -242,6 +243,157 @@ function autoPairShoppingRows(sketch, pantry) {
 // can diff them against the paired pantry row's attributes.claims
 // and flag "⚠ NO LONGER VEGAN" when the user takes a non-compliant
 // substitution.
+// MUST-INCLUDE picker renderer — pulled out of the main component
+// body so the JSX + filter logic doesn't bloat the setup phase. Not
+// a React component (no hooks of its own); just a render helper that
+// takes the shared state bag and returns the <Section> block.
+function renderStarPicker({
+  starOptionGroups,
+  starIngredientIds,
+  setStarIngredientIds,
+  starSearch,
+  setStarSearch,
+}) {
+  const q = starSearch.trim().toLowerCase();
+  // Default state (empty search) shows NOTHING — a 100-row pantry
+  // dumped as chips is unusable. The user either searches for
+  // something specific ("crisco", "ricotta") or taps one of their
+  // already-selected chips. Matching groups only render while a
+  // search is active.
+  const filteredGroups = q
+    ? starOptionGroups
+        .map(g => ({ ...g, items: g.items.filter(o => o.label.toLowerCase().includes(q)) }))
+        .filter(g => g.items.length > 0)
+    : [];
+  const allOptions = starOptionGroups.flatMap(g => g.items);
+  // Currently-selected chips always pin at the top — they're the
+  // user's own picks, not noise, and they need to be tappable to
+  // remove without re-searching.
+  const selectedOptions = starIngredientIds
+    .map(id => allOptions.find(o => o.id === id))
+    .filter(Boolean);
+  // Drop the search id set from result groups so a selected chip
+  // doesn't render twice (once in SELECTED, once in search results).
+  const selectedIdSet = new Set(starIngredientIds);
+  const visibleGroups = filteredGroups.map(g => ({
+    ...g,
+    items: g.items.filter(o => !selectedIdSet.has(o.id)),
+  })).filter(g => g.items.length > 0);
+
+  return (
+    <Section label="MUST INCLUDE — star any pantry item">
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <input
+          type="text"
+          value={starSearch}
+          onChange={(e) => setStarSearch(e.target.value)}
+          placeholder="Search pantry (e.g. crisco, ricotta, gochujang)"
+          style={{
+            width: "100%", padding: "10px 12px",
+            background: "#0f0f0f", color: "#f0ece4",
+            border: "1px solid #2a2a2a", borderRadius: 8,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+            outline: "none",
+          }}
+        />
+        {/* SELECTED chips always pin at the top once they've been
+            added — independent of what's in the search box. Tapping
+            removes. */}
+        {selectedOptions.length > 0 && (
+          <div>
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#f5c842", letterSpacing: "0.1em",
+              marginBottom: 6,
+            }}>
+              SELECTED ({selectedOptions.length})
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {selectedOptions.map(o => (
+                <button
+                  key={o.id}
+                  onClick={() => setStarIngredientIds(prev => prev.filter(id => id !== o.id))}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "7px 12px",
+                    background: "#1e1a0e",
+                    border: "1px solid #f5c842",
+                    color: "#f5c842",
+                    borderRadius: 20,
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ fontSize: 14 }}>{o.emoji}</span>
+                  {o.label}
+                  <span style={{ opacity: 0.6, marginLeft: 4 }}>×</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* Empty state: nothing searched AND nothing selected → a
+            one-liner hint instead of a wall of chips. Users asked
+            explicitly NOT to dump the whole pantry by default. */}
+        {!q && selectedOptions.length === 0 && (
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#666", fontStyle: "italic",
+          }}>
+            Type to search your pantry — e.g. &quot;crisco&quot;, &quot;ricotta&quot;,
+            &quot;gochujang&quot;. Pick anything the dish MUST include.
+          </div>
+        )}
+        {q && visibleGroups.length === 0 && (
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#666", fontStyle: "italic",
+          }}>
+            No pantry items match &quot;{starSearch}&quot;.
+          </div>
+        )}
+        {visibleGroups.map(group => (
+          <div key={group.key}>
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#666", letterSpacing: "0.1em",
+              marginBottom: 6,
+            }}>
+              {group.label.toUpperCase()}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {group.items.map(o => {
+                const active = starIngredientIds.includes(o.id);
+                return (
+                  <button
+                    key={o.id}
+                    onClick={() => setStarIngredientIds(prev => (
+                      active ? prev.filter(id => id !== o.id) : [...prev, o.id]
+                    ))}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "7px 12px",
+                      background: active ? "#1e1a0e" : "#161616",
+                      border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                      color: active ? "#f5c842" : "#888",
+                      borderRadius: 20,
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                      cursor: "pointer", transition: "all 0.2s",
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{o.emoji}</span>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function stampDietaryClaims(sketch) {
   if (!sketch || !Array.isArray(sketch.ideal)) return sketch;
   return {
@@ -328,9 +480,17 @@ export default function AIRecipe({
   // — resets every time a different row's picker opens.
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
   const [swapSearch,  setSwapSearch]  = useState("");
+  // Override toggle for the swap picker. When false (default), the
+  // picker hides incompatible candidates (score 0 — different food
+  // category and no token overlap). When true, the user has
+  // explicitly asked to see the full pantry including the rough
+  // matches. Resets whenever the picker closes so each open starts
+  // with the safe default.
+  const [showIncompatSwaps, setShowIncompatSwaps] = useState(false);
   const openSwapPicker = (idx) => {
     setSwapOpenIdx(idx);
     setSwapSearch("");
+    setShowIncompatSwaps(false);   // each open starts with the safe gate on
   };
   const [addOpen, setAddOpen]         = useState(false);
   // Revision instruction for the FINAL cook — the user's "make it
@@ -342,6 +502,17 @@ export default function AIRecipe({
   // signal that the user is DIRECTING an AI, not scribbling a
   // secondary note. Lives at the top of the setup screen.
   const [mealPrompt, setMealPrompt] = useState("");
+  // Dish contract (classified from mealPrompt). Session-cached so
+  // regens don't re-classify. Three tiers:
+  //   SPECIFIC  → aliases + rules injected into the prompt; deterministic
+  //               post-check enforces that the output title matches.
+  //   FAMILY    → family + examples injected; output must fit the family.
+  //   OPEN      → (empty mealPrompt) drop pantry entirely, dream mode.
+  //   FREEFORM  → (unrecognizable text) fall back to verbatim quoting.
+  // classifiedPromptRef tracks which mealPrompt produced the current
+  // contract so re-typing the SAME text doesn't refire the Haiku call.
+  const [dishContract, setDishContract] = useState(null);
+  const [classifiedFrom, setClassifiedFrom] = useState("");
   const [mealTiming, setMealTiming] = useState("any");
   const [course,     setCourse]     = useState("any");
   // Priority mode — which side of the "I want X / I have Y" tension
@@ -353,6 +524,10 @@ export default function AIRecipe({
   // UI when course === "any" — no tension to resolve.
   const [priority,   setPriority]   = useState("category");
   const [starIngredientIds, setStarIngredientIds] = useState([]);
+  // Search query for the MUST-INCLUDE picker. Filters starOptionGroups
+  // by substring (case-insensitive) against item labels so a user
+  // searching "crisco" in a 104-row pantry doesn't have to scroll.
+  const [starSearch, setStarSearch] = useState("");
   const [cuisine,    setCuisine]    = useState("any");
   const [time,       setTime]       = useState("medium");
   const [difficulty, setDifficulty] = useState("medium");
@@ -378,50 +553,87 @@ export default function AIRecipe({
   const [pickExistingFor, setPickExistingFor] = useState(null);
   //   null | "side" | "dessert" | "appetizer"
 
+  // Draft persistence. When the user is mid-tweak and leaves the page,
+  // we stash the sketch + all editable state in localStorage so they
+  // can pick up where they were without burning another Claude call.
+  // userId keys the entry per-account so multi-user devices don't
+  // cross-contaminate drafts. Hydration happens once via a ref-guarded
+  // effect; save runs debounced on any tweak-phase state change; clear
+  // fires on successful final cook or explicit "start fresh."
+  const userId = profile?.id || profile?.user_id || null;
+  const [draftHydrated, setDraftHydrated] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState(null);
+
   // Protein picker source — collapse the pantry to one chip per
   // canonical (5 cans of tuna = one TUNA chip, not five) and group
   // by category so the user can scan MEAT / POULTRY / SEAFOOD /
   // PLANT at a glance instead of reading a wall of chips. Uses the
   // canonical's full `name` (not `shortName`) so "Ground Beef" and
   // "Ground Pork" don't both read as just "Ground."
-  const proteinGroups = useMemo(() => {
+  // MUST-INCLUDE picker — the full pantry (not just proteins).
+  // Previously this was gated to meat/poultry/seafood + a hand-picked
+  // plant-protein set, but users (rightly) wanted to tag things like
+  // Crisco, tortillas, brown butter, or a specific cheese when that
+  // ingredient was the POINT of the dish. Now every pantry row with
+  // kind="ingredient" (i.e. not a compound dish or leftover) is
+  // pickable. A search input sits above the groups so finding one
+  // item in a 100-row pantry doesn't require scrolling.
+  //
+  // Grouping: prefer meat/poultry/seafood/dairy/produce/grains/fats/
+  // pantry/frozen in that visual order; anything with an unknown
+  // category falls under "Other" at the end.
+  const starOptionGroups = useMemo(() => {
     const byCanonical = new Map();
     for (const row of pantry) {
-      if (!isProteinRow(row)) continue;
+      // Compound dishes (frozen pizzas) and leftovers (last night's
+      // rice) carry ingredientIds but aren't pickable as "must
+      // include" tags — you don't build a dish around the fact that
+      // you have a leftover.
+      if (row?.kind && row.kind !== "ingredient") continue;
       const slug = row.ingredientId || row.canonicalId;
       if (!slug) continue;
       if (!byCanonical.has(slug)) {
-        // findIngredient resolves through CANONICAL_ALIASES, so a
-        // legacy `ground_beef` slug comes back as the `beef` base
-        // canonical with its clean "Beef" name. No UI stripping
-        // needed post-migration 0060.
         const canon = findIngredient(slug);
         byCanonical.set(slug, {
           id: slug,
           label: canon?.name || row.name || slug,
-          emoji: row.emoji || canon?.emoji || "🍖",
-          category: canon?.category || null,
+          emoji: row.emoji || canon?.emoji || "🍽️",
+          category: canon?.category || row.category || null,
           slug,
         });
       }
     }
-    // Categories in the order we want them surfaced. Anything that
-    // doesn't match one of the meat/poultry/seafood buckets lands
-    // under "PLANT & OTHER" — tofu, eggs, beans, egg whites, etc.
     const categoryOrder = [
-      { key: "meat",    label: "Meat" },
-      { key: "poultry", label: "Poultry" },
-      { key: "seafood", label: "Seafood" },
-      { key: "plant",   label: "Plant & other" },
+      { key: "meat",     label: "Meat" },
+      { key: "poultry",  label: "Poultry" },
+      { key: "seafood",  label: "Seafood" },
+      { key: "dairy",    label: "Dairy & eggs" },
+      { key: "produce",  label: "Produce" },
+      { key: "grains",   label: "Grains & starches" },
+      { key: "fats",     label: "Fats & oils" },
+      { key: "pantry",   label: "Pantry" },
+      { key: "frozen",   label: "Frozen" },
+      { key: "beverage", label: "Beverages" },
+      { key: "other",    label: "Other" },
     ];
     const groups = new Map(categoryOrder.map(c => [c.key, { ...c, items: [] }]));
+    // Map a handful of equivalent category strings to the canonical
+    // bucket keys above. Anything unmapped lands under "other" so the
+    // picker never silently loses a pantry row.
+    const CATEGORY_BUCKET = {
+      meat: "meat", poultry: "poultry", seafood: "seafood",
+      dairy: "dairy", egg: "dairy", eggs: "dairy",
+      produce: "produce", fruit: "produce", vegetable: "produce",
+      grain: "grains", grains: "grains", starch: "grains", bread: "grains", pasta: "grains", rice: "grains",
+      fat: "fats", fats: "fats", oil: "fats", oils: "fats",
+      pantry: "pantry", condiment: "pantry", spice: "pantry", sauce: "pantry", baking: "pantry",
+      frozen: "frozen",
+      beverage: "beverage", drink: "beverage",
+    };
     for (const opt of byCanonical.values()) {
-      const key = ["meat", "poultry", "seafood"].includes(opt.category)
-        ? opt.category
-        : "plant";
-      groups.get(key).items.push(opt);
+      const bucket = CATEGORY_BUCKET[opt.category] || "other";
+      groups.get(bucket).items.push(opt);
     }
-    // Sort each group alphabetically; drop empties.
     const out = [];
     for (const c of categoryOrder) {
       const g = groups.get(c.key);
@@ -446,10 +658,12 @@ export default function AIRecipe({
       mealPrompt: mealPrompt.trim() || undefined,
       mealTiming: (isComponentCourse || mealTiming === "any") ? undefined : mealTiming,
       course: course === "any" ? undefined : course,
-      // Always send priority — when course is "any", the edge fn's
-      // pantry filter is a no-op but the precedence branch still
-      // respects the user's "category-first" vs "pantry-first" intent
-      // for whichever course Claude decides to emit.
+      // Always send priority on BOTH sketch and final — the edge fn
+      // previously had an inconsistency where the final pass dropped
+      // priority when course="any" and the edge fn silently defaulted
+      // it back to "category", flipping precedence mid-session. The
+      // user's "category-first" vs "pantry-first" intent is authoritative
+      // on every call in the draft.
       priority,
       starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
       // Compose-a-meal anchor. Only present when the user clicked
@@ -461,6 +675,114 @@ export default function AIRecipe({
     };
   };
 
+  // Resolve the dish contract for the current mealPrompt. Cached by
+  // the exact string so re-typing the same prompt doesn't refire the
+  // Haiku call; regens within a session reuse the contract.
+  // Hydrate a saved draft on first mount. Runs once per userId — we
+  // gate on draftHydrated so a remount (hot reload, parent re-render)
+  // doesn't re-restore over in-flight user edits. Drops the user
+  // straight into the tweak phase when a draft is present so the
+  // resume experience is "click AI Recipe, your sketch is back."
+  useEffect(() => {
+    if (draftHydrated) return;
+    if (!userId) { setDraftHydrated(true); return; }
+    const d = loadDraft(userId);
+    setDraftHydrated(true);
+    if (!d) return;
+    // Only hydrate when the setup screen is still fresh — if the
+    // user has already typed into mealPrompt or picked a course, they
+    // started a new draft and we shouldn't clobber it.
+    if (mealPrompt || starIngredientIds.length > 0 || course !== "any") return;
+    if (d.recipe) setRecipe(d.recipe);
+    if (d.sketch) setSketch(d.sketch);
+    setPantryEdits(d.pantryEdits);
+    setRecipeFeedback(d.recipeFeedback);
+    setPreviousTitles(d.previousTitles);
+    setMealPrompt(d.mealPrompt);
+    setMealTiming(d.mealTiming);
+    setCourse(d.course);
+    setPriority(d.priority);
+    setStarIngredientIds(d.starIngredientIds);
+    setCuisine(d.cuisine);
+    setTime(d.time);
+    setDifficulty(d.difficulty);
+    setDishContract(d.dishContract);
+    setClassifiedFrom(d.classifiedFrom);
+    setDraftSavedAt(d.savedAt);
+    // Restore to the phase they last reached. Preview wins over tweak
+    // when a full recipe is on the draft — the user spent money on
+    // Sonnet to get it, losing it to a tab close was the bug.
+    setPhase(d.recipe && d.phase === "preview" ? "preview" : "tweak");
+    // Deps intentionally include the setup-state we read in the
+    // freshness guard — when they change, the effect re-runs and
+    // the draftHydrated flag short-circuits it on line 1. Cheap
+    // no-op after the first hydration.
+  }, [userId, draftHydrated, mealPrompt, starIngredientIds, course]);
+
+  // Auto-save on any tweak-OR-preview state change, debounced so
+  // rapid edits don't thrash localStorage. 500ms matches the human
+  // "paused thinking" threshold. Preview phase is included because
+  // the generated recipe is the most expensive artifact in the
+  // session (Sonnet call, real dollars) and losing it to a tab
+  // close was a billing-visible bug. Save clears only on explicit
+  // save/schedule/cook actions below.
+  const draftTimerRef = useRef(null);
+  useEffect(() => {
+    if (!draftHydrated || !userId) return;
+    if (phase !== "tweak" && phase !== "preview") return;
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(() => {
+      saveDraft(userId, {
+        phase, recipe,
+        sketch, pantryEdits, recipeFeedback, previousTitles,
+        mealPrompt, mealTiming, course, priority, starIngredientIds,
+        cuisine, time, difficulty, dishContract, classifiedFrom,
+      });
+      setDraftSavedAt(new Date().toISOString());
+    }, 500);
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
+  }, [
+    userId, draftHydrated, phase, recipe, sketch, pantryEdits, recipeFeedback,
+    previousTitles, mealPrompt, mealTiming, course, priority,
+    starIngredientIds, cuisine, time, difficulty, dishContract,
+    classifiedFrom,
+  ]);
+
+  // Explicit abandon — drops the saved draft and resets tweak state
+  // back to a blank setup screen. Wired into the "Start fresh" banner
+  // that shows when the user has an un-consumed resume offer.
+  const abandonDraft = () => {
+    if (userId) clearDraft(userId);
+    setDraftSavedAt(null);
+    setRecipe(null);
+    setSketch(null);
+    setPantryEdits({ swaps: {}, removes: new Set(), adds: [], shopping: new Set() });
+    setRecipeFeedback("");
+    setPreviousTitles([]);
+    setMealPrompt("");
+    setMealTiming("any");
+    setCourse("any");
+    setPriority("category");
+    setStarIngredientIds([]);
+    setCuisine("any");
+    setTime("medium");
+    setDifficulty("medium");
+    setDishContract(null);
+    setClassifiedFrom("");
+    setPhase("setup");
+  };
+
+  const ensureContract = async () => {
+    const target = (mealPrompt || "").trim();
+    if (dishContract && classifiedFrom === target) return dishContract;
+    const c = await classifyDishPrompt(target);
+    setDishContract(c);
+    setClassifiedFrom(target);
+    return c;
+  };
+
   // Phase 2 entry — kicks off the cheap sketch pass. User lands on
   // the tweak screen with the rough draft + dual IDEAL/PANTRY lists,
   // can swap / remove / add / promote-to-shopping / type feedback,
@@ -470,6 +792,8 @@ export default function AIRecipe({
     setErrMsg("");
     try {
       const isRegen = previousTitles.length > 0;
+      const contract = await ensureContract();
+      const isDreamMode = contract?.tier === "OPEN";
       const built = buildAIContext({
         pantry, profile, ingredientInfo, cookLogs,
         mode: isRegen ? "lean" : "rich",
@@ -482,8 +806,14 @@ export default function AIRecipe({
       });
       const payload = {
         mode: "sketch",
-        pantry: built.pantry,
-        prefs: buildPrefs(),
+        // OPEN/dream mode: drop the pantry entirely — Claude dreams
+        // without any "use what's here" pressure. User's dietary
+        // constraints + cook history still ride through `context`.
+        pantry: isDreamMode ? [] : built.pantry,
+        prefs: buildPrefs({
+          pantryFiltered: isDreamMode ? false : built.pantryFiltered,
+          dishContract: contract || undefined,
+        }),
         avoidTitles: previousTitles,
         context: built.context,
       };
@@ -605,19 +935,35 @@ export default function AIRecipe({
     setPhase("final_loading");
     setErrMsg("");
     try {
+      const contract = await ensureContract();
+      const isDreamMode = contract?.tier === "OPEN";
       const built = buildAIContext({
         pantry, profile, ingredientInfo, cookLogs,
         mode: "rich",
         starIngredientIds,
         course:   course === "any" ? undefined : course,
-        priority: course === "any" ? undefined : priority,
+        // Pass priority unconditionally — was previously nulled out
+        // when course="any", which tripped the edge fn's silent
+        // undefined→"category" default and flipped precedence midway
+        // through a single session.
+        priority,
       });
       const locked = buildLockedIngredients();
       const payload = {
         mode: "final",
-        pantry: built.pantry,
+        pantry: isDreamMode ? [] : built.pantry,
         prefs: buildPrefs({
           recipeFeedback: recipeFeedback.trim() || undefined,
+          pantryFiltered: isDreamMode ? false : built.pantryFiltered,
+          // Anchor the final pass to the sketch's dish identity —
+          // without this the final pass saw the locked ingredient
+          // list but had no binding to what dish they belonged to,
+          // and Claude would sometimes re-conceptualize the dish
+          // (Bacon Egg Sandwich sketch → Quiche Lorraine final).
+          sketchTitle:     sketch?.title || undefined,
+          sketchSubtitle:  sketch?.subtitle || undefined,
+          sketchRationale: sketch?.aiRationale || undefined,
+          dishContract:    contract || undefined,
         }),
         avoidTitles: previousTitles,
         context: built.context,
@@ -730,20 +1076,18 @@ export default function AIRecipe({
       if (enriched?.title) {
         setPreviousTitles(prev => (prev.includes(enriched.title) ? prev : [...prev, enriched.title]));
       }
-      // Push shopping-source locked items into the parent's shopping
-      // list. Happens only after the final cook actually lands so a
-      // user who cancels mid-tweak doesn't pollute their list.
-      const shoppingItems = locked.filter(l => l.source === "shopping");
-      if (shoppingItems.length > 0 && onShoppingAdd) {
-        onShoppingAdd(shoppingItems.map(l => ({
-          name: l.name,
-          amount: typeof l.amount === "string" ? parseFloat(l.amount) || 1 : (Number(l.amount) || 1),
-          unit: l.unit || (typeof l.amount === "string" ? String(l.amount).replace(/[\d.\s]+/, "").trim() : "") || "count",
-          ingredientId: l.ingredientId || null,
-          source: "ai-recipe",
-        })));
-      }
+      // No automatic shopping-list push. Users explicitly don't want
+      // the final cook to silently dump items into their cart — that
+      // was happening AFTER the recipe was drafted, surprising the
+      // user. If/when they want shopping items added, the preview
+      // screen's ingredient panel exposes per-row "+ SHOP" controls
+      // (see IngredientsWithPairing → showShop) that hit onShoppingAdd
+      // directly. Keeps consent explicit and per-item.
       setPhase("preview");
+      // Preview landed, but the user hasn't saved yet — keep the
+      // draft alive so "I closed the tab before hitting SAVE" still
+      // recovers. The draft only clears when the user takes an
+      // explicit save/schedule/cook action below.
     } catch (e) {
       console.error("AI recipe final failed:", e);
       setErrMsg(e?.message || "Final cook failed");
@@ -752,11 +1096,17 @@ export default function AIRecipe({
   };
 
   // Each action guards on busy so a double-tap can't fire twice.
+  // On successful save/schedule/cook, the draft is cleared — that
+  // commit is the point where user_recipes has a row and the local
+  // sketch is no longer the source of truth. If the action throws,
+  // the draft stays so the user can retry.
   const handleAction = (kind, cb) => async () => {
     if (!recipe || busy) return;
     setBusy(kind);
     try {
       await cb?.(recipe);
+      if (userId) clearDraft(userId);
+      setDraftSavedAt(null);
     } catch (e) {
       console.error(`[ai recipe] ${kind} failed:`, e);
     } finally {
@@ -766,6 +1116,30 @@ export default function AIRecipe({
   const handleSave     = handleAction("save",     onSave);
   const handleSchedule = handleAction("schedule", onSchedule);
   const handleCookIt   = handleAction("cook",     onSaveAndCook);
+
+  // Preview-phase add: user spotted a missing ingredient after the
+  // final recipe generated. Append to pantryEdits.adds (same shape
+  // the tweak-phase addPantryRow uses) then fire cookFinal() again
+  // — the lockedIngredients flow picks up the new entry and the
+  // regeneration integrates it into the steps. Another Sonnet call,
+  // but intentional and deterministic (sketch anchor keeps the dish
+  // identity). Shape matches addPantryRow in the tweak phase.
+  const addIngredientAndRegen = async (row) => {
+    if (!row || !sketch || busy) return;
+    const pendingAdd = {
+      name: row.name,
+      amount: `${row.amount ?? 1}${row.unit ? ` ${row.unit}` : ""}`,
+      ingredientId: row.ingredientId || row.canonicalId || null,
+      pantryItemId: row.id || null,
+      emoji: row.emoji,
+    };
+    setPantryEdits(prev => ({ ...prev, adds: [...prev.adds, pendingAdd] }));
+    // cookFinal reads state — we've set pantryEdits via the setter
+    // above, but React batches; call cookFinal on the NEXT tick so
+    // buildLockedIngredients sees the new adds. setTimeout(0) is the
+    // simplest way to defer past the setState queue.
+    setTimeout(() => { cookFinal(); }, 0);
+  };
 
   // ── Compose-a-meal handlers ─────────────────────────────────────
 
@@ -1105,6 +1479,26 @@ export default function AIRecipe({
     // name to contain the query as a substring (user is explicitly
     // typing, so loose substring is fine — we're filtering a list
     // in front of their eyes, not auto-pairing).
+    // Quality tiers derived from rankSwapCandidates scores.
+    //   score >= 1000 → "exact"   (same canonical id)
+    //   score >=  500 → "family"  (same hub — cuts of chicken, kinds of cheese)
+    //   score >=  100 → "category"(same food category — dairy, produce, etc.)
+    //   score >    0  → "weak"    (only token overlap)
+    //   score ==   0  → "incompat"(different category AND no overlap)
+    //
+    // The swap picker won't render incompat candidates by default —
+    // butter can't substitute for oranges and we shouldn't present it
+    // as an option. An explicit "show anything" disclosure exists for
+    // intentional overrides; picking a "weak" candidate triggers a
+    // confirm so the user acknowledges the stretch.
+    const classifySwapQuality = (score) => {
+      if (score >= 1000) return "exact";
+      if (score >= 500) return "family";
+      if (score >= 100) return "category";
+      if (score > 0) return "weak";
+      return "incompat";
+    };
+
     const rankSwapCandidates = (sketchPantryRow, query) => {
       const primaryCanon = sketchPantryRow.ingredientId
         ? findIngredient(sketchPantryRow.ingredientId)
@@ -1182,6 +1576,25 @@ export default function AIRecipe({
       if (shopping.has(i)) shopping.delete(i);
       else shopping.add(i);
       return { ...prev, shopping };
+    });
+    // Escape hatch for unwanted substitutions. When Claude subbed
+    // Ritz for flour and the user doesn't have real flour in their
+    // pantry, SWAP has no good targets and × just deletes the slot
+    // entirely — the user was trapped making a recipe with ingredients
+    // they didn't want. `rejectSubForShopping` promotes the IDEAL
+    // to the shopping list (so "all-purpose flour" appears as a
+    // buy-this item) AND drops the sub pantry row in one atomic
+    // edit, so the user sees the real ingredient they'll shop for
+    // instead of the substitute they wanted to reject.
+    const rejectSubForShopping = (pantryIdx, idealIdx) => setPantryEdits(prev => {
+      const removes = new Set(prev.removes);
+      removes.add(pantryIdx);
+      const shopping = new Set(prev.shopping);
+      if (idealIdx != null) shopping.add(idealIdx);
+      // Drop any swap the user had on this row — it's going away.
+      const swaps = { ...prev.swaps };
+      delete swaps[pantryIdx];
+      return { ...prev, removes, shopping, swaps };
     });
     const dropAdd = (i) => setPantryEdits(prev => ({
       ...prev,
@@ -1295,15 +1708,35 @@ export default function AIRecipe({
         }
         if (pantryIdx !== null) {
           matchedPantryIdx.add(pantryIdx);
-          entries.push({
-            kind: pantryEdits.removes.has(pantryIdx) ? "removed"
-                : isSub ? "subbed"
-                : "matched",
-            idealIdx,
-            pantryIdx,
-          });
+          // USE ORIGINAL was clicked: user rejected this sub AND promoted
+          // the classical ideal to shopping. Render as a clean
+          // "idealShopping" entry (showing the ORIGINAL ingredient name
+          // with a "not in pantry" note) — NOT as a strikethrough
+          // "removed" row which reads as "this ingredient won't be in
+          // the recipe." The sub pantry row is absorbed as "rejected
+          // context" for an optional hint.
+          const rejected = pantryEdits.removes.has(pantryIdx)
+            && pantryEdits.shopping.has(idealIdx);
+          if (rejected) {
+            entries.push({ kind: "idealShopping", idealIdx, rejectedPantryIdx: pantryIdx });
+          } else {
+            entries.push({
+              kind: pantryEdits.removes.has(pantryIdx) ? "removed"
+                  : isSub ? "subbed"
+                  : "matched",
+              idealIdx,
+              pantryIdx,
+            });
+          }
         } else {
-          entries.push({ kind: "missing", idealIdx });
+          // No sketch.pantry match but user still promoted this ideal
+          // to shopping via the standalone PROMOTE action — render as
+          // idealShopping so it doesn't get lost.
+          if (pantryEdits.shopping.has(idealIdx)) {
+            entries.push({ kind: "idealShopping", idealIdx, rejectedPantryIdx: null });
+          } else {
+            entries.push({ kind: "missing", idealIdx });
+          }
         }
       });
       // Second pass: any pantry rows the sketch included that
@@ -1492,6 +1925,68 @@ export default function AIRecipe({
                   );
                 }
 
+                // IDEAL SHOPPING — user clicked USE ORIGINAL on a sub
+                // row, which rejected Claude's substitute and asked to
+                // use the classical ingredient instead. Renders as a
+                // prominent "will shop for" row in the ORIGINAL
+                // ingredient's position (not crossed out, not demoted
+                // to a missing-style row) so the user reads it as
+                // "this IS in the recipe, you'll pick it up at the
+                // store." Shows the rejected sub as a small footnote
+                // so the undo path stays discoverable.
+                if (entry.kind === "idealShopping") {
+                  const ideal = sketch.ideal[entry.idealIdx];
+                  const rejectedRow = entry.rejectedPantryIdx != null
+                    ? sketch.pantry[entry.rejectedPantryIdx]
+                    : null;
+                  return (
+                    <div key={`ishop-${idx}`} style={{
+                      padding: "10px 12px",
+                      background: "#141414", border: "1px solid #1e1e1e", borderRadius: 12,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 15, color: "#f0ece4" }}>
+                            {ideal.name} · <span style={{ color: "#aaa", fontStyle: "normal", fontFamily: "'DM Mono',monospace", fontSize: 12 }}>{ideal.amount}</span>
+                          </div>
+                          <div style={{
+                            marginTop: 3, fontFamily: "'DM Mono',monospace", fontSize: 9,
+                            color: "#f59e0b", letterSpacing: "0.06em",
+                          }}>
+                            ⚠ NOT IN PANTRY — WILL ADD TO SHOPPING LIST
+                          </div>
+                          {rejectedRow && (
+                            <div style={{
+                              marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4,
+                              padding: "2px 8px",
+                              background: "#1a1410", border: "1px solid #3a2f1a",
+                              borderRadius: 10,
+                              fontFamily: "'DM Mono',monospace", fontSize: 9,
+                              color: "#a88868", letterSpacing: "0.04em",
+                            }}>
+                              rejected sub: {rejectedRow.name}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          {/* UNDO restores the rejected sub: drops the
+                              pantryIdx from removes AND idealIdx from
+                              shopping in one click. */}
+                          <button
+                            onClick={() => {
+                              if (entry.rejectedPantryIdx != null) toggleRemove(entry.rejectedPantryIdx);
+                              togglePromoteToShopping(entry.idealIdx);
+                            }}
+                            style={undoChip}
+                          >
+                            UNDO
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
                 // MISSING — classical ingredient with no pantry match
                 // IN THE SKETCH. Before offering + SHOP, scan the
                 // raw user pantry for candidates the AI overlooked
@@ -1554,9 +2049,41 @@ export default function AIRecipe({
                           pantryItemId: null,
                         };
                         const ranked = rankSwapCandidates(target, swapSearch);
-                        const shown = q
-                          ? ranked.slice(0, 8).map(r => r.row)
-                          : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                        const scored = ranked.map(r => ({
+                          row: r.row,
+                          score: r.score,
+                          quality: classifySwapQuality(r.score),
+                        }));
+                        const safe = scored.filter(r => r.quality !== "incompat");
+                        const incompat = scored.filter(r => r.quality === "incompat");
+                        // Default-empty search-first picker. Nothing
+                        // renders until the user types. Same gating as
+                        // the primary swap picker — incompat items hidden
+                        // unless explicitly shown.
+                        // Small focused picker: show the top 5
+                        // compatible candidates immediately. Widen to
+                        // top 12 when the user starts typing. Incompat
+                        // items hide until the user opts in via the
+                        // override link.
+                        const baseShown = q ? safe.slice(0, 12) : safe.slice(0, 5);
+                        const shown = showIncompatSwaps
+                          ? [...baseShown, ...incompat.slice(0, 20)]
+                          : baseShown;
+                        const pickCandidate = (c) => {
+                          if (c.quality === "weak") {
+                            const ok = typeof window !== "undefined" && window.confirm
+                              ? window.confirm(`"${c.row.name}" isn't a close match for "${ideal.name}". Use it anyway?`)
+                              : true;
+                            if (!ok) return;
+                          } else if (c.quality === "incompat") {
+                            const ok = typeof window !== "undefined" && window.confirm
+                              ? window.confirm(`"${c.row.name}" is in a different food category than "${ideal.name}" — this is an unusual substitution. Use it anyway?`)
+                              : true;
+                            if (!ok) return;
+                          }
+                          addPantryRow(c.row);
+                          openSwapPicker(null);
+                        };
                         return (
                           <div style={{
                             marginTop: 10, paddingTop: 10,
@@ -1574,31 +2101,82 @@ export default function AIRecipe({
                               style={swapSearchInput}
                               autoFocus
                             />
-                            {!q && (
+                            {!q && safe.length > 0 && (
                               <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
-                                TOP 3 CLOSEST · TYPE TO SEARCH
+                                COMPATIBLE SUBS · TYPE TO SEARCH
                               </div>
                             )}
                             {shown.length === 0 && (
-                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                                {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                              <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
+                                {q
+                                  ? `No compatible substitutes match "${q}".`
+                                  : `No compatible substitutes in your pantry for "${ideal.name}".`}
+                                {!showIncompatSwaps && incompat.length > 0 && (
+                                  <>
+                                    {" "}
+                                    <button
+                                      onClick={() => setShowIncompatSwaps(true)}
+                                      style={{
+                                        background: "transparent", border: "none",
+                                        color: "#7eb8d4", cursor: "pointer",
+                                        padding: 0, font: "inherit",
+                                        textDecoration: "underline",
+                                      }}
+                                    >
+                                      Show all pantry items anyway
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             )}
                             {shown.map(c => (
                               <button
-                                key={c.id}
-                                onClick={() => { addPantryRow(c); openSwapPicker(null); }}
+                                key={c.row.id}
+                                onClick={() => pickCandidate(c)}
                                 style={swapOptionBtn}
+                                title={
+                                  c.quality === "exact"    ? "Same ingredient"
+                                : c.quality === "family"   ? "Same ingredient family"
+                                : c.quality === "category" ? "Same food category"
+                                : c.quality === "weak"     ? "Only loosely related"
+                                : "Different food category — unusual substitution"
+                                }
                               >
-                                <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                                <span style={{ fontSize: 16 }}>{c.row.emoji || "🥫"}</span>
                                 <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                                  {c.name}
+                                  {c.row.name}
                                 </span>
+                                {(c.quality === "weak" || c.quality === "incompat") && (
+                                  <span style={{
+                                    padding: "1px 6px",
+                                    background: "#2a1210", border: "1px solid #5a2a22",
+                                    color: "#e8908a", borderRadius: 6,
+                                    fontFamily: "'DM Mono',monospace", fontSize: 8,
+                                    letterSpacing: "0.06em",
+                                  }}>
+                                    {c.quality === "weak" ? "LOOSE" : "DIFFERENT CATEGORY"}
+                                  </span>
+                                )}
                                 <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
-                                  {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                                  {c.row.amount}{c.row.unit ? ` ${c.row.unit}` : ""}
                                 </span>
                               </button>
                             ))}
+                            {q && shown.length > 0 && !showIncompatSwaps && incompat.length > 0 && (
+                              <button
+                                onClick={() => setShowIncompatSwaps(true)}
+                                style={{
+                                  marginTop: 4,
+                                  padding: "4px 8px",
+                                  background: "transparent", border: "1px dashed #2a2a2a",
+                                  color: "#666", borderRadius: 6,
+                                  fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                  letterSpacing: "0.06em", cursor: "pointer",
+                                }}
+                              >
+                                + SHOW {incompat.length} MORE (DIFFERENT CATEGORY)
+                              </button>
+                            )}
                           </div>
                         );
                       })()}
@@ -1773,26 +2351,78 @@ export default function AIRecipe({
                           </div>
                         )}
                       </div>
-                      <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                      <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
                         <button
                           onClick={() => swapOpen ? openSwapPicker(null) : openSwapPicker(pantryIdx)}
                           style={swapOpen ? swapBtnActive : swapBtn}
                         >
                           ⇌ SWAP
                         </button>
+                        {/* USE ORIGINAL — only surfaces on substitution
+                            rows (isSub). Drops the sub and carries the
+                            classical ideal forward as a shopping item, so
+                            users aren't trapped cooking with ingredients
+                            they don't want. Example: Ritz auto-paired as
+                            "flour"; user taps USE ORIGINAL → Ritz removed,
+                            "all-purpose flour" lands on the shopping list. */}
+                        {isSub && idealRef && (
+                          <button
+                            onClick={() => rejectSubForShopping(pantryIdx, entry.idealIdx)}
+                            style={buyRealBtn}
+                            title={`Drop this sub and use ${idealRef.name} instead`}
+                          >
+                            USE ORIGINAL
+                          </button>
+                        )}
                         <button onClick={() => toggleRemove(pantryIdx)} style={removeBtn}>×</button>
                       </div>
                     </div>
                     {swapOpen && (() => {
-                      // Pin the 3 closest matches at the top and let
-                      // the user type to filter the rest of pantry.
-                      // Replaces the old full-category dump that made
-                      // the user scroll past 20+ items every swap.
+                      // Metadata-gated swap picker. Default shows only
+                      // candidates in the same food category, hub, or
+                      // sharing a token — real substitution territory.
+                      // Incompatible candidates (different category, no
+                      // overlap) are hidden unless the user explicitly
+                      // opts to see them via the disclosure below.
                       const q = swapSearch.trim();
                       const ranked = rankSwapCandidates(row, swapSearch);
-                      const shown = q
-                        ? ranked.slice(0, 8).map(r => r.row)
-                        : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                      const scored = ranked.map(r => ({
+                        row: r.row,
+                        score: r.score,
+                        quality: classifySwapQuality(r.score),
+                      }));
+                      const safe = scored.filter(r => r.quality !== "incompat");
+                      const incompat = scored.filter(r => r.quality === "incompat");
+                      // Swap picker on the tweak screen is small and
+                      // focused — show the top compatible candidates
+                      // immediately so users see "here are the 3 subs
+                      // you already have for flour" without typing.
+                      // With a query, widen to top 12. Incompat items
+                      // stay hidden unless the user opts in.
+                      const baseShown = q ? safe.slice(0, 12) : safe.slice(0, 5);
+                      const shown = showIncompatSwaps
+                        ? [...baseShown, ...incompat.slice(0, 20)]
+                        : baseShown;
+                      const pickCandidate = (c) => {
+                        // Weak picks (token-only overlap — e.g. "cream
+                        // cheese" searched as "cream" against "heavy
+                        // cream") get a confirm so intentional stretches
+                        // aren't accidental. Incompat picks (butter for
+                        // oranges) get a sharper confirm before applying.
+                        if (c.quality === "weak") {
+                          const ok = typeof window !== "undefined" && window.confirm
+                            ? window.confirm(`"${c.row.name}" isn't a close match for "${row.name}". Use it anyway?`)
+                            : true;
+                          if (!ok) return;
+                        } else if (c.quality === "incompat") {
+                          const ok = typeof window !== "undefined" && window.confirm
+                            ? window.confirm(`"${c.row.name}" is in a different food category than "${row.name}" — this is an unusual substitution. Use it anyway?`)
+                            : true;
+                          if (!ok) return;
+                        }
+                        applySwap(pantryIdx, c.row.id);
+                        openSwapPicker(null);
+                      };
                       return (
                         <div style={{
                           marginTop: 10, paddingTop: 10,
@@ -1811,30 +2441,87 @@ export default function AIRecipe({
                             autoFocus
                           />
                           {!q && (
-                            <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#555", letterSpacing: "0.06em" }}>
-                              TOP 3 CLOSEST · TYPE TO SEARCH
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
+                              Type to search your pantry for a substitute.
                             </div>
                           )}
-                          {shown.length === 0 && (
-                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#666", fontStyle: "italic" }}>
-                              {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                          {q && shown.length === 0 && (
+                            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#888", fontStyle: "italic" }}>
+                              No compatible substitutes match &quot;{q}&quot;.
+                              {!showIncompatSwaps && incompat.length > 0 && (
+                                <>
+                                  {" "}
+                                  <button
+                                    onClick={() => setShowIncompatSwaps(true)}
+                                    style={{
+                                      background: "transparent", border: "none",
+                                      color: "#7eb8d4", cursor: "pointer",
+                                      padding: 0, font: "inherit",
+                                      textDecoration: "underline",
+                                    }}
+                                  >
+                                    Show all pantry items anyway
+                                  </button>
+                                </>
+                              )}
                             </div>
                           )}
                           {shown.map(c => (
                             <button
-                              key={c.id}
-                              onClick={() => { applySwap(pantryIdx, c.id); openSwapPicker(null); }}
+                              key={c.row.id}
+                              onClick={() => pickCandidate(c)}
                               style={swapOptionBtn}
+                              title={
+                                c.quality === "exact"    ? "Same ingredient"
+                              : c.quality === "family"   ? "Same ingredient family"
+                              : c.quality === "category" ? "Same food category"
+                              : c.quality === "weak"     ? "Only loosely related"
+                              : "Different food category — unusual substitution"
+                              }
                             >
-                              <span style={{ fontSize: 16 }}>{c.emoji || "🥫"}</span>
+                              <span style={{ fontSize: 16 }}>{c.row.emoji || "🥫"}</span>
                               <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
-                                {c.name}
+                                {c.row.name}
                               </span>
+                              {/* Quality badge. exact+family fade into
+                                  the chip so the common case is quiet;
+                                  weak/incompat get a visible warning. */}
+                              {(c.quality === "weak" || c.quality === "incompat") && (
+                                <span style={{
+                                  padding: "1px 6px",
+                                  background: "#2a1210", border: "1px solid #5a2a22",
+                                  color: "#e8908a", borderRadius: 6,
+                                  fontFamily: "'DM Mono',monospace", fontSize: 8,
+                                  letterSpacing: "0.06em",
+                                }}>
+                                  {c.quality === "weak" ? "LOOSE" : "DIFFERENT CATEGORY"}
+                                </span>
+                              )}
                               <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
-                                {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                                {c.row.amount}{c.row.unit ? ` ${c.row.unit}` : ""}
                               </span>
                             </button>
                           ))}
+                          {/* Override disclosure. Only shown when
+                              compatible picks exist AND the user
+                              hasn't yet opted in. Gives a way to see
+                              "weird" pantry items without defaulting
+                              to the kitchen-sink behavior. */}
+                          {shown.length > 0 && !showIncompatSwaps && incompat.length > 0 && (
+                            <button
+                              onClick={() => setShowIncompatSwaps(true)}
+                              style={{
+                                marginTop: 4,
+                                padding: "4px 8px",
+                                background: "transparent", border: "1px dashed #2a2a2a",
+                                color: "#666", borderRadius: 6,
+                                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                                letterSpacing: "0.06em", cursor: "pointer",
+                              }}
+                            >
+                              + SHOW {incompat.length} MORE (DIFFERENT CATEGORY)
+                            </button>
+                          )}
                           {swappedRow && (
                             <button onClick={() => { clearSwap(pantryIdx); openSwapPicker(null); }} style={swapClearBtn}>
                               ↺ REVERT TO ORIGINAL ({row.name})
@@ -1994,35 +2681,7 @@ export default function AIRecipe({
           </div>
 
           {recipe.aiRationale && (
-            // "Why I picked this" banner. Claude cites the concrete
-            // signals it used — expiring items, the user's stated
-            // preferences, recent cuisine runs, cooking level — so
-            // the draft doesn't feel like a black box. Styled softer
-            // than the bundled copy so it reads as AI commentary, not
-            // part of the recipe.
-            <div style={{
-              marginTop: 8, padding: "12px 14px",
-              background: "linear-gradient(135deg, #1a1624 0%, #141018 100%)",
-              border: "1px solid #2e2538",
-              borderRadius: 12,
-              display: "flex", gap: 10, alignItems: "flex-start",
-            }}>
-              <div style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>✨</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
-                  color: "#c7a8d4", letterSpacing: "0.12em", marginBottom: 4,
-                }}>
-                  WHY THIS DISH
-                </div>
-                <div style={{
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 13,
-                  color: "#d8d2c8", lineHeight: 1.55,
-                }}>
-                  {recipe.aiRationale}
-                </div>
-              </div>
-            </div>
+            <AiRationaleBanner text={recipe.aiRationale} />
           )}
 
           <Section label={`INGREDIENTS · ${recipe.ingredients?.length || 0}`}>
@@ -2031,6 +2690,19 @@ export default function AIRecipe({
               pantry={pantry}
               onShoppingAdd={onShoppingAdd}
             />
+            {/* Forgot-something escape hatch — user noticed a missing
+                ingredient after the draft (e.g. "oh I wanted heavy
+                whipping cream"). Toggle opens a default-empty search
+                over the full pantry; picking appends to
+                pantryEdits.adds and re-fires the final pass so the
+                new ingredient is integrated into the steps. Another
+                Sonnet call, but targeted and explicit. */}
+            {sketch && !busy && (
+              <PreviewAddIngredient
+                pantry={pantry}
+                onAdd={addIngredientAndRegen}
+              />
+            )}
           </Section>
 
           <Section label={`STEPS · ${recipe.steps?.length || 0}`}>
@@ -2153,6 +2825,53 @@ export default function AIRecipe({
             : `I'll look at ${pantryCount} pantry ${pantryCount === 1 ? "item" : "items"} and shape the recipe around what you tell me below.`}
         </div>
 
+        {/* Resume-draft banner — only surfaces when the user has a
+            saved draft but is back on the setup screen (usually via
+            the "back" button from the tweak screen). If they're
+            actively hydrating a draft into tweak phase the banner
+            doesn't show. Gives them an easy "throw it out" button
+            without forcing a navigate. */}
+        {draftSavedAt && phase === "setup" && (sketch || recipe) && (
+          <div style={{
+            marginTop: 12, padding: "10px 12px",
+            background: "#16121a", border: "1px solid #3a2f40",
+            borderRadius: 8,
+            display: "flex", alignItems: "center", gap: 12,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#c7a8d4",
+          }}>
+            <span>
+              {recipe
+                ? `Unsaved recipe "${recipe.title}" — saved ${draftAgeLabel(draftSavedAt)}`
+                : `Draft saved ${draftAgeLabel(draftSavedAt)} — resume in progress`}
+            </span>
+            <button
+              onClick={() => setPhase(recipe ? "preview" : "tweak")}
+              style={{
+                marginLeft: "auto",
+                padding: "4px 10px",
+                background: "#2a1e2e", border: "1px solid #c7a8d4",
+                color: "#c7a8d4", borderRadius: 6,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.1em", cursor: "pointer",
+              }}
+            >
+              RESUME
+            </button>
+            <button
+              onClick={abandonDraft}
+              style={{
+                padding: "4px 10px",
+                background: "transparent", border: "1px solid #2a2a2a",
+                color: "#888", borderRadius: 6,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                letterSpacing: "0.1em", cursor: "pointer",
+              }}
+            >
+              START FRESH
+            </button>
+          </div>
+        )}
+
         {/* MEAL PROMPT — hero input, top of the screen. The user is
             directing an AI that's looking into their kitchen; this is
             where they tell it what they're in the mood for. Styled
@@ -2213,56 +2932,20 @@ export default function AIRecipe({
           />
         </Section>
 
-        {/* STAR INGREDIENTS — only surfaces when the pantry has
-            proteins. Multi-select: the user's explicit "use these"
-            signal. Beats the expiring-soon heuristic in the pantry
-            ranking. */}
-        {proteinGroups.length > 0 && (
-          <Section label="BUILD AROUND THESE PROTEINS">
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {proteinGroups.map(group => (
-                <div key={group.key}>
-                  {/* Per-category sub-header. Keeps the four buckets
-                      (Meat / Poultry / Seafood / Plant & other) scannable
-                      instead of a single wall of chips. */}
-                  <div style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: "#666", letterSpacing: "0.1em",
-                    marginBottom: 6,
-                  }}>
-                    {group.label.toUpperCase()}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {group.items.map(o => {
-                      const active = starIngredientIds.includes(o.id);
-                      return (
-                        <button
-                          key={o.id}
-                          onClick={() => setStarIngredientIds(prev => (
-                            active ? prev.filter(id => id !== o.id) : [...prev, o.id]
-                          ))}
-                          style={{
-                            display: "inline-flex", alignItems: "center", gap: 6,
-                            padding: "7px 12px",
-                            background: active ? "#1e1a0e" : "#161616",
-                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                            color: active ? "#f5c842" : "#888",
-                            borderRadius: 20,
-                            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                            cursor: "pointer", transition: "all 0.2s",
-                          }}
-                        >
-                          <span style={{ fontSize: 14 }}>{o.emoji}</span>
-                          {o.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
+        {/* MUST-INCLUDE picker — the full pantry, searchable. Multi-
+            select: the user's explicit "these have to be in the dish"
+            signal. Beats the expiring-soon heuristic in the ranker
+            and flows into the prompt's star-ingredient block.
+            Previously this was gated to proteins only; users wanted
+            to tag things like Crisco or a specific cheese when that
+            ingredient was the POINT of the dish. */}
+        {starOptionGroups.length > 0 && renderStarPicker({
+          starOptionGroups,
+          starIngredientIds,
+          setStarIngredientIds,
+          starSearch,
+          setStarSearch,
+        })}
 
         <Section label="COURSE">
           <ChipRow
@@ -2463,6 +3146,123 @@ const previewShopBtn = {
 };
 const previewShopBtnDone = { ...previewShopBtn, background: "#0f1a0f", borderColor: "#22c55e44", color: "#4ade80", cursor: "default" };
 
+// "WHY THIS DISH" banner with collapse-expand. The rationale can run
+// 150–900 chars depending on how much context Claude had to cite; a
+// hard truncation mid-word in the UI was being reported as a bug.
+// Collapse threshold is 240 chars — short-enough rationales render
+// in full; longer ones show a snippet + "Show more" toggle that
+// reveals the rest in-place. Collapsed state doesn't mutate the
+// underlying text, so copy-paste and screen readers still see the
+// whole thing.
+const RATIONALE_COLLAPSE_THRESHOLD = 240;
+function AiRationaleBanner({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  const long = text.length > RATIONALE_COLLAPSE_THRESHOLD;
+  const visible = !long || expanded
+    ? text
+    : text.slice(0, RATIONALE_COLLAPSE_THRESHOLD).replace(/\s+\S*$/, "") + "…";
+  return (
+    <div style={{
+      marginTop: 8, padding: "12px 14px",
+      background: "linear-gradient(135deg, #1a1624 0%, #141018 100%)",
+      border: "1px solid #2e2538",
+      borderRadius: 12,
+      display: "flex", gap: 10, alignItems: "flex-start",
+    }}>
+      <div style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}>✨</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
+          color: "#c7a8d4", letterSpacing: "0.12em", marginBottom: 4,
+        }}>
+          WHY THIS DISH
+        </div>
+        <div style={{
+          fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+          color: "#d8d2c8", lineHeight: 1.55,
+        }}>
+          {visible}
+          {long && (
+            <>
+              {" "}
+              <button
+                onClick={() => setExpanded(e => !e)}
+                style={{
+                  background: "transparent", border: "none", padding: 0,
+                  color: "#c7a8d4", cursor: "pointer",
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  letterSpacing: "0.08em", textDecoration: "underline",
+                }}
+              >
+                {expanded ? "SHOW LESS" : "SHOW MORE"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Preview-phase "forgot an ingredient" picker. Identical UI to the
+// tweak-phase "+ ADD INGREDIENT FROM PANTRY" control — same toggle
+// button, same scrollable chip list, same dedupe-by-canonical rule.
+// Exists on preview so users who notice something missing after
+// the final pass can add it without navigating back to tweak.
+function PreviewAddIngredient({ pantry, onAdd }) {
+  const [open, setOpen] = useState(false);
+  const candidates = (() => {
+    const seenCanon = new Set();
+    return (pantry || []).filter(p => {
+      if (!p) return false;
+      if (p.kind && p.kind !== "ingredient") return false;
+      const canonId = p.ingredientId || p.canonicalId || p.name?.toLowerCase();
+      if (canonId && seenCanon.has(canonId)) return false;
+      if (canonId) seenCanon.add(canonId);
+      return true;
+    });
+  })();
+  return (
+    <div style={{ marginTop: 10 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={open ? addBtnActive : addBtn}
+      >
+        {open ? "× CLOSE" : "+ ADD INGREDIENT FROM PANTRY"}
+      </button>
+      {open && (
+        <div style={{
+          marginTop: 8, padding: "10px 12px",
+          background: "#0a0a0a", border: "1px solid #242424", borderRadius: 10,
+          maxHeight: 240, overflowY: "auto",
+          display: "flex", flexDirection: "column", gap: 6,
+        }}>
+          {candidates.length === 0 ? (
+            <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666", fontStyle: "italic", padding: "12px 0", textAlign: "center" }}>
+              No pantry items available.
+            </div>
+          ) : candidates.map(p => (
+            <button
+              key={p.id}
+              onClick={() => { onAdd(p); setOpen(false); }}
+              style={swapOptionBtn}
+            >
+              <span style={{ fontSize: 16 }}>{p.emoji || "🥫"}</span>
+              <span style={{ flex: 1, textAlign: "left", fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
+                {p.name}
+              </span>
+              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#888" }}>
+                {p.amount}{p.unit ? ` ${p.unit}` : ""}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Section({ label, children }) {
   return (
     <div style={{ marginTop: 20 }}>
@@ -2571,6 +3371,17 @@ const swapBtn = {
   letterSpacing: "0.06em", cursor: "pointer", whiteSpace: "nowrap",
 };
 const swapBtnActive = { ...swapBtn, background: "#1a2430", color: "#9bcae0" };
+// Amber-tint button for the "BUY REAL" action on substitution rows —
+// reuses the rust/amber palette from the subHint chip ("⇌ classic
+// calls for X") so the two visually rhyme: same dish-substitution
+// story, one explains, one resolves.
+const buyRealBtn = {
+  padding: "5px 10px",
+  background: "#1f1410", border: "1px solid #4a2f1a",
+  color: "#d4a878", borderRadius: 8,
+  fontFamily: "'DM Mono',monospace", fontSize: 9,
+  letterSpacing: "0.06em", cursor: "pointer", whiteSpace: "nowrap",
+};
 const removeBtn = {
   width: 28, height: 28, padding: 0,
   background: "transparent", border: "1px solid #2a2a2a",

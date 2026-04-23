@@ -45,10 +45,17 @@ const CORS_HEADERS = {
 };
 const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
-// Haiku 4.5 — same model the rest of the app uses. Recipe drafting is
-// well within its headroom; keeping everything on one model keeps
-// behavior consistent.
-const MODEL = "claude-haiku-4-5-20251001";
+// Model split — Haiku 4.5 for the sketch pass (simple task: pick a
+// dish + list ingredients) and the classifier (trivially structured
+// output). Sonnet 4.6 for the final pass, where instruction-following
+// matters most (juggling dietary + locked ingredients + course +
+// sketch anchor + feedback + dish contract at once, plus step-quality
+// — timer semantics, reheat logic, prep). Sonnet on final delivers
+// materially better compliance and step writing for ~3x the per-call
+// cost on a pass users actually read.
+const MODEL_SKETCH = "claude-haiku-4-5-20251001";
+const MODEL_FINAL  = "claude-sonnet-4-6";
+const MODEL_CLASSIFIER = "claude-haiku-4-5-20251001";
 
 type PantryItem = {
   name?: string;
@@ -104,9 +111,18 @@ type Prefs = {
   //   "pantry"   — legacy behavior. Pantry items drive the draft; the
   //                course is a soft hint Claude bends around the
   //                ingredients.
-  // Undefined → legacy behavior (course is a soft hint). Client only
-  // sends the field when course !== "any".
+  // The client sends priority on EVERY call (sketch + final). Edge fn
+  // does NOT default undefined→"category" — a missing value means
+  // "don't use a priority block at all," which is distinct from
+  // "category mode." Silent defaulting previously flipped precedence
+  // mid-session when the final pass dropped the field.
   priority?: "category" | "pantry";
+  // True when the client actually filtered the pantry rows before
+  // sending them (see courseCompat.js). The PRECEDENCE block uses this
+  // to tell the truth — previously it unconditionally claimed "the
+  // pantry has been filtered to category-compatible items," which was
+  // a lie for main/side/appetizer courses where no filter ran.
+  pantryFiltered?: boolean;
   // Canonical ids the user explicitly chose to build around. Must
   // appear in the recipe as primary components, not garnishes.
   starIngredientIds?: string[];
@@ -114,6 +130,29 @@ type Prefs = {
   // technique / seasoning / approach when going from sketch to
   // final cook. Only meaningful in mode = "final".
   recipeFeedback?: string;
+  // Sketch concept fields — passed ONLY to the final pass, to anchor
+  // it to whatever the user just approved on the tweak screen. Without
+  // these the final pass could see the locked ingredient list but had
+  // no binding to the dish identity, and Claude would occasionally
+  // re-conceptualize (Bacon Egg Sandwich sketch → Quiche Lorraine
+  // final). Feedback text may tune technique/seasoning but must not
+  // flip the dish.
+  sketchTitle?: string;
+  sketchSubtitle?: string;
+  sketchRationale?: string;
+  // Dish contract from the classifier. Passed on sketch + final. Shapes
+  // the prompt (SPECIFIC → inject rules; FAMILY → stay-in-family; OPEN
+  // → drop pantry, dream mode). The edge fn also uses it for the
+  // deterministic post-check that reject-retries when Claude drifts.
+  dishContract?: {
+    tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM";
+    dishName?: string;
+    aliases?: string[];
+    rules?: string;
+    familyName?: string;
+    familyExamples?: string[];
+    rawPrompt?: string;
+  };
   // Anchor context for compose-a-meal drafts. When present, the draft
   // is a side / dessert / appetizer intended to be served alongside
   // `pairWith.title`. Claude uses it for contrast/complement — don't
@@ -217,7 +256,7 @@ function assemblePromptHeader(
         })
         .join("\n");
 
-  const mealPrompt = prefs.mealPrompt || prefs.notes || "";
+  const mealPrompt = sanitizeUserText(prefs.mealPrompt || prefs.notes || "", 400);
 
   const starPantryNames = Array.isArray(prefs.starIngredientIds) && prefs.starIngredientIds.length
     ? prefs.starIngredientIds
@@ -259,6 +298,42 @@ function assemblePromptHeader(
   // block (with explicit violation callouts) makes breakfast-vs-dinner and
   // main-vs-side-vs-dessert actually swing the output.
   const hardConstraintLines: string[] = [];
+  // Dish contract — classifier output shapes the mealPrompt framing.
+  // SPECIFIC: inject aliases + rules, strict "this dish or nothing".
+  // FAMILY:   creative freedom WITHIN the family, list examples.
+  // OPEN:     no mealPrompt framing; the dream-mode block below handles
+  //           the pantry-free instruction.
+  // FREEFORM: fall back to the old "quote the user verbatim" behavior.
+  const contract = prefs.dishContract;
+  if (contract?.tier === "SPECIFIC" && contract.dishName) {
+    const aliases = Array.isArray(contract.aliases) && contract.aliases.length
+      ? contract.aliases.slice(0, 6).join('", "')
+      : contract.dishName;
+    const rulesLine = contract.rules ? ` The classical rules of this dish: ${contract.rules}` : "";
+    hardConstraintLines.push(
+      `- USER ASK (SPECIFIC DISH): "${contract.dishName}". The output MUST be this exact dish. The title MUST contain one of: "${aliases}".${rulesLine} Do NOT draft a related-but-different dish (if asked for "creme brulee" do NOT draft panna cotta; if asked for "lasagna" do NOT draft spaghetti bolognese). Pantry availability does NOT override this — if the pantry lacks key ingredients, list them as shopping items and draft the canonical recipe anyway.`,
+    );
+  } else if (contract?.tier === "FAMILY" && contract.familyName) {
+    const examples = Array.isArray(contract.familyExamples) && contract.familyExamples.length
+      ? contract.familyExamples.slice(0, 8).join(", ")
+      : "";
+    hardConstraintLines.push(
+      `- USER ASK (FAMILY): "${contract.familyName}". The output MUST be a ${contract.familyName}. You have creative freedom to pick any specific dish within this family${examples ? ` — e.g. ${examples}, or another member of the family` : ""}. Do NOT drift outside the family (if asked for "cookies" do NOT emit a cake; if asked for "custard based treat" do NOT emit a sorbet).`,
+    );
+  } else if (contract?.tier === "OPEN") {
+    // OPEN mode banner. The PANTRY block will already have been
+    // skipped by the client (empty array) and the main instruction
+    // below tells Claude to work from dietary + history alone.
+    hardConstraintLines.push(
+      `- DREAM MODE: the user typed no specific ask and wants you to surprise them. IGNORE the pantry entirely — pretend the user has access to any grocery store. Draft the dish you think they'd most love based on their dietary constraints, cook history, and cuisines they lean into. Every ingredient becomes a shopping item; that's expected and correct in this mode. Be ambitious — a weeknight-boring draft is a failure.`,
+    );
+  } else if (mealPrompt && mealPrompt.trim().length > 0) {
+    // FREEFORM fallback — trust the user's words verbatim.
+    const quoted = mealPrompt.trim().replace(/"/g, '\\"');
+    hardConstraintLines.push(
+      `- USER ASK: "${quoted}". This is the user's direct instruction — treat every noun as a hard requirement. If they named a dish, draft that dish. If they named a protein or cuisine, honor it even if the pantry doesn't support it (non-pantry items become shopping items, not substitutions). Pantry availability does NOT override the user's words.`,
+    );
+  }
   if (prefs.mealTiming && prefs.mealTiming !== "any") {
     const t = prefs.mealTiming;
     const examples = t === "breakfast"
@@ -310,15 +385,28 @@ function assemblePromptHeader(
     ? `\nHARD CONSTRAINTS — violating these is a failure, not a stylistic choice:\n${hardConstraintLines.join("\n")}\n`
     : "";
 
-  // Priority mode — category-first (course wins, pantry is a palette
-  // filtered to compatible items) vs pantry-first (legacy; pantry
-  // drives the draft and course bends). The client pre-filters the
-  // pantry block when priority==="category", so Claude sees a
-  // shortened palette; this block makes the precedence match that
-  // reality so Claude doesn't try to paint around missing ingredients
-  // by inventing something off-category.
-  const priorityMode: "category" | "pantry" =
-    prefs.priority === "pantry" ? "pantry" : "category";
+  // Priority mode — category-first (course wins, pantry is a soft
+  // palette) vs pantry-first (pantry drives the draft and course
+  // bends). The priority flag is explicit: the client sends it on
+  // every call. An undefined value means "no priority block" (the
+  // user didn't pick a course, no tension to resolve).
+  //
+  // pantryFiltered tells the truth about whether the pantry block
+  // shown above has actually been trimmed to category-compatible
+  // items. Historically the prompt unconditionally claimed "the
+  // pantry has been filtered," which was a lie for main/side/
+  // appetizer courses — Claude trusted the lie, Claude drafted
+  // around expiring savory rows under a category the user wanted.
+  const priorityMode: "category" | "pantry" | null =
+    prefs.priority === "category" ? "category"
+    : prefs.priority === "pantry" ? "pantry"
+    : null;
+  const pantryFiltered = prefs.pantryFiltered === true;
+  const pantryHonesty = priorityMode === "category"
+    ? (pantryFiltered
+      ? `The pantry block above has been pre-filtered to category-compatible items; use it as a palette but don't feel obligated to use every row.`
+      : `The pantry block above is NOT filtered — it's the user's full pantry. You are in CATEGORY-PRIORITY mode: treat the pantry as a soft reference, NOT a shopping list you must exhaust. Most rows will not be in the dish. Ignore urgency/expiry narratives — the user explicitly asked for a category output, not for you to use up what's going bad.`)
+    : "";
   const precedenceBlock = priorityMode === "category" ? `
 PRECEDENCE (hard → soft). Earlier beats later when they conflict.
 You are in CATEGORY-PRIORITY mode: the user picked a course and
@@ -329,24 +417,21 @@ wants that category respected over pantry convenience.
      with a bread element. A "dessert" output is sweet. A "prep"
      output is a single-component jar/bottle. Do not reframe the
      category to fit the pantry.
-  3. MEAL TIMING — if set, the recipe fits that meal within the
+  3. The USER ASK in HARD CONSTRAINTS — the user's typed words are
+     the second-strongest signal after course. If they named a dish,
+     draft that dish within the course. If they named a protein or
+     cuisine, honor it even if the pantry doesn't have it.
+  4. MEAL TIMING — if set, the recipe fits that meal within the
      category (breakfast pastry, dinner prep, etc.).
-  4. STAR INGREDIENTS — compatible only. If a starred item doesn't
+  5. STAR INGREDIENTS — compatible only. If a starred item doesn't
      fit the course category (e.g. hot dogs starred but course is
      "bake"), SILENTLY DROP that star. Do not bend the category to
      include it. Keep compatible stars (butter, flour, sugar, eggs
      for bake; aromatics for prep; fruit/dairy for dessert).
-  5. The MEAL PROMPT text — the user's direct ask, respected within
-     the course category. "lasagna" under "bake" → reject lasagna,
-     pick a pastry.
   6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
      constraints above.
 
-The pantry block has already been filtered to category-compatible
-items. Ignore urgency/expiry narratives — the user explicitly asked
-for a category output, not for you to use up what's going bad. If
-the pantry is sparse for the category, draft a standard recipe and
-call the missing items out as shopping items.
+${pantryHonesty}
 
 Lean toward creative, non-obvious combinations WITHIN the category.
 A boring chocolate chip cookie is a failure mode; so is a savory
@@ -529,6 +614,22 @@ Rules:
     user has pecorino" is a real sub. "Classic calls for tortillas,
     user has tortillas" is not a sub at all — just use them.
 
+  - COMPOUND PRODUCTS ARE NEVER A SUB FOR RAW INGREDIENTS. A box of
+    Ritz Butter Crackers contains flour, butter, and salt in its
+    composition — that does NOT mean it satisfies a recipe call for
+    FLOUR. Cereal does not sub for wheat. Bread does not sub for
+    flour. Chocolate chip cookies do not sub for chocolate. Frozen
+    pizza does not sub for mozzarella or tomato sauce. Pre-made
+    pesto does not sub for basil. Hot dogs do not sub for ground
+    pork. The user expects raw ingredients; pairing with a compound
+    product and labeling it "subbed from flour" is always wrong.
+    Cracker boxes / cookie boxes / cereal / sauces in jars / frozen
+    prepared foods / spice blends / anything on a grocery shelf that
+    is already A THING UNTO ITSELF — none of those are ingredients
+    in the pairing sense. If the pantry lacks a raw ingredient, mark
+    it as shopping (pantryItemId: null, missingFromIdeal: false),
+    not as a sub-from-compound.
+
   - "subbedFrom" is non-null ONLY on genuine swaps (case above).
     null when the pantry item matches the ideal directly — including
     when brand/packaging differs (Mission Tortillas for tortillas
@@ -565,6 +666,24 @@ function buildFinalPrompt(
   context: RichContext,
   lockedIngredients: LockedIngredient[] = [],
 ): string {
+  // SKETCH ANCHOR — anchors the final pass to the dish concept the
+  // user already approved on the tweak screen. Without this binding
+  // Claude would sometimes re-conceptualize (Bacon Egg Sandwich
+  // sketch → Quiche Lorraine final) because the locked ingredients
+  // list didn't carry a dish identity on its own. Feedback can tune
+  // technique/seasoning, but the dish identity is the user's signed
+  // contract from the sketch phase.
+  const sketchTitle = typeof prefs.sketchTitle === "string" ? prefs.sketchTitle.trim() : "";
+  const sketchSubtitle = typeof prefs.sketchSubtitle === "string" ? prefs.sketchSubtitle.trim() : "";
+  const sketchRationale = typeof prefs.sketchRationale === "string" ? prefs.sketchRationale.trim() : "";
+  const sketchBlock = sketchTitle
+    ? `\nSKETCH ANCHOR — the user reviewed and approved this dish concept on the sketch screen. The final recipe MUST be the SAME dish.
+- Title: ${sketchTitle}${sketchSubtitle ? `\n- Subtitle: ${sketchSubtitle}` : ""}${sketchRationale ? `\n- Why this dish: ${sketchRationale}` : ""}
+
+You are writing the full step-by-step for THIS dish. Do NOT re-conceptualize. Do NOT swap the dish for something else that happens to use the same ingredients (a sandwich does not become a quiche; a pasta does not become a risotto). RECIPE FEEDBACK may tune technique, seasoning, or emphasis — it may NOT flip the dish identity. If the feedback reads like a request to change the dish wholesale, interpret it as a tuning hint within the current dish instead.
+`
+    : "";
+
   const lockedBlock = lockedIngredients.length > 0
     ? `\nLOCKED INGREDIENTS — the user already approved this exact set during the
 sketch tweak. You MUST use ALL of them, with these names and amounts. Do NOT
@@ -579,12 +698,13 @@ ${lockedIngredients.map((i) => {
 }).join("\n")}\n`
     : "";
 
-  const feedbackBlock = (prefs.recipeFeedback || "").trim()
-    ? `\nRECIPE FEEDBACK (most recent revision instruction — apply on top of everything above except dietary + locked ingredients):
-${prefs.recipeFeedback!.trim()}\n`
+  const sanitizedFeedback = sanitizeUserText(prefs.recipeFeedback || "", 800);
+  const feedbackBlock = sanitizedFeedback
+    ? `\nRECIPE FEEDBACK (most recent revision instruction — apply on top of everything above except dietary, locked ingredients, and the SKETCH ANCHOR dish identity):
+${sanitizedFeedback}\n`
     : "";
 
-  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${lockedBlock}${feedbackBlock}
+  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${sketchBlock}${lockedBlock}${feedbackBlock}
 Return ONLY a single JSON object (no markdown, no prose) with this
 exact shape. Every field is REQUIRED unless marked optional.
 
@@ -893,6 +1013,205 @@ function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): st
   return `\nRECENT HISTORY:\n${lines.join("\n")}\n`;
 }
 
+// ── dish contract post-check ────────────────────────────────────────
+//
+// Deterministic verification — the one thing that actually *prevents*
+// drift (vs. the prompt framing above which just *reduces* it).
+// Compares the drafted title against the contract and returns a
+// pass/fail with a reason string we feed back into a retry prompt.
+//
+// SPECIFIC tier: output title must contain one of the aliases as a
+//   case-insensitive substring. Aliases are set by the classifier and
+//   include typo variants, romanizations, and core dish nouns.
+// FAMILY tier: output title must contain the family name OR one of the
+//   family's example dishes. Looser but still catches dessert-asked /
+//   main-emitted cross-category drifts.
+// OPEN / FREEFORM: no check — the user didn't pin anything.
+type DishContract = {
+  tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM";
+  dishName?: string;
+  aliases?: string[];
+  rules?: string;
+  familyName?: string;
+  familyExamples?: string[];
+  rawPrompt?: string;
+};
+function verifyContract(
+  title: unknown,
+  contract: DishContract | undefined,
+): { pass: boolean; reason: string } {
+  if (!contract || contract.tier === "OPEN" || contract.tier === "FREEFORM") {
+    return { pass: true, reason: "" };
+  }
+  const t = typeof title === "string" ? title.toLowerCase() : "";
+  if (!t) return { pass: false, reason: "title was empty" };
+  if (contract.tier === "SPECIFIC") {
+    const aliases = Array.isArray(contract.aliases) ? contract.aliases : [];
+    const needles = [contract.dishName, ...aliases]
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.toLowerCase());
+    for (const n of needles) if (t.includes(n)) return { pass: true, reason: "" };
+    return {
+      pass: false,
+      reason: `title "${title}" does not mention "${contract.dishName}" or any alias (${needles.slice(0, 4).join(", ")})`,
+    };
+  }
+  // FAMILY
+  const family = (contract.familyName || "").toLowerCase();
+  const examples = Array.isArray(contract.familyExamples) ? contract.familyExamples : [];
+  if (family && t.includes(family)) return { pass: true, reason: "" };
+  for (const ex of examples) {
+    if (typeof ex === "string" && t.includes(ex.toLowerCase())) return { pass: true, reason: "" };
+  }
+  return {
+    pass: false,
+    reason: `title "${title}" does not fit family "${contract.familyName}" (expected one of: ${family}, ${examples.slice(0, 5).join(", ")})`,
+  };
+}
+
+// Retry addendum — a strong plaintext instruction appended to the
+// prompt on the second attempt when the first one drifted off-contract.
+// Written like a note from the user ("that wasn't what I asked for,
+// here's what you emitted, try again") because Claude follows that
+// framing tighter than abstract rules.
+function buildRetryAddendum(
+  priorTitle: string,
+  contract: DishContract,
+): string {
+  if (contract.tier === "SPECIFIC") {
+    const aliases = Array.isArray(contract.aliases) ? contract.aliases.slice(0, 6) : [];
+    return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS OFF-CONTRACT.
+You previously emitted a draft titled "${priorTitle}".
+The user asked for "${contract.dishName}" specifically. "${priorTitle}" is not that dish.
+Start over. The output title MUST contain one of: ${aliases.map(a => `"${a}"`).join(", ")}.${contract.rules ? ` Follow the classical rules: ${contract.rules}` : ""} Do NOT substitute a related dish. Draft "${contract.dishName}", exactly.`;
+  }
+  if (contract.tier === "FAMILY") {
+    const examples = Array.isArray(contract.familyExamples) ? contract.familyExamples.slice(0, 6) : [];
+    return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS OFF-CONTRACT.
+You previously emitted "${priorTitle}". The user asked for a ${contract.familyName}. "${priorTitle}" is not one.
+Start over. Draft a ${contract.familyName} — pick any specific dish from: ${examples.join(", ")}. Do NOT drift outside the family.`;
+  }
+  return "";
+}
+
+// ── dish contract classifier ────────────────────────────────────────
+//
+// Three tiers — lifted out of the user's own wording:
+//   SPECIFIC — they named a real dish ("creme brulee", "lasagna",
+//              "brown butter m&m cookies"). Rules of that dish are
+//              authoritative; the output title must include one of the
+//              aliases Claude identifies, or we retry.
+//   FAMILY   — they described a category ("custard based treat",
+//              "cookies", "quick stir-fry"). Claude has creative freedom
+//              within that family; the output title must fit one of
+//              the family examples Claude lists.
+//   OPEN     — they typed nothing. Dream mode: drop the pantry entirely
+//              from the prompt, use only dietary constraints + cook
+//              history + tastes. The user signaled "surprise me."
+//
+// Classification is ONE Haiku call, cached by the client for the
+// session so regens reuse the same contract. ~$0.0001, ~300ms.
+// (DishContract type declared above alongside verifyContract.)
+
+async function classifyDishPrompt(
+  apiKey: string,
+  mealPrompt: string,
+): Promise<DishContract> {
+  const trimmed = (mealPrompt || "").trim();
+  if (!trimmed) return { tier: "OPEN" };
+
+  const classifierPrompt = `Classify this user prompt for a recipe-generation system. The user will get a drafted recipe; we need to know whether they named a specific dish (rules of that dish apply), a family/category (creative freedom within the family), or freeform text we can't categorize.
+
+User prompt: "${trimmed.replace(/"/g, '\\"').slice(0, 300)}"
+
+Return ONLY a JSON object (no markdown, no prose). Schema:
+
+{
+  "tier": "SPECIFIC" | "FAMILY" | "FREEFORM",
+  // SPECIFIC when the user named a real dish with known conventions
+  //   (creme brulee, lasagna, pad thai, brown butter m&m cookies, shakshuka).
+  //   Multi-word specifics like "brown butter m&m cookies" are SPECIFIC —
+  //   the modifiers ARE part of the dish identity, not category hints.
+  "dishName": "<canonical spelling of the dish, e.g. 'crème brûlée'>",    // SPECIFIC only
+  "aliases":  ["<string>", ...],                                          // SPECIFIC only — 2-5 variant spellings the output title might use (e.g. ['creme brulee', 'crème brûlée', 'creme brulée']). Include the core dish noun(s) alone too ('brulee', 'creme').
+  "rules":    "<one sentence describing what this dish MUST contain/be>", // SPECIFIC only
+  // FAMILY when the user described a category/technique but not a
+  //   specific dish (cookies, pasta, stir-fry, custard based treat,
+  //   italian dinner, quick breakfast, something spicy).
+  "familyName":     "<short family label, e.g. 'cookies', 'custard dessert', 'italian pasta'>",  // FAMILY only
+  "familyExamples": ["<dish>", ...],  // FAMILY only — 4-8 concrete dishes that fit
+  // FREEFORM for anything else: vague adjectives only ('something good',
+  //   'delicious'), unrecognizable text, foreign words you can't map.
+}
+
+Examples:
+  "creme brulee"            → SPECIFIC, dishName: "crème brûlée", aliases: ["creme brulee","crème brûlée","brulee","creme bruelee"]
+  "brown butter m&m cookies"→ SPECIFIC, dishName: "brown butter M&M cookies", aliases: ["brown butter m&m cookies","brown butter mm cookies","brown butter cookies","m&m cookies"]
+  "cookies"                 → FAMILY,   familyName: "cookies", familyExamples: ["chocolate chip cookies","snickerdoodles","oatmeal raisin cookies","peanut butter cookies","shortbread","macarons","gingersnaps"]
+  "custard based treat"     → FAMILY,   familyName: "custard dessert", familyExamples: ["crème brûlée","panna cotta","flan","pot de crème","crème caramel","bread pudding"]
+  "italian pasta"           → FAMILY,   familyName: "italian pasta", familyExamples: ["cacio e pepe","carbonara","bolognese","cacciatore","lasagna","puttanesca"]
+  "something good"          → FREEFORM
+
+Return the JSON object and nothing else.`;
+
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: MODEL_CLASSIFIER,
+        max_tokens: 400,
+        temperature: 0,   // classification wants determinism
+        messages: [
+          { role: "user", content: [{ type: "text", text: classifierPrompt }] },
+          { role: "assistant", content: [{ type: "text", text: "{" }] },
+        ],
+      }),
+    });
+    if (!resp.ok) return { tier: "FREEFORM", rawPrompt: trimmed };
+    const data = await resp.json();
+    const raw = "{" + (data?.content?.[0]?.text ?? "");
+    const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const first = cleaned.indexOf("{");
+      const last  = cleaned.lastIndexOf("}");
+      if (first < 0 || last <= first) return { tier: "FREEFORM", rawPrompt: trimmed };
+      parsed = JSON.parse(cleaned.slice(first, last + 1));
+    }
+    const tier = parsed.tier === "SPECIFIC" || parsed.tier === "FAMILY" || parsed.tier === "FREEFORM"
+      ? parsed.tier as DishContract["tier"]
+      : "FREEFORM";
+    const out: DishContract = { tier, rawPrompt: trimmed };
+    if (tier === "SPECIFIC") {
+      out.dishName = typeof parsed.dishName === "string" ? parsed.dishName : trimmed;
+      out.aliases = Array.isArray(parsed.aliases)
+        ? parsed.aliases.filter((a): a is string => typeof a === "string" && a.trim().length > 0).slice(0, 8)
+        : [trimmed];
+      // Always include the raw prompt as a low-case alias so misspellings
+      // the classifier didn't echo still get post-checked.
+      if (!out.aliases.some((a) => a.toLowerCase() === trimmed.toLowerCase())) {
+        out.aliases.push(trimmed);
+      }
+      out.rules = typeof parsed.rules === "string" ? parsed.rules.slice(0, 300) : "";
+    } else if (tier === "FAMILY") {
+      out.familyName = typeof parsed.familyName === "string" ? parsed.familyName : trimmed;
+      out.familyExamples = Array.isArray(parsed.familyExamples)
+        ? parsed.familyExamples.filter((a): a is string => typeof a === "string" && a.trim().length > 0).slice(0, 10)
+        : [];
+    }
+    return out;
+  } catch {
+    return { tier: "FREEFORM", rawPrompt: trimmed };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: CORS_HEADERS });
@@ -904,7 +1223,7 @@ Deno.serve(async (req) => {
   }
 
   let body: {
-    mode?: "sketch" | "final";
+    mode?: "sketch" | "final" | "classify";
     pantry?: PantryItem[];
     prefs?: Prefs;
     avoidTitles?: string[];
@@ -921,22 +1240,42 @@ Deno.serve(async (req) => {
 
   // Default mode = "final" so existing callers (and the legacy
   // single-pass flow) keep working unchanged. Sketch mode is opt-in
-  // from the new tweak-loop UI.
-  const mode: "sketch" | "final" = body.mode === "sketch" ? "sketch" : "final";
+  // from the new tweak-loop UI. Classify mode is a cheap pre-step
+  // that turns a user's typed mealPrompt into a dish contract the
+  // sketch + final prompts can enforce against.
+  const mode: "sketch" | "final" | "classify" =
+    body.mode === "sketch" ? "sketch"
+    : body.mode === "classify" ? "classify"
+    : "final";
   const pantry = Array.isArray(body.pantry) ? body.pantry : [];
   const prefs = body.prefs || {};
   const context = body.context || null;
   const lockedIngredients = Array.isArray(body.lockedIngredients)
     ? body.lockedIngredients.filter((x): x is LockedIngredient => !!x && typeof x === "object")
     : [];
-  // Truncate the avoid list so a long regen session doesn't blow out
-  // the prompt. The last five titles are plenty to steer away from
-  // whatever the user actually saw most recently.
+  // 15 recent titles — bumped from 5 because regen sessions past the
+  // first five drafts started cycling dishes back as "available again."
+  // Prompt-budget cost is negligible (one short title per line).
   const avoidTitles = Array.isArray(body.avoidTitles)
     ? body.avoidTitles
         .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
-        .slice(-5)
+        .slice(-15)
     : [];
+
+  // Classify-only short-circuit. The client calls this once per
+  // AIRecipe session (or whenever mealPrompt changes) and caches the
+  // result across sketch + final.
+  if (mode === "classify") {
+    const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({ error: "server is missing ANTHROPIC_API_KEY" }),
+        { status: 500, headers: JSON_HEADERS },
+      );
+    }
+    const contract = await classifyDishPrompt(apiKey, prefs.mealPrompt || prefs.notes || "");
+    return new Response(JSON.stringify({ contract }), { headers: JSON_HEADERS });
+  }
 
   const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
@@ -949,120 +1288,138 @@ Deno.serve(async (req) => {
     );
   }
 
-  let anthropicResp: Response;
-  try {
-    anthropicResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        // Both modes get the full 4000-token budget. Earlier attempts
-        // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
-        // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps
-        // with uses[] arrays). Token cost is secondary to not
-        // failing; a truncated draft is worse than an expensive one.
-        // If this still truncates, the repairTruncatedJson fallback
-        // below attempts to close dangling structures so the user
-        // still gets a usable draft.
-        max_tokens: 4000,
-        // temperature=1 is the API default but we set it explicitly so
-        // nobody accidentally pins it to 0 during debugging and wipes
-        // out regen variety without realizing why.
-        temperature: 1,
-        messages: [
+  // Claude call + parse + contract verification loop.
+  //
+  // Two attempts max: original prompt, then (if the first draft drifts
+  // off the dish contract) a retry with a strong addendum telling
+  // Claude "you emitted X, the user asked for Y, try again." The
+  // addendum is what makes this deterministic — the classifier tells
+  // us what to check, verifyContract enforces, the addendum closes
+  // the loop by feeding Claude a specific "fix this" instruction
+  // instead of re-shipping the same prompt.
+  const contract = prefs.dishContract as DishContract | undefined;
+  let recipe: Record<string, unknown> | null = null;
+  let raw = "{}";
+  let truncated = false;
+  let contractPass = true;
+  let contractReason = "";
+  let priorTitle = "";
+  let contractRetries = 0;
+  const MAX_ATTEMPTS = 2;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const addendum = attempt === 0 || !contract
+      ? ""
+      : buildRetryAddendum(priorTitle, contract);
+    const basePrompt = mode === "sketch"
+      ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
+      : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients);
+    const promptText = basePrompt + addendum;
+
+    let anthropicResp: Response;
+    // Sonnet 4.6 rejects assistant-message prefill with
+    // "The conversation must end with a user message." Haiku still
+    // accepts it. Per-model: Haiku uses prefill to force `{`-first
+    // JSON output; Sonnet folds the no-prose-no-fences instruction
+    // into the user message and relies on existing parse fallbacks
+    // (brace-slice + truncation repair) to catch any preface prose.
+    const activeModel = mode === "final" ? MODEL_FINAL : MODEL_SKETCH;
+    const usePrefill = activeModel.startsWith("claude-haiku-");
+    const anthropicMessages = usePrefill
+      ? [
+          { role: "user", content: [{ type: "text", text: promptText }] },
+          { role: "assistant", content: [{ type: "text", text: "{" }] },
+        ]
+      : [
           {
             role: "user",
             content: [{
               type: "text",
-              text: mode === "sketch"
-                ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
-                : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients),
+              text: `${promptText}\n\nRESPOND WITH ONLY A JSON OBJECT. Start your response with { and end with }. Do NOT wrap in markdown code fences. Do NOT include any prose before or after.`,
             }],
           },
-          // Prefill the assistant with "{" so Claude MUST continue
-          // from valid-JSON start. No preface ("Here's your recipe:"),
-          // no markdown fences, no trailing commentary. Handles the
-          // couldn't-parse 502s we were seeing from a chatty model.
-          // We prepend "{" back to the response before parsing.
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "{" }],
-          },
-        ],
-      }),
-    });
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: `anthropic fetch failed: ${String(err)}` }),
-      { status: 502, headers: JSON_HEADERS },
-    );
-  }
+        ];
+    try {
+      anthropicResp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: activeModel,
+          max_tokens: 4000,
+          temperature: 1,
+          messages: anthropicMessages,
+        }),
+      });
+    } catch (err) {
+      return new Response(
+        JSON.stringify({ error: `anthropic fetch failed: ${String(err)}` }),
+        { status: 502, headers: JSON_HEADERS },
+      );
+    }
+    if (!anthropicResp.ok) {
+      const text = await anthropicResp.text();
+      return new Response(
+        JSON.stringify({ error: `anthropic returned ${anthropicResp.status}`, detail: text }),
+        { status: 502, headers: JSON_HEADERS },
+      );
+    }
 
-  if (!anthropicResp.ok) {
-    const text = await anthropicResp.text();
-    return new Response(
-      JSON.stringify({
-        error: `anthropic returned ${anthropicResp.status}`,
-        detail: text,
-      }),
-      { status: 502, headers: JSON_HEADERS },
-    );
-  }
-
-  const data = await anthropicResp.json();
-  // The request prefilled the assistant with "{", so Claude returns
-  // the body AFTER the opening brace. Prepend it back so we parse
-  // a whole object. Fall back to "{}" if Anthropic gave us nothing.
-  const rawBody = data?.content?.[0]?.text ?? "";
-  const raw = rawBody ? `{${rawBody}` : "{}";
-
-  // Tolerant JSON extraction as a safety net. Three fallbacks in
-  // order of aggressiveness:
-  //   1. direct parse of the response (fences stripped first)
-  //   2. brace-slice — carve out between first { and last } to
-  //      handle a chatty model wrapping JSON in prose
-  //   3. truncation-repair — if Claude hit max_tokens mid-output,
-  //      close any dangling strings / arrays / objects and try
-  //      again. User gets a partial-but-structured draft instead
-  //      of a 502.
-  const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-  const truncated = data?.stop_reason === "max_tokens";
-  let recipe: Record<string, unknown> | null = null;
-  try {
-    recipe = JSON.parse(cleaned);
-  } catch {
-    const first = cleaned.indexOf("{");
-    const last  = cleaned.lastIndexOf("}");
-    if (first >= 0 && last > first) {
-      const sliced = cleaned.slice(first, last + 1);
-      try {
-        recipe = JSON.parse(sliced);
-      } catch {
-        // Fall through to repair below.
+    const data = await anthropicResp.json();
+    const rawBody = data?.content?.[0]?.text ?? "";
+    // With prefill (Haiku path), the response starts AFTER the prefilled
+    // `{` so we prepend it back. Without prefill (Sonnet path), the
+    // response already contains the full JSON including the leading
+    // brace. Prepending in the no-prefill case would produce `{{…` and
+    // break the parse.
+    raw = rawBody
+      ? (usePrefill ? `{${rawBody}` : rawBody)
+      : "{}";
+    const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
+    truncated = data?.stop_reason === "max_tokens";
+    recipe = null;
+    try {
+      recipe = JSON.parse(cleaned);
+    } catch {
+      const first = cleaned.indexOf("{");
+      const last  = cleaned.lastIndexOf("}");
+      if (first >= 0 && last > first) {
+        try { recipe = JSON.parse(cleaned.slice(first, last + 1)); } catch { /* fallthrough */ }
+      }
+      if (!recipe) {
+        const repaired = repairTruncatedJson(cleaned);
+        try { recipe = JSON.parse(repaired); } catch { /* handled below */ }
       }
     }
     if (!recipe) {
-      const repaired = repairTruncatedJson(cleaned);
-      try {
-        recipe = JSON.parse(repaired);
-      } catch {
-        return new Response(
-          JSON.stringify({
-            error: "couldn't parse model output as JSON",
-            detail: truncated
-              ? "model output was truncated (hit max_tokens) and couldn't be repaired"
-              : "model returned non-JSON content; tried direct, brace-slice, and truncation-repair",
-            truncated,
-            raw,
-          }),
-          { status: 502, headers: JSON_HEADERS },
-        );
-      }
+      return new Response(
+        JSON.stringify({
+          error: "couldn't parse model output as JSON",
+          detail: truncated
+            ? "model output was truncated (hit max_tokens) and couldn't be repaired"
+            : "model returned non-JSON content; tried direct, brace-slice, and truncation-repair",
+          truncated, raw,
+        }),
+        { status: 502, headers: JSON_HEADERS },
+      );
     }
+
+    const check = verifyContract(recipe.title, contract);
+    contractPass = check.pass;
+    contractReason = check.reason;
+    if (check.pass) break;
+
+    // Off-contract. If we have a retry budget, loop with the addendum.
+    priorTitle = String(recipe.title || "");
+    contractRetries = attempt + 1;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[generate-recipe] contract drift (attempt ${attempt + 1}/${MAX_ATTEMPTS}):`,
+      check.reason,
+    );
   }
 
   // Sketch mode response — narrower shape. Title + IDEAL + PANTRY
@@ -1092,10 +1449,27 @@ Deno.serve(async (req) => {
       ideal:       Array.isArray(recipe.ideal)  ? recipe.ideal  : [],
       pantry:      Array.isArray(recipe.pantry) ? recipe.pantry : [],
       aiRationale: typeof recipe.aiRationale === "string"
-        ? String(recipe.aiRationale).slice(0, 400).trim() || null
+        // 1000-char cap (up from 400): the prompt asks for 1-3 sentences
+        // but Sonnet occasionally writes a longer, genuinely useful
+        // rationale citing multiple pantry items + goal + cuisine
+        // history. Client-side collapse-expand handles long text in
+        // the preview UI; this cap catches runaway model outputs.
+        ? String(recipe.aiRationale).slice(0, 1000).trim() || null
         : null,
     };
-    return new Response(JSON.stringify({ sketch }), { headers: JSON_HEADERS });
+    return new Response(
+      JSON.stringify({
+        sketch,
+        contract: contract || null,
+        // contractDrift signals: true when BOTH attempts drifted
+        // off-contract (user ran out of retry budget); the UI can
+        // surface a "this isn't what you asked for" banner.
+        contractDrift: contract && !contractPass
+          ? { reason: contractReason, retries: contractRetries }
+          : null,
+      }),
+      { headers: JSON_HEADERS },
+    );
   }
 
   // FINAL mode response — full recipe with steps. Same validation as
@@ -1112,6 +1486,36 @@ Deno.serve(async (req) => {
 
   // Backfill anything the model forgot. Keeps the downstream pipeline
   // from having to defend against missing optional fields.
+  const normalizedIngredients = normalizeIngredients(recipe.ingredients) as Array<Record<string, unknown>>;
+  const normalizedSteps = normalizeSteps(recipe.steps) as Array<Record<string, unknown>>;
+  // Enforce the LOCKED INGREDIENTS contract — drop any ingredient
+  // Claude tacked on beyond the locked set + staples allowlist.
+  // No-op when the final pass is freshly generated without a tweak
+  // phase (lockedIngredients empty).
+  const lockedFilter = filterToLockedIngredients(normalizedIngredients, lockedIngredients);
+  if (lockedFilter.dropped.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[generate-recipe] dropped non-locked ingredients:",
+      lockedFilter.dropped.map((d) => d.item),
+    );
+  }
+  if (lockedFilter.forced.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[generate-recipe] force-added locked ingredients the model dropped:",
+      lockedFilter.forced.map((f) => f.item),
+    );
+  }
+  // Reconcile integer-counted ingredients against step quantities.
+  // Raises the ingredient count when steps consume more than the
+  // header declares (the "4 eggs header, 6 eggs in step 2" class of
+  // bug). Corrections are logged so we can see drift frequency.
+  const reconciled = reconcileStepQuantities(lockedFilter.ingredients, normalizedSteps);
+  if (reconciled.corrections.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn("[generate-recipe] step-quantity reconciliation:", reconciled.corrections);
+  }
   const finalRecipe = {
     slug:       recipe.slug       || slugify(recipe.title as string),
     title:      recipe.title,
@@ -1131,12 +1535,11 @@ Deno.serve(async (req) => {
     time:       recipe.time       || { prep: 10, cook: 20 },
     serves:     clampInt(recipe.serves, 1, 12, 2),
     tools:      Array.isArray(recipe.tools) ? recipe.tools : [],
-    ingredients: normalizeIngredients(recipe.ingredients),
-    // Backfill step shape so CookMode never has to defend against a
-    // step that skipped `uses`, `heat`, or `doneCue`. If the model
-    // dropped `uses` entirely, default to an empty array (CookMode
-    // falls back to the top-level ingredients list for rendering).
-    steps:      normalizeSteps(recipe.steps),
+    ingredients: reconciled.ingredients,
+    // Step `uses` is preserved (see normalizeStepUses) so
+    // reconcileStepQuantities has structured signal. CookMode still
+    // falls back to the top-level list when uses is empty.
+    steps:      normalizedSteps,
     // Structured prep reminders (migration 0134). Claude emits zero
     // or more; the normalizer drops malformed entries and clamps
     // leadMinutes into a sane range so a model hallucinating
@@ -1160,7 +1563,29 @@ Deno.serve(async (req) => {
     reheat:     normalizeReheat(recipe.reheat),
   };
 
-  return new Response(JSON.stringify({ recipe: finalRecipe }), { headers: JSON_HEADERS });
+  return new Response(
+    JSON.stringify({
+      recipe: finalRecipe,
+      contractDrift: contract && !contractPass
+        ? { reason: contractReason, retries: contractRetries }
+        : null,
+      // droppedIngredients — items Claude tried to add beyond the
+      // locked set. The client surface a banner ("we blocked these
+      // additions: hot sauce, parmesan") so the user knows the lock
+      // was enforced, not silently obeyed.
+      droppedIngredients: lockedFilter.dropped.length > 0
+        ? lockedFilter.dropped
+        : null,
+      // forcedIngredients — locked items Claude dropped that we
+      // force-added back into the recipe. The user's intent wins;
+      // the client can surface "we kept your added heavy whipping
+      // cream even though Claude left it out" if it wants.
+      forcedIngredients: lockedFilter.forced.length > 0
+        ? lockedFilter.forced
+        : null,
+    }),
+    { headers: JSON_HEADERS },
+  );
 });
 
 // Reheat-block normalizer. Validates method enum, drops a block
@@ -1256,6 +1681,176 @@ function repairTruncatedJson(input: string): string {
   return s;
 }
 
+// User-entered free text (mealPrompt, recipeFeedback) goes directly
+// into the LLM prompt. Strip control chars + code-fence markers so a
+// user can't smuggle prompt instructions, cap length so a 5000-char
+// paste doesn't blow past sane budgets.
+function sanitizeUserText(s: unknown, maxLen: number): string {
+  if (typeof s !== "string") return "";
+  return s
+    .replace(/[ -]+/g, " ")  // control chars → space
+    .replace(/`+/g, "")                        // code-fence markers
+    .replace(/\s+/g, " ")                      // collapse whitespace
+    .trim()
+    .slice(0, Math.max(1, maxLen));
+}
+
+// ── LOCKED INGREDIENTS enforcement ──────────────────────────────────
+//
+// The FINAL prompt tells Claude "use every locked ingredient, add
+// nothing beyond assumed staples." Compliance is soft — Claude
+// occasionally tacks on "hot sauce" or "parmesan" even when the
+// locked list doesn't include them. This filter enforces the contract
+// server-side: anything on recipe.ingredients that isn't in the
+// locked set AND isn't on the staples allowlist gets dropped, and
+// the drops ride back on the response so the client can surface
+// "we blocked these additions" UI.
+//
+// Only fires when lockedIngredients.length > 0 — a fresh final pass
+// without a tweak phase has no contract to enforce.
+const STAPLE_ALLOWLIST = new Set([
+  "salt", "kosher salt", "sea salt", "table salt", "pepper", "black pepper",
+  "white pepper", "olive oil", "vegetable oil", "canola oil", "neutral oil",
+  "oil", "water", "ice", "butter",
+]);
+function normForLockMatch(s: unknown): string {
+  if (typeof s !== "string") return "";
+  return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+// Disqualifying modifiers on ambiguous head nouns. Mirrors the
+// HEAD_NOUN_MODIFIER_EXCLUSIONS map in src/data/ingredients.js so the
+// edge function makes the same identity calls as the client. Without
+// this, "peanut butter" would pass head-noun/subset matching against
+// locked "butter" (both share head "butter", {butter} ⊆ {peanut,
+// butter}) and Claude's invented peanut-butter-in-chicken-marsala
+// would slip past the locked-set filter. Keep these in sync with
+// the client-side set; drift means the two matchers disagree on
+// what counts as a legit substitution.
+const EDGE_HEAD_NOUN_EXCLUSIONS: Record<string, Set<string>> = {
+  butter: new Set(["peanut", "almond", "cashew", "sunflower", "apple", "cocoa"]),
+  milk:   new Set(["coconut", "almond", "soy", "oat", "rice", "cashew", "hemp", "pea"]),
+  cream:  new Set(["sour", "ice", "whipped"]),
+  cheese: new Set(["cream"]),
+  oil:    new Set(["sesame", "truffle", "chili", "essential"]),
+  sauce:  new Set(["soy", "fish", "hot", "bbq", "barbecue", "tartar", "tomato", "pasta", "pizza", "steak", "worcestershire"]),
+  powder: new Set(["baking", "curry", "cocoa", "chili", "garlic", "onion", "protein", "espresso"]),
+  salt:   new Set(["garlic", "onion", "celery", "seasoning"]),
+  sugar:  new Set(["brown", "powdered", "confectioners", "coconut"]),
+  flour:  new Set(["almond", "coconut", "rice", "oat", "tapioca", "corn"]),
+  water:  new Set(["rose", "coconut", "sparkling", "tonic"]),
+  juice:  new Set(["pickle"]),
+};
+function edgeSharesDisqualifyingModifier(small: Set<string>, big: Set<string>, head: string): boolean {
+  const modifiers = EDGE_HEAD_NOUN_EXCLUSIONS[head];
+  if (!modifiers) return false;
+  for (const t of big) {
+    if (t === head) continue;
+    if (modifiers.has(t) && !small.has(t)) return true;
+  }
+  return false;
+}
+
+// Head-noun + subset match — mirrors recipePairing.namesMatch (incl.
+// the disqualifying-modifier gate) so "heavy cream" ↔ "heavy whipping
+// cream" passes but "peanut butter" ↛ "butter" fails even though
+// they'd otherwise share head "butter" with subset containment.
+// Used by the locked-ingredient filter to handle name drift between
+// Claude's output and the locked entry without waving through sub
+// products as legit identity matches.
+function locksMatchByName(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const ta = a.split(" ").filter(Boolean);
+  const tb = b.split(" ").filter(Boolean);
+  if (!ta.length || !tb.length) return false;
+  const head = ta[ta.length - 1];
+  if (head !== tb[tb.length - 1]) return false;
+  const sa = new Set(ta);
+  const sb = new Set(tb);
+  const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+  for (const t of small) if (!big.has(t)) return false;
+  if (edgeSharesDisqualifyingModifier(small, big, head)) return false;
+  return true;
+}
+function filterToLockedIngredients(
+  ingredients: Array<Record<string, unknown>>,
+  lockedIngredients: LockedIngredient[],
+): {
+  ingredients: Array<Record<string, unknown>>;
+  dropped: Array<{ item: string; reason: string }>;
+  forced: Array<{ item: string; reason: string }>;
+} {
+  if (!Array.isArray(ingredients) || !Array.isArray(lockedIngredients) || lockedIngredients.length === 0) {
+    return { ingredients: ingredients || [], dropped: [], forced: [] };
+  }
+  // Build lookup sets for the gate direction (drop-extras): canonical-
+  // id tight + normalized-name loose.
+  const lockedIds = new Set<string>();
+  const lockedNormNames: string[] = [];
+  for (const l of lockedIngredients) {
+    if (l?.ingredientId && typeof l.ingredientId === "string") lockedIds.add(l.ingredientId);
+    const n = normForLockMatch(l?.name);
+    if (n) lockedNormNames.push(n);
+  }
+  const kept: Array<Record<string, unknown>> = [];
+  const dropped: Array<{ item: string; reason: string }> = [];
+  for (const ing of ingredients) {
+    const name = typeof ing.item === "string" ? ing.item : "";
+    const id = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
+    const nn = normForLockMatch(name);
+    if (id && lockedIds.has(id)) { kept.push(ing); continue; }
+    // Name match: exact OR head-noun/subset. Catches "heavy cream" vs
+    // "heavy whipping cream", "flour tortilla" vs "tortilla", etc.
+    if (nn && lockedNormNames.some((ln) => ln === nn || locksMatchByName(nn, ln))) {
+      kept.push(ing);
+      continue;
+    }
+    // Staple allowlist — the prompt explicitly says salt/pepper/oil/
+    // water/butter are OK even if not locked.
+    if (nn && STAPLE_ALLOWLIST.has(nn)) { kept.push(ing); continue; }
+    const tokens = nn.split(" ").filter(Boolean);
+    if (tokens.length > 0 && STAPLE_ALLOWLIST.has(tokens[tokens.length - 1])) {
+      kept.push(ing); continue;
+    }
+    dropped.push({ item: name || id || "(unnamed)", reason: "not in locked set" });
+  }
+  // Force-include direction: any locked ingredient that DID NOT land
+  // in the model's output gets force-appended. Previously if Claude
+  // decided the user's added ingredient (e.g. heavy whipping cream on
+  // a chicken marsala) "didn't fit the dish," it silently dropped it
+  // and the user burned a Sonnet call only to see their add missing.
+  // The user's locked list is explicit intent — respect it.
+  const keptIds = new Set<string>();
+  const keptNorms: string[] = [];
+  for (const ing of kept) {
+    const id = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
+    const nn = normForLockMatch(typeof ing.item === "string" ? ing.item : "");
+    if (id) keptIds.add(id);
+    if (nn) keptNorms.push(nn);
+  }
+  const forced: Array<{ item: string; reason: string }> = [];
+  for (const l of lockedIngredients) {
+    const lid = typeof l?.ingredientId === "string" ? l.ingredientId : "";
+    const lnn = normForLockMatch(l?.name);
+    const alreadyKept = (lid && keptIds.has(lid))
+      || (lnn && keptNorms.some((kn) => kn === lnn || locksMatchByName(kn, lnn)));
+    if (alreadyKept) continue;
+    if (!l?.name) continue;
+    kept.push({
+      item: l.name,
+      ingredientId: l.ingredientId ?? null,
+      amount: l.amount ?? null,
+      unit: l.unit ?? null,
+      state: null,
+      cut: null,
+      qty: undefined,
+      role: undefined,
+    });
+    forced.push({ item: l.name, reason: "locked but dropped by model — force-added" });
+  }
+  return { ingredients: kept, dropped, forced };
+}
+
 function slugify(s: string): string {
   return String(s || "recipe")
     .toLowerCase()
@@ -1313,14 +1908,14 @@ function normalizeIngredients(ings: unknown): unknown[] {
 }
 
 // Ensure every step carries the fields CookMode reads without
-// blowing up on a model that skipped one. `uses` was historically a
-// per-step ingredient list, but it duplicated top-level
-// ingredients[] and burned 15-30% of output tokens on complex
-// recipes (one of the drivers behind max_tokens truncation). The
-// step renderer falls back to the top-level list when uses is
-// empty, which is now always. Defaults to [] here so saved
-// pre-trim recipes still hydrate without nulls breaking
-// CookMode's uses.map.
+// blowing up on a model that skipped one. `uses` is preserved when
+// the model emits it — it's the signal we need to catch the
+// "ingredient says 4 eggs, step says 6 eggs" class of bug that used
+// to ship to users unchallenged. reconcileStepQuantities (below)
+// consumes uses[] + the step instruction text to reconcile against
+// top-level ingredients[]. An empty uses[] is still fine — the step
+// renderer falls back to the top-level list.
+//
 // Timer clamp bounds. 5s floor drops trivial "1 second" hallucinations;
 // 24h ceiling catches a model that confused days with seconds. Actual
 // cooks that need longer (e.g. 48h sous vide) are rare enough that the
@@ -1366,11 +1961,175 @@ function normalizeSteps(steps: unknown): unknown[] {
       icon:        typeof step.icon        === "string" ? step.icon        : "👨‍🍳",
       timer,
       tip:         typeof step.tip         === "string" ? step.tip         : null,
-      uses:        [],
+      uses:        normalizeStepUses(step.uses),
       heat:        typeof step.heat        === "string" ? step.heat        : null,
       doneCue:     typeof step.doneCue     === "string" ? step.doneCue     : null,
     };
   });
+}
+
+// Accept Claude's per-step `uses` array in the canonical shape
+// { item, amount?, ingredientId? }. Drops entries without an item
+// (the only required field for zip-back to ingredients[]); everything
+// else is best-effort passthrough so reconcileStepQuantities has
+// structured signal to work with.
+function normalizeStepUses(raw: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<Record<string, unknown>> = [];
+  for (const u of raw) {
+    if (!u || typeof u !== "object") continue;
+    const entry = u as Record<string, unknown>;
+    const item = typeof entry.item === "string" ? entry.item.trim() : "";
+    if (!item) continue;
+    out.push({
+      item,
+      amount: entry.amount ?? null,
+      ingredientId: typeof entry.ingredientId === "string" ? entry.ingredientId : null,
+    });
+  }
+  return out;
+}
+
+// ── ingredient ↔ step quantity reconciliation ─────────────────────
+//
+// Claude frequently drafts a recipe where the top-level ingredients[]
+// list declares a smaller count than what the steps end up consuming.
+// Classic shape: ingredients[0] = "4 eggs", step2.instruction =
+// "whisk in 6 eggs". Nothing in the pipeline caught that before —
+// normalizeSteps dropped `uses`, no quantity check ran anywhere, and
+// users saw the conflict in CookMode.
+//
+// The reconciler is deliberately conservative:
+//   - It only fires on INTEGER-COUNTED ingredients (eggs, tortillas,
+//     bananas — things the user understands as "N of them"). Volume
+//     and mass units (tbsp, oz, grams) are too lossy to reason about
+//     across the "3 tbsp" / "⅓ cup" / "45 ml" grid without a full
+//     unit ladder, so we skip them.
+//   - It compares the sum of step-level uses (+ instruction-text
+//     mentions) against the top-level count.
+//   - When the steps consume MORE than the top-level declares, the
+//     top-level count is raised to match (the step is the more
+//     specific statement of what the cook actually does).
+//   - When the steps consume LESS, we leave both alone — the extra
+//     could legitimately be a garnish / optional addition.
+//
+// Both corrections are logged so we can see how often Claude misaligns.
+
+// Parse a free-text amount into an integer count, or null when the
+// amount isn't an integer count (e.g. "2 tbsp", "½ cup", "a pinch").
+// Count-ish strings: "4", "4 count", "4 whole", "4 large", "4 medium",
+// "4 small", "four", plus the obvious pluralized produce units like
+// "4 heads" / "4 cloves" (for garlic) — those fall through to the
+// count path only when the ingredient's own amount string uses the
+// same unit word. Anything with a volume or mass unit returns null.
+const COUNT_UNIT_RE = /^\s*(\d+)\s*(?:count|whole|large|medium|small|head|heads|clove|cloves|piece|pieces|ct)?\s*$/i;
+const INTEGER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+function parseIntegerCount(amount: unknown): number | null {
+  if (typeof amount === "number" && Number.isFinite(amount) && Number.isInteger(amount) && amount > 0) {
+    return amount;
+  }
+  if (typeof amount !== "string") return null;
+  const s = amount.trim().toLowerCase();
+  if (!s) return null;
+  const m = COUNT_UNIT_RE.exec(s);
+  if (m) {
+    const n = Number(m[1]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  // "four eggs" style — leading integer word.
+  const first = s.split(/\s+/)[0];
+  if (first && INTEGER_WORDS[first] != null) return INTEGER_WORDS[first];
+  return null;
+}
+
+// Rewrite the integer count inside an amount string while preserving
+// the unit word. "4 count" + newCount=6 → "6 count"; bare "4" → "6".
+function replaceIntegerCount(amount: unknown, newCount: number): string {
+  if (typeof amount === "string") {
+    const m = /^\s*(\d+)(\s*.*)$/.exec(amount);
+    if (m) return `${newCount}${m[2] ?? ""}`;
+  }
+  return String(newCount);
+}
+
+// Build a regex that matches "<N> <ingredient-head-noun>" in a step
+// instruction. We key off the LAST token of the ingredient item —
+// "chicken breast" → "breast" — because instructions routinely drop
+// the modifier ("season the breast with salt"). Digits only; written-
+// out counts in instructions are rare enough to skip.
+function countMentionsInInstruction(instruction: string, itemName: string): number[] {
+  const head = String(itemName || "").toLowerCase().trim().split(/\s+/).pop();
+  if (!head || head.length < 3) return [];
+  // Escape the head noun for safe regex use; allow trailing "s" so
+  // "egg" matches "eggs" without being fooled by "eggshell".
+  const esc = head.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`\\b(\\d+)\\s+${esc}s?\\b`, "gi");
+  const hits: number[] = [];
+  const src = String(instruction || "");
+  for (const m of src.matchAll(re)) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0) hits.push(n);
+  }
+  return hits;
+}
+
+function reconcileStepQuantities(
+  ingredients: Array<Record<string, unknown>>,
+  steps: Array<Record<string, unknown>>,
+): { ingredients: Array<Record<string, unknown>>; corrections: string[] } {
+  if (!Array.isArray(ingredients) || !Array.isArray(steps)) {
+    return { ingredients, corrections: [] };
+  }
+  const corrections: string[] = [];
+  const out = ingredients.map((ing) => ({ ...ing }));
+
+  for (let i = 0; i < out.length; i++) {
+    const ing = out[i];
+    const topCount = parseIntegerCount(ing.amount);
+    if (topCount == null) continue;                       // not count-measured, skip
+    const name = typeof ing.item === "string" ? ing.item : "";
+    if (!name) continue;
+
+    // Two signal sources per step: structured uses[] with a matching
+    // item, and the instruction text with "<N> <head-noun>". Prefer
+    // uses[] when it's present; fall back to instruction mentions.
+    let stepsTotal = 0;
+    let anyMention = false;
+    for (const s of steps) {
+      const uses = Array.isArray(s.uses) ? (s.uses as Array<Record<string, unknown>>) : [];
+      const usesHit = uses.find((u) => {
+        if (!u || typeof u !== "object") return false;
+        const uItem = typeof u.item === "string" ? u.item.toLowerCase() : "";
+        const uId = typeof u.ingredientId === "string" ? u.ingredientId : "";
+        const ingId = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
+        if (ingId && uId && ingId === uId) return true;
+        return uItem && uItem === name.toLowerCase();
+      });
+      if (usesHit) {
+        const n = parseIntegerCount(usesHit.amount);
+        if (n != null) { stepsTotal += n; anyMention = true; }
+        continue;   // structured signal wins; skip the text regex for this step
+      }
+      const instr = typeof s.instruction === "string" ? s.instruction : "";
+      const hits = countMentionsInInstruction(instr, name);
+      if (hits.length > 0) {
+        stepsTotal += hits.reduce((a, b) => a + b, 0);
+        anyMention = true;
+      }
+    }
+
+    if (!anyMention) continue;
+    if (stepsTotal > topCount) {
+      const newAmount = replaceIntegerCount(ing.amount, stepsTotal);
+      corrections.push(`${name}: ingredients declared ${topCount}, steps consume ${stepsTotal} — raised to ${stepsTotal}`);
+      out[i] = { ...ing, amount: newAmount };
+    }
+  }
+
+  return { ingredients: out, corrections };
 }
 
 // Prep-step normalizer. prepSteps ride alongside the main `steps` array
