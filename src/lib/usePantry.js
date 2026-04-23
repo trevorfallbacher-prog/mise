@@ -37,7 +37,19 @@ function fromDb(row) {
   const components = rawArr && rawArr.length
     ? rawArr
     : (singleId ? [singleId] : []);
-  const primaryId = components[0] || null;
+  // Primary identity: canonical_id (what this thing IS) wins over
+  // composition. Composition[0] is only a sane primary when the row
+  // has no canonical identity AND the composition is a single-item
+  // shortcut (raw flour row with composition ["all_purpose_flour"]
+  // and no canonical_id — same thing, use it). For compound products
+  // (Ritz Butter Crackers: canonical_id="crackers", composition=
+  // ["all_purpose_flour"]) composition[0] is NOT the identity, and
+  // promoting it produces the "Ritz pinned for flour recipe" bug
+  // the audit caught. canonical_id is always the right answer when
+  // present.
+  const primaryId = row.canonical_id
+    || (components.length === 1 ? components[0] : null)
+    || null;
 
   const item = {
     id: row.id,
@@ -192,9 +204,19 @@ function toDb(item) {
     ? item.components
     : (Array.isArray(item.ingredientIds) ? item.ingredientIds : null);
   const hasArray = Array.isArray(arr);
-  const primaryId = hasArray && arr.length
-    ? (arr[0] || null)
-    : (item.ingredientId || null);
+  // Primary identity on the wire: canonicalId (the "what this thing
+  // IS" signal) wins over composition. When canonicalId is present,
+  // `ingredient_id` mirrors it — legacy SQL keyed on the scalar still
+  // resolves to the identity, not to composition[0]. Single-component
+  // rows without canonicalId fall through to composition[0] (a raw
+  // flour row with one component IS flour). Multi-component rows
+  // without canonicalId get null — compound products need an explicit
+  // identity, and silently promoting composition[0] was the root of
+  // the "Ritz Butter Crackers paired for flour recipe" bug.
+  const primaryId = item.canonicalId
+    || item.ingredientId
+    || (hasArray && arr.length === 1 ? (arr[0] || null) : null)
+    || null;
   return {
     ingredient_id: primaryId,
     ...(hasArray ? { components: arr.filter(Boolean) } : {}),
