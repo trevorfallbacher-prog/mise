@@ -52,6 +52,21 @@ function normalizeName(s) {
     .trim();
 }
 
+// Render-side: turn a canonical slug into a readable title when no
+// bundled ingredient lookup resolves it (synthetic/family-created
+// canonicals like "cheez_danish" that the user just created via
+// LinkIngredient's ⭐ create-new flow). Preserves the user's own
+// words — never falls back to OFF's productName, which is what was
+// causing corrected scans to appear "unfixed" in the header.
+function prettifySlug(slug) {
+  if (!slug) return null;
+  return String(slug)
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
 function tokens(s) {
   return new Set(normalizeName(s).split(" ").filter(t => t.length >= 3));
 }
@@ -1672,9 +1687,18 @@ const EditableScanLine = memo(function EditableScanLine({
   // rows). Without this, picking a canonical via LinkIngredient
   // silently updates the cascade but the big header text stays
   // stuck on the OFF productName — user saw the pairing "not stick."
+  //
+  // When a canonical IS bound but it's a synthetic (family-created)
+  // slug that findIngredient can't resolve, we STILL prefer it over
+  // the OFF productName — per CLAUDE.md, never let a typed/OFF name
+  // fossilize as the title when a canonical exists. Pretty-print
+  // the slug ("cheez_danish" → "Cheez Danish", "pastry" → "Pastry")
+  // so the user sees their correction reflected in the header even
+  // before the synthetic canonical gets enriched.
   const label =
     currentCanonical?.shortName
     || currentCanonical?.name
+    || (scan.canonicalId ? prettifySlug(scan.canonicalId) : null)
     || scan.productName
     || scan.brand
     || `UPC ${scan.barcodeUpc.slice(-6)}`;
@@ -2229,6 +2253,7 @@ const TripScanLine = memo(function TripScanLine({
     const canon = scan.canonicalId ? findIngredient(scan.canonicalId) : null;
     const l = canon?.shortName
       || canon?.name
+      || (scan.canonicalId ? prettifySlug(scan.canonicalId) : null)
       || scan.productName
       || scan.brand
       || `UPC ${scan.barcodeUpc.slice(-6)}`;
