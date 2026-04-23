@@ -242,6 +242,133 @@ function autoPairShoppingRows(sketch, pantry) {
 // can diff them against the paired pantry row's attributes.claims
 // and flag "⚠ NO LONGER VEGAN" when the user takes a non-compliant
 // substitution.
+// MUST-INCLUDE picker renderer — pulled out of the main component
+// body so the JSX + filter logic doesn't bloat the setup phase. Not
+// a React component (no hooks of its own); just a render helper that
+// takes the shared state bag and returns the <Section> block.
+function renderStarPicker({
+  starOptionGroups,
+  starIngredientIds,
+  setStarIngredientIds,
+  starSearch,
+  setStarSearch,
+}) {
+  const q = starSearch.trim().toLowerCase();
+  const filteredGroups = q
+    ? starOptionGroups
+        .map(g => ({ ...g, items: g.items.filter(o => o.label.toLowerCase().includes(q)) }))
+        .filter(g => g.items.length > 0)
+    : starOptionGroups;
+  // Pinned chips: any currently-selected star that doesn't match the
+  // filter still renders at the top so the user doesn't lose track
+  // of their picks while searching.
+  const matchedIds = new Set(filteredGroups.flatMap(g => g.items.map(o => o.id)));
+  const allOptions = starOptionGroups.flatMap(g => g.items);
+  const hiddenSelections = q
+    ? starIngredientIds
+        .filter(id => !matchedIds.has(id))
+        .map(id => allOptions.find(o => o.id === id))
+        .filter(Boolean)
+    : [];
+  return (
+    <Section label="MUST INCLUDE — star any pantry item">
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <input
+          type="text"
+          value={starSearch}
+          onChange={(e) => setStarSearch(e.target.value)}
+          placeholder="Search pantry (e.g. crisco, ricotta, gochujang)"
+          style={{
+            width: "100%", padding: "10px 12px",
+            background: "#0f0f0f", color: "#f0ece4",
+            border: "1px solid #2a2a2a", borderRadius: 8,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+            outline: "none",
+          }}
+        />
+        {hiddenSelections.length > 0 && (
+          <div>
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#f5c842", letterSpacing: "0.1em",
+              marginBottom: 6,
+            }}>
+              SELECTED (HIDDEN BY SEARCH)
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {hiddenSelections.map(o => (
+                <button
+                  key={o.id}
+                  onClick={() => setStarIngredientIds(prev => prev.filter(id => id !== o.id))}
+                  style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "7px 12px",
+                    background: "#1e1a0e",
+                    border: "1px solid #f5c842",
+                    color: "#f5c842",
+                    borderRadius: 20,
+                    fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  <span style={{ fontSize: 14 }}>{o.emoji}</span>
+                  {o.label}
+                  <span style={{ opacity: 0.6, marginLeft: 4 }}>×</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {q && filteredGroups.length === 0 && (
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+            color: "#666", fontStyle: "italic",
+          }}>
+            No pantry items match &quot;{starSearch}&quot;.
+          </div>
+        )}
+        {filteredGroups.map(group => (
+          <div key={group.key}>
+            <div style={{
+              fontFamily: "'DM Mono',monospace", fontSize: 9,
+              color: "#666", letterSpacing: "0.1em",
+              marginBottom: 6,
+            }}>
+              {group.label.toUpperCase()}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {group.items.map(o => {
+                const active = starIngredientIds.includes(o.id);
+                return (
+                  <button
+                    key={o.id}
+                    onClick={() => setStarIngredientIds(prev => (
+                      active ? prev.filter(id => id !== o.id) : [...prev, o.id]
+                    ))}
+                    style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "7px 12px",
+                      background: active ? "#1e1a0e" : "#161616",
+                      border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
+                      color: active ? "#f5c842" : "#888",
+                      borderRadius: 20,
+                      fontFamily: "'DM Sans',sans-serif", fontSize: 12,
+                      cursor: "pointer", transition: "all 0.2s",
+                    }}
+                  >
+                    <span style={{ fontSize: 14 }}>{o.emoji}</span>
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function stampDietaryClaims(sketch) {
   if (!sketch || !Array.isArray(sketch.ideal)) return sketch;
   return {
@@ -364,6 +491,10 @@ export default function AIRecipe({
   // UI when course === "any" — no tension to resolve.
   const [priority,   setPriority]   = useState("category");
   const [starIngredientIds, setStarIngredientIds] = useState([]);
+  // Search query for the MUST-INCLUDE picker. Filters starOptionGroups
+  // by substring (case-insensitive) against item labels so a user
+  // searching "crisco" in a 104-row pantry doesn't have to scroll.
+  const [starSearch, setStarSearch] = useState("");
   const [cuisine,    setCuisine]    = useState("any");
   const [time,       setTime]       = useState("medium");
   const [difficulty, setDifficulty] = useState("medium");
@@ -395,44 +526,70 @@ export default function AIRecipe({
   // PLANT at a glance instead of reading a wall of chips. Uses the
   // canonical's full `name` (not `shortName`) so "Ground Beef" and
   // "Ground Pork" don't both read as just "Ground."
-  const proteinGroups = useMemo(() => {
+  // MUST-INCLUDE picker — the full pantry (not just proteins).
+  // Previously this was gated to meat/poultry/seafood + a hand-picked
+  // plant-protein set, but users (rightly) wanted to tag things like
+  // Crisco, tortillas, brown butter, or a specific cheese when that
+  // ingredient was the POINT of the dish. Now every pantry row with
+  // kind="ingredient" (i.e. not a compound dish or leftover) is
+  // pickable. A search input sits above the groups so finding one
+  // item in a 100-row pantry doesn't require scrolling.
+  //
+  // Grouping: prefer meat/poultry/seafood/dairy/produce/grains/fats/
+  // pantry/frozen in that visual order; anything with an unknown
+  // category falls under "Other" at the end.
+  const starOptionGroups = useMemo(() => {
     const byCanonical = new Map();
     for (const row of pantry) {
-      if (!isProteinRow(row)) continue;
+      // Compound dishes (frozen pizzas) and leftovers (last night's
+      // rice) carry ingredientIds but aren't pickable as "must
+      // include" tags — you don't build a dish around the fact that
+      // you have a leftover.
+      if (row?.kind && row.kind !== "ingredient") continue;
       const slug = row.ingredientId || row.canonicalId;
       if (!slug) continue;
       if (!byCanonical.has(slug)) {
-        // findIngredient resolves through CANONICAL_ALIASES, so a
-        // legacy `ground_beef` slug comes back as the `beef` base
-        // canonical with its clean "Beef" name. No UI stripping
-        // needed post-migration 0060.
         const canon = findIngredient(slug);
         byCanonical.set(slug, {
           id: slug,
           label: canon?.name || row.name || slug,
-          emoji: row.emoji || canon?.emoji || "🍖",
-          category: canon?.category || null,
+          emoji: row.emoji || canon?.emoji || "🍽️",
+          category: canon?.category || row.category || null,
           slug,
         });
       }
     }
-    // Categories in the order we want them surfaced. Anything that
-    // doesn't match one of the meat/poultry/seafood buckets lands
-    // under "PLANT & OTHER" — tofu, eggs, beans, egg whites, etc.
     const categoryOrder = [
-      { key: "meat",    label: "Meat" },
-      { key: "poultry", label: "Poultry" },
-      { key: "seafood", label: "Seafood" },
-      { key: "plant",   label: "Plant & other" },
+      { key: "meat",     label: "Meat" },
+      { key: "poultry",  label: "Poultry" },
+      { key: "seafood",  label: "Seafood" },
+      { key: "dairy",    label: "Dairy & eggs" },
+      { key: "produce",  label: "Produce" },
+      { key: "grains",   label: "Grains & starches" },
+      { key: "fats",     label: "Fats & oils" },
+      { key: "pantry",   label: "Pantry" },
+      { key: "frozen",   label: "Frozen" },
+      { key: "beverage", label: "Beverages" },
+      { key: "other",    label: "Other" },
     ];
     const groups = new Map(categoryOrder.map(c => [c.key, { ...c, items: [] }]));
+    // Map a handful of equivalent category strings to the canonical
+    // bucket keys above. Anything unmapped lands under "other" so the
+    // picker never silently loses a pantry row.
+    const CATEGORY_BUCKET = {
+      meat: "meat", poultry: "poultry", seafood: "seafood",
+      dairy: "dairy", egg: "dairy", eggs: "dairy",
+      produce: "produce", fruit: "produce", vegetable: "produce",
+      grain: "grains", grains: "grains", starch: "grains", bread: "grains", pasta: "grains", rice: "grains",
+      fat: "fats", fats: "fats", oil: "fats", oils: "fats",
+      pantry: "pantry", condiment: "pantry", spice: "pantry", sauce: "pantry", baking: "pantry",
+      frozen: "frozen",
+      beverage: "beverage", drink: "beverage",
+    };
     for (const opt of byCanonical.values()) {
-      const key = ["meat", "poultry", "seafood"].includes(opt.category)
-        ? opt.category
-        : "plant";
-      groups.get(key).items.push(opt);
+      const bucket = CATEGORY_BUCKET[opt.category] || "other";
+      groups.get(bucket).items.push(opt);
     }
-    // Sort each group alphabetically; drop empties.
     const out = [];
     for (const c of categoryOrder) {
       const g = groups.get(c.key);
@@ -2262,56 +2419,20 @@ export default function AIRecipe({
           />
         </Section>
 
-        {/* STAR INGREDIENTS — only surfaces when the pantry has
-            proteins. Multi-select: the user's explicit "use these"
-            signal. Beats the expiring-soon heuristic in the pantry
-            ranking. */}
-        {proteinGroups.length > 0 && (
-          <Section label="BUILD AROUND THESE PROTEINS">
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {proteinGroups.map(group => (
-                <div key={group.key}>
-                  {/* Per-category sub-header. Keeps the four buckets
-                      (Meat / Poultry / Seafood / Plant & other) scannable
-                      instead of a single wall of chips. */}
-                  <div style={{
-                    fontFamily: "'DM Mono',monospace", fontSize: 9,
-                    color: "#666", letterSpacing: "0.1em",
-                    marginBottom: 6,
-                  }}>
-                    {group.label.toUpperCase()}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {group.items.map(o => {
-                      const active = starIngredientIds.includes(o.id);
-                      return (
-                        <button
-                          key={o.id}
-                          onClick={() => setStarIngredientIds(prev => (
-                            active ? prev.filter(id => id !== o.id) : [...prev, o.id]
-                          ))}
-                          style={{
-                            display: "inline-flex", alignItems: "center", gap: 6,
-                            padding: "7px 12px",
-                            background: active ? "#1e1a0e" : "#161616",
-                            border: `1px solid ${active ? "#f5c842" : "#2a2a2a"}`,
-                            color: active ? "#f5c842" : "#888",
-                            borderRadius: 20,
-                            fontFamily: "'DM Sans',sans-serif", fontSize: 12,
-                            cursor: "pointer", transition: "all 0.2s",
-                          }}
-                        >
-                          <span style={{ fontSize: 14 }}>{o.emoji}</span>
-                          {o.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Section>
-        )}
+        {/* MUST-INCLUDE picker — the full pantry, searchable. Multi-
+            select: the user's explicit "these have to be in the dish"
+            signal. Beats the expiring-soon heuristic in the ranker
+            and flows into the prompt's star-ingredient block.
+            Previously this was gated to proteins only; users wanted
+            to tag things like Crisco or a specific cheese when that
+            ingredient was the POINT of the dish. */}
+        {starOptionGroups.length > 0 && renderStarPicker({
+          starOptionGroups,
+          starIngredientIds,
+          setStarIngredientIds,
+          starSearch,
+          setStarSearch,
+        })}
 
         <Section label="COURSE">
           <ChipRow
