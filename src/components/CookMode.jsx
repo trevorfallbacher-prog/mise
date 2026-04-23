@@ -1044,6 +1044,33 @@ export default function CookMode({
 
   return (
     <div style={{ padding:"16px 24px 40px", maxWidth:480, margin:"0 auto" }}>
+      {/* Top bar: minimize back to the app while the cook stays live.
+          The banner picks it up the moment CookMode closes — useful
+          when a timer is ticking and the user wants to check pantry /
+          message family / whatever, without ending the session.
+          Session endures 2h; explicit end is still via DONE LOG IT. */}
+      {onExit && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
+          <button
+            onClick={onExit}
+            title="Step out — timer keeps running"
+            aria-label="Minimize cook view"
+            style={{
+              display:"inline-flex", alignItems:"center", gap:8,
+              background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb",
+              borderRadius:20, padding:"8px 14px",
+              fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.14em",
+              cursor:"pointer",
+            }}
+          >
+            <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
+            MINIMIZE
+          </button>
+          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em" }}>
+            TIMER KEEPS RUNNING
+          </span>
+        </div>
+      )}
       <div style={{ height:3, background:"#222", borderRadius:2, marginTop:16, overflow:"hidden" }}>
         <div style={{ height:"100%", background:"#f5c842", borderRadius:2, width:`${progress}%`, transition:"width 0.5s ease" }} />
       </div>

@@ -93,10 +93,12 @@ export default function CookBanner({ active, onResume, onDismiss }) {
             zIndex: 120,
             background: timerDone
               ? "linear-gradient(180deg,#15301a 0%,#0f1a0f 100%)"
-              : "linear-gradient(180deg,#1e1408 0%,#140d05 100%)",
-            borderBottom: `1px solid ${timerDone ? "#2f6d3a" : "#3a2a0a"}`,
-            boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
-            padding: "10px 14px 8px",
+              : "linear-gradient(180deg,#231509 0%,#170d05 100%)",
+            borderBottom: `2px solid ${timerDone ? "#2f6d3a" : "#4a3a10"}`,
+            boxShadow: timerDone
+              ? "0 10px 28px rgba(34,197,94,0.25), 0 4px 10px rgba(0,0,0,0.5)"
+              : "0 10px 28px rgba(245,200,66,0.18), 0 4px 10px rgba(0,0,0,0.5)",
+            padding: "14px 18px 14px",
             cursor: "pointer",
             userSelect: "none",
           }}
@@ -105,34 +107,36 @@ export default function CookBanner({ active, onResume, onDismiss }) {
           aria-label={`Resume cooking ${recipe.title}`}
         >
           {/* Row 1 — identity */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 20, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 28, flexShrink: 0, lineHeight: 1 }}>
               {recipe.emoji || session.recipe_emoji || "👨‍🍳"}
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{
-                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
                 color: timerDone ? "#4ade80" : "#f5c842",
-                letterSpacing: "0.14em",
+                letterSpacing: "0.16em",
+                marginBottom: 2,
               }}>
-                {timerDone ? "⏰ TIMER'S UP" : "COOKING"}
+                {timerDone ? "⏰ TIMER'S UP — TAP TO FINISH" : "COOKING · TAP TO RESUME"}
               </div>
               <div style={{
                 fontFamily: "'Fraunces',serif", fontStyle: "italic",
-                fontSize: 15, lineHeight: 1.2,
+                fontSize: 19, lineHeight: 1.15,
                 color: "#f5f5f0",
                 whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
               }}>
                 {recipe.title}
               </div>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               {totalSteps > 0 && stepIndex > 0 && (
                 <span style={{
-                  fontFamily: "'DM Mono',monospace", fontSize: 9,
-                  color: "#b8a878", letterSpacing: "0.1em",
+                  fontFamily: "'DM Mono',monospace", fontSize: 10,
+                  color: "#b8a878", letterSpacing: "0.12em",
                   background: "#1a1508", border: "1px solid #3a2f10",
-                  padding: "3px 7px", borderRadius: 4,
+                  padding: "5px 9px", borderRadius: 5,
+                  fontWeight: 600,
                 }}>
                   STEP {stepIndex}/{totalSteps}
                 </span>
@@ -141,8 +145,8 @@ export default function CookBanner({ active, onResume, onDismiss }) {
                 onClick={(e) => { e.stopPropagation(); onDismiss?.(); }}
                 aria-label="Dismiss banner"
                 style={{
-                  background: "transparent", border: "none", color: "#666",
-                  fontSize: 16, cursor: "pointer", padding: "2px 6px",
+                  background: "transparent", border: "none", color: "#777",
+                  fontSize: 20, cursor: "pointer", padding: "4px 8px",
                   lineHeight: 1,
                 }}
               >
@@ -153,47 +157,36 @@ export default function CookBanner({ active, onResume, onDismiss }) {
 
           {/* Row 2 — live countdown + progress bar */}
           {remainingSec != null && (
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 12 }}>
               <div style={{
-                display: "flex", alignItems: "baseline", gap: 10,
+                display: "flex", alignItems: "baseline", gap: 12,
                 fontFamily: "'DM Mono',monospace",
               }}>
                 <span style={{
-                  fontSize: 22, letterSpacing: "0.04em",
+                  fontSize: 32, letterSpacing: "0.04em", fontWeight: 600,
                   color: timerDone ? "#4ade80" : pulsing ? "#ef4444" : "#f59e0b",
                   animation: pulsing ? "cookBannerPulse 1s ease-in-out infinite" : "none",
+                  textShadow: pulsing ? "0 0 16px rgba(239,68,68,0.5)" : "none",
                 }}>
                   {timerDone ? "0:00" : `${mins}:${String(secs).padStart(2, "0")}`}
                 </span>
-                <span style={{ fontSize: 10, color: "#888", letterSpacing: "0.12em" }}>
+                <span style={{ fontSize: 11, color: "#999", letterSpacing: "0.14em", fontWeight: 500 }}>
                   {activeStep?.step_title ? activeStep.step_title.toUpperCase() : "TIMER"}
                 </span>
               </div>
               {progressPct != null && (
                 <div style={{
-                  marginTop: 6, height: 3, borderRadius: 2,
+                  marginTop: 9, height: 5, borderRadius: 3,
                   background: "#2a1f10", overflow: "hidden",
                 }}>
                   <div style={{
                     width: `${progressPct}%`, height: "100%",
                     background: timerDone ? "#4ade80" : pulsing ? "#ef4444" : "#f59e0b",
                     transition: "width 0.5s linear, background 0.3s",
+                    boxShadow: pulsing ? "0 0 10px rgba(239,68,68,0.6)" : "none",
                   }} />
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Row 3 — resume affordance. Only render when no timer
-              row is visible (otherwise the bar is already busy and
-              redundant labeling feels cramped). */}
-          {remainingSec == null && (
-            <div style={{
-              marginTop: 4,
-              fontFamily: "'DM Mono',monospace", fontSize: 9,
-              color: "#888", letterSpacing: "0.12em",
-            }}>
-              TAP TO RESUME →
             </div>
           )}
 
