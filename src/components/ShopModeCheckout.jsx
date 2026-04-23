@@ -103,37 +103,51 @@ function normalizeBarcode(b) {
 //     06811313546 (11). After leading-zero strip both sides share
 //     the 10-digit data prefix 6811313546.
 //
-// Match strategy: strip leading zeros from both, then either direct
-// equality OR shorter is a PREFIX of longer with >= 9 digit overlap.
+// Match strategy: strip leading zeros from both, then check two
+// equivalence paths that between them cover the real-world UPC
+// mismatch cases observed from Vision on thermal receipts.
 //
-// Why prefix (not substring): UPC-A data portions align at the left
-// after leading-zero strip — both scan forms and Walmart's shifted
-// form share the same prefix, they just diverge at the end where
-// Vision's OCR dropped one or two digits. Matching on a prefix is
-// dramatically less collision-prone than "substring anywhere"
-// because it pins the match origin. A 9-char prefix of UPC-A data
-// is effectively unique per product (1-billion space).
+// Path 1 — PURE PREFIX at >= 9 chars. Handles Vision truncation
+// where digits were dropped off the end but every surviving digit
+// was read correctly. Scan 681131354684 (12) vs Vision 6811313546
+// (10) — the vision form is a pure prefix of the scan. 9-char
+// floor because Vision can drop both leading zeros AND the check
+// digit on a Walmart-shifted print (Sandwich: scan 24126017186
+// vs Vision 241260171).
 //
-// Why 9 (not 10): seen two classes of Vision truncation on thermal
-// receipts:
-//   - "drops one": 12-digit scan vs 11-digit vision → 10-char overlap
-//     (Cremini Mushrooms: 681131354684 vs 6811313546)
-//   - "drops two": 12-digit scan vs Vision's 11-digit form where
-//     BOTH leading zeros are stripped by normalizeBarcode → 9-char
-//     overlap (Sandwich/Hawaiian Bread: 24126017186 vs 241260171,
-//     because Vision returned "00241260171" and normalizeBarcode
-//     stripped "00" → "241260171").
-// 9 catches both without relaxing into noise. Below 9 we'd start
-// matching EAN-8 collisions against 12-digit UPCs that happen to
-// contain the 8 digits, which is a real risk.
+// Path 2 — HAMMING-1 at >= 10 chars. Handles classic thermal-OCR
+// last-digit misreads (4/7, 3/8, 5/6, 9/5 confusion) where Vision
+// read the same number of digits as printed but got one wrong.
+// Scan 194346251827 vs Vision 194346251824 — same length, last
+// digit differs. Share 11 correct positions + 1 mismatch. This
+// pattern was the #1 remaining source of unpaired rows.
+//
+// Both paths are conservative enough to keep false-positive risk
+// near zero for a single receipt (<30 items) because UPC-A data
+// portions are left-anchored and any legitimate collision would
+// need to be a different variant in the SAME manufacturer line
+// that appears on the SAME receipt — possible but rare, and
+// claimed-set dedup prevents a single vision row from pairing
+// twice.
 function upcsEquivalent(a, b) {
   const an = normalizeBarcode(a);
   const bn = normalizeBarcode(b);
   if (!an || !bn) return false;
   if (an === bn) return true;
   const [shorter, longer] = an.length <= bn.length ? [an, bn] : [bn, an];
-  if (shorter.length < 9) return false;
-  return longer.startsWith(shorter);
+  // Path 1 — pure prefix.
+  if (shorter.length >= 9 && longer.startsWith(shorter)) return true;
+  // Path 2 — Hamming-1 with both sides >= 10 and lengths off by
+  // at most 2 (so we don't match wildly different UPCs that happen
+  // to share a short prefix).
+  if (shorter.length < 10) return false;
+  if (Math.abs(an.length - bn.length) > 2) return false;
+  const overlap = Math.min(an.length, bn.length);
+  let matches = 0;
+  for (let i = 0; i < overlap; i++) {
+    if (an[i] === bn[i]) matches++;
+  }
+  return matches >= 10 && (overlap - matches) <= 1;
 }
 
 // Match a trip_scan to a receipt line. UPC direct match wins (the
