@@ -1451,11 +1451,23 @@ Deno.serve(async (req) => {
   // from having to defend against missing optional fields.
   const normalizedIngredients = normalizeIngredients(recipe.ingredients) as Array<Record<string, unknown>>;
   const normalizedSteps = normalizeSteps(recipe.steps) as Array<Record<string, unknown>>;
+  // Enforce the LOCKED INGREDIENTS contract — drop any ingredient
+  // Claude tacked on beyond the locked set + staples allowlist.
+  // No-op when the final pass is freshly generated without a tweak
+  // phase (lockedIngredients empty).
+  const lockedFilter = filterToLockedIngredients(normalizedIngredients, lockedIngredients);
+  if (lockedFilter.dropped.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[generate-recipe] dropped non-locked ingredients:",
+      lockedFilter.dropped.map((d) => d.item),
+    );
+  }
   // Reconcile integer-counted ingredients against step quantities.
   // Raises the ingredient count when steps consume more than the
   // header declares (the "4 eggs header, 6 eggs in step 2" class of
   // bug). Corrections are logged so we can see drift frequency.
-  const reconciled = reconcileStepQuantities(normalizedIngredients, normalizedSteps);
+  const reconciled = reconcileStepQuantities(lockedFilter.ingredients, normalizedSteps);
   if (reconciled.corrections.length > 0) {
     // eslint-disable-next-line no-console
     console.warn("[generate-recipe] step-quantity reconciliation:", reconciled.corrections);
@@ -1512,6 +1524,13 @@ Deno.serve(async (req) => {
       recipe: finalRecipe,
       contractDrift: contract && !contractPass
         ? { reason: contractReason, retries: contractRetries }
+        : null,
+      // droppedIngredients — items Claude tried to add beyond the
+      // locked set. The client surface a banner ("we blocked these
+      // additions: hot sauce, parmesan") so the user knows the lock
+      // was enforced, not silently obeyed.
+      droppedIngredients: lockedFilter.dropped.length > 0
+        ? lockedFilter.dropped
         : null,
     }),
     { headers: JSON_HEADERS },
@@ -1623,6 +1642,67 @@ function sanitizeUserText(s: unknown, maxLen: number): string {
     .replace(/\s+/g, " ")                      // collapse whitespace
     .trim()
     .slice(0, Math.max(1, maxLen));
+}
+
+// ── LOCKED INGREDIENTS enforcement ──────────────────────────────────
+//
+// The FINAL prompt tells Claude "use every locked ingredient, add
+// nothing beyond assumed staples." Compliance is soft — Claude
+// occasionally tacks on "hot sauce" or "parmesan" even when the
+// locked list doesn't include them. This filter enforces the contract
+// server-side: anything on recipe.ingredients that isn't in the
+// locked set AND isn't on the staples allowlist gets dropped, and
+// the drops ride back on the response so the client can surface
+// "we blocked these additions" UI.
+//
+// Only fires when lockedIngredients.length > 0 — a fresh final pass
+// without a tweak phase has no contract to enforce.
+const STAPLE_ALLOWLIST = new Set([
+  "salt", "kosher salt", "sea salt", "table salt", "pepper", "black pepper",
+  "white pepper", "olive oil", "vegetable oil", "canola oil", "neutral oil",
+  "oil", "water", "ice", "butter",
+]);
+function normForLockMatch(s: unknown): string {
+  if (typeof s !== "string") return "";
+  return s.toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+}
+function filterToLockedIngredients(
+  ingredients: Array<Record<string, unknown>>,
+  lockedIngredients: LockedIngredient[],
+): { ingredients: Array<Record<string, unknown>>; dropped: Array<{ item: string; reason: string }> } {
+  if (!Array.isArray(ingredients) || !Array.isArray(lockedIngredients) || lockedIngredients.length === 0) {
+    return { ingredients: ingredients || [], dropped: [] };
+  }
+  // Build two lookup sets: canonical-id (tight) and normalized name
+  // (loose — catches the "Kerrygold butter" → "butter" case where the
+  // names differ but identity is the same).
+  const lockedIds = new Set<string>();
+  const lockedNames = new Set<string>();
+  for (const l of lockedIngredients) {
+    if (l?.ingredientId && typeof l.ingredientId === "string") lockedIds.add(l.ingredientId);
+    const n = normForLockMatch(l?.name);
+    if (n) lockedNames.add(n);
+  }
+  const kept: Array<Record<string, unknown>> = [];
+  const dropped: Array<{ item: string; reason: string }> = [];
+  for (const ing of ingredients) {
+    const name = typeof ing.item === "string" ? ing.item : "";
+    const id = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
+    const nn = normForLockMatch(name);
+    if (id && lockedIds.has(id)) { kept.push(ing); continue; }
+    if (nn && lockedNames.has(nn)) { kept.push(ing); continue; }
+    // Staple allowlist — the prompt explicitly says salt/pepper/oil/
+    // water/butter are OK. Match by normalized name, including
+    // head-noun fallback ("olive oil" contains "oil"; "kosher salt"
+    // contains "salt").
+    if (nn && STAPLE_ALLOWLIST.has(nn)) { kept.push(ing); continue; }
+    const tokens = nn.split(" ").filter(Boolean);
+    if (tokens.length > 0 && STAPLE_ALLOWLIST.has(tokens[tokens.length - 1])) {
+      kept.push(ing); continue;
+    }
+    dropped.push({ item: name || id || "(unnamed)", reason: "not in locked set" });
+  }
+  return { ingredients: kept, dropped };
 }
 
 function slugify(s: string): string {
