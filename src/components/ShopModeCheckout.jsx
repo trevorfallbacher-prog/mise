@@ -230,6 +230,20 @@ export default function ShopModeCheckout({
   const [scans, setScans] = useState(initialScans);
   // Which scan, if any, has its inline editor open. null = closed.
   const [editingScanId, setEditingScanId] = useState(null);
+  // Per-scan package-size overrides the user sets in the inline
+  // editor before commit. Keyed by scan id → { amount, unit }.
+  // Overrides win over OFF / canonical defaults when the pantry
+  // row is built in doCommit. Kept in local state (not persisted)
+  // — edits are lost if the user backs out of checkout.
+  const [packageOverrides, setPackageOverrides] = useState(() => new Map());
+  function setPackageOverride(scanId, patch) {
+    setPackageOverrides(prev => {
+      const next = new Map(prev);
+      const current = next.get(scanId) || {};
+      next.set(scanId, { ...current, ...patch });
+      return next;
+    });
+  }
 
   async function handlePhotoSelect(e) {
     const file = e?.target?.files?.[0];
@@ -419,20 +433,26 @@ export default function ShopModeCheckout({
           || scan.productName
           || `UPC ${scan.barcodeUpc}`;
 
-        // Package size — try OFF first, then "popular packages"
-        // corpus (learned from past family scans of same canonical+
-        // brand), then canonical default. When nothing resolves,
-        // fall back to { amount: qty, unit: canonical.defaultUnit
-        // || "package" }. The pantry row still commits; user can
-        // refine on the ItemCard later.
+        // Package size cascade. User override (typed in the review
+        // screen's inline editor) wins over everything so the user
+        // can correct OFF misses without post-commit edits. Then OFF
+        // parsed quantity, then canonical defaults. qty multiplier
+        // applies to whichever package size we land on — 2 × 16oz
+        // packages → amount = 32.
         const offQty = scan.offPayload?.quantity || null;
-        const pkg = parsePackageSize(offQty);
+        const offPkg = parsePackageSize(offQty);
+        const override = packageOverrides.get(scan.id) || null;
         const qtyCount = scan.qty || 1;
-        const amount = pkg?.amount != null ? pkg.amount * qtyCount : qtyCount;
-        const unit = pkg?.unit
+        const pkgAmount = (override?.amount != null && override.amount > 0)
+          ? override.amount
+          : (offPkg?.amount != null ? offPkg.amount : null);
+        const pkgUnit = override?.unit
+          || offPkg?.unit
           || canon?.defaultUnit
           || (Array.isArray(canon?.units) && canon.units[0]?.id)
           || "package";
+        const amount = pkgAmount != null ? pkgAmount * qtyCount : qtyCount;
+        const unit = pkgUnit;
         // max (the "full package" baseline the consumption slider
         // walks down from) = the amount we just decided. User
         // adjusts later as they eat.
@@ -631,6 +651,8 @@ export default function ShopModeCheckout({
                 onPatch={(patch) => patchScan(s.id, patch)}
                 onDelete={() => deleteScan(s.id)}
                 onUnpair={() => patchScan(s.id, { paired_shopping_list_item_id: null })}
+                packageOverride={packageOverrides.get(s.id) || null}
+                onPackageChange={(patch) => setPackageOverride(s.id, patch)}
               />
             ))}
           </div>
@@ -779,9 +801,24 @@ function remapFromDb(row) {
 // state = name + brand text inputs, qty stepper, unpair + delete
 // actions. Edits write through to the DB; parent updates local
 // state on success.
-function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair }) {
+function EditableScanLine({
+  scan, listName, isOpen, onToggle, onPatch, onDelete, onUnpair,
+  packageOverride = null, onPackageChange,
+}) {
   const [name, setName]   = useState(scan.productName || "");
   const [brand, setBrand] = useState(scan.brand || "");
+  // Package size user overrides — default to the OFF-parsed value
+  // when available, else blank. Typing commits back via
+  // onPackageChange, which threads through to the top-level
+  // packageOverrides map and is consumed at commit time in doCommit.
+  const offParsed = parsePackageSize(scan.offPayload?.quantity || null);
+  const [pkgAmount, setPkgAmount] = useState(() =>
+    packageOverride?.amount != null ? String(packageOverride.amount)
+      : (offParsed?.amount != null ? String(offParsed.amount) : "")
+  );
+  const [pkgUnit, setPkgUnit] = useState(() =>
+    packageOverride?.unit || offParsed?.unit || ""
+  );
   // LinkIngredient picker — embedded as a full-screen modal on tap.
   // Covers bundled fuzzy match + admin-approved synthetics + the
   // ⭐ create-new-canonical flow. Picked id writes to trip_scans.canonical_id.
@@ -930,8 +967,46 @@ function EditableScanLine({ scan, listName, isOpen, onToggle, onPatch, onDelete,
             />
           </label>
 
+          {/* Package size — overrides whatever OFF returned for
+              this UPC. Typing here is the way to fix "no quantity
+              came back from OFF" cases without dropping into the
+              ItemCard after commit. Blur commits to the top-level
+              packageOverrides map and flows into doCommit. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888" }}>
+              PACKAGE SIZE {offParsed && <span style={{ color: "#555" }}>· OFF says {offParsed.amount} {offParsed.unit}</span>}
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={pkgAmount}
+                onChange={e => setPkgAmount(e.target.value)}
+                onBlur={() => {
+                  const n = Number(pkgAmount);
+                  if (Number.isFinite(n) && n > 0) {
+                    onPackageChange?.({ amount: n });
+                  } else if (!pkgAmount) {
+                    onPackageChange?.({ amount: null });
+                  }
+                }}
+                placeholder="16"
+                style={{ ...textInput, flex: "0 0 90px" }}
+              />
+              <input
+                type="text"
+                value={pkgUnit}
+                onChange={e => setPkgUnit(e.target.value)}
+                onBlur={() => onPackageChange?.({ unit: pkgUnit.trim() || null })}
+                placeholder="oz / ml / count"
+                style={{ ...textInput, flex: 1 }}
+              />
+            </div>
+          </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 2 }}>
-            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888", flex: 1 }}>QTY</span>
+            <span style={{ fontSize: 10, letterSpacing: 1.1, color: "#888", flex: 1 }}>QTY (how many packages)</span>
             <button onClick={() => bumpQty(-1)} style={qtyBtn} aria-label="Decrease">−</button>
             <span style={{ minWidth: 30, textAlign: "center", color: "#f0ece4", fontSize: 15 }}>×{scan.qty || 1}</span>
             <button onClick={() => bumpQty(1)} style={qtyBtn} aria-label="Increase">+</button>
