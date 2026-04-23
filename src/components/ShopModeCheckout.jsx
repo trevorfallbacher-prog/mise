@@ -604,8 +604,15 @@ export default function ShopModeCheckout({
       // compressImage so the canvas downscale doesn't undo the
       // win on the way through.
       const compressed = await compressImage(file, {
+        // 2000px is at Anthropic's effective vision ceiling — both
+        // Haiku and Sonnet auto-resize beyond ~1568 on the long
+        // edge, so going higher just bloats the upload without
+        // buying more pixels for the model. 0.95 quality preserves
+        // a bit more edge detail than the prior 0.92, which matters
+        // for thermal-print barcode digits that already sit at the
+        // resolution floor of the receipt printer.
         maxDimension: 2000,
-        jpegQuality:  0.92,
+        jpegQuality:  0.95,
       }).catch(() => null);
       let base64;
       let mediaType;

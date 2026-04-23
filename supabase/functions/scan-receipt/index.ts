@@ -49,8 +49,16 @@ const CORS_HEADERS = {
 
 const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
-// Using Haiku 4.5 — it has vision, is cheap, and plenty smart for receipt OCR.
-const MODEL = "claude-haiku-4-5-20251001";
+// Using Sonnet 4.6 for receipt OCR. Was Haiku 4.5 — Haiku is cheap
+// and plenty smart for the structured-extraction part, but its
+// vision reasoning was producing systematic last-digit confusions
+// on thermal-printed barcodes (6/8, 3/8, 4/7, 5/6). Sonnet sees
+// the same pixel grid (Anthropic auto-resizes both to ~1568px on
+// the long edge regardless of model) but discriminates similar
+// glyphs noticeably better. Cost goes from ~$0.006/receipt to
+// ~$0.03/receipt — pennies/month for a typical user, worth it
+// against the alternative of a UPC pair miss every other receipt.
+const MODEL = "claude-sonnet-4-6";
 
 type CanonicalIngredient = {
   id: string;
@@ -138,6 +146,22 @@ For each item, return TWO name fields:
     When a line clearly has no UPC printed (produce sold by weight,
     deli items priced by weight, generic short codes), barcode = null.
     Better to return null than to invent digits.
+
+    THERMAL-PRINT OCR CONFUSABLES — be especially careful with these
+    digit pairs in barcodes, where the print head's resolution is
+    lowest and pixel noise causes systematic misreads:
+      - 6 vs 8     (top loop closed = 8, open = 6)
+      - 3 vs 8     (left side closed = 8, open = 3)
+      - 4 vs 7     (top horizontal stroke length)
+      - 5 vs 6     (bottom loop closure)
+      - 0 vs 8     (less common but happens on faded prints)
+      - 1 vs 7     (1 has no top serif on most thermal fonts)
+    Look at neighboring digits and the overall barcode shape; if
+    you can compute the UPC-A check digit from the first 11 data
+    digits and the trailing digit you read DOESN'T match the
+    computed check, prefer the computed check digit. A barcode that
+    fails its own checksum is almost certainly an OCR error in the
+    last position rather than a non-standard barcode.
 
   * brand: the manufacturer label, canonicalized to its full brand
     name, only when you recognize a brand abbreviation in rawText.
