@@ -40,7 +40,7 @@ import LinkIngredient from "./LinkIngredient";
 import ModalSheet from "./ModalSheet";
 import ReceiptView from "./ReceiptView";
 import ReceiptHistoryModal from "./ReceiptHistoryModal";
-import { Z } from "../lib/tokens";
+import { Z, SET_CHIP, UNSET_CHIP, CHIP_TONES, FONT, COLOR, pickerKicker, pickerTitle } from "../lib/tokens";
 import { bumpTileUse } from "../lib/userTiles";
 import { inferTileFromName } from "../lib/tileKeywords";
 import {
@@ -1717,13 +1717,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                               onClick={e => { e.stopPropagation(); setLinkingScanMode("canonical"); setLinkingScanIdx(idx); }}
                               aria-label="Set canonical"
                               title="Tap to set canonical"
-                              style={{
-                                fontFamily:"'DM Mono',monospace", fontSize:9,
-                                color:"#666", background:"transparent",
-                                border:"1px dashed #2a2a2a",
-                                borderRadius:4, padding:"1px 6px",
-                                letterSpacing:"0.08em", cursor:"pointer",
-                              }}
+                              style={UNSET_CHIP}
                             >
                               + set canonical
                             </button>
@@ -1736,14 +1730,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                             title={isPending
                               ? `Canonical: ${displayName} — pending review. Tap to change.`
                               : `Canonical: ${displayName} — tap to change`}
-                            style={{
-                              display:"inline-flex", alignItems:"center", gap:4,
-                              fontFamily:"'DM Mono',monospace", fontSize:9,
-                              color:"#b8a878", background:"#1a1508",
-                              border:"1px solid #3a2f10",
-                              borderRadius:4, padding:"2px 6px",
-                              letterSpacing:"0.08em", cursor:"pointer",
-                            }}
+                            style={SET_CHIP(CHIP_TONES.canonical)}
                           >
                             <span>{displayEmoji} {displayName.toUpperCase()}</span>
                             {isPending && !isAdmin && (
@@ -1851,19 +1838,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                             onClick={e => { e.stopPropagation(); setTypingScanIdx(idx); }}
                             aria-label={typeEntry ? `Change food category (currently ${typeEntry.label})` : "Set food category"}
                             title={typeEntry ? `Food category: ${typeEntry.label} — tap to change` : "Tap to set food category"}
-                            style={typeEntry ? {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#e07a3a", background: "#1a0f08",
-                              border: "1px solid #3a1f0e",
-                              borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            } : {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#666", background: "transparent",
-                              border: "1px dashed #2a2a2a",
-                              borderRadius: 4, padding: "1px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            }}
+                            style={typeEntry ? SET_CHIP(CHIP_TONES.category) : UNSET_CHIP}
                           >
                             {typeEntry
                               ? <>{typeEntry.emoji} {typeEntry.label.toUpperCase()}</>
@@ -1892,19 +1867,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                             onClick={e => { e.stopPropagation(); setTilingScanIdx(idx); }}
                             aria-label={tileEntry ? `Change stored-in shelf (currently ${tileEntry.label})` : "Set stored-in shelf"}
                             title={tileEntry ? `Stored in ${tileEntry.label} — tap to change` : "Tap to set a shelf"}
-                            style={tileEntry ? {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#7eb8d4", background: "#0f1620",
-                              border: "1px solid #1f3040",
-                              borderRadius: 4, padding: "2px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            } : {
-                              fontFamily: "'DM Mono',monospace", fontSize: 9,
-                              color: "#666", background: "transparent",
-                              border: "1px dashed #2a2a2a",
-                              borderRadius: 4, padding: "1px 6px",
-                              letterSpacing: "0.08em", cursor: "pointer",
-                            }}
+                            style={tileEntry ? SET_CHIP(CHIP_TONES.location) : UNSET_CHIP}
                           >
                             {tileEntry
                               ? <>{tileEntry.emoji} {tileEntry.label.toUpperCase()}</>
@@ -2185,10 +2148,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           (canonical) auto-fills too unless the user already linked. */}
       {typingScanIdx != null && scannedItems[typingScanIdx] && (
         <ModalSheet onClose={() => setTypingScanIdx(null)} maxHeight="86vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#e07a3a", letterSpacing:"0.12em", marginBottom:10 }}>
-            CATEGORY
-          </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 6px", lineHeight:1.2 }}>
+          <div style={pickerKicker(CHIP_TONES.category.fg)}>CATEGORY</div>
+          <h2 style={pickerTitle}>
             What category does {scannedItems[typingScanIdx].name} belong to?
           </h2>
           <p style={{ fontFamily:"'DM Sans',sans-serif", fontSize:12, color:"#888", lineHeight:1.5, margin:"0 0 14px" }}>
@@ -2224,10 +2185,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           explicitly moved one of them already. */}
       {tilingScanIdx != null && scannedItems[tilingScanIdx] && (
         <ModalSheet onClose={() => setTilingScanIdx(null)} maxHeight="86vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#7eb8d4", letterSpacing:"0.12em", marginBottom:10 }}>
-            STORED IN
-          </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+          <div style={pickerKicker(CHIP_TONES.location.fg)}>STORED IN</div>
+          <h2 style={{ ...pickerTitle, margin: "0 0 14px" }}>
             Where does {scannedItems[tilingScanIdx].name} live?
           </h2>
           <IdentifiedAsPicker
@@ -2252,10 +2211,8 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
           get the same emoji in one tap. */}
       {emojiingScanIdx != null && scannedItems[emojiingScanIdx] && (
         <ModalSheet onClose={() => setEmojiingScanIdx(null)} maxHeight="60vh">
-          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#f5c842", letterSpacing:"0.12em", marginBottom:10 }}>
-            PICK AN EMOJI
-          </div>
-          <h2 style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#f0ece4", fontWeight:400, margin:"0 0 14px", lineHeight:1.2 }}>
+          <div style={pickerKicker(COLOR.gold)}>PICK AN EMOJI</div>
+          <h2 style={{ ...pickerTitle, margin: "0 0 14px" }}>
             {scannedItems[emojiingScanIdx].name}
           </h2>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(7, 1fr)", gap:8 }}>
