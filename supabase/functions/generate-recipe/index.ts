@@ -996,6 +996,87 @@ function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): st
   return `\nRECENT HISTORY:\n${lines.join("\n")}\n`;
 }
 
+// ── dish contract post-check ────────────────────────────────────────
+//
+// Deterministic verification — the one thing that actually *prevents*
+// drift (vs. the prompt framing above which just *reduces* it).
+// Compares the drafted title against the contract and returns a
+// pass/fail with a reason string we feed back into a retry prompt.
+//
+// SPECIFIC tier: output title must contain one of the aliases as a
+//   case-insensitive substring. Aliases are set by the classifier and
+//   include typo variants, romanizations, and core dish nouns.
+// FAMILY tier: output title must contain the family name OR one of the
+//   family's example dishes. Looser but still catches dessert-asked /
+//   main-emitted cross-category drifts.
+// OPEN / FREEFORM: no check — the user didn't pin anything.
+type DishContract = {
+  tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM";
+  dishName?: string;
+  aliases?: string[];
+  rules?: string;
+  familyName?: string;
+  familyExamples?: string[];
+  rawPrompt?: string;
+};
+function verifyContract(
+  title: unknown,
+  contract: DishContract | undefined,
+): { pass: boolean; reason: string } {
+  if (!contract || contract.tier === "OPEN" || contract.tier === "FREEFORM") {
+    return { pass: true, reason: "" };
+  }
+  const t = typeof title === "string" ? title.toLowerCase() : "";
+  if (!t) return { pass: false, reason: "title was empty" };
+  if (contract.tier === "SPECIFIC") {
+    const aliases = Array.isArray(contract.aliases) ? contract.aliases : [];
+    const needles = [contract.dishName, ...aliases]
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => s.toLowerCase());
+    for (const n of needles) if (t.includes(n)) return { pass: true, reason: "" };
+    return {
+      pass: false,
+      reason: `title "${title}" does not mention "${contract.dishName}" or any alias (${needles.slice(0, 4).join(", ")})`,
+    };
+  }
+  // FAMILY
+  const family = (contract.familyName || "").toLowerCase();
+  const examples = Array.isArray(contract.familyExamples) ? contract.familyExamples : [];
+  if (family && t.includes(family)) return { pass: true, reason: "" };
+  for (const ex of examples) {
+    if (typeof ex === "string" && t.includes(ex.toLowerCase())) return { pass: true, reason: "" };
+  }
+  return {
+    pass: false,
+    reason: `title "${title}" does not fit family "${contract.familyName}" (expected one of: ${family}, ${examples.slice(0, 5).join(", ")})`,
+  };
+}
+
+// Retry addendum — a strong plaintext instruction appended to the
+// prompt on the second attempt when the first one drifted off-contract.
+// Written like a note from the user ("that wasn't what I asked for,
+// here's what you emitted, try again") because Claude follows that
+// framing tighter than abstract rules.
+function buildRetryAddendum(
+  priorTitle: string,
+  contract: DishContract,
+): string {
+  if (contract.tier === "SPECIFIC") {
+    const aliases = Array.isArray(contract.aliases) ? contract.aliases.slice(0, 6) : [];
+    return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS OFF-CONTRACT.
+You previously emitted a draft titled "${priorTitle}".
+The user asked for "${contract.dishName}" specifically. "${priorTitle}" is not that dish.
+Start over. The output title MUST contain one of: ${aliases.map(a => `"${a}"`).join(", ")}.${contract.rules ? ` Follow the classical rules: ${contract.rules}` : ""} Do NOT substitute a related dish. Draft "${contract.dishName}", exactly.`;
+  }
+  if (contract.tier === "FAMILY") {
+    const examples = Array.isArray(contract.familyExamples) ? contract.familyExamples.slice(0, 6) : [];
+    return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS OFF-CONTRACT.
+You previously emitted "${priorTitle}". The user asked for a ${contract.familyName}. "${priorTitle}" is not one.
+Start over. Draft a ${contract.familyName} — pick any specific dish from: ${examples.join(", ")}. Do NOT drift outside the family.`;
+  }
+  return "";
+}
+
 // ── dish contract classifier ────────────────────────────────────────
 //
 // Three tiers — lifted out of the user's own wording:
@@ -1013,15 +1094,7 @@ function historySection(h: NonNullable<NonNullable<RichContext>["history"]>): st
 //
 // Classification is ONE Haiku call, cached by the client for the
 // session so regens reuse the same contract. ~$0.0001, ~300ms.
-type DishContract = {
-  tier: "SPECIFIC" | "FAMILY" | "OPEN" | "FREEFORM";
-  dishName?: string;
-  aliases?: string[];
-  rules?: string;
-  familyName?: string;
-  familyExamples?: string[];
-  rawPrompt?: string;
-};
+// (DishContract type declared above alongside verifyContract.)
 
 async function classifyDishPrompt(
   apiKey: string,
@@ -1198,123 +1271,122 @@ Deno.serve(async (req) => {
     );
   }
 
-  let anthropicResp: Response;
-  try {
-    anthropicResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        // Sonnet on final (better instruction-following across the
-        // dietary/locked/course/anchor/feedback/contract bundle),
-        // Haiku on sketch (simple ingredient list, fast regen).
-        model: mode === "final" ? MODEL_FINAL : MODEL_SKETCH,
-        // Both modes get the full 4000-token budget. Earlier attempts
-        // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
-        // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps
-        // with uses[] arrays). Token cost is secondary to not
-        // failing; a truncated draft is worse than an expensive one.
-        // If this still truncates, the repairTruncatedJson fallback
-        // below attempts to close dangling structures so the user
-        // still gets a usable draft.
-        max_tokens: 4000,
-        // temperature=1 is the API default but we set it explicitly so
-        // nobody accidentally pins it to 0 during debugging and wipes
-        // out regen variety without realizing why.
-        temperature: 1,
-        messages: [
-          {
-            role: "user",
-            content: [{
-              type: "text",
-              text: mode === "sketch"
-                ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
-                : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients),
-            }],
-          },
-          // Prefill the assistant with "{" so Claude MUST continue
-          // from valid-JSON start. No preface ("Here's your recipe:"),
-          // no markdown fences, no trailing commentary. Handles the
-          // couldn't-parse 502s we were seeing from a chatty model.
-          // We prepend "{" back to the response before parsing.
-          {
-            role: "assistant",
-            content: [{ type: "text", text: "{" }],
-          },
-        ],
-      }),
-    });
-  } catch (err) {
-    return new Response(
-      JSON.stringify({ error: `anthropic fetch failed: ${String(err)}` }),
-      { status: 502, headers: JSON_HEADERS },
-    );
-  }
-
-  if (!anthropicResp.ok) {
-    const text = await anthropicResp.text();
-    return new Response(
-      JSON.stringify({
-        error: `anthropic returned ${anthropicResp.status}`,
-        detail: text,
-      }),
-      { status: 502, headers: JSON_HEADERS },
-    );
-  }
-
-  const data = await anthropicResp.json();
-  // The request prefilled the assistant with "{", so Claude returns
-  // the body AFTER the opening brace. Prepend it back so we parse
-  // a whole object. Fall back to "{}" if Anthropic gave us nothing.
-  const rawBody = data?.content?.[0]?.text ?? "";
-  const raw = rawBody ? `{${rawBody}` : "{}";
-
-  // Tolerant JSON extraction as a safety net. Three fallbacks in
-  // order of aggressiveness:
-  //   1. direct parse of the response (fences stripped first)
-  //   2. brace-slice — carve out between first { and last } to
-  //      handle a chatty model wrapping JSON in prose
-  //   3. truncation-repair — if Claude hit max_tokens mid-output,
-  //      close any dangling strings / arrays / objects and try
-  //      again. User gets a partial-but-structured draft instead
-  //      of a 502.
-  const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
-  const truncated = data?.stop_reason === "max_tokens";
+  // Claude call + parse + contract verification loop.
+  //
+  // Two attempts max: original prompt, then (if the first draft drifts
+  // off the dish contract) a retry with a strong addendum telling
+  // Claude "you emitted X, the user asked for Y, try again." The
+  // addendum is what makes this deterministic — the classifier tells
+  // us what to check, verifyContract enforces, the addendum closes
+  // the loop by feeding Claude a specific "fix this" instruction
+  // instead of re-shipping the same prompt.
+  const contract = prefs.dishContract as DishContract | undefined;
   let recipe: Record<string, unknown> | null = null;
-  try {
-    recipe = JSON.parse(cleaned);
-  } catch {
-    const first = cleaned.indexOf("{");
-    const last  = cleaned.lastIndexOf("}");
-    if (first >= 0 && last > first) {
-      const sliced = cleaned.slice(first, last + 1);
-      try {
-        recipe = JSON.parse(sliced);
-      } catch {
-        // Fall through to repair below.
+  let raw = "{}";
+  let truncated = false;
+  let contractPass = true;
+  let contractReason = "";
+  let priorTitle = "";
+  let contractRetries = 0;
+  const MAX_ATTEMPTS = 2;
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const addendum = attempt === 0 || !contract
+      ? ""
+      : buildRetryAddendum(priorTitle, contract);
+    const basePrompt = mode === "sketch"
+      ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
+      : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients);
+    const promptText = basePrompt + addendum;
+
+    let anthropicResp: Response;
+    try {
+      anthropicResp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          // Sonnet on final (better instruction-following across the
+          // dietary/locked/course/anchor/feedback/contract bundle),
+          // Haiku on sketch (simple ingredient list, fast regen).
+          model: mode === "final" ? MODEL_FINAL : MODEL_SKETCH,
+          // Both modes get the full 4000-token budget. Earlier attempts
+          // at 1000 / 1600 / 2500 kept truncating mid-JSON on larger
+          // pantries (10+ ingredients × IDEAL+PANTRY arrays, 6+ steps
+          // with uses[] arrays). Token cost is secondary to not
+          // failing; a truncated draft is worse than an expensive one.
+          max_tokens: 4000,
+          temperature: 1,
+          messages: [
+            { role: "user", content: [{ type: "text", text: promptText }] },
+            // Prefill the assistant with "{" so Claude MUST continue
+            // from valid-JSON start. No preface, no markdown fences.
+            { role: "assistant", content: [{ type: "text", text: "{" }] },
+          ],
+        }),
+      });
+    } catch (err) {
+      return new Response(
+        JSON.stringify({ error: `anthropic fetch failed: ${String(err)}` }),
+        { status: 502, headers: JSON_HEADERS },
+      );
+    }
+    if (!anthropicResp.ok) {
+      const text = await anthropicResp.text();
+      return new Response(
+        JSON.stringify({ error: `anthropic returned ${anthropicResp.status}`, detail: text }),
+        { status: 502, headers: JSON_HEADERS },
+      );
+    }
+
+    const data = await anthropicResp.json();
+    const rawBody = data?.content?.[0]?.text ?? "";
+    raw = rawBody ? `{${rawBody}` : "{}";
+    const cleaned = raw.replace(/```json\s*|\s*```/g, "").trim();
+    truncated = data?.stop_reason === "max_tokens";
+    recipe = null;
+    try {
+      recipe = JSON.parse(cleaned);
+    } catch {
+      const first = cleaned.indexOf("{");
+      const last  = cleaned.lastIndexOf("}");
+      if (first >= 0 && last > first) {
+        try { recipe = JSON.parse(cleaned.slice(first, last + 1)); } catch { /* fallthrough */ }
+      }
+      if (!recipe) {
+        const repaired = repairTruncatedJson(cleaned);
+        try { recipe = JSON.parse(repaired); } catch { /* handled below */ }
       }
     }
     if (!recipe) {
-      const repaired = repairTruncatedJson(cleaned);
-      try {
-        recipe = JSON.parse(repaired);
-      } catch {
-        return new Response(
-          JSON.stringify({
-            error: "couldn't parse model output as JSON",
-            detail: truncated
-              ? "model output was truncated (hit max_tokens) and couldn't be repaired"
-              : "model returned non-JSON content; tried direct, brace-slice, and truncation-repair",
-            truncated,
-            raw,
-          }),
-          { status: 502, headers: JSON_HEADERS },
-        );
-      }
+      return new Response(
+        JSON.stringify({
+          error: "couldn't parse model output as JSON",
+          detail: truncated
+            ? "model output was truncated (hit max_tokens) and couldn't be repaired"
+            : "model returned non-JSON content; tried direct, brace-slice, and truncation-repair",
+          truncated, raw,
+        }),
+        { status: 502, headers: JSON_HEADERS },
+      );
     }
+
+    const check = verifyContract(recipe.title, contract);
+    contractPass = check.pass;
+    contractReason = check.reason;
+    if (check.pass) break;
+
+    // Off-contract. If we have a retry budget, loop with the addendum.
+    priorTitle = String(recipe.title || "");
+    contractRetries = attempt + 1;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[generate-recipe] contract drift (attempt ${attempt + 1}/${MAX_ATTEMPTS}):`,
+      check.reason,
+    );
   }
 
   // Sketch mode response — narrower shape. Title + IDEAL + PANTRY
@@ -1347,7 +1419,19 @@ Deno.serve(async (req) => {
         ? String(recipe.aiRationale).slice(0, 400).trim() || null
         : null,
     };
-    return new Response(JSON.stringify({ sketch }), { headers: JSON_HEADERS });
+    return new Response(
+      JSON.stringify({
+        sketch,
+        contract: contract || null,
+        // contractDrift signals: true when BOTH attempts drifted
+        // off-contract (user ran out of retry budget); the UI can
+        // surface a "this isn't what you asked for" banner.
+        contractDrift: contract && !contractPass
+          ? { reason: contractReason, retries: contractRetries }
+          : null,
+      }),
+      { headers: JSON_HEADERS },
+    );
   }
 
   // FINAL mode response — full recipe with steps. Same validation as
@@ -1422,7 +1506,15 @@ Deno.serve(async (req) => {
     reheat:     normalizeReheat(recipe.reheat),
   };
 
-  return new Response(JSON.stringify({ recipe: finalRecipe }), { headers: JSON_HEADERS });
+  return new Response(
+    JSON.stringify({
+      recipe: finalRecipe,
+      contractDrift: contract && !contractPass
+        ? { reason: contractReason, retries: contractRetries }
+        : null,
+    }),
+    { headers: JSON_HEADERS },
+  );
 });
 
 // Reheat-block normalizer. Validates method enum, drops a block
