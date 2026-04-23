@@ -104,9 +104,18 @@ type Prefs = {
   //   "pantry"   — legacy behavior. Pantry items drive the draft; the
   //                course is a soft hint Claude bends around the
   //                ingredients.
-  // Undefined → legacy behavior (course is a soft hint). Client only
-  // sends the field when course !== "any".
+  // The client sends priority on EVERY call (sketch + final). Edge fn
+  // does NOT default undefined→"category" — a missing value means
+  // "don't use a priority block at all," which is distinct from
+  // "category mode." Silent defaulting previously flipped precedence
+  // mid-session when the final pass dropped the field.
   priority?: "category" | "pantry";
+  // True when the client actually filtered the pantry rows before
+  // sending them (see courseCompat.js). The PRECEDENCE block uses this
+  // to tell the truth — previously it unconditionally claimed "the
+  // pantry has been filtered to category-compatible items," which was
+  // a lie for main/side/appetizer courses where no filter ran.
+  pantryFiltered?: boolean;
   // Canonical ids the user explicitly chose to build around. Must
   // appear in the recipe as primary components, not garnishes.
   starIngredientIds?: string[];
@@ -114,6 +123,16 @@ type Prefs = {
   // technique / seasoning / approach when going from sketch to
   // final cook. Only meaningful in mode = "final".
   recipeFeedback?: string;
+  // Sketch concept fields — passed ONLY to the final pass, to anchor
+  // it to whatever the user just approved on the tweak screen. Without
+  // these the final pass could see the locked ingredient list but had
+  // no binding to the dish identity, and Claude would occasionally
+  // re-conceptualize (Bacon Egg Sandwich sketch → Quiche Lorraine
+  // final). Feedback text may tune technique/seasoning but must not
+  // flip the dish.
+  sketchTitle?: string;
+  sketchSubtitle?: string;
+  sketchRationale?: string;
   // Anchor context for compose-a-meal drafts. When present, the draft
   // is a side / dessert / appetizer intended to be served alongside
   // `pairWith.title`. Claude uses it for contrast/complement — don't
@@ -259,6 +278,18 @@ function assemblePromptHeader(
   // block (with explicit violation callouts) makes breakfast-vs-dinner and
   // main-vs-side-vs-dessert actually swing the output.
   const hardConstraintLines: string[] = [];
+  // Hoist the user's typed mealPrompt when it looks like a directive
+  // ask (names a dish, protein, cuisine, or technique). Buried at the
+  // bottom of USER PREFERENCES the model was treating the user's
+  // literal words as soft — "italian pasta" got overridden by pantry
+  // pressure toward whatever was expiring. Quoting the ask verbatim
+  // and putting it in HARD CONSTRAINTS makes it land.
+  if (mealPrompt && mealPrompt.trim().length > 0) {
+    const quoted = mealPrompt.trim().replace(/"/g, '\\"');
+    hardConstraintLines.push(
+      `- USER ASK: "${quoted}". This is the user's direct instruction — treat every noun as a hard requirement. If they named a dish, draft that dish. If they named a protein or cuisine, honor it even if the pantry doesn't support it (non-pantry items become shopping items, not substitutions). Pantry availability does NOT override the user's words.`,
+    );
+  }
   if (prefs.mealTiming && prefs.mealTiming !== "any") {
     const t = prefs.mealTiming;
     const examples = t === "breakfast"
@@ -310,15 +341,28 @@ function assemblePromptHeader(
     ? `\nHARD CONSTRAINTS — violating these is a failure, not a stylistic choice:\n${hardConstraintLines.join("\n")}\n`
     : "";
 
-  // Priority mode — category-first (course wins, pantry is a palette
-  // filtered to compatible items) vs pantry-first (legacy; pantry
-  // drives the draft and course bends). The client pre-filters the
-  // pantry block when priority==="category", so Claude sees a
-  // shortened palette; this block makes the precedence match that
-  // reality so Claude doesn't try to paint around missing ingredients
-  // by inventing something off-category.
-  const priorityMode: "category" | "pantry" =
-    prefs.priority === "pantry" ? "pantry" : "category";
+  // Priority mode — category-first (course wins, pantry is a soft
+  // palette) vs pantry-first (pantry drives the draft and course
+  // bends). The priority flag is explicit: the client sends it on
+  // every call. An undefined value means "no priority block" (the
+  // user didn't pick a course, no tension to resolve).
+  //
+  // pantryFiltered tells the truth about whether the pantry block
+  // shown above has actually been trimmed to category-compatible
+  // items. Historically the prompt unconditionally claimed "the
+  // pantry has been filtered," which was a lie for main/side/
+  // appetizer courses — Claude trusted the lie, Claude drafted
+  // around expiring savory rows under a category the user wanted.
+  const priorityMode: "category" | "pantry" | null =
+    prefs.priority === "category" ? "category"
+    : prefs.priority === "pantry" ? "pantry"
+    : null;
+  const pantryFiltered = prefs.pantryFiltered === true;
+  const pantryHonesty = priorityMode === "category"
+    ? (pantryFiltered
+      ? `The pantry block above has been pre-filtered to category-compatible items; use it as a palette but don't feel obligated to use every row.`
+      : `The pantry block above is NOT filtered — it's the user's full pantry. You are in CATEGORY-PRIORITY mode: treat the pantry as a soft reference, NOT a shopping list you must exhaust. Most rows will not be in the dish. Ignore urgency/expiry narratives — the user explicitly asked for a category output, not for you to use up what's going bad.`)
+    : "";
   const precedenceBlock = priorityMode === "category" ? `
 PRECEDENCE (hard → soft). Earlier beats later when they conflict.
 You are in CATEGORY-PRIORITY mode: the user picked a course and
@@ -329,24 +373,21 @@ wants that category respected over pantry convenience.
      with a bread element. A "dessert" output is sweet. A "prep"
      output is a single-component jar/bottle. Do not reframe the
      category to fit the pantry.
-  3. MEAL TIMING — if set, the recipe fits that meal within the
+  3. The USER ASK in HARD CONSTRAINTS — the user's typed words are
+     the second-strongest signal after course. If they named a dish,
+     draft that dish within the course. If they named a protein or
+     cuisine, honor it even if the pantry doesn't have it.
+  4. MEAL TIMING — if set, the recipe fits that meal within the
      category (breakfast pastry, dinner prep, etc.).
-  4. STAR INGREDIENTS — compatible only. If a starred item doesn't
+  5. STAR INGREDIENTS — compatible only. If a starred item doesn't
      fit the course category (e.g. hot dogs starred but course is
      "bake"), SILENTLY DROP that star. Do not bend the category to
      include it. Keep compatible stars (butter, flour, sugar, eggs
      for bake; aromatics for prep; fruit/dairy for dessert).
-  5. The MEAL PROMPT text — the user's direct ask, respected within
-     the course category. "lasagna" under "bake" → reject lasagna,
-     pick a pastry.
   6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
      constraints above.
 
-The pantry block has already been filtered to category-compatible
-items. Ignore urgency/expiry narratives — the user explicitly asked
-for a category output, not for you to use up what's going bad. If
-the pantry is sparse for the category, draft a standard recipe and
-call the missing items out as shopping items.
+${pantryHonesty}
 
 Lean toward creative, non-obvious combinations WITHIN the category.
 A boring chocolate chip cookie is a failure mode; so is a savory
@@ -565,6 +606,24 @@ function buildFinalPrompt(
   context: RichContext,
   lockedIngredients: LockedIngredient[] = [],
 ): string {
+  // SKETCH ANCHOR — anchors the final pass to the dish concept the
+  // user already approved on the tweak screen. Without this binding
+  // Claude would sometimes re-conceptualize (Bacon Egg Sandwich
+  // sketch → Quiche Lorraine final) because the locked ingredients
+  // list didn't carry a dish identity on its own. Feedback can tune
+  // technique/seasoning, but the dish identity is the user's signed
+  // contract from the sketch phase.
+  const sketchTitle = typeof prefs.sketchTitle === "string" ? prefs.sketchTitle.trim() : "";
+  const sketchSubtitle = typeof prefs.sketchSubtitle === "string" ? prefs.sketchSubtitle.trim() : "";
+  const sketchRationale = typeof prefs.sketchRationale === "string" ? prefs.sketchRationale.trim() : "";
+  const sketchBlock = sketchTitle
+    ? `\nSKETCH ANCHOR — the user reviewed and approved this dish concept on the sketch screen. The final recipe MUST be the SAME dish.
+- Title: ${sketchTitle}${sketchSubtitle ? `\n- Subtitle: ${sketchSubtitle}` : ""}${sketchRationale ? `\n- Why this dish: ${sketchRationale}` : ""}
+
+You are writing the full step-by-step for THIS dish. Do NOT re-conceptualize. Do NOT swap the dish for something else that happens to use the same ingredients (a sandwich does not become a quiche; a pasta does not become a risotto). RECIPE FEEDBACK may tune technique, seasoning, or emphasis — it may NOT flip the dish identity. If the feedback reads like a request to change the dish wholesale, interpret it as a tuning hint within the current dish instead.
+`
+    : "";
+
   const lockedBlock = lockedIngredients.length > 0
     ? `\nLOCKED INGREDIENTS — the user already approved this exact set during the
 sketch tweak. You MUST use ALL of them, with these names and amounts. Do NOT
@@ -580,11 +639,11 @@ ${lockedIngredients.map((i) => {
     : "";
 
   const feedbackBlock = (prefs.recipeFeedback || "").trim()
-    ? `\nRECIPE FEEDBACK (most recent revision instruction — apply on top of everything above except dietary + locked ingredients):
+    ? `\nRECIPE FEEDBACK (most recent revision instruction — apply on top of everything above except dietary, locked ingredients, and the SKETCH ANCHOR dish identity):
 ${prefs.recipeFeedback!.trim()}\n`
     : "";
 
-  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${lockedBlock}${feedbackBlock}
+  return `${assemblePromptHeader(pantry, prefs, avoidTitles, context, { skipPantry: true })}${sketchBlock}${lockedBlock}${feedbackBlock}
 Return ONLY a single JSON object (no markdown, no prose) with this
 exact shape. Every field is REQUIRED unless marked optional.
 
@@ -1112,6 +1171,17 @@ Deno.serve(async (req) => {
 
   // Backfill anything the model forgot. Keeps the downstream pipeline
   // from having to defend against missing optional fields.
+  const normalizedIngredients = normalizeIngredients(recipe.ingredients) as Array<Record<string, unknown>>;
+  const normalizedSteps = normalizeSteps(recipe.steps) as Array<Record<string, unknown>>;
+  // Reconcile integer-counted ingredients against step quantities.
+  // Raises the ingredient count when steps consume more than the
+  // header declares (the "4 eggs header, 6 eggs in step 2" class of
+  // bug). Corrections are logged so we can see drift frequency.
+  const reconciled = reconcileStepQuantities(normalizedIngredients, normalizedSteps);
+  if (reconciled.corrections.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn("[generate-recipe] step-quantity reconciliation:", reconciled.corrections);
+  }
   const finalRecipe = {
     slug:       recipe.slug       || slugify(recipe.title as string),
     title:      recipe.title,
@@ -1131,12 +1201,11 @@ Deno.serve(async (req) => {
     time:       recipe.time       || { prep: 10, cook: 20 },
     serves:     clampInt(recipe.serves, 1, 12, 2),
     tools:      Array.isArray(recipe.tools) ? recipe.tools : [],
-    ingredients: normalizeIngredients(recipe.ingredients),
-    // Backfill step shape so CookMode never has to defend against a
-    // step that skipped `uses`, `heat`, or `doneCue`. If the model
-    // dropped `uses` entirely, default to an empty array (CookMode
-    // falls back to the top-level ingredients list for rendering).
-    steps:      normalizeSteps(recipe.steps),
+    ingredients: reconciled.ingredients,
+    // Step `uses` is preserved (see normalizeStepUses) so
+    // reconcileStepQuantities has structured signal. CookMode still
+    // falls back to the top-level list when uses is empty.
+    steps:      normalizedSteps,
     // Structured prep reminders (migration 0134). Claude emits zero
     // or more; the normalizer drops malformed entries and clamps
     // leadMinutes into a sane range so a model hallucinating
@@ -1313,14 +1382,14 @@ function normalizeIngredients(ings: unknown): unknown[] {
 }
 
 // Ensure every step carries the fields CookMode reads without
-// blowing up on a model that skipped one. `uses` was historically a
-// per-step ingredient list, but it duplicated top-level
-// ingredients[] and burned 15-30% of output tokens on complex
-// recipes (one of the drivers behind max_tokens truncation). The
-// step renderer falls back to the top-level list when uses is
-// empty, which is now always. Defaults to [] here so saved
-// pre-trim recipes still hydrate without nulls breaking
-// CookMode's uses.map.
+// blowing up on a model that skipped one. `uses` is preserved when
+// the model emits it — it's the signal we need to catch the
+// "ingredient says 4 eggs, step says 6 eggs" class of bug that used
+// to ship to users unchallenged. reconcileStepQuantities (below)
+// consumes uses[] + the step instruction text to reconcile against
+// top-level ingredients[]. An empty uses[] is still fine — the step
+// renderer falls back to the top-level list.
+//
 // Timer clamp bounds. 5s floor drops trivial "1 second" hallucinations;
 // 24h ceiling catches a model that confused days with seconds. Actual
 // cooks that need longer (e.g. 48h sous vide) are rare enough that the
@@ -1366,11 +1435,175 @@ function normalizeSteps(steps: unknown): unknown[] {
       icon:        typeof step.icon        === "string" ? step.icon        : "👨‍🍳",
       timer,
       tip:         typeof step.tip         === "string" ? step.tip         : null,
-      uses:        [],
+      uses:        normalizeStepUses(step.uses),
       heat:        typeof step.heat        === "string" ? step.heat        : null,
       doneCue:     typeof step.doneCue     === "string" ? step.doneCue     : null,
     };
   });
+}
+
+// Accept Claude's per-step `uses` array in the canonical shape
+// { item, amount?, ingredientId? }. Drops entries without an item
+// (the only required field for zip-back to ingredients[]); everything
+// else is best-effort passthrough so reconcileStepQuantities has
+// structured signal to work with.
+function normalizeStepUses(raw: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(raw)) return [];
+  const out: Array<Record<string, unknown>> = [];
+  for (const u of raw) {
+    if (!u || typeof u !== "object") continue;
+    const entry = u as Record<string, unknown>;
+    const item = typeof entry.item === "string" ? entry.item.trim() : "";
+    if (!item) continue;
+    out.push({
+      item,
+      amount: entry.amount ?? null,
+      ingredientId: typeof entry.ingredientId === "string" ? entry.ingredientId : null,
+    });
+  }
+  return out;
+}
+
+// ── ingredient ↔ step quantity reconciliation ─────────────────────
+//
+// Claude frequently drafts a recipe where the top-level ingredients[]
+// list declares a smaller count than what the steps end up consuming.
+// Classic shape: ingredients[0] = "4 eggs", step2.instruction =
+// "whisk in 6 eggs". Nothing in the pipeline caught that before —
+// normalizeSteps dropped `uses`, no quantity check ran anywhere, and
+// users saw the conflict in CookMode.
+//
+// The reconciler is deliberately conservative:
+//   - It only fires on INTEGER-COUNTED ingredients (eggs, tortillas,
+//     bananas — things the user understands as "N of them"). Volume
+//     and mass units (tbsp, oz, grams) are too lossy to reason about
+//     across the "3 tbsp" / "⅓ cup" / "45 ml" grid without a full
+//     unit ladder, so we skip them.
+//   - It compares the sum of step-level uses (+ instruction-text
+//     mentions) against the top-level count.
+//   - When the steps consume MORE than the top-level declares, the
+//     top-level count is raised to match (the step is the more
+//     specific statement of what the cook actually does).
+//   - When the steps consume LESS, we leave both alone — the extra
+//     could legitimately be a garnish / optional addition.
+//
+// Both corrections are logged so we can see how often Claude misaligns.
+
+// Parse a free-text amount into an integer count, or null when the
+// amount isn't an integer count (e.g. "2 tbsp", "½ cup", "a pinch").
+// Count-ish strings: "4", "4 count", "4 whole", "4 large", "4 medium",
+// "4 small", "four", plus the obvious pluralized produce units like
+// "4 heads" / "4 cloves" (for garlic) — those fall through to the
+// count path only when the ingredient's own amount string uses the
+// same unit word. Anything with a volume or mass unit returns null.
+const COUNT_UNIT_RE = /^\s*(\d+)\s*(?:count|whole|large|medium|small|head|heads|clove|cloves|piece|pieces|ct)?\s*$/i;
+const INTEGER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7,
+  eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+};
+function parseIntegerCount(amount: unknown): number | null {
+  if (typeof amount === "number" && Number.isFinite(amount) && Number.isInteger(amount) && amount > 0) {
+    return amount;
+  }
+  if (typeof amount !== "string") return null;
+  const s = amount.trim().toLowerCase();
+  if (!s) return null;
+  const m = COUNT_UNIT_RE.exec(s);
+  if (m) {
+    const n = Number(m[1]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  // "four eggs" style — leading integer word.
+  const first = s.split(/\s+/)[0];
+  if (first && INTEGER_WORDS[first] != null) return INTEGER_WORDS[first];
+  return null;
+}
+
+// Rewrite the integer count inside an amount string while preserving
+// the unit word. "4 count" + newCount=6 → "6 count"; bare "4" → "6".
+function replaceIntegerCount(amount: unknown, newCount: number): string {
+  if (typeof amount === "string") {
+    const m = /^\s*(\d+)(\s*.*)$/.exec(amount);
+    if (m) return `${newCount}${m[2] ?? ""}`;
+  }
+  return String(newCount);
+}
+
+// Build a regex that matches "<N> <ingredient-head-noun>" in a step
+// instruction. We key off the LAST token of the ingredient item —
+// "chicken breast" → "breast" — because instructions routinely drop
+// the modifier ("season the breast with salt"). Digits only; written-
+// out counts in instructions are rare enough to skip.
+function countMentionsInInstruction(instruction: string, itemName: string): number[] {
+  const head = String(itemName || "").toLowerCase().trim().split(/\s+/).pop();
+  if (!head || head.length < 3) return [];
+  // Escape the head noun for safe regex use; allow trailing "s" so
+  // "egg" matches "eggs" without being fooled by "eggshell".
+  const esc = head.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`\\b(\\d+)\\s+${esc}s?\\b`, "gi");
+  const hits: number[] = [];
+  const src = String(instruction || "");
+  for (const m of src.matchAll(re)) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > 0) hits.push(n);
+  }
+  return hits;
+}
+
+function reconcileStepQuantities(
+  ingredients: Array<Record<string, unknown>>,
+  steps: Array<Record<string, unknown>>,
+): { ingredients: Array<Record<string, unknown>>; corrections: string[] } {
+  if (!Array.isArray(ingredients) || !Array.isArray(steps)) {
+    return { ingredients, corrections: [] };
+  }
+  const corrections: string[] = [];
+  const out = ingredients.map((ing) => ({ ...ing }));
+
+  for (let i = 0; i < out.length; i++) {
+    const ing = out[i];
+    const topCount = parseIntegerCount(ing.amount);
+    if (topCount == null) continue;                       // not count-measured, skip
+    const name = typeof ing.item === "string" ? ing.item : "";
+    if (!name) continue;
+
+    // Two signal sources per step: structured uses[] with a matching
+    // item, and the instruction text with "<N> <head-noun>". Prefer
+    // uses[] when it's present; fall back to instruction mentions.
+    let stepsTotal = 0;
+    let anyMention = false;
+    for (const s of steps) {
+      const uses = Array.isArray(s.uses) ? (s.uses as Array<Record<string, unknown>>) : [];
+      const usesHit = uses.find((u) => {
+        if (!u || typeof u !== "object") return false;
+        const uItem = typeof u.item === "string" ? u.item.toLowerCase() : "";
+        const uId = typeof u.ingredientId === "string" ? u.ingredientId : "";
+        const ingId = typeof ing.ingredientId === "string" ? ing.ingredientId : "";
+        if (ingId && uId && ingId === uId) return true;
+        return uItem && uItem === name.toLowerCase();
+      });
+      if (usesHit) {
+        const n = parseIntegerCount(usesHit.amount);
+        if (n != null) { stepsTotal += n; anyMention = true; }
+        continue;   // structured signal wins; skip the text regex for this step
+      }
+      const instr = typeof s.instruction === "string" ? s.instruction : "";
+      const hits = countMentionsInInstruction(instr, name);
+      if (hits.length > 0) {
+        stepsTotal += hits.reduce((a, b) => a + b, 0);
+        anyMention = true;
+      }
+    }
+
+    if (!anyMention) continue;
+    if (stepsTotal > topCount) {
+      const newAmount = replaceIntegerCount(ing.amount, stepsTotal);
+      corrections.push(`${name}: ingredients declared ${topCount}, steps consume ${stepsTotal} — raised to ${stepsTotal}`);
+      out[i] = { ...ing, amount: newAmount };
+    }
+  }
+
+  return { ingredients: out, corrections };
 }
 
 // Prep-step normalizer. prepSteps ride alongside the main `steps` array

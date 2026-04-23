@@ -446,10 +446,12 @@ export default function AIRecipe({
       mealPrompt: mealPrompt.trim() || undefined,
       mealTiming: (isComponentCourse || mealTiming === "any") ? undefined : mealTiming,
       course: course === "any" ? undefined : course,
-      // Always send priority — when course is "any", the edge fn's
-      // pantry filter is a no-op but the precedence branch still
-      // respects the user's "category-first" vs "pantry-first" intent
-      // for whichever course Claude decides to emit.
+      // Always send priority on BOTH sketch and final — the edge fn
+      // previously had an inconsistency where the final pass dropped
+      // priority when course="any" and the edge fn silently defaulted
+      // it back to "category", flipping precedence mid-session. The
+      // user's "category-first" vs "pantry-first" intent is authoritative
+      // on every call in the draft.
       priority,
       starIngredientIds: starIngredientIds.length ? starIngredientIds : undefined,
       // Compose-a-meal anchor. Only present when the user clicked
@@ -483,7 +485,7 @@ export default function AIRecipe({
       const payload = {
         mode: "sketch",
         pantry: built.pantry,
-        prefs: buildPrefs(),
+        prefs: buildPrefs({ pantryFiltered: built.pantryFiltered }),
         avoidTitles: previousTitles,
         context: built.context,
       };
@@ -610,7 +612,11 @@ export default function AIRecipe({
         mode: "rich",
         starIngredientIds,
         course:   course === "any" ? undefined : course,
-        priority: course === "any" ? undefined : priority,
+        // Pass priority unconditionally — was previously nulled out
+        // when course="any", which tripped the edge fn's silent
+        // undefined→"category" default and flipped precedence midway
+        // through a single session.
+        priority,
       });
       const locked = buildLockedIngredients();
       const payload = {
@@ -618,6 +624,15 @@ export default function AIRecipe({
         pantry: built.pantry,
         prefs: buildPrefs({
           recipeFeedback: recipeFeedback.trim() || undefined,
+          pantryFiltered: built.pantryFiltered,
+          // Anchor the final pass to the sketch's dish identity —
+          // without this the final pass saw the locked ingredient
+          // list but had no binding to what dish they belonged to,
+          // and Claude would sometimes re-conceptualize the dish
+          // (Bacon Egg Sandwich sketch → Quiche Lorraine final).
+          sketchTitle:     sketch?.title || undefined,
+          sketchSubtitle:  sketch?.subtitle || undefined,
+          sketchRationale: sketch?.aiRationale || undefined,
         }),
         avoidTitles: previousTitles,
         context: built.context,

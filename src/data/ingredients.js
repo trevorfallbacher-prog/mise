@@ -5976,6 +5976,55 @@ function levenshtein(a, b) {
   return prev[b.length];
 }
 
+// Ingredients that LOOK like they share a head noun but are
+// semantically different products. "peanut butter" ⊇ "butter" would
+// otherwise match under head+subset logic (heads both = "butter",
+// {butter} ⊆ {peanut, butter}) and the fuzzy matcher would happily
+// resolve "butter" to peanut_butter in a household that doesn't have
+// a plain butter row. Same footgun for coconut milk / almond milk on
+// "milk", for sesame oil / truffle oil on "oil", for cream cheese on
+// "cheese", etc.
+//
+// Policy: a modifier token from this list in ONE side and NOT the
+// other disqualifies the head-noun match. The bare canonical
+// ("butter") can still pair with "salted butter" / "unsalted butter"
+// because those modifiers aren't in the set — the exclusion only
+// kicks in for modifiers that FLIP the ingredient's identity.
+//
+// Format: Map<headNoun, Set<modifierToken>>, all lowercase, tokens
+// compared post-normalize. Exported so recipePairing shares the same
+// guard — a drift between the two matchers is how this class of bug
+// hides.
+export const HEAD_NOUN_MODIFIER_EXCLUSIONS = new Map([
+  ["butter", new Set(["peanut", "almond", "cashew", "sunflower", "apple", "cocoa"])],
+  ["milk",   new Set(["coconut", "almond", "soy", "oat", "rice", "cashew", "hemp", "pea"])],
+  ["cream",  new Set(["sour", "ice", "whipped"])],
+  ["cheese", new Set(["cream"])],
+  ["oil",    new Set(["sesame", "truffle", "chili", "essential"])],
+  ["sauce",  new Set(["soy", "fish", "hot", "bbq", "barbecue", "tartar", "tomato", "pasta", "pizza", "steak", "worcestershire"])],
+  ["powder", new Set(["baking", "curry", "cocoa", "chili", "garlic", "onion", "protein", "espresso"])],
+  ["salt",   new Set(["garlic", "onion", "celery", "seasoning"])],
+  ["sugar",  new Set(["brown", "powdered", "confectioners", "coconut"])],
+  ["flour",  new Set(["almond", "coconut", "rice", "oat", "tapioca", "corn"])],
+  ["water",  new Set(["rose", "coconut", "sparkling", "tonic"])],
+  ["juice",  new Set(["pickle"])],
+]);
+
+export function sharesDisqualifyingModifier(smallSet, bigSet, head) {
+  const modifiers = HEAD_NOUN_MODIFIER_EXCLUSIONS.get(head);
+  if (!modifiers) return false;
+  // Fires when the bigger set carries a flip-modifier the smaller
+  // set doesn't — i.e. one side is the bare head ("butter") and the
+  // other is a compound product ("peanut butter"). Two compounds
+  // with the same modifier (salted butter vs salted butter) never
+  // trip it.
+  for (const t of bigSet) {
+    if (t === head) continue;
+    if (modifiers.has(t) && !smallSet.has(t)) return true;
+  }
+  return false;
+}
+
 // Token-subset containment with head-noun equality. Replaces the
 // bare `.includes()` substring check that was mis-resolving
 // "tortillas" onto a `tortilla_chips` canonical (and similar) when
@@ -5984,6 +6033,8 @@ function levenshtein(a, b) {
 //   • heads must match (last token) — "tortilla chip" vs "tortilla"
 //     have heads "chip" vs "tortilla", so they are NOT equivalent
 //   • the shorter's token set must be fully contained in the longer's
+//   • no disqualifying modifier (HEAD_NOUN_MODIFIER_EXCLUSIONS) —
+//     kills the peanut-butter-as-butter class of false positive
 // "flour tortilla" ⊇ "tortilla" still matches (both head=tortilla,
 // {tortilla} ⊂ {flour, tortilla}). "Parm" still matches via the
 // equal-string path above because candidates include shortName.
@@ -5992,11 +6043,13 @@ function headAndSubsetMatch(c, n) {
   const tc = c.split(" ").filter(Boolean);
   const tn = n.split(" ").filter(Boolean);
   if (!tc.length || !tn.length) return false;
-  if (tc[tc.length - 1] !== tn[tn.length - 1]) return false;
+  const head = tc[tc.length - 1];
+  if (head !== tn[tn.length - 1]) return false;
   const sc = new Set(tc);
   const sn = new Set(tn);
   const [small, big] = sc.size <= sn.size ? [sc, sn] : [sn, sc];
   for (const t of small) if (!big.has(t)) return false;
+  if (sharesDisqualifyingModifier(small, big, head)) return false;
   return true;
 }
 

@@ -145,3 +145,14 @@ export function filterPantryByCourse(rows, course, priority) {
   if (!set) return rows;
   return (rows || []).filter(r => r?.canonicalId && set.has(r.canonicalId));
 }
+
+// True when filterPantryByCourse would actually remove rows for this
+// (course, priority) combination. Lets the edge function tailor the
+// PRECEDENCE block so it doesn't claim "the pantry has been filtered"
+// when no filter ran (main / side / appetizer under category priority
+// historically tripped this — the prompt lied and Claude drafted
+// around expiring items anyway).
+export function courseHasPantryFilter(course, priority) {
+  if (priority !== "category") return false;
+  return compatibilitySetFor(course) != null;
+}
