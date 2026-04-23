@@ -5127,6 +5127,21 @@ function ConvertStateModal({ item, onCancel, onConfirm }) {
 // ── Pantry Screen ─────────────────────────────────────────────────────────────
 export default function Kitchen({ userId, pantry, setPantry, shoppingList, setShoppingList, familyIds = [], view = "stock", setView, deepLink, onDeepLinkConsumed, pendingPantryAction, onPendingActionConsumed }) {
   const [scanning, setScanning] = useState(false);
+  // The raw `shoppingList` prop includes items already marked
+  // purchased via Shop Mode checkout (we keep the rows for audit —
+  // purchasedAt + purchasedPantryItemId + purchasedTripId tie them
+  // to the trip / pantry row). Every user-facing "to buy" surface
+  // (Shopping view counter, nav badge, list render, Shop Mode) must
+  // filter these OUT, or the user sees items they already bought
+  // lingering on the list. ShopMode.jsx already filters internally;
+  // Kitchen.jsx was the surface that wasn't, which is why purchased
+  // items "weren't removed after submitting the receipt" — they
+  // were removed from ShopMode but the shopping-tab listing still
+  // showed them.
+  const toBuy = useMemo(
+    () => (shoppingList || []).filter(i => !i.purchasedAt),
+    [shoppingList],
+  );
   // Shop Mode — persistent-scanner + pair-to-list feature (migrations
   // 0126/0127/0128). Two pieces of state:
   //   shopModeOpen      → full-screen ShopMode overlay is mounted
@@ -5372,19 +5387,65 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   // Low-stock surface — now stack-aware. Each entry is the HEAD row
   // of a bucket that passes isStackLow (discrete stacks compare
   // instance count, fractional stacks sum amounts), with the full
+  // Pantry identity-grouped once per pantry change. Previously
+  // groupByIdentity(pantry) was called inline here, at the tile
+  // renderStack site (L7047), and at ItemCard's hydration paths
+  // (L7556, L7878, L7897). Each call is O(N); a pantry of 100+
+  // items runs this 5+ times per render on tab switches. Cache it
+  // once and pass the result down where possible.
+  const pantryBuckets = useMemo(() => groupByIdentity(pantry), [pantry]);
   // bucket attached via _bucket for the restock math. Rendering the
   // banner chips and addLowStockToList both iterate this list as
   // one-per-identity rather than one-per-row, so a 5-can tuna stack
   // contributes one entry, not five.
   const lowItems = useMemo(() => {
-    return groupByIdentity(pantry)
+    return pantryBuckets
       .filter(isStackLow)
       .map(b => ({ ...b.items[0], _bucket: b }));
-  }, [pantry]);
+  }, [pantryBuckets]);
+  // Stocked count for the Kitchen header — was inline filter on
+  // every render. Memoize so scrolling / typing doesn't re-walk the
+  // pantry array + re-run pct() per item.
+  const stockedCount = useMemo(
+    () => pantry.reduce((n, i) => pct(i) > 50 ? n + 1 : n, 0),
+    [pantry],
+  );
 
   // Current tab's tile set + classifier. Null when the tab has no tiles
   // wired yet (freezer) — the render path falls back to a flat list.
   const { tiles: currentTiles, classify: currentClassify } = tilesForTab(storageTab);
+
+  // Per-item classification cache. Computes once per pantry change:
+  // each row's effective location AND its tile id for all three
+  // location tile sets. Downstream render-time aggregates
+  // (searchResults, tileCounts, visibleItems) read from this map
+  // instead of re-running classify + findIngredient + hubForIngredient
+  // per item per render.
+  //
+  // The classify functions are pure + deterministic w.r.t. (p,
+  // findIngredient, hubForIngredient); the latter two are stable
+  // module imports, so memoizing on `pantry` alone is safe. For a
+  // 100-item pantry this is ~300 classify calls ONCE per pantry
+  // change vs 100+ per render otherwise — typing in the tile search
+  // used to re-walk the pantry every keystroke.
+  const itemMeta = useMemo(() => {
+    const fridgeClassify  = tilesForTab("fridge").classify;
+    const pantryClassify  = tilesForTab("pantry").classify;
+    const freezerClassify = tilesForTab("freezer").classify;
+    const ctx = { findIngredient, hubForIngredient };
+    const map = new Map();
+    for (const p of pantry) {
+      map.set(p.id, {
+        location: effectiveLocation(p),
+        tileByLoc: {
+          fridge:  fridgeClassify  ? fridgeClassify(p, ctx)  : null,
+          pantry:  pantryClassify  ? pantryClassify(p, ctx)  : null,
+          freezer: freezerClassify ? freezerClassify(p, ctx) : null,
+        },
+      });
+    }
+    return map;
+  }, [pantry]);
 
   // Global search — runs when tileSearch is non-empty AND we're on the tile
   // grid (not drilled into a tile). Matches across the WHOLE pantry (all
@@ -5397,11 +5458,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     if (!trimmedSearch) return [];
     const out = [];
     for (const p of pantry) {
-      const loc = effectiveLocation(p);
-      const { tiles: locTiles, classify: locClassify } = tilesForTab(loc);
-      const tileId = (locTiles && locClassify)
-        ? locClassify(p, { findIngredient, hubForIngredient })
-        : null;
+      const meta = itemMeta.get(p.id);
+      if (!meta) continue;
+      const loc = meta.location;
+      const { tiles: locTiles } = tilesForTab(loc);
+      const tileId = meta.tileByLoc[loc];
       const tile = tileId ? (locTiles?.find(t => t.id === tileId) || null) : null;
       // Match against everything textual we carry on the row: name,
       // brand, emoji, ingredient id, canonical name, category, and
@@ -5423,31 +5484,35 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       }
     }
     return out;
-  }, [trimmedSearch, pantry]);
+  }, [trimmedSearch, pantry, itemMeta]);
 
   // Count items per tile (regardless of drill state) for the active tab
   // — powers the grid's badge numbers and the "empty tile" greyed-out
-  // treatment. Returns {} when the tab has no tile set.
+  // treatment. Reads from itemMeta instead of re-classifying per render.
   const tileCounts = useMemo(() => {
     if (!currentTiles || !currentClassify) return {};
     const counts = {};
     for (const p of pantry) {
-      if (effectiveLocation(p) !== storageTab) continue;
-      const tid = currentClassify(p, { findIngredient, hubForIngredient });
+      const meta = itemMeta.get(p.id);
+      if (!meta || meta.location !== storageTab) continue;
+      const tid = meta.tileByLoc[storageTab];
+      if (tid == null) continue;
       counts[tid] = (counts[tid] || 0) + 1;
     }
     return counts;
-  }, [pantry, storageTab, currentTiles, currentClassify]);
+  }, [pantry, storageTab, currentTiles, currentClassify, itemMeta]);
 
-  // Items visible in the current tab/drill context. The grouped list below
-  // renders from this subset instead of the whole pantry.
+  // Items visible in the current tab/drill context. Reads classification
+  // from itemMeta — O(N) is unavoidable (we filter the full pantry) but
+  // per-item work drops from "classify + findIngredient + hubForIngredient"
+  // to a single Map.get.
   const visibleItems = useMemo(() => {
-    let v = pantry.filter(p => effectiveLocation(p) === storageTab);
+    let v = pantry.filter(p => itemMeta.get(p.id)?.location === storageTab);
     if (currentClassify && drilledTile) {
-      v = v.filter(p => currentClassify(p, { findIngredient, hubForIngredient }) === drilledTile);
+      v = v.filter(p => itemMeta.get(p.id)?.tileByLoc[storageTab] === drilledTile);
     }
     return v;
-  }, [pantry, storageTab, drilledTile, currentClassify]);
+  }, [pantry, storageTab, drilledTile, currentClassify, itemMeta]);
 
   // Group visible items under their ingredient hub (Chicken, Cheese, …) when
   // they have one — otherwise they render as standalone rows. `search` filters
@@ -7091,12 +7156,12 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           <div style={{ textAlign:"right" }}>
             {view === "shopping" ? (
               <>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{shoppingList.length}</div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{toBuy.length}</div>
                 <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>TO BUY</div>
               </>
             ) : (
               <>
-                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{pantry.filter(i=>pct(i)>50).length}/{pantry.length}</div>
+                <div style={{ fontFamily:"'DM Mono',monospace", fontSize:18, color:"#f5c842" }}>{stockedCount}/{pantry.length}</div>
                 <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555" }}>STOCKED</div>
               </>
             )}
@@ -7177,8 +7242,8 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
           style={{ flex:1, padding:"10px", background: view==="shopping"?"#1e1e1e":"transparent", border:"none", borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:11, fontWeight:600, color: view==="shopping"?"#f5c842":"#666", cursor:"pointer", letterSpacing:"0.08em", transition:"all 0.2s", display:"flex", alignItems:"center", justifyContent:"center", gap:6 }}
         >
           SHOPPING LIST
-          {shoppingList.length > 0 && (
-            <span style={{ background:"#f5c842", color:"#111", borderRadius:10, padding:"1px 7px", fontSize:10, fontWeight:700 }}>{shoppingList.length}</span>
+          {toBuy.length > 0 && (
+            <span style={{ background:"#f5c842", color:"#111", borderRadius:10, padding:"1px 7px", fontSize:10, fontWeight:700 }}>{toBuy.length}</span>
           )}
         </button>
       </div>
@@ -7633,7 +7698,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             <div style={{ fontSize: 20, color: "#b8a878" }}>→</div>
           </div>
 
-          {shoppingList.length === 0 ? (
+          {toBuy.length === 0 ? (
             <div style={{ margin:"30px 20px 0", padding:"40px 20px", textAlign:"center", background:"#0f0f0f", border:"1px dashed #222", borderRadius:16 }}>
               <div style={{ fontSize:40, marginBottom:12, opacity:0.6 }}>🛒</div>
               <div style={{ fontFamily:"'Fraunces',serif", fontSize:20, fontStyle:"italic", color:"#888", marginBottom:6 }}>Your list is empty</div>
@@ -7643,7 +7708,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
             </div>
           ) : (
             <div style={{ padding:"18px 20px 0", display:"flex", flexDirection:"column", gap:8 }}>
-              {shoppingList.map(item => (
+              {toBuy.map(item => (
                 <div key={item.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 14px", background:"#141414", border:"1px solid #1e1e1e", borderRadius:14 }}>
                   <button
                     onClick={() => checkOffShoppingItem(item)}
@@ -7877,10 +7942,9 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
         // Widen the bucket: any OTHER rows that share identity
         // (e.g. the user just tapped + PACKAGE and we want the new
         // row in the list) should show up here too. Walk the full
-        // pantry, collect identity-matches via groupByIdentity on a
-        // synthetic seed.
-        const allBuckets = groupByIdentity(pantry);
-        const match = allBuckets.find(b => b.key === stackDrilldown.key);
+        // pantry, collect identity-matches via the already-memoized
+        // pantryBuckets from the top of the component.
+        const match = pantryBuckets.find(b => b.key === stackDrilldown.key);
         if (match) bucket = match;
         const ordered = sortedInstances(bucket, "fifo");
         const top = ordered[0] || bucket.items[0];

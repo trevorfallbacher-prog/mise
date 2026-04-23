@@ -49,8 +49,16 @@ const CORS_HEADERS = {
 
 const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
-// Using Haiku 4.5 — it has vision, is cheap, and plenty smart for receipt OCR.
-const MODEL = "claude-haiku-4-5-20251001";
+// Using Sonnet 4.6 for receipt OCR. Was Haiku 4.5 — Haiku is cheap
+// and plenty smart for the structured-extraction part, but its
+// vision reasoning was producing systematic last-digit confusions
+// on thermal-printed barcodes (6/8, 3/8, 4/7, 5/6). Sonnet sees
+// the same pixel grid (Anthropic auto-resizes both to ~1568px on
+// the long edge regardless of model) but discriminates similar
+// glyphs noticeably better. Cost goes from ~$0.006/receipt to
+// ~$0.03/receipt — pennies/month for a typical user, worth it
+// against the alternative of a UPC pair miss every other receipt.
+const MODEL = "claude-sonnet-4-6";
 
 type CanonicalIngredient = {
   id: string;
@@ -100,22 +108,60 @@ For each item, return TWO name fields:
     unambiguous match in the canonical registry below. When in doubt,
     canonicalId = null.
 
-  * barcode: the UPC / EAN digit string printed on that receipt
-    line, if visible. US receipts commonly print the 11-13 digit
-    barcode between the item text and the price; some stores put
-    it at the end of the line. Extract just the digit string — no
-    spaces, no hyphens, no store-internal prefix characters. Length
-    must be 8–14 digits. If nothing matches that shape, barcode = null.
+  * barcode: the UPC / EAN / SKU digit string printed on that
+    receipt line, if visible. THIS IS HIGH-VALUE — getting the
+    barcode lets us pair the receipt line back to the in-aisle scan,
+    which is how the user attaches a price to the right pantry row.
+    Look HARD on every line. Receipts print barcodes in many places:
+      - between the item text and the price (most common)
+      - immediately after the item text on its own (Walmart often)
+      - at the very end of the line, after the price
+      - on a separate sub-line below the item
+      - in tiny font directly under the item description
+    Extract whichever digit cluster on the line LOOKS like a barcode
+    (a long, contiguous run of 7+ digits). Strip spaces and hyphens.
+    Length is typically 8–14 digits BUT some retailers print
+    truncated forms — accept anything 7+ digits long that looks
+    like a product code, not a price or weight.
+
+    IMPORTANT — Walmart prints a 12-digit form that LOOKS unusual
+    but IS a real barcode: the manufacturer's UPC right-shifted
+    (drop the check digit, prepend "0"). So a Walmart line like
+    "GV TWO PCT 1G 007342000011 3.27" — that "007342000011" IS
+    the barcode (NOT a SKU to skip). Same for similar-shaped
+    runs starting with "00".
 
     Examples of what to extract:
       - "MILK 2% GAL  0070038000563  4.29"      → barcode:"0070038000563"
       - "TOSTITOS SCOOPS 028400647465 4.99"     → barcode:"028400647465"
       - "041287305201 EGGS LG 18CT 6.53"        → barcode:"041287305201"
+      - "GV 2% MILK 007342000011 3.27"          → barcode:"007342000011"  (Walmart-shifted form, still a barcode)
+      - "BANANAS 2.14 LB @ .59  1.26"           → barcode:null  (no UPC printed; produce sold by weight)
 
     Examples of what NOT to extract:
-      - item-code IDs that look like 4-6 digit PLU codes on produce
-        ("#4011 BANANAS" — that's a produce PLU, not a UPC) → null
-      - dept numbers, register numbers, short SKU codes → null
+      - 4-6 digit PLU codes on produce ("#4011 BANANAS") → null
+      - register/dept/cashier numbers in the receipt header → null
+      - prices, weights, dates, phone numbers → null
+
+    When a line clearly has no UPC printed (produce sold by weight,
+    deli items priced by weight, generic short codes), barcode = null.
+    Better to return null than to invent digits.
+
+    THERMAL-PRINT OCR CONFUSABLES — be especially careful with these
+    digit pairs in barcodes, where the print head's resolution is
+    lowest and pixel noise causes systematic misreads:
+      - 6 vs 8     (top loop closed = 8, open = 6)
+      - 3 vs 8     (left side closed = 8, open = 3)
+      - 4 vs 7     (top horizontal stroke length)
+      - 5 vs 6     (bottom loop closure)
+      - 0 vs 8     (less common but happens on faded prints)
+      - 1 vs 7     (1 has no top serif on most thermal fonts)
+    Look at neighboring digits and the overall barcode shape; if
+    you can compute the UPC-A check digit from the first 11 data
+    digits and the trailing digit you read DOESN'T match the
+    computed check, prefer the computed check digit. A barcode that
+    fails its own checksum is almost certainly an OCR error in the
+    last position rather than a non-standard barcode.
 
   * brand: the manufacturer label, canonicalized to its full brand
     name, only when you recognize a brand abbreviation in rawText.
@@ -173,6 +219,23 @@ CRITICAL: the big number next to an item is almost always the PRICE
 in USD ($6.53, $3.99), NOT the quantity. Do NOT put the price in the
 amount field. If the receipt doesn't clearly show a quantity, use 1.
 
+QUANTITY MULTIPLIER — the user may have bought MULTIPLE of the same
+item on a single receipt line. Receipts print this as:
+
+  - "3 @ 1.99"        (3 units, $1.99 each)
+  - "2 PACK MARINARA" (a 2-pack — qty=2)
+  - "MARINARA QTY 3"  (explicit count column)
+  - a leading "3 " or "2x" before the item name
+
+When you see ANY of these multiplier patterns, set:
+  qty: <the multiplier number>     (default 1 if no multiplier)
+
+The 'amount' field is the PACKAGE SIZE (16 oz, 1 gallon), not the
+multiplier. They are different fields. A "3 @ 16oz Marinara $5.97"
+line should return amount:16, unit:"oz", qty:3, priceCents:597.
+
+If the line doesn't show a multiplier, qty=1 (one of this package).
+
 Reading examples (showing the two-name shape + brand axis):
   - "MILK 2% GAL 4.29"      → rawText:"MILK 2% GAL",      name:"2% Milk",        canonicalId:"milk",   brand:null,          confidence:"high"
   - "EGGS LG 18CT 6.53"     → rawText:"EGGS LG 18CT",     name:"Large Eggs",     canonicalId:"eggs",   brand:null,          confidence:"high"
@@ -210,9 +273,10 @@ Return ONLY a JSON object — no markdown fences, no prose — with this shape:
   "date": "2026-04-14" | null,
   "totalCents": 4523 | null,
   "items": [
-    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","barcode":"0070038000563","brand":null,"emoji":"🥛","amount":1,"unit":"gallon","category":"dairy","priceCents":429,"confidence":"high"},
-    {"rawText":"GV GRN BNS 14OZ","name":"Green Beans","canonicalId":"green_beans","barcode":null,"brand":"Great Value","emoji":"🫛","amount":1,"unit":"can","category":"pantry","priceCents":129,"confidence":"high"},
-    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"barcode":null,"brand":null,"emoji":"🥫","amount":1,"unit":"count","category":"pantry","priceCents":399,"confidence":"low"}
+    {"rawText":"MILK 2% GAL","name":"2% Milk","canonicalId":"milk","barcode":"0070038000563","brand":null,"emoji":"🥛","amount":1,"unit":"gallon","qty":1,"category":"dairy","priceCents":429,"confidence":"high"},
+    {"rawText":"GV GRN BNS 14OZ","name":"Green Beans","canonicalId":"green_beans","barcode":null,"brand":"Great Value","emoji":"🫛","amount":14,"unit":"oz","qty":1,"category":"pantry","priceCents":129,"confidence":"high"},
+    {"rawText":"3 @ MARINARA 16OZ","name":"Marinara","canonicalId":"marinara","barcode":null,"brand":null,"emoji":"🍝","amount":16,"unit":"oz","qty":3,"category":"pantry","priceCents":597,"confidence":"high"},
+    {"rawText":"ACQUAMAR FLA","name":"ACQUAMAR FLA","canonicalId":null,"barcode":null,"brand":null,"emoji":"🥫","amount":1,"unit":"count","qty":1,"category":"pantry","priceCents":399,"confidence":"low"}
   ]
 }
 

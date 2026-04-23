@@ -37,6 +37,28 @@ function cacheKey(brand, canonical, limit) {
   return `${brand || ""}|${canonical || ""}|${limit}`;
 }
 
+// Flush the in-memory cache for a specific (brand, canonical) pair
+// so the very next call re-queries Supabase. Called from the
+// Shop Mode commit path: when a user just taught us a new package
+// size by inserting a pantry_items row, the 60s cache TTL would
+// hide that observation from the user's next scan. After commit we
+// clear the cache so the chip they JUST taught shows up on their
+// next visit. Both brand-specific and canonical-only entries are
+// flushed because the canonical-wide rollup (Tier 2) also sees the
+// new row.
+export function clearPopularPackagesCache(brand, canonicalId) {
+  if (!canonicalId) return;
+  const brandKey = brand || "";
+  for (const key of Array.from(cache.keys())) {
+    // key shape: `${brand}|${canonical}|${limit}`
+    const [b, c] = key.split("|");
+    if (c !== canonicalId) continue;
+    // Flush both the brand-specific entry AND the canonical-wide
+    // (brand="") entry — the new row affects both tiers.
+    if (b === brandKey || b === "") cache.delete(key);
+  }
+}
+
 // Container tokens Claude sometimes appends to typical-size strings
 // ("1 lb bag", "1 gallon jug"). The leading number+unit is the real
 // measurement; the trailing container word is just the package shape

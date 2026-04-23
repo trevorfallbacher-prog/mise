@@ -162,7 +162,15 @@ export async function rememberBarcodeCorrection({
   if (Array.isArray(ingredientIds) && ingredientIds.length > 0) {
     patch.ingredient_ids = ingredientIds;
   }
-  if (Object.keys(patch).length === 0) return { error: null };
+  if (Object.keys(patch).length === 0) {
+    // Loud no-op so a caller that silently passes nothing-to-teach
+    // (e.g. a chip pick that resolves to the same value already
+    // stored) shows up in the console rather than vanishing into
+    // "the write succeeded with nothing." Surface it so callers can
+    // diagnose teach-on-edit gaps instead of guessing.
+    console.warn("[barcodeCorrections] no fields to write — caller passed an empty patch", { barcodeUpc: upc });
+    return { error: null, skipped: true };
+  }
 
   if (isAdmin) {
     // Global path — upsert by barcode_upc (unique index).
