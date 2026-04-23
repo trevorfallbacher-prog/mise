@@ -34,6 +34,8 @@ import { PANTRY_TILES } from "../lib/pantryTiles";
 import { FREEZER_TILES } from "../lib/freezerTiles";
 import TypePicker from "./TypePicker";
 import { findFoodType, inferFoodTypeFromName } from "../data/foodTypes";
+import { rememberBarcodeCorrection, findBarcodeCorrection } from "../lib/barcodeCorrections";
+import { useProfile } from "../lib/useProfile";
 
 const FLASH_COLORS = {
   green:  { bg: "#1f6b3a", label: "MATCHED" },
@@ -296,6 +298,10 @@ export default function ShopModeCheckout({
   // (storage, category, units) for family-created canonicals that
   // aren't in the bundled INGREDIENTS registry.
   const { dbMap: ingredientDbMap } = useIngredientInfo();
+  // Admin role drives whether corrections land in the global table
+  // or family-scoped. Same gate the main Scanner / AdminPanel uses.
+  const { profile } = useProfile(userId);
+  const isAdmin = profile?.role === "admin";
   // Local editable copy of the scans array. Edits in the summary
   // phase (name, brand, qty, unpair, delete) write through to DB
   // AND mutate this state so the commit pass + re-renders pick up
@@ -486,8 +492,21 @@ export default function ShopModeCheckout({
       const nowIso = new Date().toISOString();
       const newPantryIds = new Map(); // scanId → pantry_items.id
       const insertErrors = [];
+      // Pre-fetch correction memory per UPC so taught typeId /
+      // tileId / location flow into the cascade below. Parallel
+      // fetch keeps the commit pass snappy even when the trip has
+      // 10+ scans.
+      const correctionByUpc = new Map();
+      await Promise.all(scans.map(async s => {
+        if (!s.barcodeUpc) return;
+        try {
+          const corr = await findBarcodeCorrection(s.barcodeUpc);
+          if (corr) correctionByUpc.set(s.barcodeUpc, corr);
+        } catch { /* best-effort */ }
+      }));
       for (const scan of scans) {
         const priceInfo = priceByScan.get(scan.id);
+        const taught = correctionByUpc.get(scan.barcodeUpc) || null;
         const id = (typeof crypto !== "undefined" && crypto.randomUUID)
           ? crypto.randomUUID()
           : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -550,24 +569,26 @@ export default function ShopModeCheckout({
 
         // Storage location cascade:
         //   0. user override from the review-screen picker (wins)
-        //   1. canonical.storage.location (bundled)
-        //   2. synthetic canonical info
-        //   3. defaultLocationForCategory(category) — derived from
-        //      the category chosen above
+        //   1. taught correction (family or global memory)
+        //   2. canonical.storage.location (bundled)
+        //   3. synthetic canonical info
+        //   4. defaultLocationForCategory(category) — derived above
         const canonStorage = canon?.storage?.location
           || synthInfo?.info?.storage?.location
           || null;
         const location = override?.location
+          || taught?.location
           || canonStorage
           || defaultLocationForCategory(category);
 
         // STORED IN tile (specific shelf within the location).
-        // Cascade: override → canonical storage → OFF axes → null
-        // (no tile on the pantry row; Kitchen renders misc).
+        // Cascade: override → taught correction → canonical storage
+        // → OFF axes → null.
         const canonTileId = canon?.storage?.tileId
           || synthInfo?.info?.storage?.tileId
           || null;
         const tileId = override?.tileId
+          || taught?.tileId
           || canonTileId
           || offAxes.tileId
           || null;
@@ -596,6 +617,7 @@ export default function ShopModeCheckout({
           location,
           tile_id: tileId,
           type_id: override?.typeId
+            || taught?.typeId
             || offAxes.typeId
             || inferFoodTypeFromName(displayName || scan.productName || scan.brand || "")
             || null,
@@ -620,6 +642,34 @@ export default function ShopModeCheckout({
           insertErrors.push({ scan, message: piErr.message });
         } else {
           newPantryIds.set(scan.id, id);
+
+          // Teach the UPC → identity correction memory when the
+          // user explicitly overrode any axis on the checkout
+          // editor (typeId, tileId, location, OR canonical picked
+          // via LinkIngredient). Same pattern used by the main
+          // Scanner's correction flow — admin writes go to the
+          // global tier, everyone else to the family tier. Next
+          // scan of this UPC auto-resolves to the taught values.
+          const correctionPatch = {};
+          if (override?.typeId)   correctionPatch.typeId     = override.typeId;
+          if (override?.tileId)   correctionPatch.tileId     = override.tileId;
+          if (override?.location) correctionPatch.location   = override.location;
+          if (scan.canonicalId)   correctionPatch.canonicalId = scan.canonicalId;
+          // Only write when at least one identity field would land
+          // AND the scan has a UPC to key on (red scans without OFF
+          // data already have correctionPatch.canonicalId via the
+          // user's in-aisle rename, so they teach too).
+          if (scan.barcodeUpc && Object.keys(correctionPatch).length > 0) {
+            rememberBarcodeCorrection({
+              userId,
+              isAdmin,
+              barcodeUpc: scan.barcodeUpc,
+              ...correctionPatch,
+              emoji: row.emoji,
+              ingredientIds: row.components || (scan.canonicalId ? [scan.canonicalId] : []),
+              categoryHints: scan.offPayload?.categoryHints || null,
+            }).catch(e => console.warn("[shop-checkout] rememberBarcodeCorrection failed:", e?.message || e));
+          }
         }
       }
 

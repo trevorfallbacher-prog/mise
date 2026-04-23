@@ -20,6 +20,8 @@ function fromGlobal(row) {
     barcodeUpc:      row.barcode_upc,
     canonicalId:     row.canonical_id || null,
     typeId:          row.type_id || null,
+    tileId:          row.tile_id || null,
+    location:        row.location || null,
     emoji:           row.emoji || null,
     ingredientIds:   Array.isArray(row.ingredient_ids) ? row.ingredient_ids : [],
     correctionCount: row.correction_count || 1,
@@ -33,6 +35,8 @@ function fromFamily(row) {
     barcodeUpc:      row.barcode_upc,
     canonicalId:     row.canonical_id || null,
     typeId:          row.type_id || null,
+    tileId:          row.tile_id || null,
+    location:        row.location || null,
     emoji:           row.emoji || null,
     ingredientIds:   Array.isArray(row.ingredient_ids) ? row.ingredient_ids : [],
     correctionCount: row.correction_count || 1,
@@ -137,6 +141,8 @@ export async function rememberBarcodeCorrection({
   barcodeUpc,
   canonicalId,
   typeId,
+  tileId,     // migration 0129 — STORED IN shelf override
+  location,   // migration 0129 — fridge/pantry/freezer override
   emoji,
   ingredientIds,
   categoryHints = null,   // optional — admin path seeds the tag map when present
@@ -146,10 +152,12 @@ export async function rememberBarcodeCorrection({
   if (!upc) return { error: new Error("empty upc") };
 
   // Build patch — only include supplied fields so a narrow update
-  // (e.g. canonical-only) doesn't wipe prior type/emoji.
+  // (e.g. canonical-only) doesn't wipe prior type/emoji/tile.
   const patch = {};
   if (canonicalId) patch.canonical_id = canonicalId;
   if (typeId)      patch.type_id      = typeId;
+  if (tileId)      patch.tile_id      = tileId;
+  if (location)    patch.location     = location;
   if (emoji)       patch.emoji        = emoji;
   if (Array.isArray(ingredientIds) && ingredientIds.length > 0) {
     patch.ingredient_ids = ingredientIds;
