@@ -6,6 +6,7 @@ import { LEVEL_OPTIONS, GOAL_OPTIONS, DIETARY_OPTIONS } from "../data";
 import StreakRevive from "./StreakRevive";
 import DailyRollCard from "./DailyRollCard";
 import FlairHalo, { isFlairActive } from "./FlairHalo";
+import PrepComingUpCard from "./PrepComingUpCard";
 
 // Rating face lookup shared with the activity feed's cook rows.
 const RATING_EMOJI = { nailed: "🤩", good: "😊", meh: "😐", rough: "😬" };
@@ -54,7 +55,7 @@ function avatarColor(name) {
  */
 export default function Home({
   profile, userId, familyIds = [], familyLoading = false, nameFor, avatarFor,
-  openProfile, openCook,
+  openProfile, openCook, onOpenPlan,
 }) {
   const streak      = profile.streak_count || 0;
   const streakTier  = profile.streak_tier  || 0;
@@ -195,6 +196,14 @@ export default function Home({
           {greeting.text}
         </h1>
       </div>
+
+      {/* Upcoming prep within 24h — thaw chicken, freeze butter,
+          marinate overnight. Null when nothing's queued (no empty
+          state on Home). Tap → open Plan so the user can drill into
+          the scheduled meal. Sits above DailyRollCard because
+          "you've got something to do soon" outranks "claim your
+          daily scratch card" by a lot when both are live. */}
+      <PrepComingUpCard userId={userId} onOpenPlan={onOpenPlan} />
 
       {/* Daily scratch-card roll. Self-only affordance; unrolled
           state tappable, already-rolled state collapses to a

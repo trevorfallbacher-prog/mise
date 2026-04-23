@@ -1350,10 +1350,15 @@ export default function CookMode({
             // stale wall-clock from an unrelated step.
             endsAt={activeStep === initialStepIndex ? initialTimerEndsAt : null}
             onDone={() => {
-              // Ring the bell. Server-side push already queued at
-              // step-start (see useCookTelemetry.startStep) handles
-              // the "app is closed" case; this handles "app is open
-              // but user wandered off / backgrounded the tab."
+              // Ring the bell. Three surfaces, in decreasing order of
+              // latency / reliability by scenario:
+              //   a) in-app chime — zero latency, foreground only
+              //   b) local Notification — when tab is backgrounded
+              //      but the JS context is still alive
+              //   c) client-fired server push — beats the 60-second
+              //      cron drain window for everyone subscribed to
+              //      this user. Race-safe against the cron so no
+              //      duplicate banners (see fireTimerPushNow).
               playTimerChime();
               if (typeof document !== "undefined" && document.hidden &&
                   typeof Notification !== "undefined" && Notification.permission === "granted") {
@@ -1365,6 +1370,21 @@ export default function CookMode({
                     badge: "/icon-badge-72.png",
                   });
                 } catch { /* some contexts forbid Notification constructor */ }
+              }
+              // Kick the server push immediately so subscribers to
+              // this user's push_subscriptions hear the ring within
+              // ~1s instead of up to 60s. stepRowId is the id of the
+              // cook_session_steps row currently in flight — we grab
+              // it off the telemetry hook's state, which startStep
+              // populated when this step opened.
+              if (telemetry.activeStep?.id) {
+                telemetry.fireTimerPushNow({
+                  stepRowId:   telemetry.activeStep.id,
+                  body:        step.title ? `Timer's up — ${step.title}` : "Step timer ended",
+                  emoji:       recipe.emoji || "⏲️",
+                  recipeTitle: recipe.title,
+                  stepTitle:   step.title,
+                });
               }
             }}
           />

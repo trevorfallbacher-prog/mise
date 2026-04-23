@@ -532,6 +532,7 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                 avatarFor={avatarFor}
                 openProfile={openProfile}
                 openCook={openCook}
+                onOpenPlan={() => setTab("plan")}
               />
             )}
             {tab === "courses"  && (

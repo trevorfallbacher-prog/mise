@@ -53,10 +53,15 @@ self.addEventListener("push", (event) => {
     // like timer rings; a silent banner update is worse than the first
     // ring rung twice.
     renotify: true,
-    // Requiring interaction keeps cook timers pinned until the user
-    // dismisses — they might have left the phone on the counter. Only
-    // applied to timer-kind pushes; other categories auto-dismiss.
-    requireInteraction: payload.target_kind === "cook_session",
+    // Pin the banner on the lock screen until the user dismisses.
+    // Applied to cook timers AND prep reminders — both have the
+    // "phone sitting on the counter, need to act on this" shape.
+    // A prep ping for "thaw chicken" that pops and vanishes in 5
+    // seconds fails the job; a pinned banner that waits for the
+    // user to look at the phone doesn't.
+    requireInteraction:
+      payload.target_kind === "cook_session" ||
+      payload.target_kind === "scheduled_meal",
     data: {
       id:          payload.id          || null,
       target_kind: payload.target_kind || null,

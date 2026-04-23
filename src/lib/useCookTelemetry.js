@@ -227,6 +227,52 @@ export function useCookTelemetry(userId) {
     }
   }, []);
 
+  // Fire the timer push immediately, bypassing the 60-second pg_cron
+  // drain window. Called from the in-app Timer when it hits 0:00 —
+  // because the client knows the exact deadline (wall-clock-accurate)
+  // and can beat the next cron tick. Race-safe via a compare-and-set
+  // on delivered_at: if cron got there first, the UPDATE returns 0
+  // rows and we skip the notifications insert so the user doesn't see
+  // two banners for the same ring.
+  //
+  // On success, the fanout trigger on notifications (migration 0053)
+  // sends Web Push to all the user's push_subscriptions rows within
+  // ~1 second total (DB insert → trigger → edge function → VAPID
+  // sign → push service → device).
+  //
+  // Fire-and-forget; the in-app chime + local Notification have
+  // already delivered the user-facing signal. If this network call
+  // fails, cron will still fire the row on its next tick.
+  const fireTimerPushNow = useCallback(async ({ stepRowId, body, emoji, recipeTitle, stepTitle } = {}) => {
+    const cur = sessionRef.current;
+    if (!userId || !cur?.id || !stepRowId) return;
+    try {
+      // Claim the pending push row. Only succeeds when delivered_at
+      // is still null. `.select()` returns [] on no-match — our cue
+      // that cron already beat us to it.
+      const { data: claimed } = await supabase
+        .from("cook_step_notifications")
+        .update({ delivered_at: new Date().toISOString() })
+        .eq("step_row_id", stepRowId)
+        .is("delivered_at", null)
+        .select("id");
+      if (!claimed || claimed.length === 0) return;
+
+      // Insert into notifications — the fanout trigger does the rest.
+      await supabase.from("notifications").insert({
+        user_id:     userId,
+        actor_id:    userId,
+        msg:         body || (stepTitle ? `Timer's up — ${stepTitle}` : "Step timer ended"),
+        emoji:       emoji || "⏲️",
+        kind:        "info",
+        target_kind: "cook_session",
+        target_id:   cur.id,
+      });
+    } catch (e) {
+      console.warn("[cookTelemetry] fireTimerPushNow failed (cron will retry):", e?.message || e);
+    }
+  }, [userId]);
+
   const endCook = useCallback(async ({ cookLogId = null, status = "finished" } = {}) => {
     const cur = sessionRef.current;
     if (!cur?.id) return null;
@@ -269,5 +315,5 @@ export function useCookTelemetry(userId) {
     }
   }, []);
 
-  return { session, activeStep, startCook, startStep, finishStep, endCook };
+  return { session, activeStep, startCook, startStep, finishStep, endCook, fireTimerPushNow };
 }

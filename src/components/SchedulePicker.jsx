@@ -3,6 +3,8 @@ import { totalTimeMin, difficultyLabel, findRecipe } from "../data/recipes";
 import { scaleRecipe } from "../lib/recipeScaling";
 import { useScheduledMeals } from "../lib/useScheduledMeals";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { useWebPush } from "../lib/useWebPush";
+import { resolvePrepSteps } from "../lib/prepScheduler";
 
 // Meal slots — the structural-time axis the user wanted in place of
 // (or alongside) raw HH:MM input. Default times per slot are
@@ -96,6 +98,12 @@ export default function SchedulePicker({
   recipe, initialDate, initialSlot, userId, userName, family = [], defaultRequest = false,
   onClose, onSave,
 }) {
+  // Push subscription for this device. Drives the "RING ME ON THE
+  // LOCK SCREEN" prompt below — scheduling a meal with long-lead prep
+  // (thaw chicken, freeze butter, marinate overnight) is useless if
+  // the reminder can't reach a locked phone. One-tap enable keeps the
+  // discovery moment attached to the action that benefits from it.
+  const webPush = useWebPush(userId);
   const today = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -186,11 +194,22 @@ export default function SchedulePicker({
   // Servings stepper. Seed from the recipe's default.
   const [servings, setServings] = useState(recipe.serves || 2);
 
-  // Per-notification opt-in state, keyed by notification.id.
+  // Resolved prep steps — unifies the new recipe.prepSteps shape, the
+  // legacy recipe.prepNotifications shape, AND the auto-synthesized
+  // "start prepping" fallback. Rendering from this means every
+  // recipe that has prep metadata shows the toggle UI, regardless of
+  // which shape the author used. Before, the UI only rendered
+  // prepNotifications and silently dropped prepSteps (which AI-
+  // generated recipes use), so users scheduling those recipes never
+  // saw reminders in the picker even though syncPrepNotifications
+  // was queueing them server-side.
+  const resolvedPrepSteps = useMemo(() => resolvePrepSteps(recipe), [recipe]);
+
+  // Per-step opt-in state, keyed by step.key (from resolvePrepSteps).
   const [notifOpts, setNotifOpts] = useState(() => {
     const map = {};
-    for (const n of recipe.prepNotifications || []) {
-      map[n.id] = n.defaultOn !== false;
+    for (const s of resolvedPrepSteps) {
+      map[s.key] = s.defaultOn !== false;
     }
     return map;
   });
@@ -510,19 +529,79 @@ export default function SchedulePicker({
           })()}
         </div>
 
-        {/* Prep notifications */}
-        {(recipe.prepNotifications || []).length > 0 && (
+        {/* Prep reminders — renders from resolvePrepSteps so both
+            authored prepSteps and legacy prepNotifications surface,
+            plus the auto-synthesized fallback for recipes with no
+            explicit prep metadata. */}
+        {resolvedPrepSteps.length > 0 && (
           <div style={{ marginTop: 22 }}>
             <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.12em", marginBottom: 10 }}>
               PREP REMINDERS
             </div>
+
+            {/* Lock-screen push enable — shown ONLY when this recipe
+                has long-lead prep (≥1 hour) that the user is
+                expecting to reach them on a locked phone. A 15-min
+                heads-up doesn't justify nagging for permission; a
+                "thaw chicken 12 hours ahead" absolutely does. */}
+            {webPush.supported &&
+             !webPush.enabled &&
+             webPush.permission !== "denied" &&
+             resolvedPrepSteps.some(s => s.leadMinutes >= 60) && (
+              <div style={{
+                marginBottom: 10,
+                padding: "12px 14px",
+                background: "linear-gradient(180deg,#1e1408 0%,#170d05 100%)",
+                border: "1px solid #3a2a0a",
+                borderRadius: 12,
+                display: "flex", alignItems: "center", gap: 12,
+              }}>
+                <span style={{ fontSize: 20, flexShrink: 0 }}>🔔</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{
+                    fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+                    color:"#f5c842", letterSpacing:"0.14em", marginBottom:3,
+                  }}>
+                    RING ME ON THE LOCK SCREEN
+                  </div>
+                  <div style={{
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12,
+                    color:"#bbb", lineHeight:1.4,
+                  }}>
+                    Prep reminders only reach your phone when it's locked if notifications are enabled.
+                  </div>
+                </div>
+                <button
+                  onClick={() => webPush.enable()}
+                  disabled={webPush.busy}
+                  style={{
+                    flexShrink: 0,
+                    padding: "9px 12px",
+                    background: "#f5c842", color: "#111",
+                    border: "none", borderRadius: 10,
+                    fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+                    letterSpacing:"0.08em", cursor: webPush.busy ? "not-allowed" : "pointer",
+                    opacity: webPush.busy ? 0.5 : 1,
+                  }}
+                >
+                  {webPush.busy ? "…" : "ENABLE"}
+                </button>
+              </div>
+            )}
+
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {recipe.prepNotifications.map(n => {
-                const on = notifOpts[n.id];
+              {resolvedPrepSteps.map(s => {
+                const on = notifOpts[s.key];
+                // Human-readable lead label (e.g. "12h" or "30m before").
+                const lead = s.leadMinutes >= 1440
+                  ? `${Math.round(s.leadMinutes / 1440)}d`
+                  : s.leadMinutes >= 60
+                    ? `${Math.round(s.leadMinutes / 60)}h`
+                    : `${s.leadMinutes}m`;
                 return (
                   <button
-                    key={n.id}
-                    onClick={() => toggleNotif(n.id)}
+                    key={s.key}
+                    onClick={() => toggleNotif(s.key)}
                     style={{
                       textAlign: "left", display: "flex", alignItems: "center", gap: 12,
                       padding: "12px 14px",
@@ -543,23 +622,23 @@ export default function SchedulePicker({
                         transition: "left 0.2s",
                       }} />
                     </div>
+                    <div style={{ fontSize: 18, flexShrink: 0 }}>{s.emoji}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: on ? "#f0ece4" : "#888", lineHeight: 1.4 }}>
-                        {n.text}
+                      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: on ? "#f0ece4" : "#888", lineHeight: 1.4, fontWeight: 500 }}>
+                        {s.title}
                       </div>
-                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", marginTop: 2 }}>
-                        {n.leadTime} before
+                      {s.body && (
+                        <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: on ? "#999" : "#555", lineHeight: 1.3, marginTop: 2 }}>
+                          {s.body}
+                        </div>
+                      )}
+                      <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", marginTop: 3, letterSpacing: "0.08em" }}>
+                        {lead} BEFORE MEAL
                       </div>
                     </div>
                   </button>
                 );
               })}
-            </div>
-            <div style={{
-              marginTop: 10, fontFamily: "'DM Sans',sans-serif", fontSize: 11,
-              color: "#555", lineHeight: 1.5, fontStyle: "italic",
-            }}>
-              Notifications are saved with this meal. Web push delivery comes in the next update — for now your choices are stored.
             </div>
           </div>
         )}
