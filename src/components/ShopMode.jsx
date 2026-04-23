@@ -1168,21 +1168,27 @@ function findListMatchForScan({ scan, listItems, alreadyPairedIds }) {
     if (byCanonical) return byCanonical.id;
   }
 
-  // Tier 2 — canonical name overlap.
+  // Tier 2 — canonical name overlap. findIngredient covers bundled
+  // canonicals; family-created synthetics aren't in the bundled
+  // registry, so we ALSO derive a name from the slug itself
+  // (kerrygold_butter → "kerrygold butter") as a safety net. That
+  // way an exact match between a family canonical and a bare-text
+  // list item ("butter") still pairs.
   if (scan.canonicalId) {
     const ing = findIngredient(scan.canonicalId);
-    if (ing) {
-      const canonNorms = [ing.shortName, ing.name, ing.id.replace(/_/g, " ")]
-        .filter(Boolean)
-        .map(normalizeName);
-      for (const item of unpaired) {
-        const itemNorm = normalizeName(item.name);
-        if (!itemNorm) continue;
-        for (const c of canonNorms) {
-          if (!c) continue;
-          if (itemNorm === c || itemNorm.includes(c) || c.includes(itemNorm)) {
-            return item.id;
-          }
+    const slugAsName = scan.canonicalId.replace(/_/g, " ");
+    const canonNorms = (ing
+      ? [ing.shortName, ing.name, ing.id.replace(/_/g, " ")]
+      : [slugAsName])
+      .filter(Boolean)
+      .map(normalizeName);
+    for (const item of unpaired) {
+      const itemNorm = normalizeName(item.name);
+      if (!itemNorm) continue;
+      for (const c of canonNorms) {
+        if (!c) continue;
+        if (itemNorm === c || itemNorm.includes(c) || c.includes(itemNorm)) {
+          return item.id;
         }
       }
     }
