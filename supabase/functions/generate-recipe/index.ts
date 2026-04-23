@@ -561,7 +561,7 @@ exact shape:
   "ideal": [
     {
       "name":         "<CLEAN CANONICAL NAME ONLY — e.g. 'mozzarella', 'flour tortillas', 'chicken breast'. One-to-three words. No prep verbs, no counts, no brand, no parentheticals.>",
-      "amount":       "<display, e.g. '8 oz'>",
+      "amount":       "<display in STANDARD US CUSTOMARY UNITS. Cutlets/chops/steaks = piece count ('2 breasts'). Roasts/large cuts = lb ('3 lb brisket'). Ground meat = lb. Liquids/dairy/dry goods = cups/tbsp/tsp/oz ('2 tbsp', '1 cup'). Produce = pieces or by eye ('2 cloves garlic', '1 onion'). Never blank, never 'to taste' (except salt/pepper), never 'drizzle'/'splash'/'dash'.>",
       "ingredientId": "<the canonical slug you have in mind — e.g. 'tortillas', 'mozzarella', 'chicken_breast'. Use the registry's canonical id so the client can objectively verify whether the user's pantry covers this slot. null only when no registry slug fits.>",
       "role":         "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
     },
@@ -729,7 +729,7 @@ exact shape. Every field is REQUIRED unless marked optional.
   "tools":      ["<short name>", ...],                  // pans, knives, etc
   "ingredients": [
     {
-      "amount":       "<display string, e.g. '2 tbsp' or '½ cup'>",
+      "amount":       "<display string in STANDARD US CUSTOMARY UNITS. Rules by ingredient type:\n        • Cutlet-style meats (chicken breast / thigh / wing / tenderloin, pork chop, steak, cutlets) → PIECE COUNT: '2 breasts', '4 thighs', '3 chops', '2 ribeyes'. Americans almost never buy these by weight; piece counts match how the cook actually grabs them out of the fridge.\n        • Roasts and large cuts (brisket, pork shoulder, chuck roast, whole chicken, turkey breast) → POUNDS: '3 lb brisket', '4 lb pork shoulder'. You buy these by weight at the counter.\n        • Ground meats → pounds or ounces: '1 lb ground beef'.\n        • Dry goods, liquids, dairy → cups / tablespoons / teaspoons / ounces: '2 tbsp', '1 cup', '½ cup', '8 oz'. Never emit grams or milliliters by default — the user can rotate to metric in the UI if they prefer.\n        • Produce → pieces or by eye: '2 cloves garlic', '1 onion', '1 bunch parsley'.\n      NEVER emit a blank amount. NEVER emit 'to taste' except for salt/pepper/pepper flakes on active-seasoning steps (even then, prefer 'pinch' or '¼ tsp' when you can estimate). NEVER emit 'a drizzle' / 'a splash' / 'a dash' — give a real measurement the cook can work with.>",
       "item":         "<CLEAN CANONICAL NAME ONLY — e.g. 'olive oil', 'chicken breast', 'mozzarella'. Do NOT stuff prep ('cut into bite-sized pieces', 'chopped fine'), brand ('Kerrygold'), or counts ('4 count') into this field. Prep goes in the step instruction; identity lives here.>",
       "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
       "cut":          "<optional: anatomical cut for meats — 'breast', 'thigh', 'ribeye', 'brisket', 'loin', 'shoulder' — null for non-meats>",
@@ -741,37 +741,40 @@ exact shape. Every field is REQUIRED unless marked optional.
     {
       "id":          "step1",
       "title":       "<short step title>",
-      "instruction": "<1-3 sentences — reference ingredients by display name; the UI zips them back to the top-level ingredients[] list>",
+      "instruction": "<1-3 sentences. EVERY ingredient reference MUST include its amount (and brand when present) inline, not a bare name. WRITE: 'Heat 2 tbsp of Kirkland unsalted butter in a skillet' — NOT 'Heat the butter in a skillet'. WRITE: 'Add 2 chicken breasts and 4 cloves of garlic' — NOT 'Add the chicken and garlic'. The inline measurement + brand matches the top-level ingredients[] row; the UI zips them back. If the step uses a partial amount of a larger ingredient ('half the onion'), say that explicitly ('half of the yellow onion — about ½ cup diced').>",
       "icon":        "🔪",
-      // Timer semantics — READ CAREFULLY, this drives real push
+      // Timer semantics — READ CAREFULLY. This drives BOTH the
+      // visible duration badge on every step AND optional push
       // notifications to the cook's phone (cook_step_notifications,
-      // migration 0137). A wrong value rings a push at the wrong time.
+      // migration 0137). The client filters which timers ring as
+      // pushes based on a user preference — your job is to always
+      // emit the real step duration so the cook can SEE how long
+      // each step takes.
       //
       // ALWAYS in SECONDS. Never minutes. A 25-minute bake is 1500,
       // NOT 25. Double-check: if your number is under ~60 and the
       // step is clearly minutes-long, you forgot to multiply by 60.
       //
-      // Emit a timer (number) ONLY on PASSIVE-WAIT steps where the
-      // cook can walk away. Pushes fire when the timer elapses, so
-      // "walk away" is the whole point. Examples:
+      // Emit a timer (integer seconds) on EVERY step that has a
+      // duration the cook can clock. Active-work steps (sear,
+      // sauté, boil, reduce) get a timer just like passive-wait
+      // steps (bake, simmer, rest). Examples:
+      //   • Sear 3 min/side (360)      • Sauté 5 min (300)
       //   • Bake 25 min (1500)         • Simmer 1 hour (3600)
       //   • Rest meat 10 min (600)     • Rise dough 2 hours (7200)
       //   • Reduce sauce 8 min (480)   • Chill 30 min (1800)
       //   • Sous vide 2 hours (7200)   • Braise 90 min (5400)
+      //   • Toast bread 2 min (120)    • Whisk 90 sec (90)
       //
-      // Emit NULL on active-work steps where the cook is at the
-      // stove and a push would be noise. Examples:
-      //   • Chop / mince / slice       • Stir / toss / flip
-      //   • Whisk together             • Season to taste
-      //   • "Cook, stirring, until X"  • Assemble / plate
-      //
-      // Short sears (90 seconds) are a judgment call — emit a timer
-      // if the cook typically sets one (steak flip, pasta water
-      // test). Skip if the instruction already says "watch closely".
+      // Emit NULL ONLY when the step has no duration at all —
+      // assembly, plating, pure prep like chopping that the cook
+      // controls entirely by eye. If the instruction says "X
+      // minutes" or "until Y" with a typical wall-clock duration,
+      // emit the timer.
       //
       // Valid range: 5..86400 seconds (5s to 24h). Anything outside
       // is treated as an error by the normalizer and dropped.
-      "timer":       <integer seconds for passive-wait steps, null otherwise>,
+      "timer":       <integer seconds for any step with a clockable duration, null only for pure-prep steps>,
       "tip":         "<optional one-line tip or null>",
       "heat":    "<optional: 'low' | 'medium-low' | 'medium' | 'medium-high' | 'high' | 'off'>",
       "doneCue": "<optional short qualitative ready-signal: 'nutty smell, color of wet sand'>"
@@ -2112,6 +2115,30 @@ function normalizeCourse(v: unknown): string | null {
   return typeof v === "string" && COURSE_VALUES.has(v) ? v : null;
 }
 
+// Canonical ids whose natural default unit is PIECE COUNT (cutlets,
+// chops, steaks, whole small items). See CLAUDE.md's identity-axis
+// hierarchy — cuts are a separate axis from the base canonical;
+// Americans buy these at the counter by the piece, not by weight.
+// The normalizer forces amounts for these canonicals into a piece-
+// count shape when Claude emits a raw weight or a blank.
+const CUT_PIECE_CANONICALS = new Set([
+  "chicken_breast", "chicken_thigh", "chicken_leg", "chicken_wing",
+  "chicken_tenderloin", "turkey_breast",
+  "pork_chop",
+  "ribeye", "ny_strip", "sirloin",
+]);
+// Canonical ids whose natural default unit is POUNDS (roasts and
+// large cuts bought by weight).
+const CUT_POUND_CANONICALS = new Set([
+  "brisket", "chuck_roast", "pork_loin", "pork_shoulder",
+]);
+function defaultAmountForCanonical(canonicalId: string | null): string {
+  if (!canonicalId) return "1";
+  if (CUT_PIECE_CANONICALS.has(canonicalId)) return "1";
+  if (CUT_POUND_CANONICALS.has(canonicalId)) return "1 lb";
+  return "1";
+}
+
 // Normalize every ingredient row. `item` is stripped of trailing
 // prep clauses ("chicken breast, cut into bite-sized pieces" →
 // "chicken breast") so the identity surfaces clean even when
@@ -2119,6 +2146,26 @@ function normalizeCourse(v: unknown): string | null {
 // axes pass through when the model emitted them; null otherwise.
 // Canonical id is left verbatim — coerceRecipeCanonicalIds on the
 // client handles any drift to the registry.
+//
+// Amount is never allowed to land as blank / null / "to taste" on a
+// structural ingredient — the UI renders an empty amount as "—"
+// which looks like a bug to the cook. Blank amounts fall back to a
+// canonical-appropriate default (piece for cutlets, lb for roasts,
+// "1" otherwise). Vague phrasings ("a drizzle", "a splash", "a dash")
+// are rewritten to a concrete starting measurement.
+const VAGUE_AMOUNT_RE = /^\s*(a\s+)?(drizzle|splash|dash|bit|touch|pinch|handful|few|some)(\s+of)?\s*$/i;
+function normalizeIngredientAmount(raw: unknown, canonicalId: string | null): string {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return defaultAmountForCanonical(canonicalId);
+  if (VAGUE_AMOUNT_RE.test(s)) {
+    // "a drizzle of oil" → "1 tbsp". "a pinch" → "¼ tsp".
+    const m = s.match(/drizzle|splash/i);
+    if (m) return "1 tbsp";
+    return "¼ tsp";
+  }
+  return s;
+}
+
 function normalizeIngredients(ings: unknown): unknown[] {
   if (!Array.isArray(ings)) return [];
   return ings.map((i) => {
@@ -2130,10 +2177,11 @@ function normalizeIngredients(ings: unknown): unknown[] {
     // Keep parentheticals ("chicken breast (boneless)") alone.
     const PREP_CLAUSE_RE = /,\s+(cut|chopped|diced|sliced|minced|shredded|crumbled|cubed|grated|ground|torn|halved|quartered|trimmed|pounded|drained|rinsed|peeled|deveined|boned|skinned|stemmed|seeded|crushed|julienned|shaved)\s.*$/i;
     const item = rawItem.replace(PREP_CLAUSE_RE, "").trim();
+    const canonicalId = typeof ing.ingredientId === "string" ? ing.ingredientId : null;
     return {
-      amount:       typeof ing.amount === "string" ? ing.amount : ing.amount,
+      amount:       normalizeIngredientAmount(ing.amount, canonicalId),
       item:         item || rawItem,
-      ingredientId: typeof ing.ingredientId === "string" ? ing.ingredientId : null,
+      ingredientId: canonicalId,
       cut:          typeof ing.cut === "string"          ? ing.cut          : null,
       state:        typeof ing.state === "string"        ? ing.state        : null,
       qty:          ing.qty,
