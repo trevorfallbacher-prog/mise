@@ -11,7 +11,7 @@
 // into the card's render shape so the visual layer doesn't care
 // which source it got.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
@@ -30,6 +30,7 @@ import { FRIDGE_TILES,  tileIdForItem          as fridgeTileFor  } from "../../l
 import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../lib/pantryTiles";
 import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
 import { findIngredient, hubForIngredient } from "../../data/ingredients";
+import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 
 const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
 
@@ -269,6 +270,30 @@ export default function PantryScreen({
     setDrilledTile(null);
   };
 
+  // Per-tile warn count — how many items in each tile are
+  // expiring soon. Renders as a small burnt-orange dot on the
+  // tile card so the user can triage at a glance without drilling
+  // in. Keyed by `${location}:${tileId}` so two locations with a
+  // same-id tile (fridge "misc" vs pantry "misc") don't collide.
+  const warnCountByTile = useMemo(() => {
+    const map = {};
+    for (const loc of Object.keys(cardsByLocTile)) {
+      for (const tileId of Object.keys(cardsByLocTile[loc])) {
+        const n = cardsByLocTile[loc][tileId].filter(c => c.status === "warn").length;
+        if (n > 0) map[`${loc}:${tileId}`] = n;
+      }
+    }
+    return map;
+  }, [cardsByLocTile]);
+
+  // Live clock for the kicker. Ticks once a minute — no need to
+  // re-render every second for a "TUESDAY · 4:12 PM" readout,
+  // the minute edge is the visible resolution. Initial value is
+  // `new Date()` so the first paint shows the correct time, no
+  // hardcoded fallback.
+  const now = useNow();
+  const warnCount = cards.length - goodCount;
+
   return (
     <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
       <WarmBackdrop variant="pantry" />
@@ -292,17 +317,22 @@ export default function PantryScreen({
              the hero stays legible at every time of day. */}
         <FadeIn>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <Kicker tone={theme.color.skyInkMuted}>Tuesday · 4:12 PM</Kicker>
+            <Kicker tone={theme.color.skyInkMuted}>
+              {formatClock(now)}
+            </Kicker>
             {/* Status chip sits on the bare backdrop, so it uses a
                 glass-fill bg + skyInk text like the hero — not the
                 low-alpha tealTint. On dawn the tint was landing at
                 ~2:1 against the wine sky; this swap yields ≥6:1
                 across every theme because the surface is always
-                the theme's already-tuned glassFillHeavy. */}
+                the theme's already-tuned glassFillHeavy. Two-axis
+                readout ("N GOOD · M SOON") when anything's
+                expiring, single axis ("N GOOD") otherwise so the
+                warn slot doesn't spam when everything's fresh. */}
             <div style={{
               display: "inline-flex",
               alignItems: "center",
-              gap: 6,
+              gap: 8,
               padding: "4px 10px",
               borderRadius: 999,
               background: theme.color.glassFillHeavy,
@@ -318,7 +348,17 @@ export default function PantryScreen({
               whiteSpace: "nowrap",
               ...THEME_TRANSITION,
             }}>
-              <StatusDot tone="ok" size={6} /> {goodCount} on hand
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                <StatusDot tone="ok" size={6} /> {goodCount} good
+              </span>
+              {warnCount > 0 && (
+                <>
+                  <span style={{ opacity: 0.35 }}>·</span>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: theme.color.burnt }}>
+                    <StatusDot tone="warn" size={6} /> {warnCount} soon
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -434,6 +474,7 @@ export default function PantryScreen({
             <TileGrid
               location={activeLocation}
               cardsByTile={cardsByLocTile[locationTab] || {}}
+              warnCountByTile={warnCountByTile}
               onPickTile={setDrilledTile}
             />
           );
@@ -562,10 +603,10 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker }) {
 
 // Tile grid — the top-level "pick a shelf" view shown when no
 // tile is drilled and no search is active. Each tile card shows
-// emoji + label + blurb + an item count. Empty tiles dim to
-// ~45% so the populated ones pop, same visual pattern the
-// classic Kitchen uses.
-function TileGrid({ location, cardsByTile, onPickTile }) {
+// icon/emoji + label + blurb + an item count + warn dot. Empty
+// tiles dim to ~45% so the populated ones pop, same visual
+// pattern the classic Kitchen uses.
+function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
   return (
     <div style={{
       display: "grid",
@@ -579,6 +620,7 @@ function TileGrid({ location, cardsByTile, onPickTile }) {
       <AnimatePresence mode="popLayout">
         {location.tiles.map((tile, i) => {
           const count = (cardsByTile[tile.id] || []).length;
+          const warn = warnCountByTile[`${location.id}:${tile.id}`] || 0;
           return (
             <motion.div
               key={tile.id}
@@ -588,7 +630,13 @@ function TileGrid({ location, cardsByTile, onPickTile }) {
               exit={{ opacity: 0, scale: 0.96 }}
               transition={{ duration: 0.32, delay: i * 0.02, ease: [0.22, 1, 0.36, 1] }}
             >
-              <TileCard tile={tile} count={count} onPick={() => onPickTile(tile)} />
+              <TileCard
+                tile={tile}
+                location={location.id}
+                count={count}
+                warnCount={warn}
+                onPick={() => onPickTile(tile)}
+              />
             </motion.div>
           );
         })}
@@ -598,13 +646,18 @@ function TileGrid({ location, cardsByTile, onPickTile }) {
 }
 
 // Tile card — the "Dairy & Eggs · 12 items" shelf-choice card.
-// Taller than an item card so the emoji has space to dominate and
+// Taller than an item card so the icon has space to dominate and
 // the blurb below the label has breathing room. Empty tiles
 // render dimmed + non-interactive so the user doesn't drill into
-// a known-empty shelf.
-function TileCard({ tile, count, onPick }) {
+// a known-empty shelf. If a bundled SVG exists at
+// public/icons/tiles/<id>.svg (registered in canonicalIcons.js),
+// it wins over the emoji fallback — so the user can upload a
+// custom tile icon and it renders instantly without any code
+// change here.
+function TileCard({ tile, location, count, warnCount, onPick }) {
   const { theme } = useTheme();
   const empty = count === 0;
+  const iconUrl = tileIconFor(tile.id, location);
   return (
     <GlassPanel
       interactive={!empty}
@@ -623,11 +676,48 @@ function TileCard({ tile, count, onPick }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-        <div style={{
-          fontSize: 38, lineHeight: 1,
-          filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-        }}>
-          {tile.emoji}
+        {/* Icon slot — bundled SVG when available, emoji fallback
+            otherwise. Wrapped in a small positioned box so the
+            warn-dot can sit as a badge on the icon's upper-right
+            corner for triage-at-a-glance. */}
+        <div style={{ position: "relative", width: 44, height: 44, flexShrink: 0 }}>
+          {iconUrl ? (
+            <img
+              src={iconUrl}
+              alt=""
+              style={{
+                width: "100%", height: "100%", objectFit: "contain",
+                filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+              }}
+            />
+          ) : (
+            <div style={{
+              fontSize: 38, lineHeight: 1,
+              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+            }}>
+              {tile.emoji}
+            </div>
+          )}
+          {warnCount > 0 && (
+            <div
+              title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
+              style={{
+                position: "absolute",
+                top: -2, right: -4,
+                minWidth: 16, height: 16,
+                padding: "0 4px",
+                borderRadius: 999,
+                background: theme.color.burnt,
+                color: theme.color.ctaText,
+                fontFamily: font.mono, fontSize: 9, fontWeight: 600,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 2px 6px rgba(168,73,17,0.35)",
+                letterSpacing: "-0.02em",
+              }}
+            >
+              {warnCount}
+            </div>
+          )}
         </div>
         {/* Count pill — DM Mono so it reads as metadata, not a
             header. Hidden on empty tiles since "0 items" adds
@@ -677,6 +767,14 @@ function PantryCard({ item, onPick }) {
   // "expires soon" is noticeable at the card level without being
   // alarming. Wash follows time-of-day automatically.
   const warnOverlay = warn ? statusTintOverlay(theme, "warn") : null;
+  // Bundled SVG icon for the item's canonical id if one exists
+  // (public/icons/<canonical>.svg, registered in canonicalIcons
+  // BUNDLED_ICON_SLUGS). Admin-generated images from
+  // ingredient_info.imageUrl aren't threaded through yet — that
+  // needs the IngredientInfo context, tracked as a follow-up.
+  // Emoji is always the fallback.
+  const canonicalId = item?._raw?.canonicalId || null;
+  const iconUrl = canonicalImageUrlFor(canonicalId, null);
 
   return (
     <GlassPanel
@@ -694,12 +792,23 @@ function PantryCard({ item, onPick }) {
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{
-          fontSize: 30, lineHeight: 1,
-          filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-        }}>
-          {item.emoji}
-        </div>
+        {iconUrl ? (
+          <img
+            src={iconUrl}
+            alt=""
+            style={{
+              width: 36, height: 36, objectFit: "contain",
+              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+            }}
+          />
+        ) : (
+          <div style={{
+            fontSize: 30, lineHeight: 1,
+            filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+          }}>
+            {item.emoji}
+          </div>
+        )}
         <StatusDot tone={warn ? "warn" : "ok"} size={warn ? 10 : 8} />
       </div>
 
@@ -751,6 +860,42 @@ function formatDaysChip(days) {
   if (days < 0) return "gone";
   if (days === 0) return "today";
   return `${days}d`;
+}
+
+// Live clock — `now` state updates once a minute. Not every
+// second: the kicker only renders "TUESDAY · 4:12 PM" precision
+// so a second-tick would re-render the whole screen for nothing.
+// Scheduled at each minute BOUNDARY (not every 60s from mount)
+// so when the minute rolls the display flips immediately rather
+// than drifting up to 59s behind the wall clock.
+function useNow() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    let alive = true;
+    const schedule = () => {
+      const msUntilNextMinute = 60000 - (Date.now() % 60000);
+      return setTimeout(() => {
+        if (!alive) return;
+        setNow(new Date());
+        timer = schedule();
+      }, msUntilNextMinute);
+    };
+    let timer = schedule();
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
+  return now;
+}
+
+// "TUESDAY · 4:12 PM" — uppercase day + 12-hour local time.
+// Kicker component already uppercases via letter-spacing /
+// fontFeatureSettings but we send it uppercase to avoid a
+// rendering pop when the style hasn't loaded yet.
+function formatClock(now) {
+  const day = now.toLocaleDateString(undefined, { weekday: "long" }).toUpperCase();
+  const time = now.toLocaleTimeString(undefined, {
+    hour: "numeric", minute: "2-digit", hour12: true,
+  }).toUpperCase();
+  return `${day} · ${time}`;
 }
 
 function SearchGlyph() {
