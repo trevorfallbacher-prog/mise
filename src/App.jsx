@@ -17,6 +17,7 @@ import LevelUpCeremony from "./components/LevelUpCeremony";
 import XpToastStack from "./components/XpToastStack";
 import CookMode from "./components/CookMode";
 import CookBanner from "./components/CookBanner";
+import MCMCookingShowcase from "./experiments/mcm-cooking/Showcase";
 import { useActiveCookSession } from "./lib/useActiveCookSession";
 import { useUserRecipes } from "./lib/useUserRecipes";
 import { useWhatsNew } from "./lib/useWhatsNew";
@@ -71,7 +72,30 @@ function nameFromAuth(user) {
   );
 }
 
+// Experimental MCM/liquid-glass cooking-app showcase, reachable via
+// `#mcm-cooking` in the URL hash. Kept entirely separate from the
+// main dark app — it short-circuits App() before any auth / data
+// hooks run, so it's a pure design sandbox.
+function useHashRoute() {
+  const [hash, setHash] = useState(() =>
+    typeof window !== "undefined" ? window.location.hash : ""
+  );
+  useEffect(() => {
+    const onChange = () => setHash(window.location.hash);
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
+  }, []);
+  return hash;
+}
+
 export default function App() {
+  const hash = useHashRoute();
+  if (hash === "#mcm-cooking") return <MCMCookingShowcase />;
+
+  return <MainApp />;
+}
+
+function MainApp() {
   const { user, loading: authLoading } = useAuth();
   const { profile, loading: profileLoading, upsert: upsertProfile, patchLocal: patchProfile } =
     useProfile(user?.id);
