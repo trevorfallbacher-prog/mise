@@ -3,6 +3,7 @@ import { COLOR, FONT, CHIP_TONES, pickerKicker, pickerTitle, pickerOptionStyle }
 import { findIngredient } from "../data/ingredients";
 import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
+import { setPreferredUnit } from "../lib/unitPrefs";
 
 // Shared unit picker for AI recipe ingredients (preview and CookMode
 // inline amounts). Tapping an ingredient's amount chip opens this as
@@ -46,6 +47,10 @@ export default function UnitPicker({
   ingredientId,
   itemName,
   onPick,
+  // Optional: persist the chosen unit to localStorage so every future
+  // render of this ingredient honors the pick. Pass prefKey to opt in;
+  // omit for ephemeral-only picks (e.g. preview-screen experimentation).
+  prefKey,
 }) {
   if (!open) return null;
   const ingredient = ingredientId ? findIngredient(ingredientId) : null;
@@ -83,6 +88,7 @@ export default function UnitPicker({
       // so hand it a stub with a units[] for the chosen unit.
       const formattable = ingredient || { units: [{ id: newUnitId, label: newUnitId }] };
       onPick(formatQty({ amount: res.value, unit: newUnitId }, formattable));
+      if (prefKey) setPreferredUnit(prefKey, newUnitId);
     }
     onClose();
   };

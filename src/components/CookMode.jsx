@@ -13,6 +13,7 @@ import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipe
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 import { useWebPush } from "../lib/useWebPush";
 import UnitPicker from "./UnitPicker";
+import { applyPreferredUnit, prefKeyForIngredient } from "../lib/unitPrefs";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -1268,9 +1269,12 @@ export default function CookMode({
               {usesList.map((ing, i) => {
                 const swappedFrom = ing._swappedFrom?.item || null;
                 const isSkipped   = !!ing._skipped;
-                const overrideKey = ing.ingredientId || ing.item || null;
+                const overrideKey = prefKeyForIngredient(ing);
                 const overrideAmount = overrideKey ? unitOverrides[overrideKey] : null;
-                const displayAmount = overrideAmount || ing.amount || "—";
+                // Session override wins (one-off pick); fall back to
+                // the user's saved preference via applyPreferredUnit.
+                const preferred = overrideAmount || applyPreferredUnit(ing.amount, ing);
+                const displayAmount = preferred || ing.amount || "—";
                 return (
                   <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color: isSkipped ? "#8a7a5a" : "#e8dfc8", lineHeight:1.5, opacity: isSkipped ? 0.7 : 1 }}>
                     <button
@@ -1500,6 +1504,7 @@ export default function CookMode({
           amountString={unitPicker.amountString}
           ingredientId={unitPicker.ingredientId}
           itemName={unitPicker.itemName}
+          prefKey={unitPicker.key}
           onPick={(newAmount) => {
             setUnitOverrides(prev => ({
               ...prev,

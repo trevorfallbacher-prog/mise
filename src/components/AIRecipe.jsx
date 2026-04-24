@@ -22,6 +22,7 @@ import {
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import UnitPicker from "./UnitPicker";
+import { applyPreferredUnit, prefKeyForIngredient } from "../lib/unitPrefs";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -3036,11 +3037,19 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
   // Per-row amount overrides from the UnitPicker. Keyed by index so
   // they survive re-renders without polluting the recipe shape; the
   // shopping-cart write below reads through these overrides.
+  //
+  // Persistent prefs (unitPrefs.js, localStorage) apply first, so a
+  // user's "I like butter in tbsp" pick carries across drafts and
+  // cook sessions automatically. The in-session override wins when
+  // it's set (handles the case where the user picks a one-off unit
+  // for this draft without changing their saved preference).
   const [amountOverrides, setAmountOverrides] = useState({});
   const [pickerIdx, setPickerIdx] = useState(null);
-  const effectiveIngredients = ingredients.map((ing, i) =>
-    amountOverrides[i] != null ? { ...ing, amount: amountOverrides[i] } : ing,
-  );
+  const effectiveIngredients = ingredients.map((ing, i) => {
+    if (amountOverrides[i] != null) return { ...ing, amount: amountOverrides[i] };
+    const prefApplied = applyPreferredUnit(ing.amount, ing);
+    return prefApplied !== ing.amount ? { ...ing, amount: prefApplied } : ing;
+  });
   const pairings = pairRecipeIngredients(effectiveIngredients, pantry || []);
   // Track per-row shopping adds locally so the button flips to
   // ✓ ON LIST after commit without waiting for the parent to
@@ -3165,6 +3174,7 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
             amountString={String(row.amount || "")}
             ingredientId={row.ingredientId}
             itemName={row.item}
+            prefKey={prefKeyForIngredient(row)}
             onPick={(newAmount) => {
               setAmountOverrides(prev => ({ ...prev, [pickerIdx]: newAmount }));
             }}
