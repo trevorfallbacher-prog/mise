@@ -349,7 +349,17 @@ export default function PantryScreen({
   const warnCount = cards.length - goodCount;
 
   return (
-    <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
+    <div style={{
+      position: "relative",
+      minHeight: "100vh",
+      // NOTE: no `overflow: hidden` here even though it was the
+      // original default. An overflow-clip ancestor kills
+      // position:sticky inside — and we want the search + location
+      // tabs to stick at the top when the user scrolls through a
+      // long tile. WarmBackdrop has its own `overflow: hidden` on
+      // its absolute-positioned shell, so backdrop blobs are still
+      // contained; this just lets the content stack breathe.
+    }}>
       <WarmBackdrop variant="pantry" />
 
       <div style={{
@@ -477,7 +487,30 @@ export default function PantryScreen({
           </p>
         </FadeIn>
 
-        {/* --- Search + filters ---------------------------------------- */}
+        {/* --- Sticky search + location tabs --------------------------
+            Wrapped in a position:sticky shell so the nav stays put
+            when the user scrolls through a long tile. Pulls a
+            negative margin on the horizontal axis so the blur
+            extends edge-to-edge of the content column rather than
+            clipping to the padding gutter. zIndex 5 keeps it above
+            the tile/item grids but below app-level modals (the
+            shared ItemCard overlay at App.jsx renders at a higher
+            z). Top offset 0 — sticks flush to the viewport top.
+            Backdrop-blur lets the underneath content peek through
+            the bar as it scrolls past, signaling "more above." */}
+        <div style={{
+          position: "sticky",
+          top: 0,
+          zIndex: 5,
+          marginLeft: -20,
+          marginRight: -20,
+          paddingLeft: 20,
+          paddingRight: 20,
+          paddingBottom: 6,
+          backdropFilter: "blur(12px) saturate(140%)",
+          WebkitBackdropFilter: "blur(12px) saturate(140%)",
+          background: withAlpha(theme.color.cream, 0.35),
+        }}>
         <FadeIn delay={0.06}>
           <GlassPanel
             tone="input"
@@ -551,6 +584,7 @@ export default function PantryScreen({
             />
           )}
         </FadeIn>
+        </div>
 
         {/* --- Search summary (which locations did we find hits in?) --
             Drilled-tile header now lives inside LayoutGroup below so
@@ -1131,6 +1165,24 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
               </>
             )}
           </div>
+          {/* Tile blurb (when present) — inherited from the tile
+              definition in fridgeTiles/pantryTiles/freezerTiles
+              so it automatically stays in sync with whatever the
+              authoring source says. Rendered as a small DM Sans
+              line so the drilled header has a micro sense of
+              place beyond just the label. Truncates on narrow
+              viewports to avoid wrapping past the icon column. */}
+          {tile.blurb && (
+            <div style={{
+              marginTop: 4,
+              fontFamily: font.sans, fontSize: 12,
+              color: theme.color.inkFaint,
+              lineHeight: 1.4,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}>
+              {tile.blurb}
+            </div>
+          )}
         </div>
       </div>
 
