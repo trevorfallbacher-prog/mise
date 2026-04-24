@@ -80,6 +80,7 @@ const BUNDLED_TILE_SLUGS = new Set([
   "dairy",
   "meat_poultry",
   "seafood",
+  "drinks",
 ]);
 
 export function tileIconFor(tileId, location) {
