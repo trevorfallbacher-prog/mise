@@ -121,6 +121,39 @@ function isDarkSky(theme) {
   return luminance(theme.color.cream) < 0.5;
 }
 
+// Full WCAG 2.1 luminance — used by the contrast-aware ink picker
+// below. `luminance` above is a cheap BT.601 approximation good
+// enough for classifying themes; this one applies the proper sRGB
+// gamma curve so contrast ratios match what the contrast.js
+// calculator reports.
+function linearize(c255) {
+  const s = c255 / 255;
+  return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+}
+function wcagLuminance(colorStr) {
+  const [r, g, b] = parseColor(colorStr);
+  return 0.2126 * linearize(r) +
+         0.7152 * linearize(g) +
+         0.0722 * linearize(b);
+}
+function wcagContrastRatio(a, b) {
+  const la = wcagLuminance(a);
+  const lb = wcagLuminance(b);
+  const hi = Math.max(la, lb);
+  const lo = Math.min(la, lb);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+// Pick the anchor (a or b) whose ink contrasts BEST against the
+// resolved surface color. Replaces the crude t<0.5 snap — lets
+// the ink flip at whatever t the surface actually crosses the
+// readability threshold, not at an arbitrary midpoint.
+function pickInkSide(a, b, surfaceColor, inkKey) {
+  const contrastA = wcagContrastRatio(a.color[inkKey], surfaceColor);
+  const contrastB = wcagContrastRatio(b.color[inkKey], surfaceColor);
+  return contrastA >= contrastB ? a : b;
+}
+
 // Fields that SNAP (pick a side) rather than linearly blend when
 // the two anchors straddle a light↔dark ink boundary. Without
 // this, a 50/50 blend between a dark-ink-on-light-bg theme and a
@@ -191,14 +224,19 @@ export function blendThemes(a, b, t) {
   if (t >= 1)    return b;
 
   // Two independent mode crossings to watch.
-  //  - crossingInkMode — card ink (dark ↔ light). Drives the
-  //    existing ink snap + glass-cream bias.
+  //  - crossingInkMode — card ink (dark ↔ light). The resolved
+  //    GLASS FILL (with cream bias applied) is what matters here.
   //  - crossingSkyMode — backdrop mode (light sky ↔ dark sky).
-  //    Drives the new skyInk snap so hero text stays legible on
-  //    the bare backdrop across dawn/dusk/night boundaries.
+  //    The resolved BACKDROP cream stop is what matters here.
+  //
+  // Instead of flipping at an arbitrary t=0.5, we pick the ink
+  // whose WCAG contrast with the actual resolved surface is
+  // higher. That fixes 5:30 AM (glass already biased bright but
+  // old snap still had night's light ink) and 7:30 PM (user
+  // wanted black to persist longer — now it holds automatically
+  // until the blended peach sky genuinely darkens enough).
   const crossingInkMode = isLightInk(a) !== isLightInk(b);
   const crossingSkyMode = isDarkSky(a) !== isDarkSky(b);
-  const inkSide = t < 0.5 ? a : b;
   // Triangle bias: 0 at t=0 and t=1, peaks at t=0.5. Only applies
   // when we're actually crossing modes (pure-theme plateaus skip
   // the whole path via the a===b short-circuit above).
@@ -209,16 +247,42 @@ export function blendThemes(a, b, t) {
   const blendedColor  = {};
   const blendedShadow = {};
 
-  for (const k of Object.keys(a.color)) {
-    if (crossingInkMode && INK_SNAP_KEYS.has(k)) {
+  // First pass: compute the non-ink fields (and the glass fills
+  // with their cream bias) so we have the resolved surface colors
+  // to measure contrast against.
+  const nonInkKeys = Object.keys(a.color).filter(
+    (k) => !INK_SNAP_KEYS.has(k) && !SKY_INK_SNAP_KEYS.has(k)
+  );
+  for (const k of nonInkKeys) {
+    const linear = blendColor(a.color[k], b.color[k], t);
+    blendedColor[k] = (glassBias > 0 && GLASS_BIAS_KEYS.has(k))
+      ? biasTowardCream(linear, glassBias)
+      : linear;
+  }
+
+  // Second pass: pick ink based on contrast against the resolved
+  // surface, THEN write inkSide's values in. This way the ink
+  // jumps at whatever t actually produces the better read, which
+  // the linear midpoint rarely does.
+  if (crossingInkMode) {
+    const inkSide = pickInkSide(a, b, blendedColor.glassFill, "ink");
+    for (const k of INK_SNAP_KEYS) {
       blendedColor[k] = inkSide.color[k];
-    } else if (crossingSkyMode && SKY_INK_SNAP_KEYS.has(k)) {
-      blendedColor[k] = inkSide.color[k];
-    } else {
-      const linear = blendColor(a.color[k], b.color[k], t);
-      blendedColor[k] = (glassBias > 0 && GLASS_BIAS_KEYS.has(k))
-        ? biasTowardCream(linear, glassBias)
-        : linear;
+    }
+  } else {
+    for (const k of INK_SNAP_KEYS) {
+      blendedColor[k] = blendColor(a.color[k], b.color[k], t);
+    }
+  }
+
+  if (crossingSkyMode) {
+    const skySide = pickInkSide(a, b, blendedColor.cream, "skyInk");
+    for (const k of SKY_INK_SNAP_KEYS) {
+      blendedColor[k] = skySide.color[k];
+    }
+  } else {
+    for (const k of SKY_INK_SNAP_KEYS) {
+      blendedColor[k] = blendColor(a.color[k], b.color[k], t);
     }
   }
   for (const k of Object.keys(a.shadow)) {

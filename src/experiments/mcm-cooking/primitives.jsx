@@ -799,7 +799,12 @@ export function FadeIn({ children, delay = 0, style }) {
 function toneFillFor(theme, tone) {
   const base = theme.color.glassFill;
   if (tone === "neutral") return base;
-  if (tone === "input")   return withAlpha(theme.color.paper, 0.85);
+  // Input tone reuses glassFillHeavy — already tuned per theme to
+  // be a bright legible surface (cream on light themes, warm
+  // amber on night, bright warm cream on dawn/dusk). Using
+  // theme.paper here instead would return a DARK brown on
+  // dawn/dusk/night, which killed placeholder contrast.
+  if (tone === "input")   return theme.color.glassFillHeavy;
   // "warm" / "cool" nudge the glass tint; on night we keep them
   // as-is since the dark glass already has a warm cast.
   if (tone === "warm") {

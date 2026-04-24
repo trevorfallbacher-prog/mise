@@ -68,14 +68,33 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
         <FadeIn>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <Kicker tone={theme.color.skyInkMuted}>Tuesday · 4:12 PM</Kicker>
-            <TintedPill
-              tone="teal"
-              mono
-              size="sm"
-              style={{ textTransform: "uppercase", letterSpacing: "0.10em" }}
-            >
+            {/* Status chip sits on the bare backdrop, so it uses a
+                glass-fill bg + skyInk text like the hero — not the
+                low-alpha tealTint. On dawn the tint was landing at
+                ~2:1 against the wine sky; this swap yields ≥6:1
+                across every theme because the surface is always
+                the theme's already-tuned glassFillHeavy. */}
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 10px",
+              borderRadius: 999,
+              background: theme.color.glassFillHeavy,
+              border: `1px solid ${theme.color.glassBorder}`,
+              backdropFilter: "blur(16px) saturate(150%)",
+              WebkitBackdropFilter: "blur(16px) saturate(150%)",
+              fontFamily: font.mono,
+              fontSize: 10,
+              fontWeight: 500,
+              color: theme.color.ink,
+              letterSpacing: "0.10em",
+              textTransform: "uppercase",
+              whiteSpace: "nowrap",
+              ...THEME_TRANSITION,
+            }}>
               <StatusDot tone="ok" size={6} /> {goodCount} on hand
-            </TintedPill>
+            </div>
           </div>
 
           <SerifHeader size={52} style={{ marginTop: 4, color: theme.color.skyInk }}>
