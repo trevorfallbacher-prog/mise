@@ -180,6 +180,7 @@ export const INGREDIENTS = [
     units: [
       { id: "stick", label: "sticks", toBase: 113.4, aliases: ["sticks"] },
       { id: "tbsp",  label: "tbsp",   toBase: 14.175 },
+      { id: "tsp",   label: "tsp",    toBase: 4.725 },  // 1 tbsp / 3
       { id: "cup",   label: "cups",   toBase: 226.8 },
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "lb",    label: "lb",     toBase: 453.592 },
@@ -1424,6 +1425,45 @@ export const INGREDIENTS = [
     defaultUnit: "cup",
     preferredUnit: { us: "cup", metric: "g" },
     measuredIn:    { us: "lb",  metric: "kg" },
+  },
+  {
+    // Baking leavener — always in tsp in recipes, bought in small
+    // canisters measured in oz on the label. Density 0.90 g/ml → 1 tsp
+    // ≈ 4.4 g. Ladder covers the whole conversion surface (tsp/tbsp/
+    // cup/oz/g/can) so the UnitPicker can offer any of them regardless
+    // of which axis preferredUnit / measuredIn pick as the default.
+    id: "baking_powder", name: "Baking Powder", emoji: "🥄", category: "pantry",
+    units: [
+      { id: "tsp",  label: "tsp",  toBase: 4.4 },
+      { id: "tbsp", label: "tbsp", toBase: 13.2 },
+      { id: "cup",  label: "cups", toBase: 211 },
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "can",  label: "cans", toBase: 227, aliases: ["cans", "canister", "canisters"] }, // 8oz Clabber Girl can
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "can",
+    preferredUnit: { us: "tsp", metric: "g" },
+    measuredIn:    { us: "oz",  metric: "g" },
+    nutrition: { per: "100g", kcal: 53, protein_g: 0.1, fat_g: 0, carb_g: 28, sodium_mg: 10600 },
+  },
+  {
+    // Baking leavener — tsp in recipes, boxes/oz on the shelf.
+    // Density 1.10 g/ml → 1 tsp ≈ 5.5 g. Same ladder-coverage rule
+    // as baking_powder — every idiomatic unit appears so nothing
+    // vanishes from the UnitPicker regardless of system default.
+    id: "baking_soda", name: "Baking Soda", emoji: "🥄", category: "pantry",
+    units: [
+      { id: "tsp",  label: "tsp",  toBase: 5.5 },
+      { id: "tbsp", label: "tbsp", toBase: 16.5 },
+      { id: "cup",  label: "cups", toBase: 264 },
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "box",  label: "boxes",toBase: 454, aliases: ["boxes"] }, // 1 lb Arm & Hammer
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "box",
+    preferredUnit: { us: "tsp", metric: "g" },
+    measuredIn:    { us: "oz",  metric: "g" },
+    nutrition: { per: "100g", kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, sodium_mg: 27360 },
   },
   {
     id: "olive_oil", name: "Olive Oil", emoji: "🫒", category: "pantry",
