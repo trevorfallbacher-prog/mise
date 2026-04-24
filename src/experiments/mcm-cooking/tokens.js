@@ -28,14 +28,14 @@ export const color = {
   mustardTint:  "rgba(212,166,55,0.18)",
   brownTint:    "rgba(122,78,45,0.14)",
 
-  // Glass primitives. Fills are intentionally low-opacity —
-  // the backdrop-filter blur does most of the work, and a
-  // thinner fill lets more color from the parchment blobs
-  // bleed through every pane. Border is near-opaque white to
-  // catch light along the glass edge.
-  glassFill:      "rgba(255,255,255,0.48)",
-  glassFillLite:  "rgba(255,255,255,0.32)",
-  glassFillHeavy: "rgba(255,255,255,0.68)",
+  // Glass primitives. Fill holds enough white to read as a
+  // distinct surface (airy cream, not translucent haze) while
+  // the backdrop-filter blur + bright edge highlight do the
+  // light-bending work. Border is near-opaque white to catch
+  // light along the glass edge.
+  glassFill:      "rgba(255,255,255,0.62)",
+  glassFillLite:  "rgba(255,255,255,0.42)",
+  glassFillHeavy: "rgba(255,255,255,0.75)",
   glassBorder:    "rgba(255,255,255,0.85)",
   hairline:       "rgba(30,30,30,0.08)",
 };
@@ -92,13 +92,13 @@ export const font = {
 };
 
 // Composed helpers so screens don't re-implement the glass recipe.
-// Thick blur + pushed saturation so backdrop color blooms through
-// the pane — a flatter blur reads as "white card," this one reads
-// as "glass bending light."
+// Thick blur so backdrop color blooms — but saturation kept
+// moderate so the pane reads as cream glass, not a stained-glass
+// color wash of whatever's behind it.
 export const glassPanel = {
   background: color.glassFill,
-  backdropFilter: "blur(36px) saturate(180%)",
-  WebkitBackdropFilter: "blur(36px) saturate(180%)",
+  backdropFilter: "blur(28px) saturate(150%)",
+  WebkitBackdropFilter: "blur(28px) saturate(150%)",
   border: `1px solid ${color.glassBorder}`,
   borderRadius: radius.xl,
   boxShadow: shadow.glass,

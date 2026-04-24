@@ -15,22 +15,21 @@ import {
 // behind the glass. Absolutely positioned so it always fills the
 // nearest positioned parent.
 export function WarmBackdrop({ variant = "pantry" }) {
-  // With glass fills dropped to ~0.48 the backdrop now shows
-  // through the panels strongly, so the blobs can run warmer
-  // saturation without clobbering readability — more color to
-  // bend = more "glass" on top. Teal top-left + burnt-orange
-  // bottom-right stays the compositional axis; the third blob
-  // is a warm mustard/brown to keep the parchment grounded.
+  // Blob opacities tuned so glass panels catch color along the
+  // edges without flooding — cook screen in particular needs to
+  // read light + airy, not "sunset through the panel." Teal
+  // top-left + burnt-orange bottom-right stays the compositional
+  // axis; third blob is a gentle warm grounding.
   const blobs = variant === "cook"
     ? [
-        { bg: "rgba(47,143,131,0.22)",  top: "-12%", left: "-15%", size: 520 },
-        { bg: "rgba(217,107,43,0.20)",  top: "55%",  left: "60%",  size: 460 },
-        { bg: "rgba(212,166,55,0.14)",  top: "10%",  left: "60%",  size: 320 },
+        { bg: "rgba(47,143,131,0.14)",  top: "-12%", left: "-15%", size: 520 },
+        { bg: "rgba(217,107,43,0.12)",  top: "58%",  left: "65%",  size: 440 },
+        { bg: "rgba(212,166,55,0.08)",  top: "10%",  left: "60%",  size: 320 },
       ]
     : [
-        { bg: "rgba(47,143,131,0.20)",  top: "-12%", left: "-12%", size: 500 },
-        { bg: "rgba(217,107,43,0.18)",  top: "55%",  left: "62%",  size: 440 },
-        { bg: "rgba(122,78,45,0.12)",   top: "70%",  left: "-8%",  size: 320 },
+        { bg: "rgba(47,143,131,0.14)",  top: "-12%", left: "-12%", size: 500 },
+        { bg: "rgba(217,107,43,0.12)",  top: "55%",  left: "62%",  size: 440 },
+        { bg: "rgba(122,78,45,0.08)",   top: "70%",  left: "-8%",  size: 320 },
       ];
 
   return (
@@ -340,12 +339,12 @@ export function GlassPill({
         border: `1px solid ${active ? color.teal : "rgba(255,255,255,0.85)"}`,
         background: active
           ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-          : "rgba(255,255,255,0.42)",
+          : "rgba(255,255,255,0.58)",
         color: active ? "#FFF8EE" : color.ink,
         boxShadow: active ? activeBoxShadow : inactiveBoxShadow,
         cursor: "pointer",
-        backdropFilter: "blur(22px) saturate(180%)",
-        WebkitBackdropFilter: "blur(22px) saturate(180%)",
+        backdropFilter: "blur(20px) saturate(150%)",
+        WebkitBackdropFilter: "blur(20px) saturate(150%)",
         ...style,
       }}
     >
@@ -422,9 +421,9 @@ export function BackChip({ children, onClick, style }) {
         alignItems: "center",
         gap: 6,
         border: `1px solid rgba(255,255,255,0.85)`,
-        background: "rgba(255,255,255,0.42)",
-        backdropFilter: "blur(22px) saturate(180%)",
-        WebkitBackdropFilter: "blur(22px) saturate(180%)",
+        background: "rgba(255,255,255,0.58)",
+        backdropFilter: "blur(20px) saturate(150%)",
+        WebkitBackdropFilter: "blur(20px) saturate(150%)",
         padding: "8px 14px",
         borderRadius: radius.pill,
         fontFamily: font.sans,
@@ -470,9 +469,9 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
           display: "flex",
           gap: 4,
           padding: 6,
-          background: "rgba(255,255,255,0.48)",
-          backdropFilter: "blur(32px) saturate(180%)",
-          WebkitBackdropFilter: "blur(32px) saturate(180%)",
+          background: "rgba(255,255,255,0.62)",
+          backdropFilter: "blur(28px) saturate(150%)",
+          WebkitBackdropFilter: "blur(28px) saturate(150%)",
           border: "1px solid rgba(255,255,255,0.85)",
           borderRadius: radius.pill,
           boxShadow: shadow.glass,

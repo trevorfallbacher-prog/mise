@@ -91,9 +91,9 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               padding: "6px 14px",
-              background: "rgba(255,255,255,0.42)",
-              backdropFilter: "blur(22px) saturate(180%)",
-              WebkitBackdropFilter: "blur(22px) saturate(180%)",
+              background: "rgba(255,255,255,0.58)",
+              backdropFilter: "blur(20px) saturate(150%)",
+              WebkitBackdropFilter: "blur(20px) saturate(150%)",
               borderRadius: 999,
               fontFamily: font.mono, fontSize: 11,
               color: color.inkMuted, letterSpacing: "0.12em",

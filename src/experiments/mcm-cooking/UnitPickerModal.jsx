@@ -63,12 +63,17 @@ export default function UnitPickerModal({
             position: "fixed",
             inset: 0,
             zIndex: 50,
+            // Warm cream wash over a very light dim — the modal
+            // should brighten the screen, not darken it. Teal +
+            // burnt-orange radials sit on top so the panel still
+            // has something to bend along its edges.
             background:
-              "radial-gradient(60% 50% at 50% 40%, rgba(47,143,131,0.30) 0%, transparent 70%)," +
-              "radial-gradient(40% 40% at 80% 80%, rgba(217,107,43,0.22) 0%, transparent 70%)," +
-              "rgba(30,20,10,0.35)",
-            backdropFilter: "blur(18px) saturate(180%)",
-            WebkitBackdropFilter: "blur(18px) saturate(180%)",
+              "radial-gradient(80% 60% at 50% 30%, rgba(255,244,220,0.55) 0%, transparent 75%)," +
+              "radial-gradient(50% 40% at 10% 85%, rgba(47,143,131,0.18) 0%, transparent 70%)," +
+              "radial-gradient(50% 40% at 90% 85%, rgba(217,107,43,0.14) 0%, transparent 70%)," +
+              "rgba(30,20,10,0.14)",
+            backdropFilter: "blur(16px) saturate(140%)",
+            WebkitBackdropFilter: "blur(16px) saturate(140%)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -151,14 +156,14 @@ export default function UnitPickerModal({
                         border: `1px solid ${active ? color.teal : "rgba(255,255,255,0.85)"}`,
                         background: active
                           ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-                          : "rgba(255,255,255,0.38)",
+                          : "rgba(255,255,255,0.62)",
                         color: active ? "#FFF8EE" : color.ink,
                         boxShadow: active
                           ? "0 10px 22px rgba(47,143,131,0.32), inset 0 1px 0 rgba(255,255,255,0.30)"
                           : "inset 0 1px 0 rgba(255,255,255,0.85), inset 0 -1px 0 rgba(30,30,30,0.05)",
                         cursor: "pointer",
-                        backdropFilter: "blur(22px) saturate(180%)",
-                        WebkitBackdropFilter: "blur(22px) saturate(180%)",
+                        backdropFilter: "blur(18px) saturate(150%)",
+                        WebkitBackdropFilter: "blur(18px) saturate(150%)",
                       }}
                     >
                       <span style={{
@@ -227,9 +232,9 @@ function StepperButton({ onClick, label }) {
       style={{
         width: 44, height: 44, borderRadius: "50%",
         border: `1px solid rgba(255,255,255,0.85)`,
-        background: "rgba(255,255,255,0.48)",
-        backdropFilter: "blur(22px) saturate(180%)",
-        WebkitBackdropFilter: "blur(22px) saturate(180%)",
+        background: "rgba(255,255,255,0.68)",
+        backdropFilter: "blur(20px) saturate(150%)",
+        WebkitBackdropFilter: "blur(20px) saturate(150%)",
         fontFamily: font.sans, fontSize: 22, fontWeight: 500,
         color: color.warmBrown,
         cursor: "pointer",
