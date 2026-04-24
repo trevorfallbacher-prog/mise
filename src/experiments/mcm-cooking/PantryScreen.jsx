@@ -2048,8 +2048,8 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
           <div style={{
             fontFamily: font.display,
             fontWeight: 560,
-            fontVariationSettings: "'wdth' 100, 'wght' 560, 'opsz' 20",
-            fontSize: 19, lineHeight: 1.1, color: theme.color.ink,
+            fontVariationSettings: "'wdth' 100, 'wght' 560, 'opsz' 22",
+            fontSize: 22, lineHeight: 1.1, color: theme.color.ink,
             letterSpacing: "-0.015em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             flex: 1, minWidth: 0,
