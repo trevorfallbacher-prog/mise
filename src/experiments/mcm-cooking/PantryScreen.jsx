@@ -480,6 +480,15 @@ export default function PantryScreen({
           90%  { opacity: 1; }
           100% { transform: translate(-10vw, 60vh); opacity: 0; }
         }
+        /* On very narrow phones (<420px) hide the tile blurb and
+           tighten the card's vertical gap. The tile label + count
+           carry enough information at that size; the blurb is
+           secondary and eats ~16px of vertical space per card,
+           which is 160+px over 10 tiles — meaningful on a short
+           iPhone mini viewport. */
+        @media (max-width: 420px) {
+          .mcm-tile-blurb { display: none !important; }
+        }
         /* Hide the keyboard shortcut hint on devices that can't
            hover (touch phones/tablets) — a kbd glyph showing a
            shortcut that user can't physically trigger is just
@@ -1542,7 +1551,9 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
               place beyond just the label. Truncates on narrow
               viewports to avoid wrapping past the icon column. */}
           {tile.blurb && (
-            <div style={{
+            <div
+              className="mcm-tile-blurb"
+              style={{
               marginTop: 4,
               fontFamily: font.sans, fontSize: 12,
               color: theme.color.inkFaint,
@@ -1918,12 +1929,15 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
           )}
         </div>
         {tile.blurb && (
-          <div style={{
-            fontFamily: font.sans, fontSize: 12,
-            color: theme.color.inkFaint,
-            lineHeight: 1.4,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
+          <div
+            className="mcm-tile-blurb"
+            style={{
+              fontFamily: font.sans, fontSize: 12,
+              color: theme.color.inkFaint,
+              lineHeight: 1.4,
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}
+          >
             {tile.blurb}
           </div>
         )}
