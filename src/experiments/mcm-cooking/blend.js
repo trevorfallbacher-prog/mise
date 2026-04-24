@@ -96,6 +96,36 @@ export function blendCssString(a, b, t) {
   });
 }
 
+// Rough perceived-luminance estimate (0..1). Good enough to
+// classify a color string as "light" vs "dark" for ink-mode
+// decisions. Uses the ITU BT.601 coefficients because we care
+// about HUMAN readability, not pixel precision.
+function luminance(colorStr) {
+  const [r, g, b] = parseColor(colorStr);
+  return (r * 0.299 + g * 0.587 + b * 0.114) / 255;
+}
+
+// Does this theme use light ink (night-style) or dark ink
+// (day-style)? Classifying on the main `ink` token is enough —
+// inkMuted/inkFaint always sit on the same side.
+function isLightInk(theme) {
+  return luminance(theme.color.ink) > 0.5;
+}
+
+// Fields that SNAP (pick a side) rather than linearly blend when
+// the two anchors straddle a light↔dark ink boundary. Without
+// this, a 50/50 blend between a dark-ink-on-light-bg theme and a
+// light-ink-on-dark-bg theme sends BOTH the background AND the
+// ink through mid-grey at exactly the same t, collapsing contrast
+// to ~1:1 — the 8pm washout bug. Snapping ink at t=0.5 means the
+// text jumps from dark to light at the crossover, keeping ≥4:1
+// contrast on either side of the transition.
+const INK_SNAP_KEYS = new Set([
+  "ink", "inkMuted", "inkFaint",
+  // hairline tracks ink's side — same flip needed.
+  "hairline",
+]);
+
 // Blend two complete theme objects. Every token that consumers
 // read from `theme` interpolates; theme.id / theme.label snap
 // to the closer of the two so `theme.id === "night"` still works
@@ -109,11 +139,20 @@ export function blendThemes(a, b, t) {
   if (t <= 0)    return a;
   if (t >= 1)    return b;
 
+  // Detect if the two anchors use opposite ink modes. When they
+  // do, ink-related fields snap instead of blend.
+  const crossingInkMode = isLightInk(a) !== isLightInk(b);
+  const inkSide = t < 0.5 ? a : b;
+
   const blendedColor  = {};
   const blendedShadow = {};
 
   for (const k of Object.keys(a.color)) {
-    blendedColor[k] = blendColor(a.color[k], b.color[k], t);
+    if (crossingInkMode && INK_SNAP_KEYS.has(k)) {
+      blendedColor[k] = inkSide.color[k];
+    } else {
+      blendedColor[k] = blendColor(a.color[k], b.color[k], t);
+    }
   }
   for (const k of Object.keys(a.shadow)) {
     blendedShadow[k] = blendCssString(a.shadow[k], b.shadow[k], t);
