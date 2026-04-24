@@ -96,8 +96,33 @@ export function useUserRecipes(userId) {
           const row = fromDb(payload.new);
           apply(prev => prev.some(r => r.id === row.id) ? prev : [row, ...prev]);
         } else if (payload.eventType === "UPDATE") {
-          const row = fromDb(payload.new);
-          apply(prev => prev.map(r => r.id === row.id ? row : r));
+          // MERGE — don't wholesale-replace. Supabase's UPDATE payloads
+          // CAN land with a missing `recipe` column (TOAST-ed jsonb not
+          // replicated, or partial-column replication under some
+          // configs), and we previously rebuilt state from payload.new
+          // alone — which wiped title, ingredients, steps, emoji,
+          // everything on any setSharing flip. Keep incoming scalars
+          // where they're defined (shared, submitted_for_review, etc.)
+          // but preserve the existing `recipe` JSON when the incoming
+          // one is falsy or empty. Same defensive principle for slug
+          // and source — scalar columns that shouldn't blank under
+          // any realistic update but are cheap to guard.
+          const incoming = fromDb(payload.new);
+          apply(prev => prev.map(r => {
+            if (r.id !== incoming.id) return r;
+            const mergedRecipe =
+              incoming.recipe && Object.keys(incoming.recipe).length > 0
+                ? incoming.recipe
+                : r.recipe;
+            return {
+              ...r,
+              ...incoming,
+              recipe: mergedRecipe,
+              slug:   incoming.slug   || r.slug,
+              source: incoming.source || r.source,
+              userId: incoming.userId || r.userId,
+            };
+          }));
         } else if (payload.eventType === "DELETE") {
           const id = payload.old?.id;
           if (!id) return;
@@ -190,11 +215,39 @@ export function useUserRecipes(userId) {
       if (submitForReview) patch.review_status = "pending";
     }
     if (Object.keys(patch).length === 0) return;
+    // Optimistic local update BEFORE the round-trip. Two reasons:
+    //   1. The UI pill flips immediately — no waiting for realtime.
+    //   2. If realtime ever drops a partial UPDATE payload (see the
+    //      merge guard in the subscribe handler), the local state
+    //      already carries the right value for this specific flip,
+    //      so a buggy realtime replay can't roll us back.
+    const prevSnapshot = { shared: undefined, submitted_for_review: undefined, review_status: undefined };
+    setRecipes(prev => prev.map(r => {
+      if (r.id !== id) return r;
+      prevSnapshot.shared = r.shared;
+      prevSnapshot.submitted_for_review = r.submittedForReview;
+      prevSnapshot.review_status = r.reviewStatus;
+      const next = { ...r };
+      if (typeof shared === "boolean") next.shared = shared;
+      if (typeof submitForReview === "boolean") {
+        next.submittedForReview = submitForReview;
+        if (submitForReview) next.reviewStatus = "pending";
+      }
+      return next;
+    }));
     const { error: err } = await supabase
       .from("user_recipes")
       .update(patch)
       .eq("id", id);
     if (err) {
+      // Roll back the optimistic update so the UI doesn't lie about
+      // a share that the server rejected.
+      setRecipes(prev => prev.map(r => r.id === id ? {
+        ...r,
+        shared: prevSnapshot.shared,
+        submittedForReview: prevSnapshot.submitted_for_review,
+        reviewStatus: prevSnapshot.review_status,
+      } : r));
       console.error("[user_recipes] setSharing failed:", err);
       throw new Error(err.message || "update failed");
     }

@@ -87,6 +87,32 @@ export function applyCookSessionToRecipe(recipe, session, pantry = []) {
       return marked;
     }
 
+    // Library swap — cook picked a bundled canonical that isn't in
+    // pantry ("use celery instead of carrots even though I don't
+    // have celery stocked"). The override carries id + display name
+    // + emoji so we can produce a full substituted ingredient slot
+    // without a pantry row to anchor to. No pantryItemId stamped —
+    // pairing downstream correctly reports this as missing (the
+    // cook declared intent but doesn't own the item).
+    if (ov.swapCanonicalId) {
+      const subCanon = findIngredient(ov.swapCanonicalId);
+      const subName = ov.swapCanonicalName || subCanon?.name || ov.swapCanonicalId;
+      const swapped = {
+        ...ing,
+        item:         subName,
+        ingredientId: ov.swapCanonicalId,
+        // Preserve step-level state/qty — the cook is saying "celery
+        // in the same amount and the same prep," not authoring a new
+        // recipe. If that's wrong for a given cook, the inline amount
+        // chip already lets them nudge units.
+        _swappedFrom: { item: ing.item, ingredientId: ing.ingredientId || null },
+      };
+      if (ing.ingredientId) swappedKeys.set(`id:${ing.ingredientId}`, swapped);
+      const nm = normalizeForMatch(ing.item || "");
+      if (nm) swappedKeys.set(`nm:${nm}`, swapped);
+      return swapped;
+    }
+
     // Resolve the committed pantry row for this ingredient:
     //   1. explicit session override (user tapped a pantry row in the
     //      swap picker)

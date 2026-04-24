@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
-import { findIngredient, unitLabel, compareQty, inferCanonicalFromName } from "../data/ingredients";
+import { findIngredient, unitLabel, compareQty, inferCanonicalFromName, getIngredientInfo, siblingsInHub, INGREDIENTS } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 import CookComplete from "./CookComplete";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
@@ -9,6 +9,8 @@ import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily, deriveRowHeader } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
+import { useUserRecipes } from "../lib/useUserRecipes";
+import { supabase } from "../lib/supabase";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 import { useWebPush } from "../lib/useWebPush";
@@ -550,6 +552,104 @@ export default function CookMode({
   // Mounts CookComplete; on finish we hand off to parent's onDone.
   const [completing, setCompleting] = useState(false);
 
+  // Two-state confirm for the cook-view EXIT button. MINIMIZE keeps
+  // the session alive (banner resumes); EXIT ends it — drops pending
+  // timer pushes, flips cook_sessions.status to 'abandoned'. Separate
+  // from CookComplete's "finish" path so accidentally backing out of
+  // a cook doesn't log it as cooked.
+  const [confirmExit, setConfirmExit] = useState(false);
+  const exitCook = async () => {
+    finalizedRef.current = true;
+    try { await telemetry.endCook({ status: "abandoned" }); } catch (_) { /* non-fatal */ }
+    onExit?.();
+  };
+
+  // Author + share state for THIS recipe. If the viewer owns a
+  // user_recipes row matching the recipe's slug, the overview
+  // exposes a SHARE WITH FAMILY toggle (otherwise no toggle — you
+  // can't share someone else's recipe, and the bundled library
+  // isn't share-able either). The row lookup is cheap; useUserRecipes
+  // already subscribes to realtime so share state flips in place
+  // after the server confirms.
+  const { recipes: userRecipesList, setSharing: setRecipeSharing } = useUserRecipes(userId);
+  const ownRecipeRow = useMemo(
+    () => userRecipesList.find(r => r.userId === userId && r.slug === recipe?.slug) || null,
+    [userRecipesList, userId, recipe?.slug],
+  );
+  const canShare = !!ownRecipeRow;
+  const isShared = ownRecipeRow?.shared === true;
+  const toggleShare = async () => {
+    if (!ownRecipeRow) return;
+    try {
+      await setRecipeSharing(ownRecipeRow.id, { shared: !isShared });
+    } catch (e) {
+      console.error("[cookMode] toggleShare failed:", e);
+    }
+  };
+
+  // Share sheet — the "↗ SHARE" button in the overview top bar opens
+  // a picker listing FAMILY + FRIENDS. Tap a person → insert a
+  // notifications row so they get pinged that this recipe was
+  // shared with them. For family taps, we also flip shared=true on
+  // the user_recipes row so they can actually OPEN the recipe; for
+  // friends, user_recipes RLS doesn't grant visibility today, so
+  // the notification plus a native-share fallback (Web Share API)
+  // is the honest v1. Local `sentIds` tracks which recipients have
+  // been pinged this session so the button flips to "✓ SENT" —
+  // prevents accidental double-pings.
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
+  const [sentIds, setSentIds] = useState(new Set());
+  const openShareSheet = () => setShareSheetOpen(true);
+  const closeShareSheet = () => setShareSheetOpen(false);
+  const sendShareTo = async (recipientId, isFamilyMember) => {
+    if (!recipientId || !recipe || sentIds.has(recipientId)) return;
+    // Optimistic mark-as-sent so the UI flips before the server round-trip.
+    setSentIds(prev => new Set(prev).add(recipientId));
+    try {
+      // Auto-share to family so they can actually read the recipe.
+      // Fire-and-forget — a failure here shouldn't block the notif.
+      if (isFamilyMember && canShare && !isShared && ownRecipeRow) {
+        setRecipeSharing(ownRecipeRow.id, { shared: true }).catch(e =>
+          console.warn("[cookMode] auto-share on send failed:", e?.message || e),
+        );
+      }
+      await supabase.from("notifications").insert({
+        user_id:  recipientId,
+        actor_id: userId,
+        msg:      `shared "${recipe.title || "a recipe"}" with you`,
+        emoji:    recipe.emoji || "🍽️",
+        kind:     "info",
+      });
+    } catch (e) {
+      // Roll back the optimistic sent-mark on failure.
+      setSentIds(prev => {
+        const next = new Set(prev);
+        next.delete(recipientId);
+        return next;
+      });
+      console.error("[cookMode] share-to-person failed:", e);
+    }
+  };
+  // Native share fallback for "everyone else" — OS share sheet
+  // (iMessage, email, copy link, whatever the device offers).
+  // Chained off the sheet so the user has a clear "off-app" path.
+  const [copiedLink, setCopiedLink] = useState(false);
+  const shareViaNative = async () => {
+    if (!recipe) return;
+    const title = recipe.title || "Recipe";
+    const text  = `${title} — recipe from mise`;
+    const url   = typeof window !== "undefined" ? window.location.href : "";
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title, text, url });
+      } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url ? `${title}\n${url}` : title);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 1800);
+      }
+    } catch (_) { /* user cancelled — swallow */ }
+  };
+
   // Nutrition rollup for the recipe — drives the calorie tile in the
   // meta row below. Pulls from the full resolver chain (pantry
   // override → brand_nutrition → ingredient_info → bundled canonical
@@ -744,6 +844,15 @@ export default function CookMode({
   // same hub (+500), same category (+100), plus token overlap. When
   // the user is typing we narrow to substring-matches on the pantry
   // row name so the list feels like a live search, not a rank.
+  //
+  // Returns { pantry, library } — pantry is the existing "rows the cook
+  // already owns" ranking; library surfaces bundled canonicals the cook
+  // can legitimately substitute even if they're not in the pantry
+  // (2% ↔ whole milk, carrot ↔ celery, chicken ↔ steak). Sources:
+  //   1. Author-curated substitutions on the canonical's info.
+  //   2. Same-hub siblings (milk_hub → 2%, whole, skim, oat).
+  // Library candidates that collide with a pantry canonical are pruned
+  // so the user sees one row per ingredient, not two.
   const rankSwapCandidates = (ing, query) => {
     const targetCanon = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
     const targetCat  = targetCanon?.category || null;
@@ -754,14 +863,14 @@ export default function CookMode({
         .split(/\s+/).filter(Boolean),
     );
     const q = (query || "").trim().toLowerCase();
-    const seen = new Set();
-    const scored = [];
+    const pantrySeen = new Set();
+    const pantryScored = [];
     for (const p of pantry || []) {
       if (!p) continue;
       const canon = p.ingredientId ? findIngredient(p.ingredientId) : null;
       const key = canon?.id || (p.name || "").toLowerCase() || p.id;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (pantrySeen.has(key)) continue;
+      pantrySeen.add(key);
       if (q && !(p.name || "").toLowerCase().includes(q)) continue;
       let score = 0;
       if (canon?.id && targetSlug && canon.id === targetSlug) score += 1000;
@@ -774,14 +883,105 @@ export default function CookMode({
       let overlap = 0;
       for (const t of targetTokens) if (pTokens.has(t)) overlap++;
       score += overlap * 10;
-      scored.push({ row: p, score });
+      pantryScored.push({ row: p, score });
     }
-    scored.sort((a, b) => b.score - a.score);
-    return scored;
+    pantryScored.sort((a, b) => b.score - a.score);
+
+    // Library candidates — curated substitutions + hub siblings. Score
+    // scale mirrors pantry: hub sibling +500, curated entry +400 (below
+    // hub so same-hub alternates top the list even without author
+    // curation), category match +100, token overlap +10 each. No +1000
+    // tier — a library entry with the target's own canonical would be
+    // "swap X for X," which is nonsense; we filter those out below.
+    const librarySeen = new Set(pantrySeen); // don't re-surface pantry canonicals as library
+    if (targetSlug) librarySeen.add(targetSlug);
+    const libraryMap = new Map(); // canonId → { canonical, score, note }
+    const addLibraryCandidate = (canonical, baseScore, note = null) => {
+      if (!canonical?.id || librarySeen.has(canonical.id)) return;
+      if (q && !canonical.name.toLowerCase().includes(q)) return;
+      let score = baseScore;
+      if (canonical.category && targetCat && canonical.category === targetCat) score += 100;
+      const cTokens = new Set(
+        normalizeForMatch(canonical.name || "").split(/\s+/).filter(Boolean),
+      );
+      let overlap = 0;
+      for (const t of targetTokens) if (cTokens.has(t)) overlap++;
+      score += overlap * 10;
+      const prev = libraryMap.get(canonical.id);
+      if (!prev || prev.score < score) {
+        libraryMap.set(canonical.id, { canonical, score, note: note || prev?.note || null });
+      }
+    };
+
+    // 1. Curated substitutions from the ingredient's info. These are
+    //    author-vetted and carry a short note ("accept that the result
+    //    will be more assertive", etc.) — the best-quality signal.
+    if (targetCanon) {
+      const dbInfo = ingredientInfo?.getInfo ? ingredientInfo.getInfo(targetCanon.id) : null;
+      const info = getIngredientInfo(targetCanon, dbInfo);
+      for (const sub of info?.substitutions || []) {
+        if (!sub?.id) continue;
+        const subCanon = findIngredient(sub.id);
+        if (!subCanon) continue;
+        addLibraryCandidate(subCanon, 400, sub.note || null);
+      }
+    }
+    // 2. Same-hub siblings (milk variants, onion variants, etc.) —
+    //    automatic coverage for ladders like 2%/whole/skim even when
+    //    nobody authored a substitutions entry.
+    if (targetSlug) {
+      for (const sib of siblingsInHub(targetSlug)) {
+        addLibraryCandidate(sib, 500, null);
+      }
+    }
+    // 3. Free-text search over the full bundled registry when the cook
+    //    types a query. Without this, typing "celery" on a carrot
+    //    wouldn't surface celery unless an author had already curated
+    //    that link — which is exactly the "swap is extremely limited"
+    //    complaint. Low base score (50) keeps curated / hub matches
+    //    on top when both apply; same-category adds +100 so e.g.
+    //    searching "steak" from chicken surfaces sirloin above
+    //    off-category collisions. Only fires with a query to avoid
+    //    dumping 387 candidates into the picker on open.
+    if (q && q.length >= 2) {
+      for (const ing of INGREDIENTS) {
+        if (!ing?.name || !ing.name.toLowerCase().includes(q)) continue;
+        addLibraryCandidate(ing, 50, null);
+      }
+    }
+
+    const libraryScored = Array.from(libraryMap.values())
+      .sort((a, b) => b.score - a.score);
+
+    return { pantry: pantryScored, library: libraryScored };
   };
 
-  const applySwap = (idx, pantryItemId) => setOverride(idx, { pantryItemId });
-  const clearSwap = (idx) => clearOverride(idx, ["pantryItemId"]);
+  const applySwap = (idx, pantryItemId) => setOverride(idx, {
+    pantryItemId,
+    // A pantry swap clears any prior library swap on the same slot so
+    // the override shape stays single-valued. effectiveRecipe.js would
+    // otherwise see both set and have to pick a precedence.
+    swapCanonicalId: undefined,
+    swapCanonicalName: undefined,
+    swapCanonicalEmoji: undefined,
+  });
+  // Library swap — cook picked a canonical that isn't in pantry. We
+  // carry the display name + emoji on the override so the cook-surface
+  // renderer can show the ingredient without re-resolving the canonical
+  // every render. effectiveRecipe.js applies this by producing a
+  // swapped ingredient slot that has no pantryItemId — pairing stays
+  // "missing" against the pantry (correct: cook said "I'm using
+  // celery" but didn't stock any), while steps / ingredient lists
+  // reflect the substitution. See applyCookSessionToRecipe.
+  const applyLibrarySwap = (idx, canonical) => setOverride(idx, {
+    swapCanonicalId:    canonical.id,
+    swapCanonicalName:  canonical.name,
+    swapCanonicalEmoji: canonical.emoji,
+    pantryItemId: undefined,
+  });
+  const clearSwap = (idx) => clearOverride(idx, [
+    "pantryItemId", "swapCanonicalId", "swapCanonicalName", "swapCanonicalEmoji",
+  ]);
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
@@ -801,13 +1001,38 @@ export default function CookMode({
 
   if (view === "overview") return (
     <div style={{ padding:"20px 24px 40px", maxWidth:480, margin:"0 auto" }}>
-      {/* Back out of the recipe to the browser */}
-      {onExit && (
-        <button onClick={onExit} style={{
-          background:"none", border:"none", color:"#666", fontSize:22,
-          cursor:"pointer", padding:0, marginBottom:4
-        }}>←</button>
-      )}
+      {/* Top bar — left: ← back to the browser (minimizes if a session
+          is live, just closes otherwise). Right: ↗ share-arrow that
+          opens the native share sheet for sending this recipe to
+          anyone (text, email, messages, …). EXIT moved to the bottom
+          of the screen so it reads as a deliberate action next to
+          SCHEDULE / START COOKING — not a corner accessory that gets
+          lost the moment the user scrolls. */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+        {onExit ? (
+          <button onClick={onExit} style={{
+            background:"none", border:"none", color:"#666", fontSize:22,
+            cursor:"pointer", padding:0,
+          }}>←</button>
+        ) : <span />}
+        <button
+          onClick={openShareSheet}
+          title="Share recipe"
+          aria-label="Share recipe"
+          style={{
+            display:"inline-flex", alignItems:"center", gap:6,
+            background: "#1a1408",
+            border: "1px solid #3a2f10",
+            color: "#f5c842",
+            borderRadius:20, padding:"10px 16px",
+            fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+            letterSpacing:"0.12em", cursor:"pointer",
+          }}
+        >
+          <span style={{ fontSize:16, lineHeight:1 }}>↗</span>
+          SHARE
+        </button>
+      </div>
       <div style={{ marginTop:12 }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
           {(recipe.cuisine || "").toUpperCase()} · {(recipe.category || "").toUpperCase()}
@@ -815,6 +1040,57 @@ export default function CookMode({
         <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:42, fontWeight:300, lineHeight:1.05, letterSpacing:"-0.03em" }}>{recipe.title}</h1>
         {recipe.subtitle && (
           <p style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:18, color:"#888", marginTop:4 }}>{recipe.subtitle}</p>
+        )}
+        {/* SHARE WITH FAMILY — a proper flippable on/off switch, not
+            a click-to-toggle pill. Visual language matches the
+            notification-opt-in toggles in SchedulePicker so the two
+            family-facing controls feel like siblings. Only rendered
+            when the viewer owns this recipe; bundled and family-
+            authored recipes skip this row entirely. The whole row is
+            tappable (label included) so the target area is generous
+            on touch. */}
+        {canShare && (
+          <button
+            onClick={toggleShare}
+            title={isShared ? "Tap to make private" : "Tap to share with family"}
+            style={{
+              marginTop: 14, width: "100%",
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 14px",
+              background: isShared ? "#14201a" : "#141414",
+              border: `1px solid ${isShared ? "#2a4a28" : "#242424"}`,
+              borderRadius: 12, cursor: "pointer",
+            }}
+          >
+            <div style={{
+              width: 42, height: 24, borderRadius: 12, flexShrink: 0,
+              background: isShared ? "#a3d977" : "#2a2a2a",
+              position: "relative", transition: "background 0.2s",
+            }}>
+              <div style={{
+                position: "absolute", top: 2, left: isShared ? 20 : 2,
+                width: 20, height: 20, borderRadius: "50%",
+                background: isShared ? "#0f1a0f" : "#888",
+                transition: "left 0.2s",
+              }} />
+            </div>
+            <div style={{ flex: 1, textAlign: "left" }}>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                color: isShared ? "#f0ece4" : "#bbb",
+              }}>
+                Share with family
+              </div>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                color: "#666", letterSpacing: "0.06em", marginTop: 2,
+              }}>
+                {isShared
+                  ? "Family can cook this recipe"
+                  : "Only you can see this recipe"}
+              </div>
+            </div>
+          </button>
         )}
       </div>
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
@@ -939,7 +1215,7 @@ export default function CookMode({
             // else ("to taste" salt, decorative herbs) just renders static.
             const tappable = !!ing.ingredientId;
             const swapOpen = swapOpenIdx === i;
-            const swapped  = !!session.overrides[i]?.pantryItemId;
+            const swapped  = !!(session.overrides[i]?.pantryItemId || session.overrides[i]?.swapCanonicalId);
             // SWAP available on every canonical-tagged row — user
             // might want to override the default pair on an IN KITCHEN
             // row (maybe they want to use a different pack that's
@@ -1039,10 +1315,23 @@ export default function CookMode({
                 )}
                 {swapOpen && (() => {
                   const q = swapSearch.trim();
-                  const ranked = rankSwapCandidates(ing, swapSearch);
-                  const shown = q
-                    ? ranked.slice(0, 8).map(r => r.row)
-                    : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                  const { pantry: rankedPantry, library: rankedLibrary } =
+                    rankSwapCandidates(ing, swapSearch);
+                  // Pantry: keep the legacy "top 3 > 0 without query"
+                  // pattern so the picker doesn't spam unrelated rows
+                  // when the user hasn't typed yet.
+                  const shownPantry = q
+                    ? rankedPantry.slice(0, 8).map(r => r.row)
+                    : rankedPantry.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                  // Library: broader on open (top 6) because the whole
+                  // point is "what else could I reasonably use?" — the
+                  // curated substitutions + hub siblings stack stays
+                  // small per ingredient, so we can afford to show more
+                  // of it. Typing narrows via the in-function filter.
+                  const shownLibrary = q
+                    ? rankedLibrary.slice(0, 8)
+                    : rankedLibrary.slice(0, 6);
+                  const hasAny = shownPantry.length > 0 || shownLibrary.length > 0;
                   return (
                     <div style={{
                       marginTop:10, paddingTop:10,
@@ -1056,35 +1345,65 @@ export default function CookMode({
                         type="text"
                         value={swapSearch}
                         onChange={e => setSwapSearch(e.target.value)}
-                        placeholder="Search your pantry…"
+                        placeholder="Search pantry or library…"
                         style={cookSwapSearchInput}
                         autoFocus
                       />
-                      {!q && (
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
-                          TOP 3 CLOSEST · TYPE TO SEARCH
-                        </div>
-                      )}
-                      {shown.length === 0 && (
+                      {!hasAny && (
                         <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", fontStyle:"italic" }}>
-                          {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                          {q ? "Nothing matches that search." : "No close matches — try typing to search."}
                         </div>
                       )}
-                      {shown.map(c => (
-                        <button
-                          key={c.id}
-                          onClick={() => { applySwap(i, c.id); openSwapPicker(null); }}
-                          style={cookSwapOptionBtn}
-                        >
-                          <span style={{ fontSize:16 }}>{c.emoji || "🥫"}</span>
-                          <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
-                            {c.name}
-                          </span>
-                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888" }}>
-                            {c.amount}{c.unit ? ` ${c.unit}` : ""}
-                          </span>
-                        </button>
-                      ))}
+                      {shownPantry.length > 0 && (
+                        <>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#a3d977", letterSpacing:"0.08em", marginTop:2 }}>
+                            FROM YOUR PANTRY
+                          </div>
+                          {shownPantry.map(c => (
+                            <button
+                              key={`pantry-${c.id}`}
+                              onClick={() => { applySwap(i, c.id); openSwapPicker(null); }}
+                              style={cookSwapOptionBtn}
+                            >
+                              <span style={{ fontSize:16 }}>{c.emoji || "🥫"}</span>
+                              <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
+                                {c.name}
+                              </span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888" }}>
+                                {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </>
+                      )}
+                      {shownLibrary.length > 0 && (
+                        <>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#d9b877", letterSpacing:"0.08em", marginTop:6 }}>
+                            OR TRY — NOT IN PANTRY
+                          </div>
+                          {shownLibrary.map(({ canonical, note }) => (
+                            <button
+                              key={`library-${canonical.id}`}
+                              onClick={() => { applyLibrarySwap(i, canonical); openSwapPicker(null); }}
+                              style={cookSwapOptionBtn}
+                              title={note || undefined}
+                            >
+                              <span style={{ fontSize:16, opacity:0.85 }}>{canonical.emoji || "🥫"}</span>
+                              <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#e8dfc8" }}>
+                                {canonical.name}
+                                {note && (
+                                  <span style={{ display:"block", fontFamily:"'DM Sans',sans-serif", fontSize:10, color:"#777", fontStyle:"italic", marginTop:1, lineHeight:1.3 }}>
+                                    {note}
+                                  </span>
+                                )}
+                              </span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.06em" }}>
+                                LIBRARY
+                              </span>
+                            </button>
+                          ))}
+                        </>
+                      )}
                       {swapped && (
                         <button onClick={() => { clearSwap(i); openSwapPicker(null); }} style={cookSwapClearBtn}>
                           ↺ REVERT TO ORIGINAL ({ing.item})
@@ -1129,7 +1448,53 @@ export default function CookMode({
           </div>
         )}
       </div>
-      <div style={{ display:"flex", gap:10, marginTop:32 }}>
+      {/* Bottom action row — EXIT pinned here (not top) so it sits
+          with SCHEDULE / START COOKING as a peer. Small, muted red,
+          two-tap confirm ("Are you sure?"). If the user wants out
+          of the recipe entirely, they find it next to the cook
+          primary button, not tucked in a corner. */}
+      <div style={{ display:"flex", gap:10, marginTop:32, alignItems:"stretch" }}>
+        {confirmExit ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+            <button
+              onClick={exitCook}
+              title="End cook and drop this recipe"
+              style={{
+                padding:"8px 12px",
+                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
+                borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+                letterSpacing:"0.1em", cursor:"pointer",
+              }}
+            >
+              YES, EXIT
+            </button>
+            <button
+              onClick={() => setConfirmExit(false)}
+              style={{
+                padding:"8px 12px",
+                background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
+                borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:10,
+                letterSpacing:"0.1em", cursor:"pointer",
+              }}
+            >
+              KEEP
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmExit(true)}
+            title="Exit — drop this recipe"
+            aria-label="Exit"
+            style={{
+              flexShrink:0, padding:"18px 12px",
+              background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+              borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+              letterSpacing:"0.08em", cursor:"pointer",
+            }}
+          >
+            ✕ EXIT
+          </button>
+        )}
         {onSchedule && (
           <button
             onClick={onSchedule}
@@ -1168,6 +1533,18 @@ export default function CookMode({
           onClose={() => setCardIng(null)}
         />
       )}
+      {shareSheetOpen && (
+        <ShareRecipeSheet
+          recipe={recipe}
+          family={family}
+          friends={friends}
+          sentIds={sentIds}
+          onSend={sendShareTo}
+          onShareNative={shareViaNative}
+          copiedLink={copiedLink}
+          onClose={closeShareSheet}
+        />
+      )}
     </div>
   );
 
@@ -1179,26 +1556,21 @@ export default function CookMode({
           message family / whatever, without ending the session.
           Session endures 2h; explicit end is still via DONE LOG IT. */}
       {onExit && (
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
-          <button
-            onClick={onExit}
-            title="Step out — timer keeps running"
-            aria-label="Minimize cook view"
-            style={{
-              display:"inline-flex", alignItems:"center", gap:8,
-              background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb",
-              borderRadius:20, padding:"8px 14px",
-              fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.14em",
-              cursor:"pointer",
-            }}
-          >
-            <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
-            MINIMIZE
-          </button>
-          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em" }}>
-            TIMER KEEPS RUNNING
-          </span>
-        </div>
+        <button
+          onClick={onExit}
+          title="Step out — timer keeps running"
+          aria-label="Minimize cook view"
+          style={{
+            display:"inline-flex", alignItems:"center", gap:8,
+            background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb",
+            borderRadius:20, padding:"8px 14px",
+            fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.14em",
+            cursor:"pointer", marginTop:4,
+          }}
+        >
+          <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
+          MINIMIZE
+        </button>
       )}
       <div style={{ height:3, background:"#222", borderRadius:2, marginTop:16, overflow:"hidden" }}>
         <div style={{ height:"100%", background:"#f5c842", borderRadius:2, width:`${progress}%`, transition:"width 0.5s ease" }} />
@@ -1500,7 +1872,53 @@ export default function CookMode({
           <p style={{ fontSize:13, color:"#7ec87e", lineHeight:1.5, fontStyle:"italic" }}>{step.tip}</p>
         </div>
       )}
-      <div style={{ display:"flex", gap:12, marginTop:24 }}>
+      {/* Bottom action row — EXIT (left, destructive) / PREV /
+          DONE → NEXT (right, progression). Left-to-right reads as
+          bail → back → forward, matching the spatial metaphor every
+          other modal in the app uses. Two-tap confirm on EXIT stays
+          inline so an accidental thumb can't kill a 45-min braise. */}
+      <div style={{ display:"flex", gap:10, marginTop:24, alignItems:"stretch" }}>
+        {confirmExit ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
+            <button
+              onClick={exitCook}
+              title="End cook and drop this recipe"
+              style={{
+                padding:"6px 10px",
+                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
+                borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700,
+                letterSpacing:"0.08em", cursor:"pointer",
+              }}
+            >
+              YES, END
+            </button>
+            <button
+              onClick={() => setConfirmExit(false)}
+              style={{
+                padding:"6px 10px",
+                background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
+                borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:9,
+                letterSpacing:"0.08em", cursor:"pointer",
+              }}
+            >
+              KEEP
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmExit(true)}
+            title="Exit cook — sure?"
+            aria-label="Exit cook"
+            style={{
+              flexShrink:0, padding:"14px 10px",
+              background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+              borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:600,
+              letterSpacing:"0.08em", cursor:"pointer",
+            }}
+          >
+            ✕ EXIT
+          </button>
+        )}
         <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
         {activeStep < steps.length-1 ? (
           <button onClick={markDone} style={{ flex:2, padding:"14px", background: completedSteps.has(activeStep)?"#1a3a1a":"#f5c842", color: completedSteps.has(activeStep)?"#4ade80":"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.3s" }}>
@@ -1623,3 +2041,175 @@ const cookSwapClearBtn = {
   letterSpacing: "0.06em", cursor: "pointer",
 };
 
+// Share-with-a-person sheet. Modal listing family + friends with a
+// quick "SEND" tap per row. Sent recipients flip to "✓ SENT" locally
+// so rapid taps don't re-ping the same person. A "SHARE EXTERNALLY"
+// row at the bottom hands off to the OS native share sheet (Web
+// Share API) or, on desktop, copies the recipe URL to clipboard.
+// Separate from the family-visibility toggle on the preview — the
+// toggle controls RLS visibility, this sheet sends individualized
+// notifications.
+function ShareRecipeSheet({ recipe, family = [], friends = [], sentIds, onSend, onShareNative, copiedLink, onClose }) {
+  // Dedupe by otherId in case the relationships hook surfaces the
+  // same person twice under different rows (shouldn't happen, but
+  // the guard is cheap). Skip any row without a name so the sheet
+  // doesn't render ghost entries.
+  const familyRows = (family || [])
+    .filter(f => f?.otherId && f?.other?.name)
+    .filter((f, i, arr) => arr.findIndex(x => x.otherId === f.otherId) === i);
+  const friendRows = (friends || [])
+    .filter(f => f?.otherId && f?.other?.name)
+    .filter((f, i, arr) => arr.findIndex(x => x.otherId === f.otherId) === i);
+  const hasAnyone = familyRows.length + friendRows.length > 0;
+
+  const Row = ({ person, isFamily }) => {
+    const sent = sentIds?.has(person.otherId);
+    return (
+      <button
+        onClick={() => onSend(person.otherId, isFamily)}
+        disabled={sent}
+        style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "12px 14px", width: "100%",
+          background: sent ? "#0f1a0f" : "#161616",
+          border: `1px solid ${sent ? "#1e3a1e" : "#2a2a2a"}`,
+          borderRadius: 12, cursor: sent ? "default" : "pointer",
+          textAlign: "left",
+        }}
+      >
+        <div style={{
+          width: 36, height: 36, borderRadius: "50%",
+          background: "#1a1a1a", border: "1px solid #2a2a2a",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "'Fraunces',serif", fontSize: 16, color: "#f0ece4",
+          flexShrink: 0,
+        }}>
+          {String(person.other?.name || "?").trim().charAt(0).toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+            color: sent ? "#9bbf9b" : "#f0ece4",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {person.other.name}
+          </div>
+          <div style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            color: "#666", letterSpacing: "0.08em", marginTop: 2,
+          }}>
+            {isFamily ? "FAMILY" : "FRIEND"}
+          </div>
+        </div>
+        <span style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700,
+          letterSpacing: "0.12em", flexShrink: 0,
+          color: sent ? "#4ade80" : "#f5c842",
+        }}>
+          {sent ? "✓ SENT" : "SEND"}
+        </span>
+      </button>
+    );
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: 310,
+      display: "flex", alignItems: "flex-end",
+      maxWidth: 480, margin: "0 auto",
+    }}>
+      <div style={{
+        width: "100%", background: "#141414",
+        borderRadius: "20px 20px 0 0", padding: "20px 22px 30px",
+        maxHeight: "80vh", display: "flex", flexDirection: "column",
+      }}>
+        <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 16px" }} />
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.14em" }}>
+          SHARE RECIPE
+        </div>
+        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 22, color: "#f0ece4", fontWeight: 300, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {recipe?.title || "Recipe"}
+        </div>
+
+        <div style={{ marginTop: 18, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+          {familyRows.length > 0 && (
+            <>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#a3d977", letterSpacing: "0.12em", marginTop: 2 }}>
+                FAMILY
+              </div>
+              {familyRows.map(f => <Row key={`fam-${f.otherId}`} person={f} isFamily={true} />)}
+            </>
+          )}
+          {friendRows.length > 0 && (
+            <>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#d9b877", letterSpacing: "0.12em", marginTop: 8 }}>
+                FRIENDS
+              </div>
+              {friendRows.map(f => <Row key={`fr-${f.otherId}`} person={f} isFamily={false} />)}
+            </>
+          )}
+          {!hasAnyone && (
+            <div style={{
+              padding: "20px 16px", textAlign: "center",
+              fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#666",
+              background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 12,
+            }}>
+              No family or friends linked yet. Use the button below to share via text / email / link instead.
+            </div>
+          )}
+
+          {/* OS share / copy-link fallback — always available. */}
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.12em", marginTop: 10 }}>
+            OR
+          </div>
+          <button
+            onClick={onShareNative}
+            style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 14px", width: "100%",
+              background: copiedLink ? "#14201a" : "#161616",
+              border: `1px solid ${copiedLink ? "#2a4a28" : "#2a2a2a"}`,
+              borderRadius: 12, cursor: "pointer", textAlign: "left",
+            }}
+          >
+            <div style={{
+              width: 36, height: 36, borderRadius: "50%",
+              background: "#1a1408", border: "1px solid #3a2f10",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18, color: "#f5c842", flexShrink: 0,
+            }}>
+              ↗
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                color: copiedLink ? "#a3d977" : "#f0ece4",
+              }}>
+                {copiedLink ? "Link copied to clipboard" : "Share via text, email, or link"}
+              </div>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                color: "#666", letterSpacing: "0.08em", marginTop: 2,
+              }}>
+                EXTERNAL
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <button
+          onClick={onClose}
+          style={{
+            marginTop: 14, padding: "14px",
+            background: "#1a1a1a", border: "1px solid #2a2a2a",
+            color: "#888", borderRadius: 12,
+            fontFamily: "'DM Mono',monospace", fontSize: 12,
+            letterSpacing: "0.08em", cursor: "pointer",
+          }}
+        >
+          DONE
+        </button>
+      </div>
+    </div>
+  );
+}
