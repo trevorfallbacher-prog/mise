@@ -1712,6 +1712,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",     toBase: 1 },
     ],
     defaultUnit: "tbsp",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "fl_oz", metric: "ml" },
   },
   {
     id: "dijon", name: "Dijon Mustard", emoji: "🟡", category: "pantry",
@@ -1721,6 +1723,9 @@ export const INGREDIENTS = [
       { id: "jar",  label: "jars", toBase: 200 },
     ],
     defaultUnit: "tsp",
+    // Volume-anchored ladder (no g entry), so metric uses ml — same-
+    // family universal converts tsp↔ml without needing density.
+    preferredUnit: { us: "tsp", metric: "ml" },
   },
   {
     id: "tomato_paste", name: "Tomato Paste", emoji: "🍅", category: "pantry",
@@ -1730,6 +1735,11 @@ export const INGREDIENTS = [
       { id: "oz",   label: "oz",   toBase: 28.35 },
     ],
     defaultUnit: "tbsp",
+    // tbsp on this ladder is mass-keyed (toBase=15g), and oz is in the
+    // ladder, so the cook/pantry pair stays inside the ladder — no
+    // family bridge needed.
+    preferredUnit: { us: "tbsp", metric: "g" },
+    measuredIn:    { us: "oz",   metric: "g" },
   },
   {
     id: "chicken_stock", name: "Chicken Stock", emoji: "🍲", category: "pantry",
@@ -1739,6 +1749,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",     toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",   metric: "ml" },
+    measuredIn:    { us: "quart", metric: "ml" },
   },
   {
     id: "beef_stock", name: "Beef Stock", emoji: "🍲", category: "pantry",
@@ -1748,6 +1760,8 @@ export const INGREDIENTS = [
       { id: "ml",    label: "ml",     toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",   metric: "ml" },
+    measuredIn:    { us: "quart", metric: "ml" },
   },
   {
     id: "red_wine", name: "Red Wine", emoji: "🍷", category: "pantry",
@@ -1757,6 +1771,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",    metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
   },
   {
     id: "white_wine", name: "White Wine / Sherry", emoji: "🍷", category: "pantry",
@@ -1766,6 +1782,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",    metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
   },
   // Rice ───────────────────
   {
@@ -2062,6 +2080,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 2.0, // ~$8–10 for the 28oz rooster bottle
   },
   {
@@ -2077,6 +2097,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "jar",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "jar",  metric: "ml" },
     estCentsPerBase: 5.5, // ~$8–10 for a 6 oz jar of the decent stuff
   },
   {
@@ -2088,6 +2110,31 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",  metric: "ml" },
+    measuredIn:    { us: "fl_oz", metric: "ml" },
+  },
+  {
+    // Pickled vegetable mix (cauliflower, peppers, carrots, celery in
+    // brine). Recipe-side: scooped by spoon/cup as a relish or
+    // antipasto component, measured by volume. Pantry-side: jars
+    // are labeled in fl oz / oz net weight. Brine + veg mix is
+    // close to water density so the volume↔mass bridge is honest;
+    // declared explicitly so convertStrict can take the density-
+    // bridge path between cup (cook) and oz (pantry).
+    id: "giardiniera", name: "Giardiniera", emoji: "🥒", category: "pantry",
+    units: [
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "cup",    label: "cups",    toBase: 240 },
+      { id: "jar",    label: "jars",    toBase: 473 }, // 16 fl oz standard
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+      { id: "oz",     label: "oz",      toBase: 28.35 },
+      { id: "g",      label: "g",       toBase: 1 },
+      { id: "ml",     label: "ml",      toBase: 1 },
+    ],
+    defaultUnit: "jar",
+    density_g_per_ml: 1.0,  // brine-soaked vegetables ≈ water density
+    preferredUnit: { us: "cup", metric: "ml" },
+    measuredIn:    { us: "oz",  metric: "g"  },
   },
   {
     id: "tortillas", name: "Tortillas", emoji: "🌮", category: "pantry",
@@ -2096,6 +2143,8 @@ export const INGREDIENTS = [
       { id: "pack",  label: "packs",     toBase: 10 },
     ],
     defaultUnit: "pack",
+    preferredUnit: { us: "count", metric: "count" },
+    measuredIn:    { us: "pack",  metric: "pack"  },
   },
   // ── condiments batch 2: Asian staples ──────────────────────────────
   {
@@ -2107,6 +2156,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 1.0, // ~$6–10 for a 24oz Red Boat
   },
   {
@@ -2118,6 +2169,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 5.7 },
     ],
     defaultUnit: "tub",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "tub",  metric: "ml" },
     estCentsPerBase: 1.6, // ~$8–10 for the Hikari tub
   },
   {
@@ -2128,6 +2181,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 6 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
     estCentsPerBase: 0.7, // ~$4–5 LKK bottle
   },
   {
@@ -2139,6 +2194,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 1.8, // ~$5–8 depending on real-hon-mirin vs. aji-mirin
   },
   {
@@ -2149,6 +2206,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 6 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
     estCentsPerBase: 0.9, // ~$5 LKK Premium
   },
   // ── condiments batch 1: American staples ────────────────────────────
@@ -2162,6 +2221,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "jar",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "jar",  metric: "ml" },
     estCentsPerBase: 0.8, // ~$6–8 for a 30oz jar
   },
   {
@@ -2173,6 +2234,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "fl_oz", metric: "ml" },
     estCentsPerBase: 0.6, // ~$3–4 for a 20oz Heinz
   },
   {
@@ -2183,6 +2246,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 5 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
     estCentsPerBase: 0.5, // ~$2–3 for a standard yellow mustard
   },
   {
@@ -2194,6 +2259,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 2.5, // ~$4–5 for a 5oz bottle; varies wildly by brand
   },
   {
@@ -2385,6 +2452,12 @@ export const INGREDIENTS = [
           { id: "g",    label: "g",    toBase: 1 },
         ],
         defaultUnit: "jar",
+        // Recipes ALWAYS measure spices by spoon — Metric users want
+        // grams, US users want teaspoons. Pantry/shopping is the jar
+        // (US) or weight (metric). Both pairs stay inside this mass-
+        // anchored ladder so no density bridge is needed.
+        preferredUnit: { us: "tsp", metric: "g" },
+        measuredIn:    { us: "jar", metric: "g" },
         nutrition: SPICE_NUTRITION[id] ?? SPICE_DEFAULT_NUTRITION,
       };
     };
@@ -2694,7 +2767,25 @@ function syntheticFromInfo(slug, info) {
   // writes this unit.
   units.push({ id: "unit", label: "unit", toBase: 1 });
 
-  return {
+  // ── preferredUnit / measuredIn / count_weight_g ──
+  // The AI enrichment prompt (v4+) asks Claude to populate these
+  // alongside density. Carry them through to the synthetic canonical
+  // so the cook-display resolver picks them up the same way it does
+  // for bundled entries — without this, every synthetic falls through
+  // to the ladder pick, which on Metric is always "g" (the bug
+  // giardiniera surfaced).
+  //
+  // Validation: both halves of the {us, metric} pair must be non-empty
+  // strings. Anything else is ignored — the resolver's ladder/registry
+  // fallback covers that case. count_weight_g must be a positive
+  // finite number; otherwise omit (the resolver consults
+  // COUNT_WEIGHTS_G / CUT_WEIGHTS_G / row override as a chain).
+  const validUnitPair = (pair) =>
+    pair && typeof pair === "object" &&
+    typeof pair.us === "string" && pair.us.length > 0 &&
+    typeof pair.metric === "string" && pair.metric.length > 0;
+
+  const out = {
     id: slug,
     name,
     shortName: null,
@@ -2704,6 +2795,17 @@ function syntheticFromInfo(slug, info) {
     units,
     defaultUnit: gPerTsp != null ? "tsp" : "oz",
   };
+  if (validUnitPair(info?.preferredUnit)) {
+    out.preferredUnit = { us: info.preferredUnit.us, metric: info.preferredUnit.metric };
+  }
+  if (validUnitPair(info?.measuredIn)) {
+    out.measuredIn = { us: info.measuredIn.us, metric: info.measuredIn.metric };
+  }
+  const cwg = Number(info?.count_weight_g);
+  if (Number.isFinite(cwg) && cwg > 0) {
+    out.count_weight_g = cwg;
+  }
+  return out;
 }
 
 // Called by IngredientInfoProvider whenever ingredient_info's dbMap
