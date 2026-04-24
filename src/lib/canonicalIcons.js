@@ -69,9 +69,12 @@ export function canonicalImageUrlFor(canonicalId, info) {
 // freezer_misc.svg — and register both the bare id and the prefixed
 // id below; tileIconFor checks the prefixed form first.
 const BUNDLED_TILE_SLUGS = new Set([
-  // empty — drop SVGs in public/icons/tiles/ and register here
-  "produce"
-  "dairy"
+  // Add registered tile slugs here. Keep one slug per line with
+  // a trailing comma so future additions don't break the parse
+  // (missing-comma between "produce" and "dairy" is what broke
+  // the build the first time this list grew past one entry).
+  "produce",
+  "dairy",
 ]);
 
 export function tileIconFor(tileId, location) {
