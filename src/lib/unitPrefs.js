@@ -1,5 +1,33 @@
+import { useEffect, useState } from "react";
 import { convert, convertWithBridge, convertUniversal, formatQty } from "./unitConvert";
 import { findIngredient } from "../data/ingredients";
+
+const CHANGE_EVENT = "mise:unitprefs-changed";
+function broadcast() {
+  if (typeof window === "undefined") return;
+  try { window.dispatchEvent(new CustomEvent(CHANGE_EVENT)); } catch { /* ignore */ }
+}
+
+// Subscribe React components to preference changes. Returns a version
+// counter that bumps whenever setMeasurementSystem or setPreferredUnit
+// fires — pulling this hook into any component that calls
+// applyPreferredUnit on render makes it re-compute amounts when the
+// user flips the Settings toggle or picks a unit in another screen.
+export function useUnitPrefsVersion() {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const bump = () => setV(x => x + 1);
+    window.addEventListener(CHANGE_EVENT, bump);
+    // Also react to localStorage writes from other tabs.
+    window.addEventListener("storage", bump);
+    return () => {
+      window.removeEventListener(CHANGE_EVENT, bump);
+      window.removeEventListener("storage", bump);
+    };
+  }, []);
+  return v;
+}
 
 // Per-user display-unit preferences for recipe ingredients. Backed by
 // localStorage; persists across sessions and surfaces anywhere a
@@ -147,6 +175,7 @@ export function setMeasurementSystem(system) {
     localStorage.setItem(LS_SYSTEM, system);
     localStorage.setItem(LS_SEEDED, "1");
   } catch { /* ignore */ }
+  broadcast();
 }
 
 export function prefKeyForIngredient(ing) {
@@ -168,6 +197,7 @@ export function setPreferredUnit(key, unit) {
   if (map[key] === unit) return;
   map[key] = unit;
   writeMap(map);
+  broadcast();
 }
 
 // Try to render an ingredient's amount string in the user's preferred

@@ -13,7 +13,7 @@ import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipe
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 import { useWebPush } from "../lib/useWebPush";
 import UnitPicker from "./UnitPicker";
-import { applyPreferredUnit, prefKeyForIngredient } from "../lib/unitPrefs";
+import { applyPreferredUnit, prefKeyForIngredient, useUnitPrefsVersion } from "../lib/unitPrefs";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -406,6 +406,9 @@ export default function CookMode({
   // in the modal.
   const [unitOverrides, setUnitOverrides] = useState({});
   const [unitPicker, setUnitPicker] = useState(null);
+  // Subscribe to preference changes so a Settings toggle re-renders
+  // amounts in-place without a page reload.
+  useUnitPrefsVersion();
   // Shared cook-time session state (src/lib/useCookSession.js). Owns
   // per-ingredient overrides (pantryItemId swaps, shopping promotions,
   // skip flags) and user-added extras. Passed as a prop to

@@ -22,7 +22,7 @@ import {
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import UnitPicker from "./UnitPicker";
-import { applyPreferredUnit, prefKeyForIngredient } from "../lib/unitPrefs";
+import { applyPreferredUnit, prefKeyForIngredient, useUnitPrefsVersion } from "../lib/unitPrefs";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -3045,6 +3045,10 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
   // for this draft without changing their saved preference).
   const [amountOverrides, setAmountOverrides] = useState({});
   const [pickerIdx, setPickerIdx] = useState(null);
+  // Subscribe to preference changes so a Settings toggle re-renders
+  // amounts in-place without a page reload. Value isn't used; the
+  // bump triggers the component update.
+  useUnitPrefsVersion();
   const effectiveIngredients = ingredients.map((ing, i) => {
     if (amountOverrides[i] != null) return { ...ing, amount: amountOverrides[i] };
     const prefApplied = applyPreferredUnit(ing.amount, ing);

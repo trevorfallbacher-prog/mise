@@ -1,7 +1,7 @@
 import ModalSheet from "./ModalSheet";
 import { COLOR, FONT, CHIP_TONES, pickerKicker, pickerTitle, pickerOptionStyle } from "../lib/tokens";
 import { findIngredient } from "../data/ingredients";
-import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor, hasDensityBridge, isMassLadder } from "../lib/unitConvert";
+import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor, isMassLadder } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
 import { setPreferredUnit } from "../lib/unitPrefs";
 
@@ -65,19 +65,18 @@ export default function UnitPicker({
   //   1. Start with the ingredient's own ladder (when present). This
   //      carries the ingredient-specific units like "stick" for
   //      butter that universal ladders don't know about.
-  //   2. If the ingredient has an explicit density (INGREDIENT_DENSITY
-  //      _G_PER_ML), union with the OTHER universal family too —
-  //      butter is a mass ladder but can bridge to volume via density,
-  //      so users should be able to pick tbsp or cup even when the
-  //      ladder only lists g / oz / lb.
+  //   2. For any mass-or-volume-based canonical, union with BOTH
+  //      universal families. Don't gate this on an explicit density
+  //      entry — resolveDensity defaults to 1.0 g/ml for unknowns,
+  //      which is still a usable (if slightly off) conversion. A
+  //      rough-but-real tbsp is better than a hidden option.
   //   3. When no ingredient is linked at all, offer the universal
   //      siblings of whatever unit the amount is currently in.
-  //   4. Ensure the current unit is always in the list (even when it
-  //      falls outside every ladder we know about).
+  //   4. Ensure the current unit is always in the list.
   const bridgeUnits = [];
-  if (ingredient && hasDensityBridge(ingredient)) {
-    const other = isMassLadder(ingredient) ? "cup" : "g";
-    bridgeUnits.push(...universalLadderFor(other));
+  if (ingredient && isMassLadder(ingredient)) {
+    bridgeUnits.push(...universalLadderFor("g"));
+    bridgeUnits.push(...universalLadderFor("cup"));
   }
   const universalWhenNoIng = currentUnit && !ingredient ? universalLadderFor(currentUnit) : [];
 
