@@ -494,8 +494,32 @@ export function canonicalizeEffectiveRecipe(recipe) {
 //   { brand: "Kerrygold Butter" }            — brand upgrade (same
 //                                              canonical, more specific
 //                                              display name)
-export function tokenizeSwappedInstruction(instruction, swaps, brandUpgrades = []) {
-  const base = String(instruction || "");
+export function tokenizeSwappedInstruction(instruction, swaps, brandUpgrades = [], amountReplacements = []) {
+  // Pre-pass: rewrite authored amount strings ("6 oz") into the
+  // chip-displayed amount ("12 tbsp") so the prose follows whatever
+  // unit the user chose on the FOR-THIS-STEP chip. Plain text→text
+  // substitution; the brand/swap tokenizer below operates on the
+  // result. Done up front so the substitution doesn't fight with
+  // the brand pattern (different lexical layer entirely — amounts
+  // never overlap with ingredient names).
+  let working = String(instruction || "");
+  if (working && Array.isArray(amountReplacements) && amountReplacements.length > 0) {
+    const ordered = amountReplacements
+      .filter(r => r?.from && r?.to && String(r.from).trim() && String(r.to).trim())
+      .filter(r => String(r.from).trim() !== String(r.to).trim())
+      // Longest-first so "1 1/2 cups" matches before "1 cups".
+      .sort((a, b) => String(b.from).length - String(a.from).length);
+    const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    for (const r of ordered) {
+      // Word-boundary at the start protects against catching a digit
+      // inside another number ("16" ≠ "6"); the tail is bounded by
+      // the unit text already, so a trailing \\b would mishandle units
+      // like "fl oz" that contain a space.
+      const pattern = new RegExp(`\\b${escape(String(r.from).trim())}`, "gi");
+      working = working.replace(pattern, () => String(r.to).trim());
+    }
+  }
+  const base = working;
   if (!base) return [{ text: base }];
 
   const all = [];

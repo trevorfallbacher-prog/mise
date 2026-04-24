@@ -6,7 +6,7 @@ import CookComplete from "./CookComplete";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useIngredientInfo } from "../lib/useIngredientInfo";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
-import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily } from "../lib/recipePairing";
+import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily, deriveRowHeader } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
@@ -615,6 +615,52 @@ export default function CookMode({
   // step renderer, pairing pass, and CookComplete all reading from
   // the same derivation.
   const ingredientPairings = pairRecipeIngredients(effectiveRecipe.ingredients || [], pantry || []);
+
+  // Look up a pairing by an ingredient identity (canonical id first,
+  // normalized name second). Same key strategy applyCookSessionToRecipe
+  // uses internally, so step.uses entries (which carry their own
+  // ingredientId from the recipe) line up with effectiveRecipe.ingredients
+  // pairings. Built here so the step-render scope can reach matched
+  // pantry rows without re-running pairRecipeIngredients per step.
+  const pairingByKey = new Map();
+  (effectiveRecipe.ingredients || []).forEach((ing, i) => {
+    const p = ingredientPairings[i];
+    if (!p) return;
+    if (ing.ingredientId) pairingByKey.set(`id:${ing.ingredientId}`, p);
+    const nm = normalizeForMatch(ing.item || "");
+    if (nm) pairingByKey.set(`nm:${nm}`, p);
+  });
+  const findPairing = (ing) => {
+    if (!ing) return null;
+    if (ing.ingredientId) {
+      const hit = pairingByKey.get(`id:${ing.ingredientId}`);
+      if (hit) return hit;
+    }
+    const nm = normalizeForMatch(ing.item || "");
+    if (nm) return pairingByKey.get(`nm:${nm}`) || null;
+    return null;
+  };
+
+  // Per-ingredient amount substitutions for the prose tokenizer:
+  // when the user picks a different unit on the FOR-THIS-STEP chip
+  // (or has a saved preference that resolves to a different unit),
+  // the displayed amount on the chip drifts from the recipe's
+  // authored amount string. Push the (authored → displayed) pairs
+  // into the prose tokenizer so the inline instruction's measurements
+  // track the chip the cook is reading from. Skipped when the chip
+  // matches the recipe (no rewrite needed) and when the recipe author
+  // omitted ing.amount (nothing to find/replace).
+  const allAmountReplacements = (effectiveRecipe.ingredients || [])
+    .map(ing => {
+      const overrideKey = prefKeyForIngredient(ing);
+      const overrideAmount = overrideKey ? unitOverrides[overrideKey] : null;
+      const preferred = overrideAmount || applyPreferredUnit(ing.amount, ing, DISPLAY_CONTEXT.COOK);
+      if (!preferred || !ing.amount) return null;
+      if (String(preferred).trim() === String(ing.amount).trim()) return null;
+      return { from: String(ing.amount), to: String(preferred) };
+    })
+    .filter(Boolean);
+
   const missingIngs    = ingredientStatus.filter(s => s.status === "missing");
   const lowIngs        = ingredientStatus.filter(s => s.status === "low");
   const wrongStateIngs = ingredientStatus.filter(s => s.status === "wrong-state");
@@ -1278,6 +1324,21 @@ export default function CookMode({
                 // the user's saved preference via applyPreferredUnit.
                 const preferred = overrideAmount || applyPreferredUnit(ing.amount, ing, DISPLAY_CONTEXT.COOK);
                 const displayAmount = preferred || ing.amount || "—";
+                // Lift the matched pantry row's branded display name
+                // (Brand + canonical) so the FOR-THIS-STEP list reads
+                // like the prep preview did instead of falling back to
+                // the recipe's generic "butter" / "flour" text. AIRecipe
+                // already does this via the pairings array; CookMode
+                // computed pairings at render time but never threaded
+                // them into this list — that's the visible disparity
+                // between prep ("Sweet Cream Unsalted Butter") and cook
+                // ("butter"). Falls back to the recipe text when no
+                // pantry pair exists (missing ingredient, unmatched
+                // shop item, etc).
+                const pairing = isSkipped ? null : findPairing(ing);
+                const matchedRow = pairing?.paired || pairing?.closestMatch || null;
+                const matchedName = matchedRow ? deriveRowHeader(matchedRow) : "";
+                const displayName = matchedName || ing.item || ing.ingredientId || "ingredient";
                 return (
                   <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color: isSkipped ? "#8a7a5a" : "#e8dfc8", lineHeight:1.5, opacity: isSkipped ? 0.7 : 1 }}>
                     <button
@@ -1305,7 +1366,7 @@ export default function CookMode({
                     </button>
                     <span style={{ flex:1 }}>
                       <span style={{ textDecoration: isSkipped ? "line-through" : "none" }}>
-                        {ing.item || ing.ingredientId || "ingredient"}
+                        {displayName}
                       </span>
                       {ing.state ? <span style={{ color:"#c7a8d4", fontSize:12 }}> · {ing.state}</span> : null}
                       {isSkipped && (
@@ -1382,7 +1443,7 @@ export default function CookMode({
             // dodges "buttered" naturally but "butter the dish"
             // becomes "Kerrygold Butter the dish" — slightly awkward,
             // worth the tradeoff to carry branded names throughout.
-            const tokens = tokenizeSwappedInstruction(step.instruction, allSwaps, allBrandUpgrades);
+            const tokens = tokenizeSwappedInstruction(step.instruction, allSwaps, allBrandUpgrades, allAmountReplacements);
             if (tokens.length === 1 && tokens[0].text === step.instruction) {
               return step.instruction;
             }
