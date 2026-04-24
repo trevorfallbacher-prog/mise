@@ -1231,7 +1231,13 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
             );
           }
           return (
-            <div style={{ fontSize: 36, lineHeight: 1, marginLeft: 4 }}>{emoji}</div>
+            <div style={{
+              // 42px so the emoji fallback matches the 44×44 img
+              // render visual weight (emoji glyph boxes cap at
+              // ~95% of fontSize).
+              fontSize: 42, lineHeight: 1, marginLeft: 4,
+              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+            }}>{emoji}</div>
           );
         })()}
         <div style={{ flex: 1, minWidth: 0 }}>
