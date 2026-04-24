@@ -588,69 +588,9 @@ export default function PantryScreen({
              once — a small moment that makes first-paint feel
              intentional. */}
         <FadeIn>
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginBottom: 8,
-            // Wrap + gap so on narrow phones (or long
-            // "N GOOD · M SOON" readouts) the meta chip moves
-            // below the kicker instead of overflowing sideways.
-            flexWrap: "wrap",
-            gap: 12,
-          }}>
-            <Kicker tone={theme.color.skyInkMuted}>
-              {formatClock(now)}
-            </Kicker>
-            {/* Status chip sits on the bare backdrop, so it uses a
-                glass-fill bg + skyInk text like the hero — not the
-                low-alpha tealTint. On dawn the tint was landing at
-                ~2:1 against the wine sky; this swap yields ≥6:1
-                across every theme because the surface is always
-                the theme's already-tuned glassFillHeavy. Two-axis
-                readout ("N GOOD · M SOON") when anything's
-                expiring, single axis ("N GOOD") otherwise so the
-                warn slot doesn't spam when everything's fresh. */}
-            {/* Meta chip — rendered only when the pantry has at
-                least one item. Empty pantries get no chip
-                ("0 GOOD" reads as an error state rather than a
-                stat). Cold-load also suppresses — the "Unpacking
-                the shelves…" subtitle below is the right signal
-                during loading. */}
-            {cards.length > 0 && (
-              <div style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "4px 10px",
-                borderRadius: 999,
-                background: theme.color.glassFillHeavy,
-                border: `1px solid ${theme.color.glassBorder}`,
-                backdropFilter: "blur(16px) saturate(150%)",
-                WebkitBackdropFilter: "blur(16px) saturate(150%)",
-                fontFamily: font.mono,
-                fontSize: 10,
-                fontWeight: 500,
-                color: theme.color.ink,
-                letterSpacing: "0.10em",
-                textTransform: "uppercase",
-                whiteSpace: "nowrap",
-                ...THEME_TRANSITION,
-              }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <StatusDot tone="ok" size={6} /> {goodCount} good
-                </span>
-                {warnCount > 0 && (
-                  <>
-                    <span style={{ opacity: 0.35 }}>·</span>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: theme.color.burnt }}>
-                      <StatusDot tone="warn" size={6} /> {warnCount} soon
-                    </span>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+          <Kicker tone={theme.color.skyInkMuted}>
+            {formatClock(now)}
+          </Kicker>
         </FadeIn>
 
         <FadeIn delay={0.07}>
@@ -889,6 +829,54 @@ export default function PantryScreen({
           </FadeIn>
         )}
 
+        {/* GOOD · SOON meta chip moved from the hero to sit just
+            above the tile grid, right-aligned. Keeps the hero
+            clean (kicker + title + search + cart) and puts the
+            health stats adjacent to the content they summarize.
+            Only shows in the default tile-grid view — drilled
+            and search modes have their own summary surfaces. */}
+        {!query && !drilledTile && !(loading && cards.length === 0) && cards.length > 0 && (
+          <FadeIn delay={0.1}>
+            <div style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              marginTop: 8,
+            }}>
+              <div style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: theme.color.glassFillHeavy,
+                border: `1px solid ${theme.color.glassBorder}`,
+                backdropFilter: "blur(16px) saturate(150%)",
+                WebkitBackdropFilter: "blur(16px) saturate(150%)",
+                fontFamily: font.mono,
+                fontSize: 10,
+                fontWeight: 500,
+                color: theme.color.ink,
+                letterSpacing: "0.10em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+                ...THEME_TRANSITION,
+              }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <StatusDot tone="ok" size={6} /> {goodCount} good
+                </span>
+                {warnCount > 0 && (
+                  <>
+                    <span style={{ opacity: 0.35 }}>·</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: theme.color.burnt }}>
+                      <StatusDot tone="warn" size={6} /> {warnCount} soon
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+          </FadeIn>
+        )}
+
         {/* --- Body: TILE grid / drilled ITEM grid / SEARCH hits ------- */}
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
@@ -1106,11 +1094,11 @@ function CartButton({ count = 0, onClick }) {
       transition={{ type: "spring", stiffness: 380, damping: 26 }}
       style={{
         position: "absolute",
-        top: 28,
+        top: 22,
         right: 20,
         zIndex: 4,
-        width: 44,
-        height: 44,
+        width: 60,
+        height: 60,
         borderRadius: 999,
         border: `1px solid ${theme.color.glassBorder}`,
         background: theme.color.glassFillHeavy,
@@ -1130,7 +1118,7 @@ function CartButton({ count = 0, onClick }) {
         alt=""
         aria-hidden
         style={{
-          width: 26, height: 26, objectFit: "contain",
+          width: 38, height: 38, objectFit: "contain",
           filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
         }}
       />
@@ -1138,13 +1126,13 @@ function CartButton({ count = 0, onClick }) {
         <span style={{
           position: "absolute",
           top: -4, right: -4,
-          minWidth: 18, height: 18,
-          padding: "0 5px",
+          minWidth: 22, height: 22,
+          padding: "0 6px",
           borderRadius: 999,
           background: theme.color.burnt,
           color: theme.color.ctaText,
           fontFamily: font.mono,
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: 600,
           letterSpacing: "-0.02em",
           display: "inline-flex",
