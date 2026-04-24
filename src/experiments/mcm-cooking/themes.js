@@ -44,6 +44,13 @@ const morning = {
     ink:          "#241810",
     inkMuted:     "#64503E",
     inkFaint:     "#8F7A62",
+    // skyInk — text that sits directly on the backdrop (hero title,
+    // subtitle, date kicker). On light-sky themes we reuse the same
+    // dark ink because dark-on-cream already reads well. On dark-sky
+    // themes (night/dawn/dusk) skyInk flips bright so hero text
+    // doesn't drown against a saturated dark sky.
+    skyInk:       "#241810",
+    skyInkMuted:  "#64503E",
     // Accents — teal slightly softer/sage, burnt slightly warmer.
     teal:         "#4F9A8F",
     aqua:         "#7FB9A7",
@@ -113,6 +120,8 @@ const day = {
     ink:          "#1E1E1E",
     inkMuted:     "#5A5A5A",
     inkFaint:     "#8A8072",
+    skyInk:       "#1E1E1E",
+    skyInkMuted:  "#5A5A5A",
     teal:         "#2F8F83",
     aqua:         "#6FAF9B",
     burnt:        "#D96B2B",
@@ -175,6 +184,8 @@ const evening = {
     ink:          "#2B1A0E",
     inkMuted:     "#6C533E",
     inkFaint:     "#94775C",
+    skyInk:       "#2B1A0E",
+    skyInkMuted:  "#6C533E",
     teal:         "#3D8278",
     aqua:         "#76AD9A",
     burnt:        "#C8541C",
@@ -249,6 +260,10 @@ const night = {
     ink:          "#F2E4C8",
     inkMuted:     "#B6A180",
     inkFaint:     "#8A7A60",
+    // Dark-sky theme — skyInk stays bright (same as ink). Hero
+    // text on the dark slate sky reads cream-on-slate ≈ 13:1.
+    skyInk:       "#F2E4C8",
+    skyInkMuted:  "#B6A180",
     // Accents — mint reads cooler against dark, burnt stays warm.
     teal:         "#6FC5B4",
     aqua:         "#8FD4C4",
@@ -336,6 +351,12 @@ const dawn = {
     ink:          "#1E0F06",
     inkMuted:     "#5C3A28",
     inkFaint:     "#7A5741",
+    // Dark-sky theme — ink stays dark (for text on bright cream
+    // glass tiles), but skyInk flips bright cream so the hero
+    // title on the bare wine-red sky holds ≥8:1 contrast instead
+    // of the ~1.9:1 dark-on-dark failure mode.
+    skyInk:       "#FFEFD8",
+    skyInkMuted:  "#DBC3A0",
     // Accents — biased warm for sunrise character.
     teal:         "#4F9A8F",
     aqua:         "#7FB9A7",
@@ -409,6 +430,11 @@ const dusk = {
     ink:          "#2B1A0E",
     inkMuted:     "#6C4E36",
     inkFaint:     "#946F52",
+    // Dark-sky theme — bright cream skyInk so hero text reads
+    // over the dark amber/rose sunset sky (~6.5:1 at #FFEBD4 over
+    // #8B3B1E). Card ink stays dark for contrast on cream glass.
+    skyInk:       "#FFEBD4",
+    skyInkMuted:  "#D9BC9A",
     teal:         "#3D8278",
     aqua:         "#76AD9A",
     burnt:        "#F0822C",

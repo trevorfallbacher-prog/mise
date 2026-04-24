@@ -20,7 +20,8 @@
 //   #rrggbb        → alpha 1
 //   rgb(r, g, b)   → alpha 1
 //   rgba(r, g, b, a)
-function parseColor(str) {
+// Exported so the contrast calculator in contrast.js can reuse it.
+export function parseColor(str) {
   if (!str || typeof str !== "string") return [0, 0, 0, 1];
   const s = str.trim();
   if (s.startsWith("#")) {
@@ -112,6 +113,14 @@ function isLightInk(theme) {
   return luminance(theme.color.ink) > 0.5;
 }
 
+// Is the theme's SKY (the backdrop cream stop) dark? Dawn and dusk
+// have dark ink on glass but dark skies, so they trip this and not
+// the regular ink-mode check. We classify on `cream` (the top
+// backdrop stop) since that's the largest visible bg area.
+function isDarkSky(theme) {
+  return luminance(theme.color.cream) < 0.5;
+}
+
 // Fields that SNAP (pick a side) rather than linearly blend when
 // the two anchors straddle a light↔dark ink boundary. Without
 // this, a 50/50 blend between a dark-ink-on-light-bg theme and a
@@ -124,6 +133,17 @@ const INK_SNAP_KEYS = new Set([
   "ink", "inkMuted", "inkFaint",
   // hairline tracks ink's side — same flip needed.
   "hairline",
+]);
+
+// skyInk / skyInkMuted snap on a SEPARATE axis — they flip when
+// the BACKDROP changes luminance mode, not when the card ink does.
+// Dawn has dark ink (for cards on bright cream glass) but bright
+// skyInk (for hero text on the dark wine-red sky). Morning has
+// dark both. Morning→dawn crosses the sky-mode boundary even
+// though the card ink mode is stable. Treat it independently so
+// hero text doesn't disappear across those windows.
+const SKY_INK_SNAP_KEYS = new Set([
+  "skyInk", "skyInkMuted",
 ]);
 
 // Glass fills blend linearly through a muddy warm-taupe at the
@@ -170,11 +190,14 @@ export function blendThemes(a, b, t) {
   if (t <= 0)    return a;
   if (t >= 1)    return b;
 
-  // Detect if the two anchors use opposite ink modes. When they
-  // do, ink-related fields snap instead of blend and glass fills
-  // pick up a cream bias so cards don't dissolve into a matching
-  // taupe backdrop at the midpoint.
+  // Two independent mode crossings to watch.
+  //  - crossingInkMode — card ink (dark ↔ light). Drives the
+  //    existing ink snap + glass-cream bias.
+  //  - crossingSkyMode — backdrop mode (light sky ↔ dark sky).
+  //    Drives the new skyInk snap so hero text stays legible on
+  //    the bare backdrop across dawn/dusk/night boundaries.
   const crossingInkMode = isLightInk(a) !== isLightInk(b);
+  const crossingSkyMode = isDarkSky(a) !== isDarkSky(b);
   const inkSide = t < 0.5 ? a : b;
   // Triangle bias: 0 at t=0 and t=1, peaks at t=0.5. Only applies
   // when we're actually crossing modes (pure-theme plateaus skip
@@ -188,6 +211,8 @@ export function blendThemes(a, b, t) {
 
   for (const k of Object.keys(a.color)) {
     if (crossingInkMode && INK_SNAP_KEYS.has(k)) {
+      blendedColor[k] = inkSide.color[k];
+    } else if (crossingSkyMode && SKY_INK_SNAP_KEYS.has(k)) {
       blendedColor[k] = inkSide.color[k];
     } else {
       const linear = blendColor(a.color[k], b.color[k], t);

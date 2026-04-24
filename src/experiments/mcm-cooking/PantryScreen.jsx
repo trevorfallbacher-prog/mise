@@ -60,10 +60,14 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
         margin: "0 auto",
         padding: "28px 20px 120px",
       }}>
-        {/* --- Hero ----------------------------------------------------- */}
+        {/* --- Hero — text sits DIRECTLY on the backdrop (no glass
+             surface behind it), so it uses theme.color.skyInk /
+             skyInkMuted instead of the regular ink. Those tokens
+             flip bright on dark-sky themes (dawn/dusk/night) so
+             the hero stays legible at every time of day. */}
         <FadeIn>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <Kicker>Tuesday · 4:12 PM</Kicker>
+            <Kicker tone={theme.color.skyInkMuted}>Tuesday · 4:12 PM</Kicker>
             <TintedPill
               tone="teal"
               mono
@@ -74,12 +78,12 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             </TintedPill>
           </div>
 
-          <SerifHeader size={52} style={{ marginTop: 4 }}>
+          <SerifHeader size={52} style={{ marginTop: 4, color: theme.color.skyInk }}>
             The Pantry
           </SerifHeader>
           <p style={{
             marginTop: 8, fontFamily: font.sans, fontSize: 15,
-            color: theme.color.inkMuted, lineHeight: 1.45, maxWidth: 340,
+            color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 340,
           }}>
             Twelve good things on the shelf. Enough for dinner, breakfast,
             and a quiet afternoon snack.
@@ -167,7 +171,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             <div style={{
               marginTop: 40, textAlign: "center",
               fontFamily: font.serif, fontStyle: "italic",
-              fontSize: 20, color: theme.color.inkMuted,
+              fontSize: 20, color: theme.color.skyInkMuted,
             }}>
               Nothing matches that search.
             </div>
