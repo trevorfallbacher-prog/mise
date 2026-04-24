@@ -64,10 +64,11 @@ export default function UnitPickerModal({
             inset: 0,
             zIndex: 50,
             background:
-              "radial-gradient(60% 50% at 50% 40%, rgba(47,143,131,0.22) 0%, transparent 70%)," +
+              "radial-gradient(60% 50% at 50% 40%, rgba(47,143,131,0.30) 0%, transparent 70%)," +
+              "radial-gradient(40% 40% at 80% 80%, rgba(217,107,43,0.22) 0%, transparent 70%)," +
               "rgba(30,20,10,0.35)",
-            backdropFilter: "blur(10px)",
-            WebkitBackdropFilter: "blur(10px)",
+            backdropFilter: "blur(18px) saturate(180%)",
+            WebkitBackdropFilter: "blur(18px) saturate(180%)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -147,15 +148,17 @@ export default function UnitPickerModal({
                         gap: 2,
                         padding: "12px 4px",
                         borderRadius: radius.md,
-                        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.08)"}`,
+                        border: `1px solid ${active ? color.teal : "rgba(255,255,255,0.85)"}`,
                         background: active
                           ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-                          : "rgba(255,255,255,0.55)",
+                          : "rgba(255,255,255,0.38)",
                         color: active ? "#FFF8EE" : color.ink,
-                        boxShadow: active ? "0 8px 18px rgba(47,143,131,0.28)" : "none",
+                        boxShadow: active
+                          ? "0 10px 22px rgba(47,143,131,0.32), inset 0 1px 0 rgba(255,255,255,0.30)"
+                          : "inset 0 1px 0 rgba(255,255,255,0.85), inset 0 -1px 0 rgba(30,30,30,0.05)",
                         cursor: "pointer",
-                        backdropFilter: "blur(8px)",
-                        WebkitBackdropFilter: "blur(8px)",
+                        backdropFilter: "blur(22px) saturate(180%)",
+                        WebkitBackdropFilter: "blur(22px) saturate(180%)",
                       }}
                     >
                       <span style={{
@@ -223,14 +226,17 @@ function StepperButton({ onClick, label }) {
       aria-label={label === "+" ? "Increase" : "Decrease"}
       style={{
         width: 44, height: 44, borderRadius: "50%",
-        border: `1px solid rgba(30,30,30,0.10)`,
-        background: "rgba(255,255,255,0.78)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        border: `1px solid rgba(255,255,255,0.85)`,
+        background: "rgba(255,255,255,0.48)",
+        backdropFilter: "blur(22px) saturate(180%)",
+        WebkitBackdropFilter: "blur(22px) saturate(180%)",
         fontFamily: font.sans, fontSize: 22, fontWeight: 500,
         color: color.warmBrown,
         cursor: "pointer",
-        boxShadow: shadow.soft,
+        boxShadow:
+          "0 2px 6px rgba(30,30,30,0.08)," +
+          "inset 0 1px 0 rgba(255,255,255,0.85)," +
+          "inset 0 -1px 0 rgba(30,30,30,0.05)",
       }}
     >
       {label}

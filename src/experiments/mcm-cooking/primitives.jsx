@@ -15,21 +15,22 @@ import {
 // behind the glass. Absolutely positioned so it always fills the
 // nearest positioned parent.
 export function WarmBackdrop({ variant = "pantry" }) {
-  // Two primary tinted blobs — teal top-left and burnt-orange
-  // bottom-right — with a very faint mustard warmth so the
-  // parchment never reads as plain beige. Opacities capped at
-  // ~0.12 so the glass panels catch color through blur without
-  // the canvas feeling busy.
+  // With glass fills dropped to ~0.48 the backdrop now shows
+  // through the panels strongly, so the blobs can run warmer
+  // saturation without clobbering readability — more color to
+  // bend = more "glass" on top. Teal top-left + burnt-orange
+  // bottom-right stays the compositional axis; the third blob
+  // is a warm mustard/brown to keep the parchment grounded.
   const blobs = variant === "cook"
     ? [
-        { bg: "rgba(47,143,131,0.14)",  top: "-12%", left: "-15%", size: 520 },
-        { bg: "rgba(217,107,43,0.12)",  top: "55%",  left: "60%",  size: 460 },
-        { bg: "rgba(212,166,55,0.08)",  top: "10%",  left: "60%",  size: 320 },
+        { bg: "rgba(47,143,131,0.22)",  top: "-12%", left: "-15%", size: 520 },
+        { bg: "rgba(217,107,43,0.20)",  top: "55%",  left: "60%",  size: 460 },
+        { bg: "rgba(212,166,55,0.14)",  top: "10%",  left: "60%",  size: 320 },
       ]
     : [
-        { bg: "rgba(47,143,131,0.12)",  top: "-12%", left: "-12%", size: 500 },
-        { bg: "rgba(217,107,43,0.10)",  top: "55%",  left: "62%",  size: 440 },
-        { bg: "rgba(212,166,55,0.08)",  top: "70%",  left: "-8%",  size: 320 },
+        { bg: "rgba(47,143,131,0.20)",  top: "-12%", left: "-12%", size: 500 },
+        { bg: "rgba(217,107,43,0.18)",  top: "55%",  left: "62%",  size: 440 },
+        { bg: "rgba(122,78,45,0.12)",   top: "70%",  left: "-8%",  size: 320 },
       ];
 
   return (
@@ -306,17 +307,19 @@ export function GlassPill({
   const pad = size === "sm" ? "6px 12px" : "10px 16px";
   const fontSize = size === "sm" ? 12 : 13;
 
-  // Inactive pills get a slightly firmer border + a feather-light
-  // drop + an inner highlight so they read as real glass, not
-  // flat white. Active pills layer a bigger colored halo and an
-  // inner rim so the lift is unmistakable without bumping chroma.
+  // Amped glass: thinner fill + heavy blur + saturation boost so
+  // backdrop color blooms through the pill. Inactive pills get a
+  // bright top-edge highlight + faint bottom inset so they read
+  // as real glass, not flat white. Active pills layer a bigger
+  // colored halo and an inner rim.
   const inactiveBoxShadow =
-    "0 1px 2px rgba(30,30,30,0.06)," +
-    "inset 0 1px 0 rgba(255,255,255,0.55)";
+    "0 1px 2px rgba(30,30,30,0.05)," +
+    "inset 0 1px 0 rgba(255,255,255,0.85)," +
+    "inset 0 -1px 0 rgba(30,30,30,0.05)";
   const activeBoxShadow =
-    "0 10px 22px rgba(47,143,131,0.34)," +
-    "0 2px 4px rgba(47,143,131,0.18)," +
-    "inset 0 1px 0 rgba(255,255,255,0.28)";
+    "0 10px 22px rgba(47,143,131,0.38)," +
+    "0 2px 5px rgba(47,143,131,0.22)," +
+    "inset 0 1px 0 rgba(255,255,255,0.35)";
 
   return (
     <Tag
@@ -334,15 +337,15 @@ export function GlassPill({
         letterSpacing: "0.02em",
         padding: pad,
         borderRadius: radius.pill,
-        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.14)"}`,
+        border: `1px solid ${active ? color.teal : "rgba(255,255,255,0.85)"}`,
         background: active
           ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-          : "rgba(255,255,255,0.65)",
+          : "rgba(255,255,255,0.42)",
         color: active ? "#FFF8EE" : color.ink,
         boxShadow: active ? activeBoxShadow : inactiveBoxShadow,
         cursor: "pointer",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        backdropFilter: "blur(22px) saturate(180%)",
+        WebkitBackdropFilter: "blur(22px) saturate(180%)",
         ...style,
       }}
     >
@@ -411,24 +414,27 @@ export function BackChip({ children, onClick, style }) {
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ background: "rgba(255,255,255,0.78)" }}
+      whileHover={{ background: "rgba(255,255,255,0.58)" }}
       whileTap={{ scale: 0.96 }}
       transition={{ duration: 0.18 }}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        border: `1px solid ${color.hairline}`,
-        background: "rgba(255,255,255,0.55)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        border: `1px solid rgba(255,255,255,0.85)`,
+        background: "rgba(255,255,255,0.42)",
+        backdropFilter: "blur(22px) saturate(180%)",
+        WebkitBackdropFilter: "blur(22px) saturate(180%)",
         padding: "8px 14px",
         borderRadius: radius.pill,
         fontFamily: font.sans,
         fontSize: 13,
         color: color.ink,
         cursor: "pointer",
-        boxShadow: shadow.soft,
+        boxShadow:
+          "0 2px 6px rgba(30,30,30,0.06)," +
+          "inset 0 1px 0 rgba(255,255,255,0.85)," +
+          "inset 0 -1px 0 rgba(30,30,30,0.05)",
         ...style,
       }}
     >
@@ -464,10 +470,10 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
           display: "flex",
           gap: 4,
           padding: 6,
-          background: "rgba(255,255,255,0.72)",
-          backdropFilter: "blur(20px) saturate(150%)",
-          WebkitBackdropFilter: "blur(20px) saturate(150%)",
-          border: "1px solid rgba(255,255,255,0.6)",
+          background: "rgba(255,255,255,0.48)",
+          backdropFilter: "blur(32px) saturate(180%)",
+          WebkitBackdropFilter: "blur(32px) saturate(180%)",
+          border: "1px solid rgba(255,255,255,0.85)",
           borderRadius: radius.pill,
           boxShadow: shadow.glass,
         }}

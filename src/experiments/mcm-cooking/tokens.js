@@ -28,11 +28,15 @@ export const color = {
   mustardTint:  "rgba(212,166,55,0.18)",
   brownTint:    "rgba(122,78,45,0.14)",
 
-  // Glass primitives.
-  glassFill:      "rgba(255,255,255,0.65)",
-  glassFillLite:  "rgba(255,255,255,0.45)",
-  glassFillHeavy: "rgba(255,255,255,0.80)",
-  glassBorder:    "rgba(255,255,255,0.60)",
+  // Glass primitives. Fills are intentionally low-opacity —
+  // the backdrop-filter blur does most of the work, and a
+  // thinner fill lets more color from the parchment blobs
+  // bleed through every pane. Border is near-opaque white to
+  // catch light along the glass edge.
+  glassFill:      "rgba(255,255,255,0.48)",
+  glassFillLite:  "rgba(255,255,255,0.32)",
+  glassFillHeavy: "rgba(255,255,255,0.68)",
+  glassBorder:    "rgba(255,255,255,0.85)",
   hairline:       "rgba(30,30,30,0.08)",
 };
 
@@ -55,26 +59,30 @@ export const space = {
 };
 
 export const shadow = {
-  // `glass` stacks three layers: a soft ambient drop, a closer
-  // contact shadow, and an inset highlight along the top edge so
-  // the panel reads as "light passing through" instead of a flat
-  // white card. Every GlassPanel inherits this; keep it consistent.
+  // `glass` stacks four layers: a soft ambient drop, a closer
+  // contact shadow, a bright inset highlight along the top edge
+  // so the pane catches light, and a faint inset bottom-shadow
+  // so the glass reads as a thick pane (light enters top, shadow
+  // pools at the bottom) rather than a flat white card.
   glass:
-    "0 20px 40px rgba(0,0,0,0.08)," +
-    "0 4px 10px rgba(0,0,0,0.05)," +
-    "inset 0 1px 0 rgba(255,255,255,0.55)",
+    "0 24px 48px rgba(0,0,0,0.10)," +
+    "0 6px 14px rgba(0,0,0,0.06)," +
+    "inset 0 1px 0 rgba(255,255,255,0.85)," +
+    "inset 0 -1px 0 rgba(30,30,30,0.06)",
   soft:  "0 8px 20px rgba(30,30,30,0.06), 0 1px 2px rgba(30,30,30,0.04)",
   lift:
-    "0 24px 50px rgba(30,30,30,0.12)," +
-    "0 6px 14px rgba(30,30,30,0.06)," +
-    "inset 0 1px 0 rgba(255,255,255,0.55)",
-  cta:   "0 12px 26px rgba(217,107,43,0.35), 0 2px 6px rgba(217,107,43,0.25)",
+    "0 30px 60px rgba(30,30,30,0.14)," +
+    "0 10px 20px rgba(30,30,30,0.08)," +
+    "inset 0 1px 0 rgba(255,255,255,0.9)," +
+    "inset 0 -1px 0 rgba(30,30,30,0.06)",
+  cta:   "0 12px 26px rgba(168,73,17,0.40), 0 2px 6px rgba(168,73,17,0.28)",
   // Search-field / input surface — reads "sunken" via a faint top
   // inset instead of the top highlight. Paired with a slightly
   // warmer fill to separate it from the panels around it.
   inputInset:
-    "inset 0 1px 2px rgba(30,30,30,0.08)," +
-    "0 1px 1px rgba(255,255,255,0.4)",
+    "inset 0 1px 2px rgba(30,30,30,0.10)," +
+    "inset 0 -1px 0 rgba(255,255,255,0.6)," +
+    "0 2px 6px rgba(30,30,30,0.04)",
 };
 
 export const font = {
@@ -84,10 +92,13 @@ export const font = {
 };
 
 // Composed helpers so screens don't re-implement the glass recipe.
+// Thick blur + pushed saturation so backdrop color blooms through
+// the pane — a flatter blur reads as "white card," this one reads
+// as "glass bending light."
 export const glassPanel = {
   background: color.glassFill,
-  backdropFilter: "blur(24px) saturate(140%)",
-  WebkitBackdropFilter: "blur(24px) saturate(140%)",
+  backdropFilter: "blur(36px) saturate(180%)",
+  WebkitBackdropFilter: "blur(36px) saturate(180%)",
   border: `1px solid ${color.glassBorder}`,
   borderRadius: radius.xl,
   boxShadow: shadow.glass,
@@ -117,6 +128,11 @@ export const pillChip = {
   userSelect: "none",
 };
 
+// Gradient endpoints darkened from the brand burnt so cream text
+// clears WCAG AA (≥4.5:1) across the full surface: top stop
+// #C85A1F → cream = 4.93:1, bottom #A34711 → cream = 7.03:1.
+// Still reads burnt-orange; the brand token `color.burnt` is
+// unchanged so accent tints / text uses keep the original hue.
 export const ctaButton = {
   display: "inline-flex",
   alignItems: "center",
@@ -124,10 +140,10 @@ export const ctaButton = {
   gap: 8,
   fontFamily: font.sans,
   fontSize: 16,
-  fontWeight: 500,
+  fontWeight: 600,
   letterSpacing: "0.01em",
   color: "#FFF8EE",
-  background: `linear-gradient(180deg, ${color.burnt} 0%, #C95A20 100%)`,
+  background: "linear-gradient(180deg, #C85A1F 0%, #A34711 100%)",
   border: "1px solid rgba(255,255,255,0.35)",
   borderRadius: radius.pill,
   padding: "14px 22px",
