@@ -10,6 +10,10 @@ import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonica
 import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
+import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
+import { useWebPush } from "../lib/useWebPush";
+import UnitPicker from "./UnitPicker";
+import { applyPreferredUnit, prefKeyForIngredient, useUnitPrefsVersion } from "../lib/unitPrefs";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -131,38 +135,141 @@ function PlateAnimation() {
 
 const AnimationMap = { boil:BoilAnimation, stir:StirAnimation, brown:BrownAnimation, bloom:BloomAnimation, toss:TossAnimation, plate:PlateAnimation };
 
-function Timer({ seconds, onDone }) {
-  const [remaining, setRemaining] = useState(seconds);
-  const [running, setRunning] = useState(false);
-  const [done, setDone] = useState(false);
+function Timer({ seconds, onDone, endsAt }) {
+  // Wall-clock-driven countdown.
+  //
+  // The old implementation decremented `remaining` every setTimeout(1s),
+  // which sounded fine but drifted badly whenever the browser throttled
+  // JS — phone locks, tab backgrounds for long stretches, OS battery
+  // saver. On unlock the countdown would resume from its paused value
+  // instead of catching up to real wall-clock elapsed, leaving the
+  // in-app timer wildly out of sync with the server-side push.
+  //
+  // Now we pin an absolute `deadline` once, then every render-interval
+  // compute remaining = ceil((deadline - Date.now())/1000). Throttled
+  // browsers will just re-render late; the MATH always reads from the
+  // wall clock, so an unlock snaps the UI to the correct remaining in
+  // one paint. The push in cook_step_notifications fires off the same
+  // absolute instant, so the two surfaces stay aligned regardless of
+  // what JS was doing in the meantime.
+  //
+  // `endsAt` (from the banner resume handoff) wins over `seconds`
+  // because it's the real server-side deadline. Fresh starts use
+  // seconds → now + seconds*1000.
+  const initialDeadline = endsAt
+    ? new Date(endsAt).getTime()
+    : Date.now() + seconds * 1000;
+  const [deadline, setDeadline]    = useState(initialDeadline);
+  const [pausedAt, setPausedAt]    = useState(null);  // ms — when running=false
+  const [tick, setTick]            = useState(0);
+  const [done, setDone]            = useState(false);
+  const running = pausedAt == null;
+
+  const remaining = Math.max(
+    0,
+    Math.ceil(((running ? deadline : pausedAt) - Date.now()) / 1000),
+  );
+
+  // Reset to the step's full duration. Fires from the RESET button
+  // when the cook needs to re-run a step without advancing.
+  const reset = () => {
+    setDeadline(Date.now() + seconds * 1000);
+    setPausedAt(null);
+    setDone(false);
+  };
+  // Re-pin the deadline when `seconds` itself changes mid-cook
+  // (calibration update or step-navigation remount).
   useEffect(() => {
-    if (!running || remaining <= 0) return;
-    const id = setTimeout(() => setRemaining(r => { if(r<=1){setRunning(false);setDone(true);onDone?.();return 0;} return r-1; }), 1000);
-    return () => clearTimeout(id);
-  }, [running, remaining]);
+    setDeadline(Date.now() + seconds * 1000);
+    setPausedAt(null);
+    setDone(false);
+  }, [seconds]);
+
+  // Tick the render clock. 500ms is plenty for a 1s-precision display
+  // and smooths over Safari's coarser throttle on backgrounded tabs
+  // (Safari's minimum throttle is ~1s, so 500ms gives us two shots at
+  // a one-second grid). No cleanup complexity; we just repaint.
+  useEffect(() => {
+    if (!running || done) return undefined;
+    const id = setInterval(() => setTick(t => t + 1), 500);
+    return () => clearInterval(id);
+  }, [running, done]);
+
+  // Detect rollover to 0 on any render (including the first one after
+  // unlock that snaps from 3:42 past the deadline). Guarded by `done`
+  // so onDone fires exactly once — idempotent re-triggers would double
+  // the chime + fire extra local notifications.
+  useEffect(() => {
+    if (!done && running && remaining <= 0) {
+      setDone(true);
+      setPausedAt(Date.now());   // stop the interval
+      onDone?.();
+    }
+  }, [remaining, running, done, onDone]);
+
+  // Pause / resume — preserve "time remaining" across the flip.
+  const togglePause = () => {
+    if (done) return;
+    if (running) {
+      setPausedAt(Date.now());
+    } else {
+      // Shift the deadline forward by however long we were paused.
+      setDeadline(d => d + (Date.now() - pausedAt));
+      setPausedAt(null);
+    }
+  };
+
+  // Also recheck remaining whenever the page becomes visible again —
+  // covers the lock-screen case where `setInterval` got suspended for
+  // N seconds; we want to repaint immediately on unlock, not wait for
+  // the next 500ms tick.
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onVis = () => { if (document.visibilityState === "visible") setTick(t => t + 1); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
   const mins=Math.floor(remaining/60), secs=remaining%60;
   const pct=((seconds-remaining)/seconds)*100;
+  const showReset = done || remaining !== seconds;
+  const pulsing = !done && running && remaining > 0 && remaining <= 10;
   return (
     <div style={{ marginTop:16, display:"flex", alignItems:"center", gap:12 }}>
       <div style={{ position:"relative", width:52, height:52 }}>
         <svg viewBox="0 0 52 52" style={{ width:52, height:52, transform:"rotate(-90deg)" }}>
           <circle cx="26" cy="26" r="22" fill="none" stroke="#333" strokeWidth="3" />
-          <circle cx="26" cy="26" r="22" fill="none" stroke={done?"#4ade80":"#f59e0b"} strokeWidth="3"
+          <circle cx="26" cy="26" r="22" fill="none" stroke={done?"#4ade80":pulsing?"#ef4444":"#f59e0b"} strokeWidth="3"
             strokeDasharray={`${2*Math.PI*22}`} strokeDashoffset={`${2*Math.PI*22*(1-pct/100)}`}
-            strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear" }} />
+            strokeLinecap="round" style={{ transition:"stroke-dashoffset 1s linear, stroke 0.3s" }} />
         </svg>
         <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
-          fontFamily:"'DM Mono',monospace", fontSize:10, color: done?"#4ade80":"#f5f5f0" }}>
+          fontFamily:"'DM Mono',monospace", fontSize:10, color: done?"#4ade80":pulsing?"#ef4444":"#f5f5f0",
+          animation: pulsing ? "cookTimerPulse 1s ease-in-out infinite" : "none" }}>
           {done ? "✓" : `${mins}:${String(secs).padStart(2,"0")}`}
         </div>
       </div>
       {!done && (
-        <button onClick={() => setRunning(r=>!r)} style={{
+        <button onClick={togglePause} style={{
           background: running ? "#3f3f3f" : "#f59e0b", color: running ? "#f5f5f0" : "#1a1a1a",
           border:"none", borderRadius:8, padding:"8px 16px", fontFamily:"'DM Mono',monospace",
           fontSize:12, cursor:"pointer", fontWeight:600, letterSpacing:"0.05em", transition:"all 0.2s"
-        }}>{running ? "⏸ PAUSE" : remaining===seconds ? "▶ START" : "▶ RESUME"}</button>
+        }}>{running ? "⏸ PAUSE" : "▶ RESUME"}</button>
       )}
+      {done && (
+        <div style={{
+          fontFamily:"'DM Mono',monospace", fontSize:11, color:"#4ade80",
+          letterSpacing:"0.12em",
+        }}>⏰ TIMER'S UP</div>
+      )}
+      {showReset && (
+        <button onClick={reset} style={{
+          background: "transparent", color: "#9a9a9a",
+          border: "1px solid #3a3a3a", borderRadius: 8, padding: "8px 14px",
+          fontFamily: "'DM Mono',monospace", fontSize: 12, cursor: "pointer",
+          fontWeight: 600, letterSpacing: "0.05em", transition: "all 0.2s",
+        }}>↻ RESET</button>
+      )}
+      <style>{`@keyframes cookTimerPulse{0%,100%{opacity:1}50%{opacity:0.55}}`}</style>
     </div>
   );
 }
@@ -275,12 +382,33 @@ export default function CookMode({
   // this flow. Optional: if not provided, the save action simply
   // isn't offered.
   onForkRecipe = null,
+  // Resume-from-banner handoff. When the CookBanner re-opens CookMode
+  // on an already-active session, App passes the live step index + a
+  // hint to skip past the ingredient-prep overview + the real
+  // cook_step_notifications.deliver_at so the in-app Timer shows
+  // wall-clock-accurate remaining seconds instead of a fresh
+  // step.timer countdown. Defaults keep the first-launch flow
+  // (overview → step 0 → fresh countdown from step.timer) intact.
+  initialView       = "overview",
+  initialStepIndex  = 0,
+  initialTimerEndsAt = null,
 }) {
-  const [view, setView] = useState("overview");
-  const [activeStep, setActiveStep] = useState(0);
+  const [view, setView] = useState(initialView);
+  const [activeStep, setActiveStep] = useState(initialStepIndex);
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
   const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
+  // UnitPicker state — user-chosen unit overrides for ingredient
+  // amounts in the "FOR THIS STEP" list. Keyed by ingredientId so
+  // the override carries across every step that references the
+  // same canonical (pick tbsp for butter once, every step shows
+  // butter in tbsp). `unitPicker` holds the row currently open
+  // in the modal.
+  const [unitOverrides, setUnitOverrides] = useState({});
+  const [unitPicker, setUnitPicker] = useState(null);
+  // Subscribe to preference changes so a Settings toggle re-renders
+  // amounts in-place without a page reload.
+  useUnitPrefsVersion();
   // Shared cook-time session state (src/lib/useCookSession.js). Owns
   // per-ingredient overrides (pantryItemId swaps, shopping promotions,
   // skip flags) and user-added extras. Passed as a prop to
@@ -303,6 +431,16 @@ export default function CookMode({
   useEffect(() => {
     resetSession();
   }, [recipe?.slug, resetSession]);
+
+  // Web Push subscription for this device. We don't AUTO-prompt on
+  // mount (browsers blacklist you for that). Instead, render an inline
+  // "enable" card inside the cook view the first time a user starts
+  // a timer on an unsubscribed device. Rationale: without a push
+  // subscription, the server-side cron drain that fires
+  // cook_step_notifications has nobody to deliver to — lock-screen
+  // rings never arrive. Opt-in is the difference between "the timer
+  // works" and "the timer only works when I'm looking at it."
+  const webPush = useWebPush(userId);
 
   // ── Cook telemetry + timer pushes (migration 0136 / 0137) ─────────
   // Records per-step durations and queues mid-cook timer notifications
@@ -333,6 +471,10 @@ export default function CookMode({
       recipeTitle: recipe.title,
       recipeEmoji: recipe.emoji,
     });
+    // Prime the Web Audio context on this explicit user action so
+    // subsequent Timer chimes land on an unsuspended context — mobile
+    // browsers suspend until a gesture. Safe to call repeatedly.
+    primeCookAudio();
   }, [view, recipe?.slug, recipe?.title, recipe?.emoji, telemetry]);
 
   // Each time activeStep changes (and we're inside a live session),
@@ -358,20 +500,47 @@ export default function CookMode({
     });
   }, [view, activeStep, telemetry, recipe]);
 
-  // Best-effort abandon: if the user navigates away (back button,
-  // parent unmounts CookMode) without going through the green CTA →
-  // CookComplete path, mark the session abandoned so the analytics
-  // view doesn't count its half-recorded durations. Skipped when the
-  // user already finalized — finalizedRef guards against the race
-  // where endCook(finished) is still in flight when unmount fires.
+  // NOTE: we intentionally DO NOT mark the session abandoned when
+  // CookMode unmounts. Before, any back-button / parent-close path
+  // flipped status → 'abandoned', which made the "resume your cook"
+  // banner impossible — the row we'd key off was torched before the
+  // user even noticed they'd navigated away. Now unmounts are treated
+  // as "stepping out of the kitchen for a moment"; the session stays
+  // active for up to 2h (enforced by useCookTelemetry.startCook's
+  // resume window) and surfaces as a pinned top banner via
+  // useActiveCookSession. Explicit abandonment is still reachable —
+  // it happens when the user starts a different recipe (startCook
+  // creates a fresh row) or when the 2h window lapses.
+
+  // Wake lock — keep the screen on while CookMode is visible.
+  // navigator.wakeLock is supported on Chrome/Edge/Android; silently
+  // no-ops on Safari and older browsers. Re-acquires on visibility
+  // change because the browser drops the lock whenever the tab is
+  // backgrounded.
   useEffect(() => {
-    return () => {
-      if (finalizedRef.current) return;
-      telemetry.endCook({ status: "abandoned" });
+    if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return undefined;
+    let sentinel = null;
+    let cancelled = false;
+    const acquire = async () => {
+      try {
+        sentinel = await navigator.wakeLock.request("screen");
+      } catch (e) {
+        // Battery-saver mode or permissions policy — not fatal.
+        console.warn("[cookMode] wake lock denied:", e?.message || e);
+      }
     };
-    // Mount-only; we want the cleanup to capture the final ref value.
-    // (Project's eslint config doesn't load react-hooks/exhaustive-deps,
-    // so no disable pragma — see Cookbook.jsx line 69 for the same note.)
+    acquire();
+    const onVis = () => {
+      if (!cancelled && document.visibilityState === "visible" && (!sentinel || sentinel.released)) {
+        acquire();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVis);
+      try { sentinel && sentinel.release && sentinel.release(); } catch { /* ignore */ }
+    };
   }, []);
 
   const [swapOpenIdx, setSwapOpenIdx] = useState(null);
@@ -574,6 +743,10 @@ export default function CookMode({
     // No-op if telemetry isn't tracking this step (e.g. session
     // creation hasn't landed yet on a fast-tap user).
     telemetry.finishStep({});
+    // Satisfying tactile confirmation the step was logged — quieter
+    // than the timer chime so rapid step-taps don't sound like a
+    // malfunctioning alarm clock.
+    playStepCompleteChime();
     if (activeStep < steps.length - 1) setTimeout(() => setActiveStep(s => s + 1), 300);
   };
 
@@ -954,6 +1127,33 @@ export default function CookMode({
 
   return (
     <div style={{ padding:"16px 24px 40px", maxWidth:480, margin:"0 auto" }}>
+      {/* Top bar: minimize back to the app while the cook stays live.
+          The banner picks it up the moment CookMode closes — useful
+          when a timer is ticking and the user wants to check pantry /
+          message family / whatever, without ending the session.
+          Session endures 2h; explicit end is still via DONE LOG IT. */}
+      {onExit && (
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
+          <button
+            onClick={onExit}
+            title="Step out — timer keeps running"
+            aria-label="Minimize cook view"
+            style={{
+              display:"inline-flex", alignItems:"center", gap:8,
+              background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb",
+              borderRadius:20, padding:"8px 14px",
+              fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.14em",
+              cursor:"pointer",
+            }}
+          >
+            <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
+            MINIMIZE
+          </button>
+          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em" }}>
+            TIMER KEEPS RUNNING
+          </span>
+        </div>
+      )}
       <div style={{ height:3, background:"#222", borderRadius:2, marginTop:16, overflow:"hidden" }}>
         <div style={{ height:"100%", background:"#f5c842", borderRadius:2, width:`${progress}%`, transition:"width 0.5s ease" }} />
       </div>
@@ -961,6 +1161,60 @@ export default function CookMode({
         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>STEP {activeStep+1} OF {steps.length}</span>
         <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555" }}>{completedSteps.size} DONE</span>
       </div>
+
+      {/* Push-enable prompt — only renders when:
+          - this device CAN do push (supported flag from useWebPush)
+          - user hasn't already subscribed
+          - user hasn't explicitly denied (respect the blacklist)
+          - this step has a timer (otherwise the value-add is unclear;
+            no timer step = no push benefit, no reason to nag)
+
+          The copy emphasizes the lock-screen case because that's the
+          pain point: an in-app countdown can't wake a locked phone,
+          a push can. One tap calls webPush.enable() which handles
+          permission prompt, SW register, and push_subscriptions
+          upsert in one go. */}
+      {webPush.supported && !webPush.enabled && webPush.permission !== "denied" && Number.isFinite(step?.timer) && step.timer > 0 && (
+        <div style={{
+          marginTop: 16,
+          padding: "14px 16px",
+          background: "linear-gradient(180deg,#1e1408 0%,#170d05 100%)",
+          border: "1px solid #3a2a0a",
+          borderRadius: 12,
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <span style={{ fontSize: 22, flexShrink: 0 }}>🔔</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+              color:"#f5c842", letterSpacing:"0.14em", marginBottom:3,
+            }}>
+              RING ME ON THE LOCK SCREEN
+            </div>
+            <div style={{
+              fontFamily:"'DM Sans',sans-serif", fontSize:12,
+              color:"#bbb", lineHeight:1.4,
+            }}>
+              Timers only reach your phone when it's locked if notifications are enabled.
+            </div>
+          </div>
+          <button
+            onClick={() => { primeCookAudio(); webPush.enable(); }}
+            disabled={webPush.busy}
+            style={{
+              flexShrink: 0,
+              padding: "10px 14px",
+              background: "#f5c842", color: "#111",
+              border: "none", borderRadius: 10,
+              fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+              letterSpacing:"0.08em", cursor: webPush.busy ? "not-allowed" : "pointer",
+              opacity: webPush.busy ? 0.5 : 1,
+            }}
+          >
+            {webPush.busy ? "…" : "ENABLE"}
+          </button>
+        </div>
+      )}
       <div style={{ display:"flex", gap:8, marginTop:16, justifyContent:"center" }}>
         {steps.map((_,i)=>(
           <button key={i} onClick={()=>setActiveStep(i)} style={{ width: completedSteps.has(i)||i===activeStep?24:8, height:8, borderRadius:4, border:"none", cursor:"pointer", background: completedSteps.has(i)?"#22c55e":i===activeStep?"#f5c842":"#333", transition:"all 0.3s" }} />
@@ -1018,11 +1272,37 @@ export default function CookMode({
               {usesList.map((ing, i) => {
                 const swappedFrom = ing._swappedFrom?.item || null;
                 const isSkipped   = !!ing._skipped;
+                const overrideKey = prefKeyForIngredient(ing);
+                const overrideAmount = overrideKey ? unitOverrides[overrideKey] : null;
+                // Session override wins (one-off pick); fall back to
+                // the user's saved preference via applyPreferredUnit.
+                const preferred = overrideAmount || applyPreferredUnit(ing.amount, ing);
+                const displayAmount = preferred || ing.amount || "—";
                 return (
                   <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color: isSkipped ? "#8a7a5a" : "#e8dfc8", lineHeight:1.5, opacity: isSkipped ? 0.7 : 1 }}>
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878", minWidth:68, flexShrink:0, textDecoration: isSkipped ? "line-through" : "none" }}>
-                      {ing.amount || "—"}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => !isSkipped && overrideKey && setUnitPicker({
+                        key: overrideKey,
+                        ingredientId: ing.ingredientId,
+                        itemName: ing.item,
+                        amountString: String(displayAmount),
+                      })}
+                      disabled={isSkipped}
+                      style={{
+                        fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878",
+                        minWidth:68, flexShrink:0, textAlign:"left",
+                        display:"inline-flex", alignItems:"center", gap:4,
+                        background:"#1a1508", border:"1px solid #3a2f10",
+                        borderRadius:6, padding:"3px 8px",
+                        cursor: isSkipped ? "default" : "pointer",
+                        textDecoration: isSkipped ? "line-through" : "none",
+                        opacity: isSkipped ? 0.6 : 1,
+                      }}
+                    >
+                      <span>{displayAmount}</span>
+                      {!isSkipped && <span style={{ fontSize:8, opacity:0.7 }}>▾</span>}
+                    </button>
                     <span style={{ flex:1 }}>
                       <span style={{ textDecoration: isSkipped ? "line-through" : "none" }}>
                         {ing.item || ing.ingredientId || "ingredient"}
@@ -1123,7 +1403,35 @@ export default function CookMode({
             });
           })()}
         </p>
-        {step.timer && <Timer seconds={step.timer} />}
+        {step.timer && (
+          <Timer
+            key={`${activeStep}-${step.id}`}
+            seconds={step.timer}
+            // Only honor the resume deadline on the step that matched
+            // the active session when CookMode re-mounted. Moving
+            // forward / back clears it so fresh starts don't read a
+            // stale wall-clock from an unrelated step.
+            endsAt={activeStep === initialStepIndex ? initialTimerEndsAt : null}
+            onDone={() => {
+              // Ring the bell. Server-side push already queued at
+              // step-start (see useCookTelemetry.startStep) handles
+              // the "app is closed" case; this handles "app is open
+              // but user wandered off / backgrounded the tab."
+              playTimerChime();
+              if (typeof document !== "undefined" && document.hidden &&
+                  typeof Notification !== "undefined" && Notification.permission === "granted") {
+                try {
+                  new Notification(`${recipe.emoji || "⏲️"} Timer's up`, {
+                    body: step.title ? `Step ${activeStep + 1}: ${step.title}` : "Step timer ended",
+                    tag: `cook-timer-${telemetry.session?.id || "local"}-${step.id}`,
+                    icon: "/icon-192.png",
+                    badge: "/icon-badge-72.png",
+                  });
+                } catch { /* some contexts forbid Notification constructor */ }
+              }
+            }}
+          />
+        )}
       </div>
       {step.tip && (
         <div style={{ marginTop:12, padding:"14px 16px", background:"#0f1a0f", border:"1px solid #1e3a1e", borderRadius:10, display:"flex", gap:10 }}>
@@ -1189,6 +1497,22 @@ export default function CookMode({
           onFinish={() => {
             setCompleting(false);
             onDone?.();
+          }}
+        />
+      )}
+      {unitPicker && (
+        <UnitPicker
+          open={true}
+          onClose={() => setUnitPicker(null)}
+          amountString={unitPicker.amountString}
+          ingredientId={unitPicker.ingredientId}
+          itemName={unitPicker.itemName}
+          prefKey={unitPicker.key}
+          onPick={(newAmount) => {
+            setUnitOverrides(prev => ({
+              ...prev,
+              [unitPicker.key]: newAmount,
+            }));
           }}
         />
       )}

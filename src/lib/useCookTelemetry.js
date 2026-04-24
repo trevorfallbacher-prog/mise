@@ -142,7 +142,26 @@ export function useCookTelemetry(userId) {
       // shift applied — the user is actively cooking, pings are the
       // point. Body: "Step 4: Flip the steak" unless the caller passed
       // something richer.
-      if (Number.isFinite(nominalSeconds) && nominalSeconds > 0) {
+      //
+      // Density filter — the prompt now asks Claude to emit a timer
+      // on EVERY step with a clockable duration (sears, sautés, bakes,
+      // rests), so the display shows "~6 min" on active steps too.
+      // That would push-notify on every short step by default, which
+      // is noisy for cooks standing at the stove. Respect the user's
+      // density preference (localStorage, defaults to "all"):
+      //   "all"       — push every timer ≥ 5s  (default)
+      //   "long_only" — push only timers ≥ 5 min (passive-wait)
+      //   "off"       — never push; display-only
+      const density = (() => {
+        try { return window.localStorage.getItem("cook_timer_density") || "all"; }
+        catch { return "all"; }
+      })();
+      const longOnlyFloor = 300; // 5 minutes
+      const shouldQueuePush =
+        density === "off"       ? false
+      : density === "long_only" ? (Number.isFinite(nominalSeconds) && nominalSeconds >= longOnlyFloor)
+      :                           (Number.isFinite(nominalSeconds) && nominalSeconds > 0);
+      if (shouldQueuePush) {
         // Calibration lookup (migration 0138) — if the global corpus
         // has enough observations for this recipe+step, use the p50
         // observed duration instead of the recipe author's nominal.

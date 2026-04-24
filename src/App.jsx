@@ -15,6 +15,10 @@ import WhatsNewNotification from "./components/WhatsNewNotification";
 import ReleaseNotesModal from "./components/ReleaseNotesModal";
 import LevelUpCeremony from "./components/LevelUpCeremony";
 import XpToastStack from "./components/XpToastStack";
+import CookMode from "./components/CookMode";
+import CookBanner from "./components/CookBanner";
+import { useActiveCookSession } from "./lib/useActiveCookSession";
+import { useUserRecipes } from "./lib/useUserRecipes";
 import { useWhatsNew } from "./lib/useWhatsNew";
 import { useAuth } from "./lib/useAuth";
 import { useProfile } from "./lib/useProfile";
@@ -257,6 +261,77 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   // route into the same overlay.
   const [profileUserId, setProfileUserId] = useState(null);
 
+  // ── Cook mode (lifted from CreateMenu / Plan) ────────────────────
+  // CookMode is mounted ONCE at the App level so it survives tab
+  // changes and overlay dismissals. useActiveCookSession tails the
+  // cook_sessions table; when a session is open (status='active',
+  // within the 2h resume window), CookBanner appears pinned at the
+  // top of the app with the live step + timer countdown. Tapping the
+  // banner re-opens CookMode at the step the user was on.
+  //
+  // Why ONE mount, not per-tab: before, CreateMenu and Plan each
+  // rendered their own CookMode. Unmounting either (closing the
+  // overlay, navigating tabs) destroyed the cook view and made "close
+  // the app then come back" a broken experience. One mount + a banner
+  // for resume + no auto-abandon-on-unmount inside CookMode = the
+  // cook survives everything short of the 2h window elapsing or the
+  // user explicitly finalizing from the DONE LOG IT button.
+  const [cookModeRecipe, setCookModeRecipe]     = useState(null);
+  const [cookModeView, setCookModeView]         = useState("overview");
+  const [cookModeStepIdx, setCookModeStepIdx]   = useState(0);
+  const [cookModeEndsAt, setCookModeEndsAt]     = useState(null);
+  const activeCook = useActiveCookSession(user?.id);
+  const { saveRecipe: saveUserRecipe } = useUserRecipes(user?.id);
+
+  // Open CookMode on a recipe. Default flow: land on overview
+  // (ingredient checklist + swap UI) and let the user tap "Start
+  // cooking" to enter the step-by-step view. When there's an ACTIVE
+  // cook_session for this recipe (push deep-link, tap on the pinned
+  // banner, a fresh Cook Now on a recipe you walked away from 10 min
+  // ago), jump straight to the live step instead — nobody wants to
+  // re-approve ingredients mid-braise. Explicit opts override.
+  const openCookMode = useCallback((recipe, opts = {}) => {
+    if (!recipe) return;
+    const activeSameRecipe = activeCook.session && activeCook.session.recipe_slug === recipe.slug;
+    const liveStepIdx = activeSameRecipe && activeCook.activeStep && recipe.steps
+      ? recipe.steps.findIndex(s => String(s.id) === String(activeCook.activeStep.step_id))
+      : -1;
+    setCookModeRecipe(recipe);
+    setCookModeView(opts.view || (activeSameRecipe ? "cook" : "overview"));
+    setCookModeStepIdx(
+      Number.isFinite(opts.stepIndex)
+        ? opts.stepIndex
+        : liveStepIdx >= 0 ? liveStepIdx : 0,
+    );
+    // Carry the server-side deadline through so the in-app Timer
+    // calibrates to "the push is 30s away" instead of starting a
+    // fresh mm:ss. Null on fresh cooks.
+    setCookModeEndsAt(activeSameRecipe ? activeCook.timerEndsAt : null);
+  }, [activeCook.session, activeCook.activeStep, activeCook.timerEndsAt]);
+
+  // Close CookMode without killing the session. The session row stays
+  // active in cook_sessions; CookBanner surfaces it. Explicit abandon
+  // only happens when the user finalizes (DONE LOG IT → endCook with
+  // status='finished') or when the 2h window lapses.
+  const closeCookMode = useCallback(() => {
+    setCookModeRecipe(null);
+    // activeCook will refresh via realtime; force one in case the
+    // realtime channel was mid-reconnect.
+    activeCook.refresh();
+  }, [activeCook]);
+
+  // Resume a cook from the CookBanner tap. Resolves the live step
+  // index off activeStep.step_id so we land inside the cook view on
+  // the correct step. Priming the step index also makes the first
+  // step-advance cancel the right pending timer push.
+  const resumeCookFromBanner = useCallback((recipe) => {
+    if (!recipe) return;
+    const idx = activeCook.activeStep && recipe.steps
+      ? Math.max(0, recipe.steps.findIndex(s => String(s.id) === String(activeCook.activeStep.step_id)))
+      : 0;
+    openCookMode(recipe, { view: "cook", stepIndex: idx });
+  }, [activeCook.activeStep, openCookMode]);
+
   // Classify a user id relative to the viewer so the UserProfile overlay
   // shows the right chip and doesn't tease cook history it won't have.
   const relationshipFor = useCallback((id) => {
@@ -489,6 +564,7 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                 setShoppingList={setShoppingList}
                 onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); }}
                 onOpenCook={openCook}
+                onStartCook={openCookMode}
                 deepLink={deepLink}
                 onDeepLinkConsumed={() => setDeepLink(null)}
               />
@@ -673,6 +749,11 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
             setCreateMenuOpen(false);
             setProfileUserId(user.id);
           }}
+          // CookMode lives at App level now; CreateMenu bubbles
+          // recipe-to-cook selections up here. App opens the overlay
+          // and keeps it alive across navigation so the resume banner
+          // can pop it back from any tab.
+          onStartCook={openCookMode}
           onRequestPantryAction={(kind) => {
             // Route the intent back to Kitchen: flip to the pantry
             // tab, stash the action so Kitchen's effect can open the
@@ -682,6 +763,56 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
             setCreateMenuOpen(false);
           }}
         />
+      )}
+
+      {/* Pinned "cooking in progress" banner. Reads live state from
+          useActiveCookSession; renders only when there IS an active
+          cook and the user hasn't dismissed. Tap re-opens CookMode
+          at the live step; × hides until next session change. Mounted
+          outside AnimatePresence because it should be visible across
+          every tab, including during tab cross-fades. */}
+      <CookBanner
+        active={activeCook}
+        onResume={resumeCookFromBanner}
+        onDismiss={activeCook.dismiss}
+      />
+
+      {/* App-level CookMode overlay. One mount, shared by every
+          entry point (CreateMenu's start-cooking, Plan's Cook Now,
+          cook_session deeplinks, the pinned banner's resume tap).
+          Full-screen over the page shell; z-index above the banner +
+          nav, below modal sheets (160). onExit just closes the
+          overlay — the cook_sessions row stays active for 2h so the
+          banner can surface it. onDone (finalize) closes the overlay
+          AND lands the user on their profile so the fresh cook_log
+          shows up. */}
+      {cookModeRecipe && (
+        <div style={{
+          position: "fixed", inset: 0, maxWidth: 480, margin: "0 auto",
+          background: "#111", color: "#f5f5f0",
+          zIndex: 140, overflowY: "auto",
+        }}>
+          <CookMode
+            recipe={cookModeRecipe}
+            initialView={cookModeView}
+            initialStepIndex={cookModeStepIdx}
+            initialTimerEndsAt={cookModeEndsAt}
+            onExit={closeCookMode}
+            onDone={() => {
+              closeCookMode();
+              setProfileUserId(user.id);
+            }}
+            pantry={pantry}
+            setPantry={setPantry}
+            shoppingList={shoppingList}
+            setShoppingList={setShoppingList}
+            onGoToShopping={() => { setPantryView("shopping"); setTab("pantry"); closeCookMode(); }}
+            userId={user.id}
+            family={relationships.family}
+            friends={relationships.friends}
+            onForkRecipe={saveUserRecipe}
+          />
+        </div>
       )}
 
       {/* Post-update notification + full release-notes modal. The slim

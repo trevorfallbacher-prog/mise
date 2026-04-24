@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import CookMode from "./CookMode";
+// CookMode is mounted at the App level now so the resume-cook banner
+// can reopen it from any tab. Plan hands the recipe off via onStartCook
+// passed from App. The old inline-CookMode render was removed —
+// Plan no longer imports CookMode.
 import SchedulePicker from "./SchedulePicker";
 import IAteThisSheet from "./IAteThisSheet";
 import MealPrepTimeline from "./MealPrepTimeline";
@@ -255,18 +258,86 @@ function RecipePickerModal({ userRecipes = [], leftovers = [], onPick, onClose }
 function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], prepRows = [], onDismissPrep, onUndismissPrep, onCookNow, onClaim, onUnclaim, onChangeCook, onChangeServings, onDelete, onClose }) {
   const [confirming, setConfirming] = useState(false);
   if (!recipe) {
+    // Recipe couldn't be resolved from the bundled library or the
+    // viewer's user_recipes list. Two likely causes:
+    //   1) Author IS the viewer — their own row was deleted or never
+    //      saved (silent persist failure on an old AI cook).
+    //   2) Author is family — user_recipes is private-by-default
+    //      (migration 0052), so a meal scheduled without flipping
+    //      shared=true is visible to family via scheduled_meals
+    //      (family-select) but the recipe JSON isn't. scary before;
+    //      now we explain it.
+    // Either way, render the scheduled context we DO have: time, slot,
+    // the author, and a title derived from the slug so the drawer
+    // never shows as "null".
+    const viewerIsAuthor = meal.user_id === userId;
+    const authorName     = nameFor ? nameFor(meal.user_id) : null;
+    const prettyTitle    = (meal.recipe_slug || "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b\w/g, c => c.toUpperCase())
+      .trim() || "Untitled recipe";
     return (
       <div style={{
         position: "fixed", inset: 0, background: "#000000dd", zIndex: 280,
         display: "flex", alignItems: "flex-end",
         maxWidth: 480, margin: "0 auto",
       }}>
-        <div style={{ width: "100%", background: "#141414", borderRadius: "20px 20px 0 0", padding: "24px 22px 36px" }}>
-          <div style={{ color: "#f87171", fontFamily: "'DM Sans',sans-serif", fontSize: 14 }}>
-            Recipe "{meal.recipe_slug}" not found in the library.
+        <div style={{ width: "100%", background: "#141414", borderRadius: "20px 20px 0 0", padding: "20px 22px 36px" }}>
+          <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 18px" }} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ fontSize: 40 }}>🔒</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.12em" }}>
+                {meal.meal_slot ? `${meal.meal_slot.toUpperCase()} · ` : ""}{fmtTime(meal.scheduled_for).toUpperCase()}
+              </div>
+              <div style={{ fontFamily: "'Fraunces',serif", fontSize: 22, color: "#f0ece4", fontWeight: 300, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {prettyTitle}
+              </div>
+              {authorName && !viewerIsAuthor && (
+                <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 12, color: "#666" }}>
+                  Scheduled by {authorName}
+                </div>
+              )}
+            </div>
           </div>
+
+          <div style={{
+            marginTop: 18, padding: "14px 16px",
+            background: "#0f0f0f", border: "1px solid #1e1e1e",
+            borderRadius: 10, display: "flex", gap: 10,
+            fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#bbb", lineHeight: 1.5,
+          }}>
+            <span style={{ fontSize: 16, flexShrink: 0 }}>{viewerIsAuthor ? "⚠️" : "🔒"}</span>
+            <span>
+              {viewerIsAuthor ? (
+                <>This recipe isn't in your library — it may have been deleted, or the save didn't land. You can schedule it again from your recipes.</>
+              ) : (
+                <>{authorName || "The author"} hasn't shared this recipe yet, so the details aren't visible. Ask them to re-open it and tap <b>SHARE WITH FAMILY</b>.</>
+              )}
+            </span>
+          </div>
+
+          {/* Destructive: let the viewer remove the stale schedule
+              if they own it — the drawer is the right place to
+              clean up after a deleted recipe row. */}
+          {viewerIsAuthor && onDelete && (
+            <button
+              onClick={() => onDelete(meal.id)}
+              style={{
+                marginTop: 14, width: "100%", padding: "14px",
+                background: "#2a0a0a", border: "1px solid #5a1a1a",
+                color: "#ef4444", borderRadius: 12,
+                fontFamily: "'DM Mono',monospace", fontSize: 12,
+                letterSpacing: "0.1em", cursor: "pointer", fontWeight: 600,
+              }}
+            >
+              REMOVE FROM CALENDAR
+            </button>
+          )}
+
           <button onClick={onClose} style={{
-            marginTop: 16, width: "100%", padding: "14px",
+            marginTop: 10, width: "100%", padding: "14px",
             background: "#1a1a1a", border: "1px solid #2a2a2a",
             color: "#888", borderRadius: 12,
             fontFamily: "'DM Mono',monospace", fontSize: 12, cursor: "pointer",
@@ -549,7 +620,7 @@ function MealDetailDrawer({ meal, recipe, userId, nameFor, family = [], prepRows
 // Plan tab — 7 days, tap + to add, tap meal for details
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook, deepLink, onDeepLinkConsumed }) {
+export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, family = [], friends = [], pantry = [], setPantry, shoppingList = [], setShoppingList, onGoToShopping, onOpenCook, onStartCook, deepLink, onDeepLinkConsumed }) {
   // 21-day rolling window: past 7 days for week-in-review + today + next 14.
   // Chronological order (oldest past on top, future on bottom) so users
   // scroll down through time the same way the eye reads a diary.
@@ -645,7 +716,12 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
         if (meal) setOpenMeal(meal);
         else if (data.recipe_slug) {
           const recipe = findRecipe(data.recipe_slug, findUserRecipe);
-          if (recipe) setCookingRecipe(recipe);
+          // App owns CookMode now — hand it the recipe and let the
+          // App-level effect open the overlay. Works from any tab, so
+          // taps from Home / Kitchen deep-links land on the same
+          // resume flow. Fallback: no-op if the host didn't wire the
+          // handler (older App bundles).
+          if (recipe) onStartCook?.(recipe);
         }
         consume();
       })();
@@ -684,7 +760,6 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   const [recipeToSchedule, setRecipeToSchedule] = useState(null); // Recipe picked from modal
   const [isRequesting, setIsRequesting] = useState(false);       // "Request" mode vs. "I'll cook"
   const [openMeal, setOpenMeal] = useState(null);                // Meal tapped to view
-  const [cookingRecipe, setCookingRecipe] = useState(null);      // Recipe now in CookMode
 
   // Auto-scroll the TODAY card into view on first mount — with 7 past
   // days above today, the default scroll-top lands on a week ago, which
@@ -754,34 +829,11 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // so the sheet renders above the whole view, not inside MealDetail.
   const [eatingLeftover, setEatingLeftover] = useState(null);
 
-  // If user tapped a meal → Cook Now, CookMode takes over the whole tab.
-  // Pantry + shoppingList wiring is identical to the Cook tab's path so
-  // "ADD MISSING TO SHOPPING LIST" works regardless of where you started.
-  // This early return lives AFTER every hook call — moving it earlier
-  // drops the cooksByDay useMemo on Cook-Now transition and trips
-  // "rendered fewer hooks than expected".
-  if (cookingRecipe) {
-    return (
-      <CookMode
-        recipe={cookingRecipe}
-        onExit={() => setCookingRecipe(null)}
-        onDone={() => setCookingRecipe(null)}
-        pantry={pantry}
-        setPantry={setPantry}
-        shoppingList={shoppingList}
-        setShoppingList={setShoppingList}
-        onGoToShopping={onGoToShopping}
-        userId={userId}
-        family={family}
-        friends={friends}
-        // Fork-to-new-recipe handler for CookComplete's "SAVE CHANGES
-        // AS NEW RECIPE" action. Wraps useUserRecipes.saveRecipe —
-        // unique-slug logic in that hook means forking beef-wellington
-        // lands as beef-wellington-2, leaving the original untouched.
-        onForkRecipe={saveUserRecipe}
-      />
-    );
-  }
+  // CookMode is now mounted at the App level so a pinned "resume
+  // cook" banner can pop it back open from any tab. Plan hands the
+  // recipe off via onStartCook; App owns the lifecycle. Previously
+  // this component did an early return into an inline CookMode which
+  // made resume impossible (unmounting Plan = losing the cook view).
   const onPickRecipe = (recipe, opts = {}) => {
     setRecipeToSchedule(recipe);
     setScheduleFromPantryRowId(opts.fromPantryRowId || null);
@@ -1155,7 +1207,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
             const scaled = openMeal.servings && openMeal.servings !== r.serves
               ? scaleRecipe(r, openMeal.servings)
               : r;
-            setCookingRecipe(scaled);
+            onStartCook?.(scaled);
           }}
           onClaim={async () => {
             const updated = await claim(openMeal.id);

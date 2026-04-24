@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
-import CookMode from "./CookMode";
+// CookMode is mounted at the App level (see App.jsx cookModeRecipe
+// state). This overlay no longer renders it inline — cook requests
+// are bubbled up via onStartCook, which lets the resume banner keep
+// the session alive across tab changes.
 import CustomRecipeBuilder from "./CustomRecipeBuilder";
 import AIRecipe from "./AIRecipe";
 import SchedulePicker from "./SchedulePicker";
@@ -48,9 +51,16 @@ export default function CreateMenu({
   // AddItemModal open. Receiving null means the host didn't wire
   // the feature yet (backwards-compat during rollout).
   onRequestPantryAction,
+  // Hands the chosen recipe up to App, which owns CookMode. The old
+  // flow rendered CookMode inline inside this overlay — unmount on
+  // close killed the resume-from-banner story. App now keeps one
+  // CookMode alive across tab changes and uses the banner to surface
+  // an in-flight cook to the user.
+  onStartCook,
 }) {
-  const [mode, setMode] = useState("choose");        // choose | custom | ai | template | cook
-  const [activeRecipe, setActiveRecipe] = useState(null);
+  // `cook` was once a valid mode here when CookMode rendered inline.
+  // That's gone now — cook requests exit through onStartCook + onClose.
+  const [mode, setMode] = useState("choose");        // choose | custom | ai | template
   // When set, the meal-detail overlay is shown (rendered on top of
   // the template picker) so the user can inspect pieces + cook one.
   const [viewingMeal, setViewingMeal] = useState(null);
@@ -142,16 +152,18 @@ export default function CreateMenu({
     });
   }, [meals, query]);
 
-  // Enter CookMode with a given recipe, regardless of source.
+  // Hand the chosen recipe up to App and close the overlay. App
+  // mounts CookMode at the top level so navigating tabs away from a
+  // cook doesn't destroy the session — useActiveCookSession + the
+  // CookBanner keep the in-flight cook visible and resumable.
   const startCooking = (recipe) => {
-    setActiveRecipe(recipe);
-    setMode("cook");
+    onStartCook?.(recipe);
+    onClose?.();
   };
 
   // Back from a nested mode should return to the chooser, not to the
   // parent — only "close" from the chooser itself actually closes.
   const backToChoose = () => {
-    setActiveRecipe(null);
     setMode("choose");
   };
 
@@ -188,12 +200,34 @@ export default function CreateMenu({
     setScheduling(row.recipe);
   };
 
-  // COOK IT — original save + cook handoff. Preserves the "cook anyway
-  // if save fails" behavior so a transient DB error doesn't strand the
-  // user mid-session.
+  // COOK IT — save then cook. Two rules learned the hard way:
+  //
+  //   1. Bail when the save fails. Before, the cook proceeded even if
+  //      persist() returned null (unique-slug collision, RLS denial,
+  //      network blip) — the user would cook something that never
+  //      landed in their library, then wonder "where did my recipe go."
+  //      Now we stop, re-toast, and let the user retry. The pushToast
+  //      inside persist() already surfaced the original error; this
+  //      extra nudge explains why cook didn't happen.
+  //
+  //   2. Mirror handleSchedule and stamp shared=true. Cooking an AI
+  //      recipe means the rest of the family sees the cook_log and
+  //      any scheduled_meals row in realtime. Without shared=true,
+  //      the user_recipes row is private, the family view resolves
+  //      null, and the meal detail drawer renders a "locked recipe"
+  //      state. Cooking is a family-visible action; the recipe that
+  //      was cooked should be too.
   const handleSaveAndCook = (source) => async (recipe, opts = {}) => {
-    await persist(recipe, source, opts);
-    startCooking(recipe);
+    const row = await persist(recipe, source, { ...opts, shared: true });
+    if (!row) {
+      pushToast("Save failed — couldn't start cook", { emoji: "⚠️", kind: "warn" });
+      return;
+    }
+    // Use the stamped (DB-slugged) recipe so subsequent lookups via
+    // findRecipe hit the exact row we just wrote. Pre-save slug may
+    // have collided and been suffixed "-2" — the raw `recipe` arg
+    // still has the old slug.
+    startCooking(row.recipe || recipe);
   };
 
   // Silent save — persist without toasting or closing. Used by the
@@ -207,37 +241,11 @@ export default function CreateMenu({
     return row?.recipe || null;
   };
 
-  // Cook mode handoff — CookMode can end in exit OR done; we preserve
-  // both and route onDone up to the parent (App).
-  if (mode === "cook" && activeRecipe) {
-    return (
-      <div style={OVERLAY_STYLE}>
-        <CookMode
-          recipe={activeRecipe}
-          onExit={backToChoose}
-          onDone={() => {
-            const r = activeRecipe;
-            setActiveRecipe(null);
-            onCooked?.(r);
-            onClose?.();
-          }}
-          pantry={pantry}
-          setPantry={setPantry}
-          shoppingList={shoppingList}
-          setShoppingList={setShoppingList}
-          onGoToShopping={onGoToShopping}
-          userId={userId}
-          family={family}
-          friends={friends}
-          // Fork-to-new-recipe handler for CookComplete's "SAVE CHANGES
-          // AS NEW RECIPE" action. Wraps useUserRecipes.saveRecipe —
-          // the hook mints a unique slug so forking leaves the
-          // original recipe untouched.
-          onForkRecipe={saveRecipe}
-        />
-      </div>
-    );
-  }
+  // CookMode is mounted at the App level now (see App.jsx
+  // cookModeRecipe state). The old inline-CookMode block that lived
+  // here was removed when we pinned a resume banner to the top of
+  // the app — keeping the cook alive across navigation means CookMode
+  // cannot be tied to the CreateMenu overlay's lifetime.
 
   if (mode === "custom") {
     return (

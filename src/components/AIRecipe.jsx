@@ -21,6 +21,8 @@ import {
 } from "../lib/recipePairing";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import UnitPicker from "./UnitPicker";
+import { applyPreferredUnit, prefKeyForIngredient, useUnitPrefsVersion } from "../lib/unitPrefs";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -3032,7 +3034,27 @@ export default function AIRecipe({
 //   amber (#f59e0b) — substitute or missing, no dietary conflict
 //   red   (#e8908a) — dietary conflict on the chosen pair/sub
 function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
-  const pairings = pairRecipeIngredients(ingredients, pantry || []);
+  // Per-row amount overrides from the UnitPicker. Keyed by index so
+  // they survive re-renders without polluting the recipe shape; the
+  // shopping-cart write below reads through these overrides.
+  //
+  // Persistent prefs (unitPrefs.js, localStorage) apply first, so a
+  // user's "I like butter in tbsp" pick carries across drafts and
+  // cook sessions automatically. The in-session override wins when
+  // it's set (handles the case where the user picks a one-off unit
+  // for this draft without changing their saved preference).
+  const [amountOverrides, setAmountOverrides] = useState({});
+  const [pickerIdx, setPickerIdx] = useState(null);
+  // Subscribe to preference changes so a Settings toggle re-renders
+  // amounts in-place without a page reload. Value isn't used; the
+  // bump triggers the component update.
+  useUnitPrefsVersion();
+  const effectiveIngredients = ingredients.map((ing, i) => {
+    if (amountOverrides[i] != null) return { ...ing, amount: amountOverrides[i] };
+    const prefApplied = applyPreferredUnit(ing.amount, ing);
+    return prefApplied !== ing.amount ? { ...ing, amount: prefApplied } : ing;
+  });
+  const pairings = pairRecipeIngredients(effectiveIngredients, pantry || []);
   // Track per-row shopping adds locally so the button flips to
   // ✓ ON LIST after commit without waiting for the parent to
   // round-trip state back down.
@@ -3080,9 +3102,22 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
             padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878", minWidth: 60 }}>
-                {ing.amount || "—"}
-              </span>
+              <button
+                type="button"
+                onClick={() => setPickerIdx(i)}
+                title="Change unit"
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878",
+                  minWidth: 60, textAlign: "left",
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: "#1a1508", border: "1px solid #3a2f10",
+                  borderRadius: 6, padding: "3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                <span>{ing.amount || "—"}</span>
+                <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
+              </button>
               <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
                 {ing.item}
               </span>
@@ -3133,6 +3168,23 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
           </div>
         );
       })}
+      {pickerIdx != null && (() => {
+        const row = effectiveIngredients[pickerIdx];
+        if (!row) return null;
+        return (
+          <UnitPicker
+            open={true}
+            onClose={() => setPickerIdx(null)}
+            amountString={String(row.amount || "")}
+            ingredientId={row.ingredientId}
+            itemName={row.item}
+            prefKey={prefKeyForIngredient(row)}
+            onPick={(newAmount) => {
+              setAmountOverrides(prev => ({ ...prev, [pickerIdx]: newAmount }));
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

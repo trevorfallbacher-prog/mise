@@ -152,6 +152,11 @@ type Prefs = {
     familyName?: string;
     familyExamples?: string[];
     rawPrompt?: string;
+    // Canonical ids the dish MUST contain. Classifier emits these
+    // for SPECIFIC dishes; the post-check retries when any are
+    // missing from the drafted ingredient list. Fixes the class of
+    // bug where "chicken marsala" drafts without chicken.
+    requiredIngredients?: string[];
   };
   // Anchor context for compose-a-meal drafts. When present, the draft
   // is a side / dessert / appetizer intended to be served alongside
@@ -206,6 +211,22 @@ function assemblePromptHeader(
   context: RichContext,
   opts: { skipPantry?: boolean } = {},
 ): string {
+  // Two modes of intent, two treatments of the pantry:
+  //
+  //   1. USE-MY-PANTRY mode — FAMILY / OPEN / FREEFORM tiers, or any
+  //      tier with starred items. The user IS leaning on what they
+  //      have; ship full pantry detail so Claude can pick and tune
+  //      the dish around it.
+  //
+  //   2. FREE-RECIPE mode — SPECIFIC tier without starred items.
+  //      The user asked for a specific dish ("chicken marsala");
+  //      the pantry is irrelevant to drafting it. Skip the pantry
+  //      block entirely — the client does the coverage join
+  //      (in-pantry vs shopping) downstream using the returned
+  //      ingredient list, no LLM turns needed.
+  const hasStarred = Array.isArray(prefs.starIngredientIds) && prefs.starIngredientIds.length > 0;
+  const contractTier = prefs.dishContract?.tier;
+  const freeRecipeMode = contractTier === "SPECIFIC" && !hasStarred;
   // Final-mode skips the pantry listing — the sketch already picked
   // a dish, the LOCKED INGREDIENTS block below is the authoritative
   // shopping list, and re-sending 80 pantry rows burns thousands of
@@ -223,18 +244,39 @@ function assemblePromptHeader(
   // tortillas" while Mission Tortillas sat in the pantry).
   const pantryLines = opts.skipPantry
     ? "(pantry was surveyed during sketch — see LOCKED INGREDIENTS below for the authoritative set)"
+    : freeRecipeMode
+    ? "(user asked for a specific dish — draft the canonical recipe; the client will label coverage against the pantry on its own. Do not try to bias toward what the user has — they asked for THIS dish.)"
     : pantry.length === 0
     ? "(pantry is empty — suggest something that needs only staples)"
     : pantry
         .map((p, i) => {
-          const amount = p.amount != null ? `${p.amount}${p.unit ? ` ${p.unit}` : ""}` : "";
+          // Per-item pantry data sent to the model. Two fields are
+          // deliberately NOT sent:
+          //
+          //   • Stock quantity (raw weighed oz / count) — Claude
+          //     isn't doing inventory math, and shipping it invited
+          //     precision echoes ("29.3545 oz garlic") into recipe
+          //     amounts. The sanity clamps in normalizeIngredientAmount
+          //     are defense in depth.
+          //   • Category ("meat" / "dairy") — the canonical_id
+          //     already encodes it; a second label per row was
+          //     redundant.
+          //
+          // Everything else is load-bearing: identity axes
+          // (canonical / cut / state / brand), shelf location
+          // (drives "use X from your fridge" phrasing + refrigerated
+          // vs dry disambiguation), kind (compound / leftover behave
+          // differently from raw ingredients), expiry (use-soon
+          // signal the model genuinely acts on), starred (user
+          // preference weight), and the enrichment fields — flavor
+          // profile, classic pairings, and per-item dietary flags —
+          // each of which biases dish choice, especially on
+          // user-minted canonicals where Claude has no training prior.
           const lines: string[] = [`Pantry Item ${i + 1}:`];
           lines.push(`  Canonical [id]: ${p.canonicalId || "(unlinked)"}`);
           if (p.cut) lines.push(`  Cut: ${p.cut}`);
           if (p.state) lines.push(`  State: ${p.state}`);
           if (p.brand) lines.push(`  Brand: ${p.brand}`);
-          if (amount) lines.push(`  Amount: ${amount}`);
-          if (p.category) lines.push(`  Category: ${p.category}`);
           if (p.location) lines.push(`  Location: ${p.location}`);
           if (p.kind && p.kind !== "ingredient") lines.push(`  Kind: ${p.kind}`);
           if (typeof p.daysToExpiry === "number") {
@@ -556,7 +598,7 @@ exact shape:
   "ideal": [
     {
       "name":         "<CLEAN CANONICAL NAME ONLY — e.g. 'mozzarella', 'flour tortillas', 'chicken breast'. One-to-three words. No prep verbs, no counts, no brand, no parentheticals.>",
-      "amount":       "<display, e.g. '8 oz'>",
+      "amount":       "<display in STANDARD US CUSTOMARY UNITS. Cutlets/chops/steaks = piece count ('2 breasts'). Roasts/large cuts = lb ('3 lb brisket'). Ground meat = lb. Liquids/dairy/dry goods = cups/tbsp/tsp/oz ('2 tbsp', '1 cup'). Produce = pieces or by eye ('2 cloves garlic', '1 onion'). Never blank, never 'to taste' (except salt/pepper), never 'drizzle'/'splash'/'dash'.>",
       "ingredientId": "<the canonical slug you have in mind — e.g. 'tortillas', 'mozzarella', 'chicken_breast'. Use the registry's canonical id so the client can objectively verify whether the user's pantry covers this slot. null only when no registry slug fits.>",
       "role":         "protein" | "dairy" | "grain" | "produce" | "fat" | "spice" | "sauce" | "other"
     },
@@ -602,7 +644,6 @@ Rules:
           Pantry Item 3:
             Canonical [id]: tortillas
             Brand: Mission
-            Amount: 8 count
         → PANTRY entry: { name: "tortillas", ingredientId: "tortillas", subbedFrom: null }
       Example 2 (WRONG):
         Same inputs
@@ -724,7 +765,7 @@ exact shape. Every field is REQUIRED unless marked optional.
   "tools":      ["<short name>", ...],                  // pans, knives, etc
   "ingredients": [
     {
-      "amount":       "<display string, e.g. '2 tbsp' or '½ cup'>",
+      "amount":       "<How much THIS RECIPE needs. Pick a sensible home-scale quantity; do not weigh-or-measure real-world precision, use CLEAN ROUND NUMBERS (halves, quarters, thirds at most). Never emit more than one decimal place of precision.\n\n      Rules by ingredient type (STANDARD US CUSTOMARY UNITS):\n        • Cutlet-style meats (chicken breast / thigh / wing / tenderloin, pork chop, steak, cutlets) → PIECE COUNT: '2 breasts', '4 thighs', '3 chops', '2 ribeyes'. Americans almost never buy these by weight; piece counts match how the cook actually grabs them out of the fridge.\n        • Roasts and large cuts (brisket, pork shoulder, chuck roast, whole chicken, turkey breast) → POUNDS: '3 lb brisket', '4 lb pork shoulder'. You buy these by weight at the counter.\n        • Ground meats → pounds or ounces: '1 lb ground beef'.\n        • Dry goods, liquids, dairy → cups / tablespoons / teaspoons / ounces: '2 tbsp', '1 cup', '½ cup', '8 oz'. Never emit grams or milliliters by default — the user can rotate to metric in the UI if they prefer.\n        • Flour → cups, not ounces ('2 cups flour', not '9 oz flour').\n        • Aromatics (garlic, ginger, shallot, herbs) → cloves / inches / sprigs / tbsp: '2 cloves garlic', '1 inch ginger', '2 sprigs thyme', '2 tbsp chopped parsley'. NEVER emit garlic in ounces or pounds — a clove is ~3g / 0.1 oz; anything over 6 cloves for a home recipe is a bug.\n        • Produce → pieces or by eye: '1 onion', '1 bunch parsley', '2 tomatoes'.\n      NEVER emit a blank amount. NEVER emit 'to taste' except for salt/pepper/pepper flakes on active-seasoning steps (even then, prefer 'pinch' or '¼ tsp' when you can estimate). NEVER emit 'a drizzle' / 'a splash' / 'a dash' — give a real measurement the cook can work with.>",
       "item":         "<CLEAN CANONICAL NAME ONLY — e.g. 'olive oil', 'chicken breast', 'mozzarella'. Do NOT stuff prep ('cut into bite-sized pieces', 'chopped fine'), brand ('Kerrygold'), or counts ('4 count') into this field. Prep goes in the step instruction; identity lives here.>",
       "ingredientId": "<verbatim pantry canonical id or null — do NOT invent or modify slugs>",
       "cut":          "<optional: anatomical cut for meats — 'breast', 'thigh', 'ribeye', 'brisket', 'loin', 'shoulder' — null for non-meats>",
@@ -736,37 +777,40 @@ exact shape. Every field is REQUIRED unless marked optional.
     {
       "id":          "step1",
       "title":       "<short step title>",
-      "instruction": "<1-3 sentences — reference ingredients by display name; the UI zips them back to the top-level ingredients[] list>",
+      "instruction": "<1-3 sentences. EVERY ingredient reference MUST include its amount (and brand when present) inline, not a bare name. WRITE: 'Heat 2 tbsp of Kirkland unsalted butter in a skillet' — NOT 'Heat the butter in a skillet'. WRITE: 'Add 2 chicken breasts and 4 cloves of garlic' — NOT 'Add the chicken and garlic'. The inline measurement + brand matches the top-level ingredients[] row; the UI zips them back. If the step uses a partial amount of a larger ingredient ('half the onion'), say that explicitly ('half of the yellow onion — about ½ cup diced').>",
       "icon":        "🔪",
-      // Timer semantics — READ CAREFULLY, this drives real push
+      // Timer semantics — READ CAREFULLY. This drives BOTH the
+      // visible duration badge on every step AND optional push
       // notifications to the cook's phone (cook_step_notifications,
-      // migration 0137). A wrong value rings a push at the wrong time.
+      // migration 0137). The client filters which timers ring as
+      // pushes based on a user preference — your job is to always
+      // emit the real step duration so the cook can SEE how long
+      // each step takes.
       //
       // ALWAYS in SECONDS. Never minutes. A 25-minute bake is 1500,
       // NOT 25. Double-check: if your number is under ~60 and the
       // step is clearly minutes-long, you forgot to multiply by 60.
       //
-      // Emit a timer (number) ONLY on PASSIVE-WAIT steps where the
-      // cook can walk away. Pushes fire when the timer elapses, so
-      // "walk away" is the whole point. Examples:
+      // Emit a timer (integer seconds) on EVERY step that has a
+      // duration the cook can clock. Active-work steps (sear,
+      // sauté, boil, reduce) get a timer just like passive-wait
+      // steps (bake, simmer, rest). Examples:
+      //   • Sear 3 min/side (360)      • Sauté 5 min (300)
       //   • Bake 25 min (1500)         • Simmer 1 hour (3600)
       //   • Rest meat 10 min (600)     • Rise dough 2 hours (7200)
       //   • Reduce sauce 8 min (480)   • Chill 30 min (1800)
       //   • Sous vide 2 hours (7200)   • Braise 90 min (5400)
+      //   • Toast bread 2 min (120)    • Whisk 90 sec (90)
       //
-      // Emit NULL on active-work steps where the cook is at the
-      // stove and a push would be noise. Examples:
-      //   • Chop / mince / slice       • Stir / toss / flip
-      //   • Whisk together             • Season to taste
-      //   • "Cook, stirring, until X"  • Assemble / plate
-      //
-      // Short sears (90 seconds) are a judgment call — emit a timer
-      // if the cook typically sets one (steak flip, pasta water
-      // test). Skip if the instruction already says "watch closely".
+      // Emit NULL ONLY when the step has no duration at all —
+      // assembly, plating, pure prep like chopping that the cook
+      // controls entirely by eye. If the instruction says "X
+      // minutes" or "until Y" with a typical wall-clock duration,
+      // emit the timer.
       //
       // Valid range: 5..86400 seconds (5s to 24h). Anything outside
       // is treated as an error by the normalizer and dropped.
-      "timer":       <integer seconds for passive-wait steps, null otherwise>,
+      "timer":       <integer seconds for any step with a clockable duration, null only for pure-prep steps>,
       "tip":         "<optional one-line tip or null>",
       "heat":    "<optional: 'low' | 'medium-low' | 'medium' | 'medium-high' | 'high' | 'off'>",
       "doneCue": "<optional short qualitative ready-signal: 'nutty smell, color of wet sand'>"
@@ -987,13 +1031,17 @@ function dietSummary(diet: Record<string, unknown> | null | undefined): string {
 }
 
 function profileSection(p: NonNullable<NonNullable<RichContext>["profile"]>): string {
+  // Kept: dietary (hard constraint), cooking level (simple vs advanced
+  // dish complexity), goal (weight loss / muscle / flavor). Dropped:
+  // practiced skills (`knife_skills(L3), sauté(L5)`) — Claude doesn't
+  // meaningfully tune dishes against skill-tree levels; the `level`
+  // field above already captures "easy vs complex" at the right scope,
+  // and the topSkills list was incremental noise for zero behaviour
+  // change across A/B drafts.
   const lines: string[] = [];
   if (p.dietary)    lines.push(`- dietary: ${p.dietary}${p.veganStyle ? ` (${p.veganStyle})` : ""}`);
   if (p.level)      lines.push(`- cooking level: ${p.level}`);
   if (p.goal)       lines.push(`- goal: ${p.goal}`);
-  if (p.topSkills && p.topSkills.length) {
-    lines.push(`- practiced skills: ${p.topSkills.map((s) => `${s.id}(L${s.level})`).join(", ")}`);
-  }
   if (!lines.length) return "";
   return `\nPROFILE:\n${lines.join("\n")}\n`;
 }
@@ -1035,11 +1083,190 @@ type DishContract = {
   familyName?: string;
   familyExamples?: string[];
   rawPrompt?: string;
+  // Canonical ids the drafted recipe MUST contain (SPECIFIC only).
+  // Seeded by REQUIRED_INGREDIENTS_SEED for well-known dishes and
+  // augmented by the classifier for everything else. Enforced by
+  // verifyContract after the title check.
+  requiredIngredients?: string[];
 };
+
+// Required-ingredient seeds for named dishes. Case-insensitive
+// substring match on dishName — "chicken marsala" matches
+// "Creamy Chicken Marsala with Mushrooms". Each value is an array
+// of canonical slugs that MUST appear in recipe.ideal/pantry, or
+// be satisfied by a hub / cut descendant.
+//
+// Mirrors src/data/ingredientAliases.js#REQUIRED_INGREDIENTS_BY_DISH.
+// Kept inline here so the Deno edge function doesn't need to import
+// from the browser src tree; update both tables together.
+const REQUIRED_INGREDIENTS_SEED: Record<string, string[]> = {
+  "chicken marsala":    ["chicken"],
+  "chicken piccata":    ["chicken"],
+  "chicken parmesan":   ["chicken", "parmesan"],
+  "chicken parmigiana": ["chicken", "parmesan"],
+  "beef stroganoff":    ["beef"],
+  "beef wellington":    ["beef"],
+  "pork chop":          ["pork"],
+  "carbonara":          ["pasta_hub", "eggs"],
+  "cacio e pepe":       ["pasta_hub", "pecorino"],
+  "risotto":            ["arborio_rice"],
+  "lasagna":            ["pasta_hub"],
+  "mac and cheese":     ["pasta_hub", "cheddar"],
+  "shrimp scampi":      ["shrimp"],
+  "fish tacos":         ["tortillas"],
+  "bolognese":          ["ground_beef"],
+  "pad thai":           ["rice_noodles"],
+};
+
+// Minimal legacy-slug alias map — mirrors CANONICAL_ALIASES in
+// src/data/ingredients.js. The edge function only needs it to
+// resolve "chicken_breast" → "chicken" when checking whether a
+// required "chicken" ingredient is satisfied by a drafted
+// "chicken_breast" ingredient. Keep in sync with the browser table.
+const CANONICAL_ALIAS_BASE: Record<string, string> = {
+  ground_beef:        "beef",
+  ground_pork:        "pork",
+  ground_turkey:      "turkey",
+  chicken_breast:     "chicken",
+  chicken_thigh:      "chicken",
+  chicken_leg:        "chicken",
+  chicken_wing:       "chicken",
+  chicken_tenderloin: "chicken",
+  ribeye:             "beef",
+  ny_strip:           "beef",
+  sirloin:            "beef",
+  brisket:            "beef",
+  chuck_roast:        "beef",
+  pork_chop:          "pork",
+  pork_loin:          "pork",
+  pork_shoulder:      "pork",
+  turkey_breast:      "turkey",
+};
+
+// Hub parent map — "chicken_breast" has parentId "chicken_hub",
+// so a required "chicken_hub" is satisfied. Keep in sync with the
+// parentId fields in src/data/ingredients.js.
+const HUB_PARENT: Record<string, string> = {
+  chicken:            "chicken_hub",
+  chicken_breast:     "chicken_hub",
+  chicken_thigh:      "chicken_hub",
+  chicken_leg:        "chicken_hub",
+  chicken_wing:       "chicken_hub",
+  chicken_tenderloin: "chicken_hub",
+  ground_chicken:     "chicken_hub",
+  beef:               "beef_hub",
+  ground_beef:        "beef_hub",
+  ribeye:             "beef_hub",
+  ny_strip:           "beef_hub",
+  sirloin:            "beef_hub",
+  brisket:            "beef_hub",
+  chuck_roast:        "beef_hub",
+  steak:              "beef_hub",
+  pork:               "pork_hub",
+  ground_pork:        "pork_hub",
+  pork_chop:          "pork_hub",
+  pork_loin:          "pork_hub",
+  pork_shoulder:      "pork_hub",
+  spaghetti:          "pasta_hub",
+  penne:              "pasta_hub",
+  fettuccine:         "pasta_hub",
+  linguine:           "pasta_hub",
+  rigatoni:           "pasta_hub",
+  lasagna:            "pasta_hub",
+  ziti:               "pasta_hub",
+  macaroni:           "pasta_hub",
+  fusilli:            "pasta_hub",
+  farfalle:           "pasta_hub",
+  orzo:               "pasta_hub",
+  orecchiette:        "pasta_hub",
+  bucatini:           "pasta_hub",
+  cavatappi:           "pasta_hub",
+  rotini:             "pasta_hub",
+  angel_hair:         "pasta_hub",
+  tortellini:         "pasta_hub",
+  ravioli:            "pasta_hub",
+  gnocchi:            "pasta_hub",
+  rice:               "rice_hub",
+  basmati_rice:       "rice_hub",
+  jasmine_rice:       "rice_hub",
+  brown_rice:         "rice_hub",
+  arborio_rice:       "rice_hub",
+  flour:              "flour_hub",
+  almond_flour:       "flour_hub",
+  coconut_flour:      "flour_hub",
+  rice_flour:         "flour_hub",
+  bread_flour:        "flour_hub",
+  cake_flour:         "flour_hub",
+  whole_wheat_flour:  "flour_hub",
+  semolina:           "flour_hub",
+  pastry_flour:       "flour_hub",
+  zero_zero_flour:    "flour_hub",
+};
+
+function seedRequiredIngredients(dishName: string): string[] {
+  const n = (dishName || "").toLowerCase().trim();
+  if (!n) return [];
+  for (const [key, ids] of Object.entries(REQUIRED_INGREDIENTS_SEED)) {
+    if (n.includes(key)) return ids;
+  }
+  return [];
+}
+
+function extractRecipeIngredientIds(recipe: unknown): string[] {
+  if (!recipe || typeof recipe !== "object") return [];
+  const r = recipe as Record<string, unknown>;
+  const lists: unknown[] = [];
+  if (Array.isArray(r.ideal))  lists.push(...r.ideal);
+  if (Array.isArray(r.pantry)) lists.push(...r.pantry);
+  if (Array.isArray(r.ingredients)) lists.push(...r.ingredients);
+  const ids: string[] = [];
+  for (const entry of lists) {
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const id = typeof e.ingredientId === "string" ? e.ingredientId : null;
+    if (id) ids.push(id);
+    // Fall back to the free-text name so "chicken" as name still
+    // counts when Claude emits ingredientId: null for a canonical
+    // it couldn't echo. Normalized slug form.
+    const name = typeof e.name === "string" ? e.name.toLowerCase().trim().replace(/\s+/g, "_") : "";
+    if (name) ids.push(name);
+  }
+  return ids;
+}
+
+function checkRequiredIngredients(
+  required: string[] | undefined,
+  presentIds: string[],
+): { ok: boolean; missing: string[] } {
+  if (!Array.isArray(required) || required.length === 0) return { ok: true, missing: [] };
+  // Build the set of canonicals effectively present, expanding each
+  // drafted id to its base (via CANONICAL_ALIAS_BASE) and its hub
+  // parent (via HUB_PARENT) so "chicken_breast" counts as "chicken"
+  // and "chicken_hub", while the raw id still counts for literal
+  // matches.
+  const present = new Set<string>();
+  for (const id of presentIds) {
+    if (!id) continue;
+    present.add(id);
+    const base = CANONICAL_ALIAS_BASE[id];
+    if (base) present.add(base);
+    const hub = HUB_PARENT[id] || (base ? HUB_PARENT[base] : undefined);
+    if (hub) present.add(hub);
+    // Free-text name fallback — "chicken_marsala" substring-matches
+    // "chicken", so name-derived slugs still satisfy coarse
+    // requirements.
+    for (const req of required) {
+      if (id.includes(req)) present.add(req);
+    }
+  }
+  const missing = required.filter(req => !present.has(req));
+  return { ok: missing.length === 0, missing };
+}
 function verifyContract(
   title: unknown,
   contract: DishContract | undefined,
-): { pass: boolean; reason: string } {
+  recipe?: unknown,
+): { pass: boolean; reason: string; missingIngredients?: string[] } {
   if (!contract || contract.tier === "OPEN" || contract.tier === "FREEFORM") {
     return { pass: true, reason: "" };
   }
@@ -1050,11 +1277,32 @@ function verifyContract(
     const needles = [contract.dishName, ...aliases]
       .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
       .map((s) => s.toLowerCase());
-    for (const n of needles) if (t.includes(n)) return { pass: true, reason: "" };
-    return {
-      pass: false,
-      reason: `title "${title}" does not mention "${contract.dishName}" or any alias (${needles.slice(0, 4).join(", ")})`,
-    };
+    const titleHit = needles.some(n => t.includes(n));
+    if (!titleHit) {
+      return {
+        pass: false,
+        reason: `title "${title}" does not mention "${contract.dishName}" or any alias (${needles.slice(0, 4).join(", ")})`,
+      };
+    }
+    // Title check passed. Now verify the ingredient list contains
+    // every canonical the dish is defined by (e.g. chicken in
+    // chicken marsala). Skips when there's no recipe body yet (the
+    // classifier-only flow) or when requiredIngredients is empty.
+    if (recipe) {
+      const req = Array.isArray(contract.requiredIngredients) ? contract.requiredIngredients : [];
+      if (req.length) {
+        const presentIds = extractRecipeIngredientIds(recipe);
+        const check = checkRequiredIngredients(req, presentIds);
+        if (!check.ok) {
+          return {
+            pass: false,
+            reason: `recipe "${title}" is missing required ingredient(s): ${check.missing.join(", ")}`,
+            missingIngredients: check.missing,
+          };
+        }
+      }
+    }
+    return { pass: true, reason: "" };
   }
   // FAMILY
   const family = (contract.familyName || "").toLowerCase();
@@ -1077,7 +1325,19 @@ function verifyContract(
 function buildRetryAddendum(
   priorTitle: string,
   contract: DishContract,
+  missingIngredients?: string[],
 ): string {
+  // Missing-ingredient retry takes priority when it fires — the title
+  // was right but the dish was incomplete. Specific and targeted: tell
+  // Claude exactly what it left out and why that's wrong.
+  if (missingIngredients && missingIngredients.length) {
+    const list = missingIngredients.join(", ");
+    const dish = contract.dishName || priorTitle;
+    return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS MISSING REQUIRED INGREDIENTS.
+Your prior draft was titled "${priorTitle}" but did NOT include: ${list}.
+"${dish}" without ${list} is wrong — ${list.split(", ")[0]} is a defining ingredient of this dish.
+Rewrite the full recipe. The ingredient list (ideal + pantry) MUST include ${list} as primary ingredient(s). Do NOT substitute, omit, or bury them in a garnish.`;
+  }
   if (contract.tier === "SPECIFIC") {
     const aliases = Array.isArray(contract.aliases) ? contract.aliases.slice(0, 6) : [];
     return `\n\n⚠ RETRY — YOUR PRIOR DRAFT WAS OFF-CONTRACT.
@@ -1135,6 +1395,7 @@ Return ONLY a JSON object (no markdown, no prose). Schema:
   "dishName": "<canonical spelling of the dish, e.g. 'crème brûlée'>",    // SPECIFIC only
   "aliases":  ["<string>", ...],                                          // SPECIFIC only — 2-5 variant spellings the output title might use (e.g. ['creme brulee', 'crème brûlée', 'creme brulée']). Include the core dish noun(s) alone too ('brulee', 'creme').
   "rules":    "<one sentence describing what this dish MUST contain/be>", // SPECIFIC only
+  "requiredIngredients": ["<lowercase ingredient noun>", ...],            // SPECIFIC only — 1-4 lowercase ingredient names the dish is DEFINED by. Missing any makes the recipe wrong. Examples: chicken marsala → ["chicken"]; chicken parmesan → ["chicken", "parmesan"]; cacio e pepe → ["pasta", "pecorino"]; carbonara → ["pasta", "eggs"]; shrimp scampi → ["shrimp"]. Use base canonicals (e.g. "chicken" not "chicken breast"; "pasta" not "spaghetti") unless the cut or shape is part of the dish identity.
   // FAMILY when the user described a category/technique but not a
   //   specific dish (cookies, pasta, stir-fry, custard based treat,
   //   italian dinner, quick breakfast, something spicy).
@@ -1200,6 +1461,21 @@ Return the JSON object and nothing else.`;
         out.aliases.push(trimmed);
       }
       out.rules = typeof parsed.rules === "string" ? parsed.rules.slice(0, 300) : "";
+      // Required ingredients — the presence check in verifyContract
+      // uses these to catch drafts that shipped without a defining
+      // ingredient (e.g. chicken marsala without chicken). Classifier
+      // output is normalized to canonical slugs (lowercase, underscores)
+      // and then unioned with the dish-name seed table so a known dish
+      // gets its seeds even when the classifier forgot to enumerate.
+      const classifierReq = Array.isArray(parsed.requiredIngredients)
+        ? parsed.requiredIngredients
+            .filter((a: unknown): a is string => typeof a === "string" && a.trim().length > 0)
+            .map((a: string) => a.toLowerCase().trim().replace(/\s+/g, "_"))
+            .slice(0, 6)
+        : [];
+      const seededReq = seedRequiredIngredients(out.dishName || trimmed);
+      const merged = Array.from(new Set([...classifierReq, ...seededReq]));
+      if (merged.length) out.requiredIngredients = merged;
     } else if (tier === "FAMILY") {
       out.familyName = typeof parsed.familyName === "string" ? parsed.familyName : trimmed;
       out.familyExamples = Array.isArray(parsed.familyExamples)
@@ -1304,13 +1580,14 @@ Deno.serve(async (req) => {
   let contractPass = true;
   let contractReason = "";
   let priorTitle = "";
+  let priorMissing: string[] | undefined;
   let contractRetries = 0;
   const MAX_ATTEMPTS = 2;
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const addendum = attempt === 0 || !contract
       ? ""
-      : buildRetryAddendum(priorTitle, contract);
+      : buildRetryAddendum(priorTitle, contract, priorMissing);
     const basePrompt = mode === "sketch"
       ? buildSketchPrompt(pantry, prefs, avoidTitles, context)
       : buildFinalPrompt(pantry, prefs, avoidTitles, context, lockedIngredients);
@@ -1407,13 +1684,14 @@ Deno.serve(async (req) => {
       );
     }
 
-    const check = verifyContract(recipe.title, contract);
+    const check = verifyContract(recipe.title, contract, recipe);
     contractPass = check.pass;
     contractReason = check.reason;
     if (check.pass) break;
 
     // Off-contract. If we have a retry budget, loop with the addendum.
     priorTitle = String(recipe.title || "");
+    priorMissing = check.missingIngredients;
     contractRetries = attempt + 1;
     // eslint-disable-next-line no-console
     console.warn(
@@ -1877,6 +2155,30 @@ function normalizeCourse(v: unknown): string | null {
   return typeof v === "string" && COURSE_VALUES.has(v) ? v : null;
 }
 
+// Canonical ids whose natural default unit is PIECE COUNT (cutlets,
+// chops, steaks, whole small items). See CLAUDE.md's identity-axis
+// hierarchy — cuts are a separate axis from the base canonical;
+// Americans buy these at the counter by the piece, not by weight.
+// The normalizer forces amounts for these canonicals into a piece-
+// count shape when Claude emits a raw weight or a blank.
+const CUT_PIECE_CANONICALS = new Set([
+  "chicken_breast", "chicken_thigh", "chicken_leg", "chicken_wing",
+  "chicken_tenderloin", "turkey_breast",
+  "pork_chop",
+  "ribeye", "ny_strip", "sirloin",
+]);
+// Canonical ids whose natural default unit is POUNDS (roasts and
+// large cuts bought by weight).
+const CUT_POUND_CANONICALS = new Set([
+  "brisket", "chuck_roast", "pork_loin", "pork_shoulder",
+]);
+function defaultAmountForCanonical(canonicalId: string | null): string {
+  if (!canonicalId) return "1";
+  if (CUT_PIECE_CANONICALS.has(canonicalId)) return "1";
+  if (CUT_POUND_CANONICALS.has(canonicalId)) return "1 lb";
+  return "1";
+}
+
 // Normalize every ingredient row. `item` is stripped of trailing
 // prep clauses ("chicken breast, cut into bite-sized pieces" →
 // "chicken breast") so the identity surfaces clean even when
@@ -1884,6 +2186,87 @@ function normalizeCourse(v: unknown): string | null {
 // axes pass through when the model emitted them; null otherwise.
 // Canonical id is left verbatim — coerceRecipeCanonicalIds on the
 // client handles any drift to the registry.
+//
+// Amount is never allowed to land as blank / null / "to taste" on a
+// structural ingredient — the UI renders an empty amount as "—"
+// which looks like a bug to the cook. Blank amounts fall back to a
+// canonical-appropriate default (piece for cutlets, lb for roasts,
+// "1" otherwise). Vague phrasings ("a drizzle", "a splash", "a dash")
+// are rewritten to a concrete starting measurement.
+const VAGUE_AMOUNT_RE = /^\s*(a\s+)?(drizzle|splash|dash|bit|touch|pinch|handful|few|some)(\s+of)?\s*$/i;
+
+// Per-canonical sanity caps for home-scale recipes. When Claude echoes
+// the user's pantry stock (e.g. the full jar weight) into the recipe
+// amount, we clamp to a sane default. Keys are canonical ids; value is
+// the suspect threshold in a common unit and the replacement string.
+// Units converted to oz for comparison via COMMON_UNIT_TO_OZ below.
+const SANITY_CAP_OZ: Record<string, { maxOz: number; fallback: string }> = {
+  garlic:         { maxOz: 1.5,  fallback: "2 cloves" },
+  ginger:         { maxOz: 1.5,  fallback: "1 inch" },
+  shallot:        { maxOz: 3,    fallback: "1 shallot" },
+  basil:          { maxOz: 1,    fallback: "2 tbsp chopped" },
+  thyme:          { maxOz: 0.25, fallback: "2 sprigs" },
+  parsley:        { maxOz: 1,    fallback: "2 tbsp chopped" },
+  cilantro:       { maxOz: 1,    fallback: "2 tbsp chopped" },
+  salt:           { maxOz: 0.5,  fallback: "¼ tsp" },
+  black_pepper:   { maxOz: 0.25, fallback: "¼ tsp" },
+  butter:         { maxOz: 8,    fallback: "4 tbsp" },
+  olive_oil:      { maxOz: 4,    fallback: "2 tbsp" },
+};
+
+const COMMON_UNIT_TO_OZ: Record<string, number> = {
+  oz: 1, ounce: 1, ounces: 1,
+  lb: 16, lbs: 16, pound: 16, pounds: 16,
+  g: 0.0353, gram: 0.0353, grams: 0.0353,
+  kg: 35.27, kilogram: 35.27,
+  tbsp: 0.5, tablespoon: 0.5, tablespoons: 0.5,
+  tsp: 0.167, teaspoon: 0.167, teaspoons: 0.167,
+  cup: 8, cups: 8,
+};
+
+// Attempt to parse an amount string like "29.3545 oz" or "2 tbsp" into
+// its ounce-equivalent for sanity comparison. Returns null for amounts
+// we can't compare (pieces, cloves, bunches — those have their own
+// per-canonical rules above).
+function amountToOz(raw: string): number | null {
+  const m = raw.match(/^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*$/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const u = m[2].toLowerCase();
+  const factor = COMMON_UNIT_TO_OZ[u];
+  if (!Number.isFinite(n) || !factor) return null;
+  return n * factor;
+}
+
+function normalizeIngredientAmount(raw: unknown, canonicalId: string | null): string {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  if (!s) return defaultAmountForCanonical(canonicalId);
+  if (VAGUE_AMOUNT_RE.test(s)) {
+    // "a drizzle of oil" → "1 tbsp". "a pinch" → "¼ tsp".
+    const m = s.match(/drizzle|splash/i);
+    if (m) return "1 tbsp";
+    return "¼ tsp";
+  }
+  // Absurd-precision guard. A weighed pantry stock leaks as e.g.
+  // "29.3545 oz" — real home recipes never specify more than one
+  // decimal. Two or more decimals → treat as a pantry echo and fall
+  // back to the canonical default.
+  if (/^\s*\d+\.\d{2,}/.test(s)) {
+    return canonicalId && SANITY_CAP_OZ[canonicalId]
+      ? SANITY_CAP_OZ[canonicalId].fallback
+      : defaultAmountForCanonical(canonicalId);
+  }
+  // Per-canonical sanity clamp. If the amount parses to an ounce
+  // equivalent above the canonical's home-scale cap, replace.
+  if (canonicalId && SANITY_CAP_OZ[canonicalId]) {
+    const oz = amountToOz(s);
+    if (oz !== null && oz > SANITY_CAP_OZ[canonicalId].maxOz) {
+      return SANITY_CAP_OZ[canonicalId].fallback;
+    }
+  }
+  return s;
+}
+
 function normalizeIngredients(ings: unknown): unknown[] {
   if (!Array.isArray(ings)) return [];
   return ings.map((i) => {
@@ -1895,10 +2278,11 @@ function normalizeIngredients(ings: unknown): unknown[] {
     // Keep parentheticals ("chicken breast (boneless)") alone.
     const PREP_CLAUSE_RE = /,\s+(cut|chopped|diced|sliced|minced|shredded|crumbled|cubed|grated|ground|torn|halved|quartered|trimmed|pounded|drained|rinsed|peeled|deveined|boned|skinned|stemmed|seeded|crushed|julienned|shaved)\s.*$/i;
     const item = rawItem.replace(PREP_CLAUSE_RE, "").trim();
+    const canonicalId = typeof ing.ingredientId === "string" ? ing.ingredientId : null;
     return {
-      amount:       typeof ing.amount === "string" ? ing.amount : ing.amount,
+      amount:       normalizeIngredientAmount(ing.amount, canonicalId),
       item:         item || rawItem,
-      ingredientId: typeof ing.ingredientId === "string" ? ing.ingredientId : null,
+      ingredientId: canonicalId,
       cut:          typeof ing.cut === "string"          ? ing.cut          : null,
       state:        typeof ing.state === "string"        ? ing.state        : null,
       qty:          ing.qty,

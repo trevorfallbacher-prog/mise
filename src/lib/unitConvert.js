@@ -95,7 +95,7 @@ function sameUniversalFamily(a, b) {
 
 // Universal conversion between two mass units or two volume units,
 // ingredient-agnostic. Returns { ok, value } or { ok: false }.
-function convertUniversal(qty, toUnit) {
+export function convertUniversal(qty, toUnit) {
   const from = normalizeUnitId(qty.unit);
   const to   = normalizeUnitId(toUnit);
   if (!from || !to) return { ok: false };
@@ -110,6 +110,30 @@ function convertUniversal(qty, toUnit) {
     return { ok: true, value: ml / UNIVERSAL_VOLUME_ML[to] };
   }
   return { ok: false };
+}
+
+// Return the list of universal units in the same family as the given
+// unit — used when an ingredient has no canonical but its unit still
+// belongs to the universal mass or volume ladder. Empty array means
+// we can't offer any alternative (count, unknown unit, etc).
+export function universalLadderFor(unitId) {
+  const n = normalizeUnitId(unitId);
+  if (!n) return [];
+  if (MASS_UNITS.has(n))   return Array.from(MASS_UNITS);
+  if (VOLUME_UNITS.has(n)) return Array.from(VOLUME_UNITS);
+  return [];
+}
+
+// True when the ingredient has an explicit g/ml density entry (not
+// the 1.0 water-equivalent default). Ingredients with a real density
+// can cross the mass↔volume bridge in convertWithBridge, so pickers
+// should offer both families to the user.
+export function hasDensityBridge(ingredient) {
+  if (!ingredient) return false;
+  if (INGREDIENT_DENSITY_G_PER_ML[ingredient.id] != null) return true;
+  const alias = CANONICAL_ALIASES[ingredient.id];
+  if (alias?.base && INGREDIENT_DENSITY_G_PER_ML[alias.base] != null) return true;
+  return false;
 }
 
 // A canonical is "mass-based" iff its ladder includes `{g:1}` or
