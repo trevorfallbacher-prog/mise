@@ -73,8 +73,12 @@ const BUNDLED_TILE_SLUGS = new Set([
   // a trailing comma so future additions don't break the parse
   // (missing-comma between "produce" and "dairy" is what broke
   // the build the first time this list grew past one entry).
+  // Slug must match the TILE ID from src/lib/{fridge,pantry,
+  // freezer}Tiles.js exactly — e.g. "meat_poultry" not
+  // "meat_and_poultry" (tile labels are human; slugs are keys).
   "produce",
   "dairy",
+  "meat_poultry",
 ]);
 
 export function tileIconFor(tileId, location) {
