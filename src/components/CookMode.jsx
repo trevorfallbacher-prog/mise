@@ -9,6 +9,7 @@ import { useBrandNutrition } from "../lib/useBrandNutrition";
 import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonicalFamily, deriveRowHeader } from "../lib/recipePairing";
 import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
+import { useUserRecipes } from "../lib/useUserRecipes";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 import { useWebPush } from "../lib/useWebPush";
@@ -562,6 +563,29 @@ export default function CookMode({
     onExit?.();
   };
 
+  // Author + share state for THIS recipe. If the viewer owns a
+  // user_recipes row matching the recipe's slug, the overview
+  // exposes a SHARE WITH FAMILY toggle (otherwise no toggle — you
+  // can't share someone else's recipe, and the bundled library
+  // isn't share-able either). The row lookup is cheap; useUserRecipes
+  // already subscribes to realtime so share state flips in place
+  // after the server confirms.
+  const { recipes: userRecipesList, setSharing: setRecipeSharing } = useUserRecipes(userId);
+  const ownRecipeRow = useMemo(
+    () => userRecipesList.find(r => r.userId === userId && r.slug === recipe?.slug) || null,
+    [userRecipesList, userId, recipe?.slug],
+  );
+  const canShare = !!ownRecipeRow;
+  const isShared = ownRecipeRow?.shared === true;
+  const toggleShare = async () => {
+    if (!ownRecipeRow) return;
+    try {
+      await setRecipeSharing(ownRecipeRow.id, { shared: !isShared });
+    } catch (e) {
+      console.error("[cookMode] toggleShare failed:", e);
+    }
+  };
+
   // Nutrition rollup for the recipe — drives the calorie tile in the
   // meta row below. Pulls from the full resolver chain (pantry
   // override → brand_nutrition → ingredient_info → bundled canonical
@@ -913,12 +937,57 @@ export default function CookMode({
 
   if (view === "overview") return (
     <div style={{ padding:"20px 24px 40px", maxWidth:480, margin:"0 auto" }}>
-      {/* Back out of the recipe to the browser */}
+      {/* Top bar — left: ← back to the browser (minimizes if a session
+          is live, just closes otherwise). Right: ✕ EXIT button that
+          tears the cook down, available from the PREVIEW screen so
+          the author isn't forced into the cook view just to bail. */}
       {onExit && (
-        <button onClick={onExit} style={{
-          background:"none", border:"none", color:"#666", fontSize:22,
-          cursor:"pointer", padding:0, marginBottom:4
-        }}>←</button>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+          <button onClick={onExit} style={{
+            background:"none", border:"none", color:"#666", fontSize:22,
+            cursor:"pointer", padding:0,
+          }}>←</button>
+          {confirmExit ? (
+            <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <button
+                onClick={() => setConfirmExit(false)}
+                style={{
+                  background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
+                  borderRadius:20, padding:"8px 12px",
+                  fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.12em",
+                  cursor:"pointer",
+                }}
+              >
+                KEEP
+              </button>
+              <button
+                onClick={exitCook}
+                style={{
+                  background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+                  borderRadius:20, padding:"8px 12px",
+                  fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
+                  cursor:"pointer",
+                }}
+              >
+                END COOK
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmExit(true)}
+              title="End cook and drop this recipe"
+              style={{
+                display:"inline-flex", alignItems:"center", gap:6,
+                background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+                borderRadius:20, padding:"8px 14px",
+                fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
+                cursor:"pointer",
+              }}
+            >
+              ✕ EXIT
+            </button>
+          )}
+        </div>
       )}
       <div style={{ marginTop:12 }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
@@ -927,6 +996,33 @@ export default function CookMode({
         <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:42, fontWeight:300, lineHeight:1.05, letterSpacing:"-0.03em" }}>{recipe.title}</h1>
         {recipe.subtitle && (
           <p style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:18, color:"#888", marginTop:4 }}>{recipe.subtitle}</p>
+        )}
+        {/* SHARE WITH FAMILY toggle — preview-screen placement so the
+            author decides sharing at the moment they see the whole
+            recipe, not buried inside a row in the template picker.
+            Only rendered when the viewer owns this recipe (the
+            authoritative check: a matching user_recipes row where
+            user_id is the viewer). Bundled recipes and family-
+            authored recipes both fall past this gate — neither is
+            share-able by the viewer. */}
+        {canShare && (
+          <button
+            onClick={toggleShare}
+            title={isShared ? "Shared with family — tap to make private" : "Private — tap to share with family"}
+            style={{
+              marginTop: 12,
+              display: "inline-flex", alignItems: "center", gap: 8,
+              padding: "8px 14px",
+              background: isShared ? "#14201a" : "#1a1a1a",
+              border: `1px solid ${isShared ? "#2a4a28" : "#2a2a2a"}`,
+              color: isShared ? "#a3d977" : "#aaa",
+              borderRadius: 20,
+              fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+              letterSpacing: "0.1em", cursor: "pointer",
+            }}
+          >
+            {isShared ? "🤝 SHARED WITH FAMILY" : "🔒 SHARE WITH FAMILY"}
+          </button>
         )}
       </div>
       <div style={{ display:"flex", gap:12, marginTop:24 }}>
@@ -1389,9 +1485,9 @@ export default function CookMode({
               aria-label="Exit cook"
               style={{
                 display:"inline-flex", alignItems:"center", gap:6,
-                background:"transparent", border:"1px solid #3a2a2a", color:"#a06060",
-                borderRadius:20, padding:"8px 12px",
-                fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.12em",
+                background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+                borderRadius:20, padding:"8px 14px",
+                fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
                 cursor:"pointer",
               }}
             >

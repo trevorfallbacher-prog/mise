@@ -69,7 +69,7 @@ export default function CreateMenu({
   // enter this state — picking a day just writes the scheduled_meals row.
   const [scheduling, setScheduling] = useState(null); // recipe object | null
 
-  const { recipes: userRecipes, saveRecipe, setSharing, findBySlug: findUserRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipes, saveRecipe, findBySlug: findUserRecipe } = useUserRecipes(userId);
   // MEAL composition hook — exposes hydrated meals + CRUD. Pieces
   // resolve through userRecipes and bundled RECIPES so tap-to-cook on
   // a meal's piece hands CookMode a full recipe object.
@@ -438,16 +438,6 @@ export default function CreateMenu({
                   tag="CUSTOM"
                   tagColor={TAG_CUSTOM}
                   onClick={() => startCooking(ur.recipe)}
-                  shared={ur.shared}
-                  onToggleShare={hasFamily ? async () => {
-                    try {
-                      await setSharing(ur.id, { shared: !ur.shared });
-                      pushToast(ur.shared ? "Recipe is now private" : "Shared with family — they can cook it", { emoji: ur.shared ? "🔒" : "🤝", kind: "info" });
-                    } catch (e) {
-                      console.error("[createMenu] setSharing failed:", e);
-                      pushToast("Couldn't update sharing", { emoji: "⚠️", kind: "warn" });
-                    }
-                  } : null}
                 />
               ))}
             </RecipeSection>
@@ -461,16 +451,6 @@ export default function CreateMenu({
                   tag="AI"
                   tagColor={TAG_AI}
                   onClick={() => startCooking(ur.recipe)}
-                  shared={ur.shared}
-                  onToggleShare={hasFamily ? async () => {
-                    try {
-                      await setSharing(ur.id, { shared: !ur.shared });
-                      pushToast(ur.shared ? "Recipe is now private" : "Shared with family — they can cook it", { emoji: ur.shared ? "🔒" : "🤝", kind: "info" });
-                    } catch (e) {
-                      console.error("[createMenu] setSharing failed:", e);
-                      pushToast("Couldn't update sharing", { emoji: "⚠️", kind: "warn" });
-                    }
-                  } : null}
                 />
               ))}
             </RecipeSection>
@@ -675,25 +655,10 @@ function RecipeSection({ title, accent, children }) {
   );
 }
 
-// RecipeRow is the row rendered inside the CreateMenu template picker.
-// When `onToggleShare` is provided the row gains a second tap target
-// — a SHARED / PRIVATE pill that flips user_recipes.shared without
-// starting the cook. The row outer has to be a <div role="button">
-// rather than a <button>, because HTML forbids nesting real buttons
-// and we need both actions to be independently tappable. The share
-// pill stopPropagation's so it doesn't bubble up into the row's
-// "open CookMode" click. Without onToggleShare (bundled recipes,
-// AI drafts with no family) the row behaves exactly like before.
-function RecipeRow({ recipe, tag, tagColor, onClick, shared, onToggleShare }) {
-  const onRowKey = (e) => {
-    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick?.(); }
-  };
+function RecipeRow({ recipe, tag, tagColor, onClick }) {
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
       onClick={onClick}
-      onKeyDown={onRowKey}
       style={{
         display: "flex", alignItems: "center", gap: 12,
         padding: "12px 14px", background: "#161616",
@@ -733,29 +698,8 @@ function RecipeRow({ recipe, tag, tagColor, onClick, shared, onToggleShare }) {
           </div>
         )}
       </div>
-      {onToggleShare && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onToggleShare(); }}
-          onKeyDown={(e) => e.stopPropagation()}
-          title={shared ? "Shared with family — tap to make private" : "Private — tap to share with family"}
-          aria-label={shared ? "Unshare recipe" : "Share with family"}
-          style={{
-            flexShrink: 0,
-            fontFamily: "'DM Mono',monospace", fontSize: 9, fontWeight: 700,
-            letterSpacing: "0.1em",
-            color: shared ? "#a3d977" : "#888",
-            background: shared ? "#14201a" : "#1a1a1a",
-            border: `1px solid ${shared ? "#2a4a28" : "#2a2a2a"}`,
-            padding: "5px 9px", borderRadius: 6,
-            cursor: "pointer",
-          }}
-        >
-          {shared ? "🤝 SHARED" : "🔒 PRIVATE"}
-        </button>
-      )}
       <span style={{ color: "#f5c842", fontFamily: "'DM Mono',monospace", fontSize: 14 }}>→</span>
-    </div>
+    </button>
   );
 }
 
