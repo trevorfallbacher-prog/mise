@@ -363,11 +363,15 @@ const dawn = {
     burnt:        "#F0822C",
     mustard:      "#F2C055",
     warmBrown:    "#A06B3F",
-    tealTint:     "rgba(79,154,143,0.18)",
-    aquaTint:     "rgba(127,185,167,0.22)",
-    burntTint:    "rgba(240,130,44,0.20)",
-    mustardTint:  "rgba(242,192,85,0.22)",
-    brownTint:    "rgba(160,107,63,0.18)",
+    // Tint alphas bumped versus morning/day/evening — dawn's
+    // glass is biased so warm-bright that low-alpha tints (chips,
+    // timer pills) chameleon into the cream surface beneath them.
+    // Tripling the tint opacity gives chips enough body to read.
+    tealTint:     "rgba(79,154,143,0.40)",
+    aquaTint:     "rgba(127,185,167,0.42)",
+    burntTint:    "rgba(240,130,44,0.42)",
+    mustardTint:  "rgba(242,192,85,0.48)",
+    brownTint:    "rgba(160,107,63,0.40)",
     // Glass — bright warm cream. Deliberately high-opacity so
     // tiles punch out of the dark red sky and dark ink has a
     // bright surface to read on.
@@ -440,11 +444,14 @@ const dusk = {
     burnt:        "#F0822C",
     mustard:      "#F2C055",
     warmBrown:    "#A06B3F",
-    tealTint:     "rgba(61,130,120,0.18)",
-    aquaTint:     "rgba(118,173,154,0.22)",
-    burntTint:    "rgba(240,130,44,0.20)",
-    mustardTint:  "rgba(242,192,85,0.22)",
-    brownTint:    "rgba(160,107,63,0.18)",
+    // Tint alphas bumped for the same reason as dawn — dusk's
+    // warm-bright glass bias would otherwise swallow chips that
+    // sit on the surface (timer pills, ingredient amounts).
+    tealTint:     "rgba(61,130,120,0.40)",
+    aquaTint:     "rgba(118,173,154,0.42)",
+    burntTint:    "rgba(240,130,44,0.42)",
+    mustardTint:  "rgba(242,192,85,0.48)",
+    brownTint:    "rgba(160,107,63,0.40)",
     glassFill:      "rgba(255,235,200,0.74)",
     glassFillLite:  "rgba(255,235,200,0.52)",
     glassFillHeavy: "rgba(255,235,200,0.84)",

@@ -144,6 +144,25 @@ function wcagContrastRatio(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+// Composite a translucent fg over a solid bg — what the user
+// actually sees after the browser paints the translucent glass
+// fill over the backdrop. Contrast must be measured against THIS
+// rendered color, not the isolated fill. At 5:30 AM the glass
+// fill on its own read as bright tan (0.77 alpha), but over the
+// dark blended backdrop it composites down to mid-brown, which
+// crushes ink contrast. Without compositing the picker picked
+// the wrong ink side.
+function compositeOver(fgStr, bgStr) {
+  const [fr, fg, fb, fa] = parseColor(fgStr);
+  const [br, bg, bb] = parseColor(bgStr);
+  return serializeColor([
+    fr * fa + br * (1 - fa),
+    fg * fa + bg * (1 - fa),
+    fb * fa + bb * (1 - fa),
+    1,
+  ]);
+}
+
 // Pick the anchor (a or b) whose ink contrasts BEST against the
 // resolved surface color. Replaces the crude t<0.5 snap — lets
 // the ink flip at whatever t the surface actually crosses the
@@ -181,19 +200,25 @@ const SKY_INK_SNAP_KEYS = new Set([
 
 // Glass fills blend linearly through a muddy warm-taupe at the
 // cross-mode midpoint, which made cards dissolve into the equally
-// taupe backdrop at 8pm / 6am. Instead of snapping (jarring jump)
-// we bias the blended glass TOWARD a warm cream with higher alpha,
-// peaking at t=0.5. Reads as "morning light through the windows"
-// or "lamp cream on a cold counter" — a deliberate twilight tile
-// color rather than an accidentally grey one.
-const TWILIGHT_CREAM_RGBA = [255, 240, 210, 0.82];
+// taupe backdrop and text drown on dim warm tan at 5:30 AM.
+// Instead of snapping (jarring jump) we bias the blended glass
+// TOWARD a warm cream with MUCH higher alpha, peaking at t=0.5.
+// Reads as "morning light through the windows" or "lamp cream on
+// a cold counter" — a deliberate twilight tile color rather than
+// an accidentally grey one, and opaque enough that the dark
+// backdrop behind doesn't bleed through and kill ink contrast.
+const TWILIGHT_CREAM_RGBA = [255, 240, 210, 0.94];
 const GLASS_BIAS_KEYS = new Set([
   "glassFill", "glassFillLite", "glassFillHeavy",
 ]);
-// Max bias weight at the exact midpoint. 0.55 = cream dominates
-// by just over half; strong enough to pop cards off the taupe bg,
-// subtle enough that it doesn't read as a hard theme snap.
-const GLASS_BIAS_PEAK = 0.55;
+// Max bias weight at the exact midpoint. Cranked up from 0.55 —
+// at 5:30 AM (t=0.4 in night→dawn) the glass was still pulling
+// too much color from night's dark amber and 60% of the dark
+// backdrop was showing through the translucent fill. 0.80 means
+// at the midpoint the glass is 80% twilight cream, drowning the
+// night tint out and composting over the dark sky into a surface
+// bright enough to take ≥7:1 contrast with dark ink.
+const GLASS_BIAS_PEAK = 0.80;
 
 // Linear interpolate a color toward the twilight cream target.
 // Preserves the source alpha trajectory (blends toward a higher
@@ -265,7 +290,13 @@ export function blendThemes(a, b, t) {
   // jumps at whatever t actually produces the better read, which
   // the linear midpoint rarely does.
   if (crossingInkMode) {
-    const inkSide = pickInkSide(a, b, blendedColor.glassFill, "ink");
+    // Measure ink against the glass as RENDERED (composited over
+    // the blended backdrop). Not the translucent fill in isolation —
+    // the user sees the composite.
+    const effectiveGlass = compositeOver(
+      blendedColor.glassFill, blendedColor.cream,
+    );
+    const inkSide = pickInkSide(a, b, effectiveGlass, "ink");
     for (const k of INK_SNAP_KEYS) {
       blendedColor[k] = inkSide.color[k];
     }
