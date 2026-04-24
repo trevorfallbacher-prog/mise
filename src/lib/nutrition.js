@@ -22,6 +22,7 @@
 
 import { findIngredient, CUT_NUTRITION, STATE_NUTRITION, DEFAULT_CUT_PER_HUB, CANONICAL_ALIASES } from "../data/ingredients";
 import { convertWithBridge, effectiveCountWeightG, isMassLadder } from "./unitConvert";
+import { normalizeUnitId } from "./units/aliases";
 
 // Resolve the best available nutrition for a pantry row. Phase 1 only
 // uses tiers 3 + 4 (canonical); the optional `brandNutrition` map hooks
@@ -386,38 +387,25 @@ const UNICODE_FRACTIONS = {
   "⅓": 1/3, "⅔": 2/3,
   "⅛": 0.125, "⅜": 0.375, "⅝": 0.625, "⅞": 0.875,
 };
-const UNIT_ALIASES = {
-  tablespoon: "tbsp", tablespoons: "tbsp", tbsps: "tbsp",
-  teaspoon: "tsp", teaspoons: "tsp", tsps: "tsp",
-  cups: "cup",
-  ounce: "oz", ounces: "oz",
-  pound: "lb", pounds: "lb", lbs: "lb",
-  gram: "g", grams: "g",
-  kilogram: "kg", kilograms: "kg",
-  milliliter: "ml", milliliters: "ml",
-  liter: "l", liters: "l",
-  // Size words that mean "1 count" — "1 large onion", "2 small eggs"
-  large: "count", small: "count", medium: "count", xl: "count",
-  // Countable plant parts — both forms.
-  clove: "count", cloves: "count",
-  sprig: "count", sprigs: "count",
-  stalk: "count", stalks: "count",
-  head:  "count", heads: "count",
-  count: "count", counts: "count", ct: "count",
-  whole: "count",
-  // Countable discrete items in meat/processed categories. Only
-  // resolves to "count" when the canonical's ladder actually has a
-  // count entry — parseAmountString drops the token otherwise so
-  // "1 package of flour" stays unparsed instead of silently claiming
-  // to be 1 count of flour (flour is a mass ladder).
-  link: "count", links: "count",
-  pack: "count", packs: "count",
-  package: "count", packages: "count",
-  pkg: "count", pkgs: "count",
-  piece: "count", pieces: "count",
-  slice: "count", slices: "count",
-  patty: "count", patties: "count",
-};
+// Semantic size/count words — NOT unit aliases. These are English
+// shortcuts that mean "one unit of this countable thing" regardless
+// of the thing's actual ladder entry (which is almost always just
+// "count"). Kept LOCAL to this module because they're recipe-parse
+// semantics, not the measurement registry's concern:
+//   "1 large onion"     → count:1
+//   "2 sprigs thyme"    → count:2
+//   "1 package cheddar" → count:1   (only if ladder has count)
+//
+// Pure unit aliases (tablespoon, teaspoon, gram, oz, etc.) live in
+// src/lib/units/aliases.js and are resolved here via normalizeUnitId.
+const SEMANTIC_COUNT_WORDS = new Set([
+  "large", "small", "medium", "xl",
+  "clove", "cloves", "sprig", "sprigs", "stalk", "stalks",
+  "head", "heads", "whole",
+  "link", "links", "pack", "packs", "package", "packages",
+  "pkg", "pkgs", "slice", "slices", "patty", "patties",
+]);
+
 export function parseAmountString(str, canonical) {
   if (!str || !canonical) return null;
   if (typeof str !== "string") return null;
@@ -432,11 +420,16 @@ export function parseAmountString(str, canonical) {
   if (!Number.isFinite(amount) || amount <= 0) return null;
   const rest = (m[3] || "").trim();
   // Peel the first whitespace-delimited token as a candidate unit.
-  // The tail is free-text ("cloves, minced" → unit = "cloves").
   const unitToken = (rest.split(/[\s,.;:]/)[0] || "").replace(/[^a-z]/g, "");
-  const unitId = UNIT_ALIASES[unitToken] || unitToken || (canonical.defaultUnit || null);
+  // Resolution order:
+  //   1. Real unit via the shared registry (tbsp, oz, ml, …).
+  //   2. Semantic count word ("large", "sprig", "package", …) → "count".
+  //   3. Fallback to canonical's defaultUnit.
+  let unitId = normalizeUnitId(unitToken);
+  if (!unitId && SEMANTIC_COUNT_WORDS.has(unitToken)) unitId = "count";
+  if (!unitId) unitId = canonical.defaultUnit || null;
   if (!unitId) return null;
-  const hasUnit = canonical.units?.some(u => u.id === unitId);
+  const hasUnit = canonical.units?.some(u => normalizeUnitId(u.id) === normalizeUnitId(unitId));
   if (!hasUnit) return null;
   return { amount, unit: unitId };
 }

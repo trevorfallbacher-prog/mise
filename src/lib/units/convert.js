@@ -53,14 +53,25 @@ function ok(value, path) {
   return { ok: true, value, path };
 }
 
-// Lookup a unit on an ingredient's declared ladder. Normalizes the
-// ladder entry id AND the query id so mixed-case data in the wild
-// resolves consistently.
+// Lookup a unit on an ingredient's declared ladder. Two-pass match:
+//   1. Registry normalize — resolves aliases (tbsp/tbsps/tablespoon,
+//      fl oz/fl_oz, etc.) so ladder entries and query strings align
+//      regardless of spelling variant.
+//   2. Raw-lowercased fallback — handles ingredient-specific ladder
+//      units that are NOT in the registry (stick on butter, wedge
+//      on parmesan, jar on honey, breast on chicken, clove on
+//      garlic). These are valid units but ladder-local; the
+//      registry alias map intentionally excludes them because they
+//      have no universal conversion factor.
 function findLadderEntry(ingredient, unitId) {
+  if (!ingredient?.units || unitId == null) return null;
+  const raw = String(unitId).trim().toLowerCase();
+  if (!raw) return null;
   const want = normalizeUnitId(unitId);
-  if (!want || !ingredient?.units) return null;
   for (const u of ingredient.units) {
-    if (normalizeUnitId(u.id) === want) return u;
+    const idRaw = String(u.id).trim().toLowerCase();
+    if (want && normalizeUnitId(idRaw) === want) return u;
+    if (idRaw === raw) return u;
   }
   return null;
 }
@@ -108,23 +119,36 @@ export function convertStrict(qty, toUnit, ingredient, options = {}) {
   const amount = Number(qty.amount);
   if (!Number.isFinite(amount)) return err("bad-amount", String(qty.amount));
 
+  // Same-string short-circuit, raw-lowercased so "Stick" → "stick"
+  // collapses without needing the alias table to know about ladder-
+  // local units.
+  const rawFrom = String(qty.unit ?? "").trim().toLowerCase();
+  const rawTo   = String(toUnit).trim().toLowerCase();
+  if (rawFrom && rawFrom === rawTo) return ok(amount, "ladder");
+
+  // ── Path 1: ladder (ingredient-declared factors, density-aware) ─
+  // Ladder match uses the two-pass findLadderEntry helper, which
+  // handles BOTH registry aliases (tbsp/tbsps) and ladder-local units
+  // (stick, wedge, clove). Do this BEFORE normalizing the query so
+  // ladder-local units aren't rejected as "unknown" by the strict
+  // registry normalizer.
+  const fromEntry = findLadderEntry(ingredient, qty.unit);
+  const toEntry   = findLadderEntry(ingredient, toUnit);
+  if (fromEntry && toEntry) {
+    const fBase = Number(fromEntry.toBase);
+    const tBase = Number(toEntry.toBase);
+    if (!Number.isFinite(fBase) || fBase <= 0) return err("bad-amount", `ladder.${rawFrom}.toBase`);
+    if (!Number.isFinite(tBase) || tBase <= 0) return err("bad-amount", `ladder.${rawTo}.toBase`);
+    return ok((amount * fBase) / tBase, "ladder");
+  }
+
+  // Normalize for the universal paths. Registry-unknown units can't
+  // route through same-family / density-bridge / count-bridge and
+  // must surface as an error — but only AFTER ladder miss.
   const fromUnit = normalizeUnitId(qty.unit);
   const normTo   = normalizeUnitId(toUnit);
   if (!fromUnit) return err("unknown-from-unit", String(qty.unit));
   if (!normTo)   return err("unknown-to-unit",   String(toUnit));
-
-  if (fromUnit === normTo) return ok(amount, "ladder");
-
-  // ── Path 1: ladder (ingredient-declared factors, density-aware) ─
-  const fromEntry = findLadderEntry(ingredient, fromUnit);
-  const toEntry   = findLadderEntry(ingredient, normTo);
-  if (fromEntry && toEntry) {
-    const fBase = Number(fromEntry.toBase);
-    const tBase = Number(toEntry.toBase);
-    if (!Number.isFinite(fBase) || fBase <= 0) return err("bad-amount", `ladder.${fromUnit}.toBase`);
-    if (!Number.isFinite(tBase) || tBase <= 0) return err("bad-amount", `ladder.${normTo}.toBase`);
-    return ok((amount * fBase) / tBase, "ladder");
-  }
 
   // ── Path 2: same-family universal (physics, no density assumed) ─
   const fromFam = UNIT_FAMILY[fromUnit];

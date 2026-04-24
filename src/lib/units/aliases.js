@@ -36,7 +36,8 @@ export const UNIT_ALIASES = Object.freeze({
   cup: "cup", cups: "cup",
   pint: "pint", pints: "pint", pt: "pint", pts: "pint",
   quart: "quart", quarts: "quart", qt: "quart", qts: "quart",
-  half_gallon: "half_gallon", halfgallon: "half_gallon",
+  half_gallon: "half_gallon", half_gallons: "half_gallon",
+  halfgallon: "half_gallon", halfgallons: "half_gallon",
   gallon: "gallon", gallons: "gallon", gal: "gallon", gals: "gallon",
 
   // ── count ────────────────────────────────────────────────────

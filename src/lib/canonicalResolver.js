@@ -35,6 +35,7 @@ import {
   INGREDIENTS,
   dbCanonicalsSnapshot,
 } from "../data/ingredients";
+import { normalizeUnitId, UNIT_AMOUNT_MULTIPLIERS } from "./units/aliases";
 
 // Module-scope cache for canonical-name tokens. Rebuilt lazily on
 // first access; DB canonicals may grow over a session, so we also
@@ -535,40 +536,39 @@ export function resolveCanonicalFromScan({
 // "8 ct (16 oz)", "16 oz (8 ct)", and multipack "12 × 50 g". Single-
 // dimension strings ("500 g", "8 ct") return counterpart:null.
 
-const UNIT_ALIASES = {
-  g: "g", gram: "g", grams: "g",
-  kg: "kg", kilogram: "kg", kilograms: "kg",
-  mg: "mg", milligram: "mg", milligrams: "mg",
-  oz: "oz", ounce: "oz", ounces: "oz",
-  lb: "lb", lbs: "lb", pound: "lb", pounds: "lb",
-  ml: "ml", milliliter: "ml", milliliters: "ml",
-  cl: "ml",  // centiliter → ml conversion factor 10x
-  l: "l", liter: "l", liters: "l", litre: "l", litres: "l",
-  ct: "count", count: "count", pieces: "count", piece: "count",
-};
-
-const UNIT_MULTIPLIERS = {
-  cl: 10,  // 1 cl = 10 ml → when we see cl we multiply amount and store as ml
-};
+// Pre-normalize multi-word unit tokens so the downstream regex
+// tokenizer (which captures single [a-z_]+ words) can still see the
+// full unit id. Without this, "16 fl oz" would tokenize as
+// {amount:16, unit:"fl"} and fail. Applied before any parsing so
+// every multi-word unit the aliases module knows about funnels into
+// its underscored canonical form.
+function prenormalizeMultiwordUnits(text) {
+  return text
+    .replace(/\bfl\s+oz\b/g, "fl_oz")
+    .replace(/\bfluid\s+ounces?\b/g, "fl_oz")
+    .replace(/\bhalf\s+gallons?\b/g, "half_gallon");
+}
 
 export function parsePackageSize(raw) {
   if (!raw || typeof raw !== "string") return null;
-  const text = raw.toLowerCase().trim();
-  if (!text) return null;
+  const cleaned = raw.toLowerCase().trim().replace(/[.,]/g, "");
+  if (!cleaned) return null;
+  const text = prenormalizeMultiwordUnits(cleaned);
 
   // Multipack pattern: "<N> × <amount><unit>" or "<N> x <amount> <unit>"
   // Counterpart surfaces the multiplier as a count so downstream can
   // derive grams-per-count (e.g. 12 × 50g has total 600g split across
   // 12 items → 50g each via effectiveCountWeightG).
   const multipack = text.match(
-    /^(\d+)\s*[×x]\s*(\d+(?:\.\d+)?)\s*([a-z]+)/,
+    /^(\d+)\s*[×x]\s*(\d+(?:\.\d+)?)\s*([a-z_]+)/,
   );
   if (multipack) {
     const count = Number(multipack[1]);
     const per   = Number(multipack[2]);
-    const unit  = canonicalizeUnit(multipack[3]);
+    const rawUnit = multipack[3];
+    const unit = normalizeUnitId(rawUnit);
     if (unit && Number.isFinite(count) && Number.isFinite(per) && count > 0 && per > 0) {
-      const mult = UNIT_MULTIPLIERS[multipack[3]] || 1;
+      const mult = UNIT_AMOUNT_MULTIPLIERS[rawUnit] || 1;
       return {
         amount: round1(count * per * mult),
         unit,
@@ -580,19 +580,16 @@ export function parsePackageSize(raw) {
   // Scan ALL number-unit tokens and classify each as count or
   // mass/volume. When both dimensions show up in the same label
   // ("8 ct 16 oz", "16 oz (8 ct)"), return the mass/volume as the
-  // primary package size and the count as the counterpart. That
-  // matches what downstream wants: package_amount (mass) for the
-  // derivation, and amount (count) for the user's consumable
-  // tracking.
+  // primary package size and the count as the counterpart.
   const tokens = [];
-  const tokenRe = /(\d+(?:\.\d+)?)\s*([a-z]+)/g;
+  const tokenRe = /(\d+(?:\.\d+)?)\s*([a-z_]+)/g;
   let m;
   while ((m = tokenRe.exec(text)) !== null) {
     const amount = Number(m[1]);
     const rawUnit = m[2];
-    const unit = canonicalizeUnit(rawUnit);
+    const unit = normalizeUnitId(rawUnit);
     if (unit && Number.isFinite(amount) && amount > 0) {
-      const mult = UNIT_MULTIPLIERS[rawUnit] || 1;
+      const mult = UNIT_AMOUNT_MULTIPLIERS[rawUnit] || 1;
       tokens.push({ amount: round1(amount * mult), unit });
     }
   }
@@ -602,9 +599,6 @@ export function parsePackageSize(raw) {
   const countTokens = tokens.filter(t => t.unit === "count");
 
   if (massTokens.length > 0 && countTokens.length > 0) {
-    // Both dimensions present — primary is mass (what gets written
-    // to pantry_items.package_amount for derivation); counterpart is
-    // the count (what gets written to pantry_items.amount).
     return {
       amount: massTokens[0].amount,
       unit:   massTokens[0].unit,
@@ -612,14 +606,7 @@ export function parsePackageSize(raw) {
     };
   }
 
-  // Single-dimension — first token wins, no counterpart.
   return { amount: tokens[0].amount, unit: tokens[0].unit };
-}
-
-function canonicalizeUnit(raw) {
-  if (!raw) return null;
-  const key = String(raw).toLowerCase().replace(/[.,]/g, "");
-  return UNIT_ALIASES[key] || null;
 }
 
 function round1(n) {
