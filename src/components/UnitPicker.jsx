@@ -1,7 +1,7 @@
 import ModalSheet from "./ModalSheet";
 import { COLOR, FONT, CHIP_TONES, pickerKicker, pickerTitle, pickerOptionStyle } from "../lib/tokens";
 import { findIngredient } from "../data/ingredients";
-import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor } from "../lib/unitConvert";
+import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor, hasDensityBridge, isMassLadder } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
 import { setPreferredUnit } from "../lib/unitPrefs";
 
@@ -61,17 +61,40 @@ export default function UnitPicker({
   const ladder = ingredient?.units || [];
   const currentUnit = parsed?.unit || null;
 
-  // When we have a canonical, use its full ladder. When we don't
-  // but the current unit belongs to the universal mass/volume
-  // families, offer the universal siblings so the cook can still
-  // flip tbsp → cup on a free-text ingredient.
-  const universal = currentUnit && !ingredient ? universalLadderFor(currentUnit) : [];
-  const universalOpts = universal.map(id => ({ id, label: id, toBase: 1 }));
+  // Option list construction:
+  //   1. Start with the ingredient's own ladder (when present). This
+  //      carries the ingredient-specific units like "stick" for
+  //      butter that universal ladders don't know about.
+  //   2. If the ingredient has an explicit density (INGREDIENT_DENSITY
+  //      _G_PER_ML), union with the OTHER universal family too —
+  //      butter is a mass ladder but can bridge to volume via density,
+  //      so users should be able to pick tbsp or cup even when the
+  //      ladder only lists g / oz / lb.
+  //   3. When no ingredient is linked at all, offer the universal
+  //      siblings of whatever unit the amount is currently in.
+  //   4. Ensure the current unit is always in the list (even when it
+  //      falls outside every ladder we know about).
+  const bridgeUnits = [];
+  if (ingredient && hasDensityBridge(ingredient)) {
+    const other = isMassLadder(ingredient) ? "cup" : "g";
+    bridgeUnits.push(...universalLadderFor(other));
+  }
+  const universalWhenNoIng = currentUnit && !ingredient ? universalLadderFor(currentUnit) : [];
 
-  const base = ladder.length > 0 ? ladder : universalOpts;
-  const options = currentUnit && !base.some(u => u.id === currentUnit)
-    ? [{ id: currentUnit, label: currentUnit, toBase: 1 }, ...base]
-    : base;
+  const seen = new Set();
+  const options = [];
+  const push = (u) => {
+    const id = typeof u === "string" ? u : u.id;
+    const label = typeof u === "string" ? u : (u.label || u.id);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    options.push({ id, label, toBase: 1 });
+  };
+  // Ingredient ladder first (preserves "stick" etc.)
+  ladder.forEach(push);
+  bridgeUnits.forEach(push);
+  universalWhenNoIng.forEach(push);
+  if (currentUnit) push(currentUnit);
 
   const pick = (newUnitId) => {
     if (!parsed) { onClose(); return; }

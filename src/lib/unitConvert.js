@@ -124,6 +124,18 @@ export function universalLadderFor(unitId) {
   return [];
 }
 
+// True when the ingredient has an explicit g/ml density entry (not
+// the 1.0 water-equivalent default). Ingredients with a real density
+// can cross the mass↔volume bridge in convertWithBridge, so pickers
+// should offer both families to the user.
+export function hasDensityBridge(ingredient) {
+  if (!ingredient) return false;
+  if (INGREDIENT_DENSITY_G_PER_ML[ingredient.id] != null) return true;
+  const alias = CANONICAL_ALIASES[ingredient.id];
+  if (alias?.base && INGREDIENT_DENSITY_G_PER_ML[alias.base] != null) return true;
+  return false;
+}
+
 // A canonical is "mass-based" iff its ladder includes `{g:1}` or
 // `{ml:1}` as its gram/volume anchor — i.e. every other unit in the
 // ladder declares how many grams (or millilitres, treated as grams
