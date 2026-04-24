@@ -1872,32 +1872,12 @@ export default function CookMode({
           <p style={{ fontSize:13, color:"#7ec87e", lineHeight:1.5, fontStyle:"italic" }}>{step.tip}</p>
         </div>
       )}
-      {/* Bottom action row — PREV / DONE NEXT / tiny EXIT. EXIT pinned
-          here (not top) so it stays visible while the cook scrolls
-          through step content; always one glance from the primary
-          action. Two-tap confirm ("Are you sure?" → END COOK) lives
-          inline so accidental taps can't kill a 45-min braise. */}
+      {/* Bottom action row — EXIT (left, destructive) / PREV /
+          DONE → NEXT (right, progression). Left-to-right reads as
+          bail → back → forward, matching the spatial metaphor every
+          other modal in the app uses. Two-tap confirm on EXIT stays
+          inline so an accidental thumb can't kill a 45-min braise. */}
       <div style={{ display:"flex", gap:10, marginTop:24, alignItems:"stretch" }}>
-        <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
-        {activeStep < steps.length-1 ? (
-          <button onClick={markDone} style={{ flex:2, padding:"14px", background: completedSteps.has(activeStep)?"#1a3a1a":"#f5c842", color: completedSteps.has(activeStep)?"#4ade80":"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.3s" }}>
-            {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
-          </button>
-        ) : (
-          <button onClick={() => {
-            // Capture the session id synchronously before endCook sets
-            // session → null, so CookComplete can stamp cook_log_id
-            // onto it after the cook_log insert lands.
-            const sid = telemetry.session?.id || null;
-            finalizedRef.current = true;
-            telemetry.finishStep({});
-            telemetry.endCook({ status: "finished" });
-            setCompletingSessionId(sid);
-            setCompleting(true);
-          }} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
-            🍝 DONE! LOG IT →
-          </button>
-        )}
         {confirmExit ? (
           <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
             <button
@@ -1937,6 +1917,26 @@ export default function CookMode({
             }}
           >
             ✕ EXIT
+          </button>
+        )}
+        <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
+        {activeStep < steps.length-1 ? (
+          <button onClick={markDone} style={{ flex:2, padding:"14px", background: completedSteps.has(activeStep)?"#1a3a1a":"#f5c842", color: completedSteps.has(activeStep)?"#4ade80":"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.3s" }}>
+            {completedSteps.has(activeStep)?"✓ DONE → NEXT":"DONE → NEXT"}
+          </button>
+        ) : (
+          <button onClick={() => {
+            // Capture the session id synchronously before endCook sets
+            // session → null, so CookComplete can stamp cook_log_id
+            // onto it after the cook_log insert lands.
+            const sid = telemetry.session?.id || null;
+            finalizedRef.current = true;
+            telemetry.finishStep({});
+            telemetry.endCook({ status: "finished" });
+            setCompletingSessionId(sid);
+            setCompleting(true);
+          }} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
+            🍝 DONE! LOG IT →
           </button>
         )}
       </div>
