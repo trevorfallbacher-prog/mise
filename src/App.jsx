@@ -626,6 +626,13 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                   items={pantry}
                   loading={pantryLoading}
                   onOpenItem={setMcmOpenItem}
+                  // Shopping-list bridge: tapping the cart in the
+                  // hero flips pantryView to "shopping", which the
+                  // same tab render handles by falling through to
+                  // the classic Kitchen (see below). shoppingCount
+                  // feeds the badge on the cart button.
+                  onGoToShopping={() => setPantryView("shopping")}
+                  shoppingCount={Array.isArray(shoppingList) ? shoppingList.length : 0}
                   hideDock
                 />
               </MCMThemeProvider>

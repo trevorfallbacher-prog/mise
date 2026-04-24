@@ -215,6 +215,14 @@ export default function PantryScreen({
   onOpenItem,
   onStartCooking,
   onOpenUnitPicker,
+  // Shopping-cart bridge. When provided, renders a cart button in
+  // the hero's top-right corner that calls back to App.jsx to
+  // switch pantryView → "shopping" (which falls through to the
+  // classic Kitchen shopping list view). shoppingCount drives an
+  // optional count badge on the cart. Both undefined = no button
+  // (keeps Showcase clean).
+  onGoToShopping,
+  shoppingCount = 0,
   hideDock = false,
 }) {
   const { theme } = useTheme();
@@ -556,6 +564,18 @@ export default function PantryScreen({
         // dead gap when the dock is hidden (search mode).
         padding: "28px 20px 180px",
       }}>
+        {/* Shopping cart — top-right of the content column,
+            absolutely-positioned so it sits above the hero's own
+            flow without pushing anything. Renders the bundled
+            shopping_cart.svg at 26x26 inside a 44x44 glass pill
+            (accessibility tap target). Count badge appears when
+            shoppingCount > 0. Tap bridges to the classic Kitchen
+            shopping list view via the onGoToShopping callback
+            (App.jsx flips pantryView → "shopping"). Hidden when
+            the prop isn't wired (Showcase mode, design demo). */}
+        {onGoToShopping && (
+          <CartButton count={shoppingCount} onClick={onGoToShopping} />
+        )}
         {/* --- Hero — text sits DIRECTLY on the backdrop (no glass
              surface behind it), so it uses theme.color.skyInk /
              skyInkMuted instead of the regular ink. Those tokens
@@ -1059,6 +1079,86 @@ const NAV_TABS = [
 ];
 
 // --- Sub-components ------------------------------------------------------
+
+// Shopping-cart button — top-right floating affordance that
+// carries the user from pantry-browse into the shopping-list
+// view. Absolutely positioned in the PantryScreen content
+// wrapper (which is position:relative) so it rides in the upper-
+// right regardless of hero content below. 44x44 circular glass
+// pill with the bundled shopping_cart.svg inside; when the
+// shopping list has items a small burnt count badge rides on
+// the upper-right corner of the icon.
+function CartButton({ count = 0, onClick }) {
+  const { theme } = useTheme();
+  const label = count === 0
+    ? "Shopping list"
+    : `Shopping list · ${count} item${count === 1 ? "" : "s"}`;
+  return (
+    <motion.button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="mcm-focusable"
+      whileHover={{ y: -2, scale: 1.04 }}
+      whileTap={{ scale: 0.94 }}
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 380, damping: 26 }}
+      style={{
+        position: "absolute",
+        top: 28,
+        right: 20,
+        zIndex: 4,
+        width: 44,
+        height: 44,
+        borderRadius: 999,
+        border: `1px solid ${theme.color.glassBorder}`,
+        background: theme.color.glassFillHeavy,
+        backdropFilter: "blur(14px) saturate(150%)",
+        WebkitBackdropFilter: "blur(14px) saturate(150%)",
+        boxShadow: theme.shadow.soft,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        padding: 0,
+        ...THEME_TRANSITION,
+      }}
+    >
+      <img
+        src="/icons/shopping_cart.svg"
+        alt=""
+        aria-hidden
+        style={{
+          width: 26, height: 26, objectFit: "contain",
+          filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
+        }}
+      />
+      {count > 0 && (
+        <span style={{
+          position: "absolute",
+          top: -4, right: -4,
+          minWidth: 18, height: 18,
+          padding: "0 5px",
+          borderRadius: 999,
+          background: theme.color.burnt,
+          color: theme.color.ctaText,
+          fontFamily: font.mono,
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 2px 6px rgba(168,73,17,0.35)",
+          border: `1px solid ${theme.color.glassBorder}`,
+        }}>
+          {count}
+        </span>
+      )}
+    </motion.button>
+  );
+}
 
 // Triage CTA — the real-mode replacement for the design-demo
 // "Cook · Lemon-butter pasta" card. Only renders in real-items
