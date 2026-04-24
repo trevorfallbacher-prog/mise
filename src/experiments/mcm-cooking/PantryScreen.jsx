@@ -1206,7 +1206,34 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
           color="rgba(217,107,43,0.14)"
           style={{ position: "absolute", top: -40, right: -40 }}
         />
-        <div style={{ fontSize: 36, lineHeight: 1, marginLeft: 4 }}>⏳</div>
+        {/* Icon slot — prefers the expiring item's own icon /
+            emoji (bread loaf for sourdough, chicken for chicken,
+            etc.) so the card reads as "THIS is the thing" rather
+            than a generic hourglass. Falls back to ⏳ only when
+            nothing's resolvable. Marked marginLeft:4 so it
+            doesn't sit on the burnt accent rule. */}
+        {(() => {
+          const raw = firstExpiring?._raw || null;
+          const iconUrl = canonicalImageUrlFor(raw?.canonicalId || null, null);
+          const emoji = firstExpiring?.emoji || "⏳";
+          if (iconUrl) {
+            return (
+              <img
+                src={iconUrl}
+                alt=""
+                aria-hidden
+                style={{
+                  width: 44, height: 44, objectFit: "contain",
+                  marginLeft: 4,
+                  filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+                }}
+              />
+            );
+          }
+          return (
+            <div style={{ fontSize: 36, lineHeight: 1, marginLeft: 4 }}>{emoji}</div>
+          );
+        })()}
         <div style={{ flex: 1, minWidth: 0 }}>
           <Kicker tone={theme.color.burnt}>{kicker}</Kicker>
           <div style={{
