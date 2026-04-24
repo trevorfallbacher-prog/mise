@@ -394,6 +394,39 @@ export default function PantryScreen({
           >
             The Pantry
           </SerifHeader>
+          {/* Magazine-masthead flourish — thin serif rule + small
+              diamond glyph between the header and the subtitle.
+              Subtle but intentional; reads as "this is a curated
+              surface, not a list of inventory rows." Kept at 50%
+              skyInkMuted alpha so it never fights the header for
+              attention. */}
+          <div
+            aria-hidden
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              marginTop: 12, maxWidth: 140,
+            }}
+          >
+            <span style={{
+              flex: 1, height: 1,
+              background: theme.color.skyInkMuted,
+              opacity: 0.4,
+            }} />
+            <span style={{
+              fontFamily: font.serif,
+              fontSize: 10,
+              color: theme.color.skyInkMuted,
+              opacity: 0.6,
+              lineHeight: 1,
+            }}>
+              ◆
+            </span>
+            <span style={{
+              flex: 1, height: 1,
+              background: theme.color.skyInkMuted,
+              opacity: 0.4,
+            }} />
+          </div>
           <p style={{
             marginTop: 8, fontFamily: font.sans, fontSize: 15,
             color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 420,
@@ -452,21 +485,16 @@ export default function PantryScreen({
               the hierarchy gets bypassed and matching items show
               across all locations. */}
           {!query && (
-            <div style={{
-              display: "flex", gap: 8, marginTop: 14,
-              overflowX: "auto", paddingBottom: 4,
-            }}>
-              {LOCATIONS.map((loc) => (
-                <GlassPill
-                  key={loc.id}
-                  active={locationTab === loc.id}
-                  onClick={() => switchLocation(loc.id)}
-                >
-                  <span style={{ marginRight: 6 }}>{loc.emoji}</span>
-                  {loc.label}
-                </GlassPill>
-              ))}
-            </div>
+            <LocationTabs
+              locations={LOCATIONS}
+              active={locationTab}
+              onSelect={switchLocation}
+              totals={{
+                fridge:  sumLocationTiles(cardsByLocTile.fridge),
+                pantry:  sumLocationTiles(cardsByLocTile.pantry),
+                freezer: sumLocationTiles(cardsByLocTile.freezer),
+              }}
+            />
           )}
         </FadeIn>
 
@@ -668,6 +696,115 @@ const NAV_TABS = [
 ];
 
 // --- Sub-components ------------------------------------------------------
+
+// Location tabs — segmented control for fridge / pantry / freezer.
+// Replaces a plain pill-row with a unified segmented element so
+// the active tab reads as "one of three modes" (which it is)
+// rather than "one pill out of three random pills." Uses a
+// framer-motion layoutId for the active indicator so it slides
+// between segments instead of snapping — reads as a physical
+// switch rather than a state flip. Each segment carries its own
+// item total so the user sees "where the weight of my pantry is"
+// before clicking.
+function LocationTabs({ locations, active, onSelect, totals }) {
+  const { theme } = useTheme();
+  return (
+    <div style={{
+      display: "flex",
+      gap: 4,
+      marginTop: 14,
+      padding: 4,
+      borderRadius: 999,
+      background: theme.color.glassFillLite,
+      border: `1px solid ${theme.color.hairline}`,
+      backdropFilter: "blur(16px) saturate(150%)",
+      WebkitBackdropFilter: "blur(16px) saturate(150%)",
+      boxShadow: theme.shadow.soft,
+      overflowX: "auto",
+      scrollbarWidth: "none",
+      ...THEME_TRANSITION,
+    }}>
+      {locations.map((loc) => {
+        const isActive = active === loc.id;
+        const total = totals[loc.id] || 0;
+        return (
+          <button
+            key={loc.id}
+            onClick={() => onSelect(loc.id)}
+            style={{
+              position: "relative",
+              flex: 1,
+              minWidth: 100,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "8px 14px",
+              borderRadius: 999,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              fontFamily: font.sans,
+              fontSize: 13,
+              fontWeight: 500,
+              color: isActive ? theme.color.ink : theme.color.inkMuted,
+              transition: "color 220ms ease",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {isActive && (
+              // Sliding indicator — framer morphs this element's
+              // bounds when `active` changes, producing a smooth
+              // slide between segments. layoutId is stable so
+              // the SAME element is tracked across tab switches,
+              // not replaced.
+              <motion.div
+                layoutId="location-tab-indicator"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  borderRadius: 999,
+                  background: theme.color.glassFillHeavy,
+                  border: `1px solid ${theme.color.glassBorder}`,
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 8px rgba(30,30,30,0.08)`,
+                  zIndex: 0,
+                }}
+                transition={{
+                  type: "spring",
+                  stiffness: 380,
+                  damping: 32,
+                }}
+              />
+            )}
+            <span style={{ position: "relative", zIndex: 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 15, lineHeight: 1 }}>{loc.emoji}</span>
+              <span>{loc.label}</span>
+              {/* Per-tab count chip — DM Mono so it reads as
+                  metadata. Hidden when total is 0 so empty-location
+                  tabs don't broadcast "0 here." */}
+              {total > 0 && (
+                <span style={{
+                  fontFamily: font.mono, fontSize: 10,
+                  fontWeight: 500,
+                  padding: "1px 6px",
+                  borderRadius: 999,
+                  background: isActive
+                    ? withAlpha(theme.color.ink, 0.08)
+                    : "transparent",
+                  color: isActive ? theme.color.inkMuted : theme.color.inkFaint,
+                  letterSpacing: "0.04em",
+                  marginLeft: 2,
+                }}>
+                  {total}
+                </span>
+              )}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 // Drilled tile header — the prominent "you are here" block shown
 // above the item grid when the user taps into a tile. Replaces
@@ -1047,8 +1184,23 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
             </div>
           )}
           {warnCount > 0 && (
-            <div
+            <motion.div
               title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
+              // Gentle breathing pulse draws the eye to tiles that
+              // need attention without feeling alarming. Scales ±4%
+              // and box-shadow halo grows/shrinks in sync so the
+              // badge feels like a soft heartbeat rather than a
+              // hard blink. 2.4s cycle is slow enough to feel
+              // ambient, fast enough to read as motion.
+              animate={{
+                scale: [1, 1.06, 1],
+                boxShadow: [
+                  "0 2px 6px rgba(168,73,17,0.35)",
+                  "0 2px 14px rgba(168,73,17,0.55)",
+                  "0 2px 6px rgba(168,73,17,0.35)",
+                ],
+              }}
+              transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
               style={{
                 position: "absolute",
                 top: -2, right: -4,
@@ -1059,12 +1211,11 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
                 color: theme.color.ctaText,
                 fontFamily: font.mono, fontSize: 9, fontWeight: 600,
                 display: "inline-flex", alignItems: "center", justifyContent: "center",
-                boxShadow: "0 2px 6px rgba(168,73,17,0.35)",
                 letterSpacing: "-0.02em",
               }}
             >
               {warnCount}
-            </div>
+            </motion.div>
           )}
         </motion.div>
         {/* Count pill — DM Mono so it reads as metadata, not a
