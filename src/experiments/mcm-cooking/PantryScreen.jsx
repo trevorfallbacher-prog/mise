@@ -2008,39 +2008,44 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
             {tile.emoji}
           </div>
         )}
-        {warnCount > 0 && (
-          <motion.div
-            title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
-            animate={{
-              scale: [1, 1.06, 1],
-              boxShadow: [
-                "0 2px 6px rgba(168,73,17,0.35)",
-                "0 2px 14px rgba(168,73,17,0.55)",
-                "0 2px 6px rgba(168,73,17,0.35)",
-              ],
-            }}
-            transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
+        {/* Stock-count badge on the icon — BLUE. Previously
+            this slot held the warn count in burnt orange, but the
+            eye-catching badge on the icon was reading as "how
+            many I have" (stock indicator) while the muted right-
+            of-label pill held the actual stock number. Swapped:
+            the badge is now the primary stock-count indicator
+            (blue reads as "inventory"), and the warn count moves
+            to the right-of-label slot below in burnt orange (which
+            now reads as "heads up, something's expiring"). */}
+        {!empty && (
+          <div
+            title={`${count} item${count === 1 ? "" : "s"}`}
             style={{
               position: "absolute",
               top: -2, right: -4,
               minWidth: 18, height: 18,
               padding: "0 5px",
               borderRadius: 999,
-              background: theme.color.burnt,
+              background: LOCATION_DOT.fridge, // #2F5A85 — deep
+                                               // blue, stock feel
               color: theme.color.ctaText,
               fontFamily: font.mono, fontSize: 10, fontWeight: 600,
               display: "inline-flex", alignItems: "center", justifyContent: "center",
               letterSpacing: "-0.02em",
+              boxShadow: "0 2px 6px rgba(30,55,100,0.35)",
+              border: `1px solid ${theme.color.glassBorder}`,
             }}
           >
-            {warnCount}
-          </motion.div>
+            {count}
+          </div>
         )}
       </motion.div>
 
-      {/* Text column — label + count pill on the same row at the
-          top, blurb below. minWidth 0 so long blurbs truncate
-          instead of forcing the card to grow past its column. */}
+      {/* Text column — label + warn pill on the same row at the
+          top, blurb below. Warn pill (burnt orange, breathing
+          pulse) takes the slot that used to hold the stock count;
+          this is the "attention, these are expiring" indicator
+          now, where the semantically-warning color belongs. */}
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
         <div style={{
           display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8,
@@ -2056,20 +2061,34 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
           }}>
             {tile.label}
           </div>
-          {!empty && (
-            <div style={{
-              fontFamily: font.mono, fontSize: 10,
-              padding: "2px 7px",
-              borderRadius: radius.pill,
-              background: withAlpha(theme.color.ink, 0.06),
-              color: theme.color.inkMuted,
-              letterSpacing: "0.06em",
-              whiteSpace: "nowrap",
-              textTransform: "uppercase",
-              flexShrink: 0,
-            }}>
-              {count}
-            </div>
+          {warnCount > 0 && (
+            <motion.div
+              title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
+              animate={{
+                scale: [1, 1.06, 1],
+                boxShadow: [
+                  "0 2px 6px rgba(168,73,17,0.35)",
+                  "0 2px 14px rgba(168,73,17,0.55)",
+                  "0 2px 6px rgba(168,73,17,0.35)",
+                ],
+              }}
+              transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
+              style={{
+                minWidth: 22, height: 22,
+                padding: "0 8px",
+                borderRadius: 999,
+                background: theme.color.burnt,
+                color: theme.color.ctaText,
+                fontFamily: font.mono, fontSize: 10, fontWeight: 600,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                flexShrink: 0,
+                border: `1px solid ${theme.color.glassBorder}`,
+              }}
+            >
+              {warnCount} soon
+            </motion.div>
           )}
         </div>
         {tile.blurb && (
