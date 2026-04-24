@@ -219,6 +219,7 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
                       <TintedPill
                         tone={ing.done ? "teal" : "burnt"}
                         mono
+                        size="sm"
                         onClick={onOpenUnitPicker}
                       >
                         {ing.amt}

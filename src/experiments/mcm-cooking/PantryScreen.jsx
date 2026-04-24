@@ -61,13 +61,14 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
         <FadeIn>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <Kicker>Tuesday · 4:12 PM</Kicker>
-            <div style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              fontFamily: font.mono, fontSize: 11, color: color.teal,
-              letterSpacing: "0.12em", textTransform: "uppercase",
-            }}>
-              <StatusDot tone="ok" /> {goodCount} on hand
-            </div>
+            <TintedPill
+              tone="teal"
+              mono
+              size="sm"
+              style={{ textTransform: "uppercase", letterSpacing: "0.10em" }}
+            >
+              <StatusDot tone="ok" size={6} /> {goodCount} on hand
+            </TintedPill>
           </div>
 
           <SerifHeader size={52} style={{ marginTop: 4 }}>
@@ -85,6 +86,8 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
         {/* --- Search + filters ---------------------------------------- */}
         <FadeIn delay={0.06}>
           <GlassPanel
+            tone="input"
+            variant="input"
             padding={14}
             style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}
           >
@@ -226,6 +229,17 @@ const NAV_TABS = [
 
 function PantryCard({ item, onPick }) {
   const warn = item.status === "warn";
+  // Warn cards pick up a gentle burnt-tinted overlay so "expires
+  // soon" is noticeable at the card level without being alarming.
+  // Glass recipe still comes from GlassPanel — we just layer a
+  // soft warm wash on top via background-image.
+  const warnOverlay = warn
+    ? {
+        background:
+          "linear-gradient(160deg, rgba(217,107,43,0.10) 0%, rgba(255,255,255,0.55) 55%)",
+      }
+    : null;
+
   return (
     <GlassPanel
       interactive
@@ -234,6 +248,7 @@ function PantryCard({ item, onPick }) {
       style={{
         display: "flex", flexDirection: "column",
         gap: 10, minHeight: 148,
+        ...warnOverlay,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -243,21 +258,21 @@ function PantryCard({ item, onPick }) {
         }}>
           {item.emoji}
         </div>
-        <StatusDot tone={warn ? "warn" : "ok"} />
+        <StatusDot tone={warn ? "warn" : "ok"} size={warn ? 10 : 8} />
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
-          fontSize: 17, lineHeight: 1.15, color: color.ink,
+          fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
+          fontSize: 18, lineHeight: 1.15, color: color.ink,
           letterSpacing: "-0.01em",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {item.name}
         </div>
         <div style={{
-          fontFamily: font.mono, fontSize: 12, color: color.warmBrown,
-          marginTop: 4, letterSpacing: "0.03em",
+          fontFamily: font.mono, fontSize: 11, color: color.inkFaint,
+          marginTop: 4, letterSpacing: "0.02em",
         }}>
           {item.qty}
         </div>
@@ -275,6 +290,7 @@ function PantryCard({ item, onPick }) {
           fontFamily: font.mono, fontSize: 10,
           color: warn ? color.burnt : color.inkMuted,
           whiteSpace: "nowrap",
+          fontWeight: warn ? 500 : 400,
         }}>
           {item.days}d
         </span>

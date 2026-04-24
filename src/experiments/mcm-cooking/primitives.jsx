@@ -15,16 +15,21 @@ import {
 // behind the glass. Absolutely positioned so it always fills the
 // nearest positioned parent.
 export function WarmBackdrop({ variant = "pantry" }) {
+  // Two primary tinted blobs — teal top-left and burnt-orange
+  // bottom-right — with a very faint mustard warmth so the
+  // parchment never reads as plain beige. Opacities capped at
+  // ~0.12 so the glass panels catch color through blur without
+  // the canvas feeling busy.
   const blobs = variant === "cook"
     ? [
-        { bg: "rgba(47,143,131,0.30)",  top: "-10%", left: "-15%", size: 520 },
-        { bg: "rgba(217,107,43,0.22)",  top: "55%",  left: "60%",  size: 440 },
-        { bg: "rgba(212,166,55,0.18)",  top: "10%",  left: "65%",  size: 300 },
+        { bg: "rgba(47,143,131,0.14)",  top: "-12%", left: "-15%", size: 520 },
+        { bg: "rgba(217,107,43,0.12)",  top: "55%",  left: "60%",  size: 460 },
+        { bg: "rgba(212,166,55,0.08)",  top: "10%",  left: "60%",  size: 320 },
       ]
     : [
-        { bg: "rgba(111,175,155,0.35)", top: "-12%", left: "-10%", size: 480 },
-        { bg: "rgba(217,107,43,0.18)",  top: "50%",  left: "65%",  size: 420 },
-        { bg: "rgba(212,166,55,0.22)",  top: "70%",  left: "-10%", size: 340 },
+        { bg: "rgba(47,143,131,0.12)",  top: "-12%", left: "-12%", size: 500 },
+        { bg: "rgba(217,107,43,0.10)",  top: "55%",  left: "62%",  size: 440 },
+        { bg: "rgba(212,166,55,0.08)",  top: "70%",  left: "-8%",  size: 320 },
       ];
 
   return (
@@ -111,17 +116,27 @@ export function Starburst({ size = 96, color: c = "rgba(122,78,45,0.14)", style 
 // screens can vary the chroma — default is neutral white-glass,
 // "warm" tints slightly mustard for hero cards.
 export function GlassPanel({
-  children, style, tone = "neutral", padding = 20, interactive = false, onClick,
+  children, style, tone = "neutral", variant = "elevated",
+  padding = 20, interactive = false, onClick,
 }) {
+  // Tone sets the chroma of the glass (neutral / warm cream /
+  // cool eucalyptus / sunken input tint). Variant sets the depth
+  // treatment — "elevated" floats with a top-edge light reflection,
+  // "input" sinks with an inset shadow so inputs read as surfaces
+  // you type INTO, not panels that sit beside everything else.
   const toneTint = {
     neutral: color.glassFill,
     warm:    "rgba(255,247,232,0.70)",
     cool:    "rgba(232,244,242,0.70)",
-  }[tone];
+    input:   "rgba(246,241,232,0.78)",
+  }[tone] || color.glassFill;
+
+  const depthShadow = variant === "input" ? shadow.inputInset : shadow.glass;
 
   const base = {
     ...glassPanel,
     background: toneTint,
+    boxShadow: depthShadow,
     padding,
     cursor: interactive ? "pointer" : "default",
     ...style,
@@ -188,6 +203,12 @@ export function StatusDot({ tone = "ok", size = 8, style }) {
           : tone === "warn" ? color.burnt
           : tone === "pending" ? color.mustard
           : color.inkFaint;
+  // Warn dots get a slightly larger ring + a soft outer glow so
+  // the "expiring soon" signal actually catches the eye without
+  // turning alarming. Other tones keep the quieter treatment.
+  const boxShadow = tone === "warn"
+    ? `0 0 0 4px ${c}22, 0 0 10px ${c}66`
+    : `0 0 0 3px ${c}22`;
   return (
     <span
       aria-hidden
@@ -197,7 +218,7 @@ export function StatusDot({ tone = "ok", size = 8, style }) {
         height: size,
         borderRadius: "50%",
         background: c,
-        boxShadow: `0 0 0 3px ${c}22`,
+        boxShadow,
         ...style,
       }}
     />
@@ -285,6 +306,18 @@ export function GlassPill({
   const pad = size === "sm" ? "6px 12px" : "10px 16px";
   const fontSize = size === "sm" ? 12 : 13;
 
+  // Inactive pills get a slightly firmer border + a feather-light
+  // drop + an inner highlight so they read as real glass, not
+  // flat white. Active pills layer a bigger colored halo and an
+  // inner rim so the lift is unmistakable without bumping chroma.
+  const inactiveBoxShadow =
+    "0 1px 2px rgba(30,30,30,0.06)," +
+    "inset 0 1px 0 rgba(255,255,255,0.55)";
+  const activeBoxShadow =
+    "0 10px 22px rgba(47,143,131,0.34)," +
+    "0 2px 4px rgba(47,143,131,0.18)," +
+    "inset 0 1px 0 rgba(255,255,255,0.28)";
+
   return (
     <Tag
       onClick={onClick}
@@ -301,12 +334,12 @@ export function GlassPill({
         letterSpacing: "0.02em",
         padding: pad,
         borderRadius: radius.pill,
-        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.10)"}`,
+        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.14)"}`,
         background: active
           ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
           : "rgba(255,255,255,0.65)",
         color: active ? "#FFF8EE" : color.ink,
-        boxShadow: active ? "0 8px 18px rgba(47,143,131,0.30)" : "none",
+        boxShadow: active ? activeBoxShadow : inactiveBoxShadow,
         cursor: "pointer",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",

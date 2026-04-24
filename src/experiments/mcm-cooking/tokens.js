@@ -55,10 +55,26 @@ export const space = {
 };
 
 export const shadow = {
-  glass: "0 20px 40px rgba(0,0,0,0.08), 0 4px 10px rgba(0,0,0,0.05)",
+  // `glass` stacks three layers: a soft ambient drop, a closer
+  // contact shadow, and an inset highlight along the top edge so
+  // the panel reads as "light passing through" instead of a flat
+  // white card. Every GlassPanel inherits this; keep it consistent.
+  glass:
+    "0 20px 40px rgba(0,0,0,0.08)," +
+    "0 4px 10px rgba(0,0,0,0.05)," +
+    "inset 0 1px 0 rgba(255,255,255,0.55)",
   soft:  "0 8px 20px rgba(30,30,30,0.06), 0 1px 2px rgba(30,30,30,0.04)",
-  lift:  "0 24px 50px rgba(30,30,30,0.12), 0 6px 14px rgba(30,30,30,0.06)",
+  lift:
+    "0 24px 50px rgba(30,30,30,0.12)," +
+    "0 6px 14px rgba(30,30,30,0.06)," +
+    "inset 0 1px 0 rgba(255,255,255,0.55)",
   cta:   "0 12px 26px rgba(217,107,43,0.35), 0 2px 6px rgba(217,107,43,0.25)",
+  // Search-field / input surface — reads "sunken" via a faint top
+  // inset instead of the top highlight. Paired with a slightly
+  // warmer fill to separate it from the panels around it.
+  inputInset:
+    "inset 0 1px 2px rgba(30,30,30,0.08)," +
+    "0 1px 1px rgba(255,255,255,0.4)",
 };
 
 export const font = {
