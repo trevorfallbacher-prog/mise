@@ -822,13 +822,20 @@ function toneFillFor(theme, tone) {
 
 function tintedPillTone(theme, tone) {
   const c = theme.color;
+  // `fg` is derived by DARKENING the hue rather than reusing the
+  // same hue as `bg`. When the tint alpha is bumped (dawn/dusk
+  // themes, blended transitions), a bg at 40%+ alpha becomes
+  // strongly colored — and a same-hue fg disappears into it
+  // (teal-on-teal / orange-on-orange). A 55% darker fg sits
+  // consistently below the bg's luminance regardless of how
+  // opaque the tint ends up.
   const tones = {
-    teal:    { fg: c.teal,      bg: c.tealTint    },
-    aqua:    { fg: c.aqua,      bg: c.aquaTint    },
-    burnt:   { fg: c.burnt,     bg: c.burntTint   },
-    mustard: { fg: c.warmBrown, bg: c.mustardTint },
-    brown:   { fg: c.warmBrown, bg: c.brownTint   },
-    muted:   { fg: c.inkMuted,  bg: withAlpha(c.ink, 0.06) },
+    teal:    { fg: darken(c.teal,  0.55), bg: c.tealTint    },
+    aqua:    { fg: darken(c.aqua,  0.55), bg: c.aquaTint    },
+    burnt:   { fg: darken(c.burnt, 0.45), bg: c.burntTint   },
+    mustard: { fg: c.warmBrown,           bg: c.mustardTint },
+    brown:   { fg: c.warmBrown,           bg: c.brownTint   },
+    muted:   { fg: c.inkMuted,            bg: withAlpha(c.ink, 0.06) },
   };
   return tones[tone] || tones.teal;
 }
@@ -856,14 +863,30 @@ export function withAlpha(colorStr, alpha) {
 // Darken a hex color by `amount` (0..1) — used for the bottom
 // stop of the teal pill/dock gradient so the recipe scales with
 // whatever teal the active theme ships.
-function darken(hex, amount) {
-  if (!hex || !hex.startsWith("#")) return hex;
-  const h = hex.slice(1);
-  let r = parseInt(h.slice(0, 2), 16);
-  let g = parseInt(h.slice(2, 4), 16);
-  let b = parseInt(h.slice(4, 6), 16);
-  r = Math.max(0, Math.round(r * (1 - amount)));
-  g = Math.max(0, Math.round(g * (1 - amount)));
-  b = Math.max(0, Math.round(b * (1 - amount)));
-  return `rgb(${r},${g},${b})`;
+// Darken a color by `amount` (0..1). Handles hex, rgb(), and rgba()
+// so it works whether called on a pure-theme anchor value or on
+// a blended rgba string coming out of blendThemes. Preserves any
+// existing alpha channel.
+function darken(colorStr, amount) {
+  if (!colorStr) return colorStr;
+  const scale = Math.max(0, 1 - amount);
+  if (colorStr.startsWith("#")) {
+    const h = colorStr.length === 4
+      ? colorStr.slice(1).split("").map((c) => c + c).join("")
+      : colorStr.slice(1);
+    const r = Math.max(0, Math.round(parseInt(h.slice(0, 2), 16) * scale));
+    const g = Math.max(0, Math.round(parseInt(h.slice(2, 4), 16) * scale));
+    const b = Math.max(0, Math.round(parseInt(h.slice(4, 6), 16) * scale));
+    return `rgb(${r},${g},${b})`;
+  }
+  const m = colorStr.match(/rgba?\(([^)]+)\)/);
+  if (m) {
+    const parts = m[1].split(",").map((s) => s.trim());
+    const r = Math.max(0, Math.round(parseFloat(parts[0]) * scale));
+    const g = Math.max(0, Math.round(parseFloat(parts[1]) * scale));
+    const b = Math.max(0, Math.round(parseFloat(parts[2]) * scale));
+    const a = parts[3] == null ? 1 : parseFloat(parts[3]);
+    return a === 1 ? `rgb(${r},${g},${b})` : `rgba(${r},${g},${b},${a})`;
+  }
+  return colorStr;
 }
