@@ -1091,12 +1091,30 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
           position: "relative", overflow: "hidden",
         }}
       >
+        {/* Left accent rule — a 4px wide burnt strip running the
+            full height of the card. Same magazine pull-quote
+            cue that says "this side bar has something urgent to
+            tell you." Positioned absolute so it hugs the card
+            edge regardless of padding; rounds with the panel's
+            corner via inherit so it doesn't stick out past the
+            rounded-rect shape. */}
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: 0, top: 0, bottom: 0,
+            width: 4,
+            background: theme.color.burnt,
+            borderTopLeftRadius: "inherit",
+            borderBottomLeftRadius: "inherit",
+          }}
+        />
         <Starburst
           size={140}
           color="rgba(217,107,43,0.14)"
           style={{ position: "absolute", top: -40, right: -40 }}
         />
-        <div style={{ fontSize: 36, lineHeight: 1 }}>⏳</div>
+        <div style={{ fontSize: 36, lineHeight: 1, marginLeft: 4 }}>⏳</div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <Kicker tone={theme.color.burnt}>{kicker}</Kicker>
           <div style={{
