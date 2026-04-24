@@ -182,10 +182,16 @@ function toCard(raw) {
     emoji:    raw.emoji || "🍽️",
     name:     raw.name || "Untitled",
     qty:      formatQty(raw.amount, raw.unit),
+    brand:    raw.brand || null,
     location,
     cat,
     status,
     days,
+    // Timestamps used for sort orderings in the drilled view.
+    // `purchasedAt` may be null for manual-add rows that never
+    // went through the scan flow; sort falls back to createdAt
+    // semantics when present.
+    purchasedAt: raw.purchasedAt || null,
     // Keep the raw row around so onOpenItem can hand it back to
     // the caller (App.jsx wants to open ItemCard with the full
     // pantry row, not the trimmed card shape).
@@ -215,6 +221,13 @@ export default function PantryScreen({
   const [locationTab, setLocationTab] = useState("fridge");
   const [drilledTile, setDrilledTile] = useState(null);
   const [query, setQuery] = useState("");
+  // Sort order for the drilled-tile items grid. Defaults to
+  // "expiring" which surfaces whichever warn items are in this
+  // tile at the top — the most useful default for a triage-
+  // oriented pantry. Not applied to search results (those stay
+  // in the pantry row's native order so the user sees relevance,
+  // not an arbitrary sort).
+  const [sortBy, setSortBy] = useState("expiring");
 
   // Normalize once — everything downstream reads from `cards`.
   const cards = useMemo(
@@ -256,12 +269,16 @@ export default function PantryScreen({
   // Items visible in the current tile drill-down — derived lazily
   // so the grid can reuse the same PantryCard renderer that the
   // flat version used. When no tile drilled, `visible` is unused
-  // (tile grid renders instead).
+  // (tile grid renders instead). Drilled items run through the
+  // sort selector; search hits keep the pantry's native order so
+  // a user searching "butter" sees results in whatever order they
+  // were added (proxy for relevance — recent scans near the top).
   const visible = useMemo(() => {
     if (searchHits) return searchHits;
     if (!drilledTile) return [];
-    return cardsByLocTile[locationTab]?.[drilledTile.id] || [];
-  }, [searchHits, drilledTile, cardsByLocTile, locationTab]);
+    const items = cardsByLocTile[locationTab]?.[drilledTile.id] || [];
+    return sortItems(items, sortBy);
+  }, [searchHits, drilledTile, cardsByLocTile, locationTab, sortBy]);
 
   // Switching location while drilled = bail to the tile grid of
   // the new location. Same behavior as classic Kitchen.
@@ -379,9 +396,14 @@ export default function PantryScreen({
           </SerifHeader>
           <p style={{
             marginTop: 8, fontFamily: font.sans, fontSize: 15,
-            color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 340,
+            color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 420,
+            // `pre-line` turns the \n separator pantrySubtitle
+            // emits between the lead sentence and the by-location
+            // breakdown into an actual break; without it HTML
+            // would collapse the newline to a space.
+            whiteSpace: "pre-line",
           }}>
-            {pantrySubtitle(cards.length, goodCount)}
+            {pantrySubtitle(cards.length, goodCount, cardsByLocTile)}
           </p>
         </FadeIn>
 
@@ -448,14 +470,25 @@ export default function PantryScreen({
           )}
         </FadeIn>
 
-        {/* --- Back chip (drilled into a tile) ------------------------- */}
+        {/* --- Drilled-tile header (richer than a back chip) ---------- */}
         {drilledTile && !query && (
           <FadeIn>
-            <div style={{ marginTop: 20 }}>
-              <BackChip onClick={() => setDrilledTile(null)}>
-                ← {drilledTile.emoji} {drilledTile.label}
-              </BackChip>
-            </div>
+            <DrilledTileHeader
+              tile={drilledTile}
+              location={locationTab}
+              count={visible.length}
+              warnCount={warnCountByTile[`${locationTab}:${drilledTile.id}`] || 0}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              onBack={() => setDrilledTile(null)}
+            />
+          </FadeIn>
+        )}
+
+        {/* --- Search summary (which locations did we find hits in?) -- */}
+        {query && (
+          <FadeIn>
+            <SearchSummary hits={visible} query={query} onClear={() => setQuery("")} />
           </FadeIn>
         )}
 
@@ -544,17 +577,70 @@ export default function PantryScreen({
 // Pantry subtitle — short warm copy that scales with the count.
 // Hardcoded wording on Showcase ("Twelve good things") doesn't
 // survive once real data flows in; this helper keeps it honest.
-function pantrySubtitle(total, good) {
+// Now also surfaces the by-location breakdown (N fridge · M
+// pantry · K freezer) when total > 0 so the user sees where the
+// gravity of their shelf is without tapping every tab.
+function pantrySubtitle(total, good, cardsByLocTile) {
   if (total === 0) {
     return "Empty shelf. Time for a grocery run.";
   }
-  if (total === good) {
-    return total === 1
-      ? "One good thing on the shelf."
-      : `${total} good things on the shelf. Everything's fresh.`;
-  }
+  // Base sentence — "all fresh" variant when nothing's expiring.
   const warnCount = total - good;
-  return `${total} on the shelf · ${warnCount} ${warnCount === 1 ? "needs" : "need"} using soon.`;
+  const base = warnCount === 0
+    ? (total === 1 ? "One good thing on the shelf." : `${total} good things on the shelf. Everything's fresh.`)
+    : `${total} on the shelf · ${warnCount} ${warnCount === 1 ? "needs" : "need"} using soon.`;
+
+  // By-location tail — sum all tiles per location. Skip when a
+  // location has zero items to keep the sentence readable.
+  const breakdown = (cardsByLocTile && Object.keys(cardsByLocTile).length > 0)
+    ? ["fridge", "pantry", "freezer"]
+        .map(loc => ({ loc, count: sumLocationTiles(cardsByLocTile[loc]) }))
+        .filter(x => x.count > 0)
+        .map(x => `${x.count} in the ${x.loc}`)
+        .join(" · ")
+    : "";
+
+  return breakdown ? `${base}\n${breakdown}.` : base;
+}
+
+// Sum all items across a location's tiles. `locBuckets` is
+// `{ tileId: card[] }` or undefined; returns 0 for undefined so
+// empty locations drop out of the breakdown naturally.
+function sumLocationTiles(locBuckets) {
+  if (!locBuckets) return 0;
+  let n = 0;
+  for (const tileId of Object.keys(locBuckets)) n += locBuckets[tileId].length;
+  return n;
+}
+
+// Sort a list of card-shape items by one of three orderings.
+// "expiring"  — ascending days-to-expire, with null-days (shelf
+//               stable) and missing dates bucketed at the end.
+//               Warn items cluster at the top of the view.
+// "name"      — case-insensitive alpha by display name.
+// "recent"    — descending purchasedAt; rows without a stamp
+//               (manual-add legacy) bucket at the end.
+function sortItems(items, sortBy) {
+  const arr = items.slice();
+  if (sortBy === "name") {
+    arr.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    return arr;
+  }
+  if (sortBy === "recent") {
+    arr.sort((a, b) => {
+      const ta = a.purchasedAt ? +new Date(a.purchasedAt) : 0;
+      const tb = b.purchasedAt ? +new Date(b.purchasedAt) : 0;
+      return tb - ta;
+    });
+    return arr;
+  }
+  // Default — "expiring" — days ascending, nulls last.
+  arr.sort((a, b) => {
+    const da = a.days == null ? Number.POSITIVE_INFINITY : a.days;
+    const db = b.days == null ? Number.POSITIVE_INFINITY : b.days;
+    return da - db;
+  });
+  return arr;
 }
 
 const NAV_TABS = [
@@ -565,6 +651,231 @@ const NAV_TABS = [
 ];
 
 // --- Sub-components ------------------------------------------------------
+
+// Drilled tile header — the prominent "you are here" block shown
+// above the item grid when the user taps into a tile. Replaces
+// the plain BackChip with a stronger sense of place: tile icon
+// (SVG or emoji), serif-italic label, count + warn count summary,
+// sort selector, and an obvious back button. Mirrors classic
+// Kitchen's drill-in moment but in MCM's voice (serif, glass,
+// warm accents).
+function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortChange, onBack }) {
+  const { theme } = useTheme();
+  const iconUrl = tileIconFor(tile.id, location);
+  const countLabel = count === 0
+    ? "empty"
+    : `${count} ${count === 1 ? "item" : "items"}`;
+  return (
+    <div style={{
+      marginTop: 20,
+      display: "flex",
+      flexDirection: "column",
+      gap: 10,
+    }}>
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+      }}>
+        {/* Back button — circular glass chip with a chevron. More
+            obvious affordance than the old text BackChip, and
+            visually balanced with the tile icon on the right. */}
+        <button
+          onClick={onBack}
+          aria-label={`Back to ${location} tiles`}
+          style={{
+            width: 38, height: 38, flexShrink: 0,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            border: `1px solid ${theme.color.hairline}`,
+            background: theme.color.glassFillLite,
+            backdropFilter: "blur(14px) saturate(150%)",
+            WebkitBackdropFilter: "blur(14px) saturate(150%)",
+            borderRadius: 999,
+            cursor: "pointer",
+            color: theme.color.ink,
+            fontSize: 18,
+            lineHeight: 1,
+            padding: 0,
+            ...THEME_TRANSITION,
+          }}
+        >
+          ←
+        </button>
+        {/* Tile icon — matches the tile-grid card's icon slot so
+            the visual "shared thing" between before/after carries
+            through even without a true layoutId animation. */}
+        <div style={{ width: 44, height: 44, flexShrink: 0 }}>
+          {iconUrl ? (
+            <img
+              src={iconUrl}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "contain",
+                filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))" }}
+            />
+          ) : (
+            <div style={{
+              fontSize: 38, lineHeight: 1,
+              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+            }}>
+              {tile.emoji}
+            </div>
+          )}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
+            fontSize: "clamp(22px, 3.5vw, 28px)",
+            lineHeight: 1.1, color: theme.color.ink,
+            letterSpacing: "-0.01em",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {tile.label}
+          </div>
+          {/* Count + warn breakdown — DM Mono so it reads as
+              metadata, not prose. Warn part tinted burnt when
+              anything in the tile is expiring soon, hidden
+              otherwise so the line stays quiet when there's
+              nothing to triage. */}
+          <div style={{
+            marginTop: 2, display: "flex", alignItems: "center", gap: 6,
+            fontFamily: font.mono, fontSize: 11,
+            letterSpacing: "0.06em",
+            color: theme.color.inkMuted,
+            textTransform: "uppercase",
+          }}>
+            <span>{countLabel}</span>
+            {warnCount > 0 && (
+              <>
+                <span style={{ opacity: 0.4 }}>·</span>
+                <span style={{ color: theme.color.burnt, fontWeight: 600 }}>
+                  {warnCount} SOON
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Sort row — only renders when there's more than one item
+          to reorder. Single-item tiles don't need sort UI. */}
+      {count > 1 && (
+        <SortSelector sortBy={sortBy} onSortChange={onSortChange} />
+      )}
+    </div>
+  );
+}
+
+// Sort selector — three small DM Mono pills ("EXPIRING" / "A–Z"
+// / "RECENT"). Shown above the items grid when drilled into a
+// tile with 2+ items.
+function SortSelector({ sortBy, onSortChange }) {
+  const { theme } = useTheme();
+  const OPTIONS = [
+    { id: "expiring", label: "Expiring" },
+    { id: "name",     label: "A–Z"      },
+    { id: "recent",   label: "Recent"   },
+  ];
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 6,
+      marginLeft: 52, // indent under the icon column so the
+                      // "sort by" row visually belongs to the
+                      // header block above, not to the grid below
+    }}>
+      <span style={{
+        fontFamily: font.mono, fontSize: 10,
+        letterSpacing: "0.12em", textTransform: "uppercase",
+        color: theme.color.inkFaint,
+        marginRight: 2,
+      }}>
+        Sort
+      </span>
+      {OPTIONS.map(opt => {
+        const active = sortBy === opt.id;
+        return (
+          <button
+            key={opt.id}
+            onClick={() => onSortChange(opt.id)}
+            style={{
+              fontFamily: font.mono, fontSize: 10,
+              letterSpacing: "0.08em", textTransform: "uppercase",
+              padding: "3px 8px",
+              borderRadius: 999,
+              border: active
+                ? `1px solid ${theme.color.hairline}`
+                : "1px solid transparent",
+              background: active ? theme.color.glassFillLite : "transparent",
+              color: active ? theme.color.ink : theme.color.inkMuted,
+              cursor: "pointer",
+              ...THEME_TRANSITION,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Search summary — shown above the flat search-hits grid. Tells
+// the user how many hits and which locations they span, so a
+// query that returns matches across multiple tabs (e.g. butter
+// in both fridge and freezer) surfaces that distribution without
+// making them count rows by hand.
+function SearchSummary({ hits, query, onClear }) {
+  const { theme } = useTheme();
+  const total = hits.length;
+  // Per-location counts — "butter" search finds 1 in fridge + 1
+  // in freezer, this line says "Found 2 · 1 fridge · 1 freezer".
+  const byLoc = { fridge: 0, pantry: 0, freezer: 0 };
+  for (const h of hits) {
+    if (byLoc[h._location] != null) byLoc[h._location] += 1;
+  }
+  const parts = ["fridge", "pantry", "freezer"]
+    .filter(loc => byLoc[loc] > 0)
+    .map(loc => `${byLoc[loc]} ${loc}`);
+
+  return (
+    <div style={{
+      marginTop: 20,
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+      flexWrap: "wrap",
+    }}>
+      <div style={{
+        fontFamily: font.mono, fontSize: 11,
+        letterSpacing: "0.06em",
+        color: theme.color.skyInkMuted,
+        textTransform: "uppercase",
+      }}>
+        {total === 0 ? (
+          <>No matches for "{query}"</>
+        ) : (
+          <>
+            Found {total}
+            {parts.length > 0 && <span style={{ opacity: 0.6 }}> · {parts.join(" · ")}</span>}
+          </>
+        )}
+      </div>
+      <button
+        onClick={onClear}
+        style={{
+          fontFamily: font.mono, fontSize: 10,
+          letterSpacing: "0.08em", textTransform: "uppercase",
+          padding: "4px 10px",
+          borderRadius: 999,
+          border: `1px solid ${theme.color.hairline}`,
+          background: theme.color.glassFillLite,
+          color: theme.color.inkMuted,
+          cursor: "pointer",
+          ...THEME_TRANSITION,
+        }}
+      >
+        Clear search
+      </button>
+    </div>
+  );
+}
 
 // Item grid — the animated 2-to-N column grid used for BOTH the
 // drilled-tile view and the search-hits view. Factored out so the
@@ -821,11 +1132,33 @@ function PantryCard({ item, onPick }) {
         }}>
           {item.name}
         </div>
+        {/* Qty + brand row. Brand follows the CLAUDE.md browse
+            pattern ("Butter · Kerrygold") — grey DM Mono sitting
+            as a subtle identity label without competing with the
+            serif name above. Middle-dot separator only renders
+            when brand exists; no brand = just the qty line. */}
         <div style={{
-          fontFamily: font.mono, fontSize: 11, color: theme.color.inkFaint,
-          marginTop: 4, letterSpacing: "0.02em",
+          display: "flex", alignItems: "baseline", gap: 6,
+          marginTop: 4,
+          fontFamily: font.mono, fontSize: 11,
+          letterSpacing: "0.02em",
+          whiteSpace: "nowrap", overflow: "hidden",
         }}>
-          {item.qty}
+          <span style={{ color: theme.color.inkFaint, flexShrink: 0 }}>
+            {item.qty}
+          </span>
+          {item.brand && (
+            <>
+              <span style={{ color: theme.color.inkFaint, opacity: 0.4, flexShrink: 0 }}>·</span>
+              <span style={{
+                color: theme.color.inkMuted,
+                overflow: "hidden", textOverflow: "ellipsis",
+                fontWeight: 500,
+              }}>
+                {item.brand}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
