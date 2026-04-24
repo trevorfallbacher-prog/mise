@@ -3096,14 +3096,14 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
                 style={{
                   fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878",
                   minWidth: 60, textAlign: "left",
-                  background: "transparent", border: "none", padding: 0,
-                  cursor: ing.ingredientId ? "pointer" : "default",
-                  textDecoration: ing.ingredientId ? "underline dotted #b8a87855" : "none",
-                  textUnderlineOffset: 3,
+                  display: "inline-flex", alignItems: "center", gap: 4,
+                  background: "#1a1508", border: "1px solid #3a2f10",
+                  borderRadius: 6, padding: "3px 8px",
+                  cursor: "pointer",
                 }}
-                disabled={!ing.ingredientId}
               >
-                {ing.amount || "—"}
+                <span>{ing.amount || "—"}</span>
+                <span style={{ fontSize: 8, opacity: 0.7 }}>▾</span>
               </button>
               <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
                 {ing.item}

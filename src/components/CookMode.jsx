@@ -1268,30 +1268,33 @@ export default function CookMode({
               {usesList.map((ing, i) => {
                 const swappedFrom = ing._swappedFrom?.item || null;
                 const isSkipped   = !!ing._skipped;
-                const overrideAmount = ing.ingredientId ? unitOverrides[ing.ingredientId] : null;
+                const overrideKey = ing.ingredientId || ing.item || null;
+                const overrideAmount = overrideKey ? unitOverrides[overrideKey] : null;
                 const displayAmount = overrideAmount || ing.amount || "—";
                 return (
                   <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color: isSkipped ? "#8a7a5a" : "#e8dfc8", lineHeight:1.5, opacity: isSkipped ? 0.7 : 1 }}>
                     <button
                       type="button"
-                      onClick={() => ing.ingredientId && !isSkipped && setUnitPicker({
+                      onClick={() => !isSkipped && overrideKey && setUnitPicker({
+                        key: overrideKey,
                         ingredientId: ing.ingredientId,
                         itemName: ing.item,
                         amountString: String(displayAmount),
                       })}
-                      disabled={!ing.ingredientId || isSkipped}
+                      disabled={isSkipped}
                       style={{
                         fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878",
                         minWidth:68, flexShrink:0, textAlign:"left",
-                        background:"transparent", border:"none", padding:0,
-                        cursor: ing.ingredientId && !isSkipped ? "pointer" : "default",
-                        textDecoration: isSkipped
-                          ? "line-through"
-                          : ing.ingredientId ? "underline dotted #b8a87855" : "none",
-                        textUnderlineOffset: 3,
+                        display:"inline-flex", alignItems:"center", gap:4,
+                        background:"#1a1508", border:"1px solid #3a2f10",
+                        borderRadius:6, padding:"3px 8px",
+                        cursor: isSkipped ? "default" : "pointer",
+                        textDecoration: isSkipped ? "line-through" : "none",
+                        opacity: isSkipped ? 0.6 : 1,
                       }}
                     >
-                      {displayAmount}
+                      <span>{displayAmount}</span>
+                      {!isSkipped && <span style={{ fontSize:8, opacity:0.7 }}>▾</span>}
                     </button>
                     <span style={{ flex:1 }}>
                       <span style={{ textDecoration: isSkipped ? "line-through" : "none" }}>
@@ -1500,7 +1503,7 @@ export default function CookMode({
           onPick={(newAmount) => {
             setUnitOverrides(prev => ({
               ...prev,
-              [unitPicker.ingredientId]: newAmount,
+              [unitPicker.key]: newAmount,
             }));
           }}
         />
