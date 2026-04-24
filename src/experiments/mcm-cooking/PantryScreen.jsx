@@ -858,7 +858,12 @@ export default function PantryScreen({
             don't participate in the tile layout.
             the tapped tile card. Search summary stays up here since
             search doesn't participate in the tile layout. */}
-        {query && (
+        {/* Search summary only renders when there ARE hits — the
+            empty-results case is handled by EmptyState below,
+            which already says "Nothing called 'x'" with warmth
+            and an ornament. Both rendering at once doubled the
+            copy with no extra signal. */}
+        {query && visible.length > 0 && (
           <FadeIn>
             <SearchSummary hits={visible} query={query} onClear={() => setQuery("")} />
           </FadeIn>
