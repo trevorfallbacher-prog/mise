@@ -1,9 +1,10 @@
 import ModalSheet from "./ModalSheet";
 import { COLOR, FONT, CHIP_TONES, pickerKicker, pickerTitle, pickerOptionStyle } from "../lib/tokens";
 import { findIngredient } from "../data/ingredients";
-import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor, isMassLadder } from "../lib/unitConvert";
+import { convert, convertWithBridge, convertUniversal, formatQty } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
-import { setPreferredUnit } from "../lib/unitPrefs";
+import { getUnitPickerOptions, DISPLAY_CONTEXT } from "../lib/units";
+import { setPreferredUnit, getMeasurementSystem } from "../lib/unitPrefs";
 
 // Shared unit picker for AI recipe ingredients (preview and CookMode
 // inline amounts). Tapping an ingredient's amount chip opens this as
@@ -51,6 +52,12 @@ export default function UnitPicker({
   // render of this ingredient honors the pick. Pass prefKey to opt in;
   // omit for ephemeral-only picks (e.g. preview-screen experimentation).
   prefKey,
+  // Context the picker is being opened FROM — cook-mode and recipe
+  // views pass "cook" (default), pantry/shopping surfaces pass
+  // "pantry". The context determines which axis of the canonical's
+  // intent drives the selected unit and the list ordering, and it
+  // scopes the user override that gets persisted.
+  context = DISPLAY_CONTEXT.COOK,
 }) {
   if (!open) return null;
   const ingredient = ingredientId ? findIngredient(ingredientId) : null;
@@ -58,42 +65,20 @@ export default function UnitPicker({
     ? (parseAmountString(amountString, ingredient) || parseAmountFallback(amountString))
     : parseAmountFallback(amountString);
 
-  const ladder = ingredient?.units || [];
   const currentUnit = parsed?.unit || null;
 
-  // Option list construction:
-  //   1. Start with the ingredient's own ladder (when present). This
-  //      carries the ingredient-specific units like "stick" for
-  //      butter that universal ladders don't know about.
-  //   2. For any mass-or-volume-based canonical, union with BOTH
-  //      universal families. Don't gate this on an explicit density
-  //      entry — resolveDensity defaults to 1.0 g/ml for unknowns,
-  //      which is still a usable (if slightly off) conversion. A
-  //      rough-but-real tbsp is better than a hidden option.
-  //   3. When no ingredient is linked at all, offer the universal
-  //      siblings of whatever unit the amount is currently in.
-  //   4. Ensure the current unit is always in the list.
-  const bridgeUnits = [];
-  if (ingredient && isMassLadder(ingredient)) {
-    bridgeUnits.push(...universalLadderFor("g"));
-    bridgeUnits.push(...universalLadderFor("cup"));
-  }
-  const universalWhenNoIng = currentUnit && !ingredient ? universalLadderFor(currentUnit) : [];
-
-  const seen = new Set();
-  const options = [];
-  const push = (u) => {
-    const id = typeof u === "string" ? u : u.id;
-    const label = typeof u === "string" ? u : (u.label || u.id);
-    if (!id || seen.has(id)) return;
-    seen.add(id);
-    options.push({ id, label, toBase: 1 });
-  };
-  // Ingredient ladder first (preserves "stick" etc.)
-  ladder.forEach(push);
-  bridgeUnits.forEach(push);
-  universalWhenNoIng.forEach(push);
-  if (currentUnit) push(currentUnit);
+  // Options come fully ordered from the central resolver: the
+  // selected unit is section="selected", the rest of the ladder
+  // follows in authored order (section="ladder"), then compatible
+  // registry units (section="registry"). Ladder-local units
+  // (stick, clove, wedge, etc.) are preserved; food-specific forms
+  // never bleed into the registry section.
+  const system = getMeasurementSystem();
+  const options = ingredient
+    ? getUnitPickerOptions(ingredient, system, context)
+    : currentUnit
+      ? [{ id: currentUnit, label: currentUnit, section: "selected", isSelected: true, isLadderLocal: false, family: null }]
+      : [];
 
   const pick = (newUnitId) => {
     if (!parsed) { onClose(); return; }
@@ -106,11 +91,12 @@ export default function UnitPicker({
       res = convertUniversal(parsed, newUnitId);
     }
     if (res.ok && Number.isFinite(res.value) && res.value > 0) {
-      // Without an ingredient, formatQty can't fetch a nice label,
-      // so hand it a stub with a units[] for the chosen unit.
       const formattable = ingredient || { units: [{ id: newUnitId, label: newUnitId }] };
       onPick(formatQty({ amount: res.value, unit: newUnitId }, formattable));
-      if (prefKey) setPreferredUnit(prefKey, newUnitId);
+      // Context-scoped override: a user who picks "g" for flour in
+      // cook mode should NOT see grams in the pantry view the next
+      // day. Override is stored under (ingredient, context).
+      if (prefKey) setPreferredUnit(prefKey, newUnitId, context);
     }
     onClose();
   };
