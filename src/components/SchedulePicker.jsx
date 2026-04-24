@@ -323,7 +323,7 @@ export default function SchedulePicker({
                   const hasMeal = !!meal;
                   let existingRecipe = null;
                   if (hasMeal) {
-                    existingRecipe = findRecipe(meal.recipe_slug, findUserRecipe) || null;
+                    existingRecipe = findRecipe(meal.recipe_slug, findUserRecipe, meal.recipe_user_id) || null;
                   }
                   return (
                     <button

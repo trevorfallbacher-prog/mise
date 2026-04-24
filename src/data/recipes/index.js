@@ -48,10 +48,17 @@ export const RECIPES = [
 // useUserRecipes().findBySlug — as the second arg. Bundled slugs win
 // on exact collision, matching the "bundled is the stable canon"
 // contract we document in the migration 0051 header.
-export const findRecipe = (slug, userResolver) => {
+//
+// ownerUserId disambiguates user-authored recipes when two family
+// members share a slug (see migration 0139 header). Callers that
+// know whose recipe the row points at — Plan.jsx reading
+// scheduled_meals.recipe_user_id, for one — should pass it. Omitting
+// it falls back to the viewer's own copy (legacy behavior) for any
+// pre-0139 rows that never stamped the author.
+export const findRecipe = (slug, userResolver, ownerUserId) => {
   const bundled = RECIPES.find(r => r.slug === slug);
   if (bundled) return bundled;
-  if (typeof userResolver === "function") return userResolver(slug) || null;
+  if (typeof userResolver === "function") return userResolver(slug, ownerUserId) || null;
   return null;
 };
 export const recipesByCuisine  = (c) => RECIPES.filter(r => r.cuisine === c);

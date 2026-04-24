@@ -248,12 +248,36 @@ export function useUserRecipes(userId) {
   // Local lookup by slug across every row the viewer can see.
   // findRecipe() in src/data/recipes/index.js checks bundled first;
   // this is the fallback call path for user-authored recipes.
-  const recipesBySlug = useMemo(() => {
-    const map = new Map();
-    for (const r of recipes) map.set(r.slug, r.recipe);
-    return map;
-  }, [recipes]);
-  const findBySlug = useCallback((slug) => recipesBySlug.get(slug) || null, [recipesBySlug]);
+  //
+  // Two family members can each author a recipe with the same slug —
+  // useUserRecipes loads self + family rows (migration 0052 RLS), so a
+  // naive slug→recipe Map collapsed to whichever row landed last and
+  // silently swapped one person's recipe for another's at cook time
+  // (migration 0139 header has the full writeup). Index by a
+  // composite (ownerUserId, slug) key instead, and resolve with an
+  // explicit owner hint when the caller knows whose recipe was
+  // picked. When the hint is absent, prefer the viewer's own row
+  // (the legacy behavior that keeps pre-0139 scheduled meals pointing
+  // at self), then fall back to any visible row with that slug.
+  const recipesIndex = useMemo(() => {
+    const byOwner = new Map();  // `${ownerId}:${slug}` → recipe
+    const bySlug  = new Map();  // slug → recipe (first-seen wins; only used when no owner hint)
+    const selfBySlug = new Map();
+    for (const r of recipes) {
+      byOwner.set(`${r.userId}:${r.slug}`, r.recipe);
+      if (r.userId === userId) selfBySlug.set(r.slug, r.recipe);
+      else if (!bySlug.has(r.slug)) bySlug.set(r.slug, r.recipe);
+    }
+    return { byOwner, bySlug, selfBySlug };
+  }, [recipes, userId]);
+  const findBySlug = useCallback((slug, ownerUserId) => {
+    if (ownerUserId) {
+      return recipesIndex.byOwner.get(`${ownerUserId}:${slug}`) || null;
+    }
+    return recipesIndex.selfBySlug.get(slug)
+        || recipesIndex.bySlug.get(slug)
+        || null;
+  }, [recipesIndex]);
 
   return {
     recipes, loading, error,
