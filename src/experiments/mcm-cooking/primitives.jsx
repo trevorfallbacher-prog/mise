@@ -22,6 +22,7 @@ import { useTheme, THEME_TRANSITION } from "./theme";
 // corners for MCM flavor, colored from the theme's teal + brown.
 export function WarmBackdrop() {
   const { theme } = useTheme();
+  const isNight = theme.id === "night";
   return (
     <div
       aria-hidden
@@ -50,16 +51,51 @@ export function WarmBackdrop() {
           }}
         />
       ))}
-      <Starburst
-        size={160}
-        color={withAlpha(theme.color.warmBrown, 0.10)}
-        style={{ position: "absolute", top: 40, right: -30 }}
-      />
-      <Starburst
-        size={90}
-        color={withAlpha(theme.color.teal, 0.14)}
-        style={{ position: "absolute", bottom: 80, left: 16 }}
-      />
+
+      {isNight ? (
+        // Moon in the top-right where the sun-starburst sits by day,
+        // plus a scattering of white stars replacing the small tinted
+        // starburst. Same compositional weight, different sky.
+        <>
+          <Moon
+            size={140}
+            style={{ position: "absolute", top: 36, right: 16 }}
+          />
+          <Starburst
+            size={60}
+            color="rgba(255,255,255,0.24)"
+            style={{ position: "absolute", bottom: 80, left: 16 }}
+          />
+          <Starburst
+            size={22}
+            color="rgba(255,255,255,0.38)"
+            style={{ position: "absolute", top: 200, left: 48 }}
+          />
+          <Starburst
+            size={18}
+            color="rgba(255,255,255,0.32)"
+            style={{ position: "absolute", top: 260, right: 70 }}
+          />
+          <Starburst
+            size={16}
+            color="rgba(255,255,255,0.28)"
+            style={{ position: "absolute", bottom: 240, right: 120 }}
+          />
+        </>
+      ) : (
+        <>
+          <Starburst
+            size={160}
+            color={withAlpha(theme.color.warmBrown, 0.10)}
+            style={{ position: "absolute", top: 40, right: -30 }}
+          />
+          <Starburst
+            size={90}
+            color={withAlpha(theme.color.teal, 0.14)}
+            style={{ position: "absolute", bottom: 80, left: 16 }}
+          />
+        </>
+      )}
     </div>
   );
 }
@@ -95,6 +131,40 @@ export function Starburst({ size = 96, color: c = "rgba(122,78,45,0.14)", style 
         );
       })}
       <circle cx={cx} cy={cx} r={size * 0.07} fill={c} />
+    </svg>
+  );
+}
+
+// --- Moon (night decorative element) ------------------------------------
+
+// Replaces the big warm starburst ("sun") when the active theme is
+// night. Soft cream disk with a faint outer glow and three subtle
+// crater dots — quiet, not cartoonish. Paired with scattered white
+// Starbursts (stars) in the same backdrop for atmosphere.
+export function Moon({ size = 120, style }) {
+  // Unique gradient id per instance so multiple moons wouldn't
+  // clobber each other (we only render one, but be tidy).
+  const gid = `moonGlow-${size}`;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      style={style}
+      aria-hidden
+    >
+      <defs>
+        <radialGradient id={gid} cx="50%" cy="50%" r="50%">
+          <stop offset="0%"   stopColor="rgba(255,250,232,0.35)" />
+          <stop offset="55%"  stopColor="rgba(255,250,232,0.08)" />
+          <stop offset="100%" stopColor="rgba(255,250,232,0)" />
+        </radialGradient>
+      </defs>
+      <circle cx="50" cy="50" r="48" fill={`url(#${gid})`} />
+      <circle cx="50" cy="50" r="26" fill="rgba(245,242,230,0.90)" />
+      <circle cx="58" cy="44" r="2.5" fill="rgba(200,195,180,0.35)" />
+      <circle cx="42" cy="54" r="2"   fill="rgba(200,195,180,0.28)" />
+      <circle cx="54" cy="62" r="1.8" fill="rgba(200,195,180,0.25)" />
     </svg>
   );
 }

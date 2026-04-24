@@ -217,72 +217,75 @@ const evening = {
   },
 };
 
-// --- NIGHT — deep cocoa background, warm cream text, mint accents ------
+// --- NIGHT — cool dark (just dark, not warm-dark) + mint accents -----
 
 const night = {
   id: "night",
   label: "Night",
   color: {
-    // Background — deep cocoa, not pure black. Warm enough that
-    // the kitchen still reads as a kitchen.
-    cream:        "#271B12",
-    parchment:    "#1C130C",
-    paper:        "#2F2218",
-    // Text — warm cream, ≥ 10:1 on cocoa for body copy comfort.
-    ink:          "#F2E6D0",
-    inkMuted:     "#B6A284",
-    inkFaint:     "#8A7860",
+    // Background — cool near-black slate, not cocoa. "Just dark."
+    cream:        "#1A1C22",
+    parchment:    "#121418",
+    paper:        "#23262E",
+    // Text — cool neutral white, ≥ 12:1 on slate so body copy is
+    // comfortable to read at any size.
+    ink:          "#EEEFF3",
+    inkMuted:     "#A9ADB6",
+    inkFaint:     "#777A84",
     // Accents — mint/teal reads cooler and brighter against dark,
-    // burnt saturates up a touch so it holds against cocoa.
+    // burnt saturates up a touch so it holds against the slate.
     teal:         "#6FC5B4",
     aqua:         "#8FD4C4",
     burnt:        "#E37C3C",
     mustard:      "#E3B44E",
-    warmBrown:    "#C88960",
+    warmBrown:    "#C8A67F",
     tealTint:     "rgba(111,197,180,0.18)",
     aquaTint:     "rgba(143,212,196,0.20)",
     burntTint:    "rgba(227,124,60,0.18)",
     mustardTint:  "rgba(227,180,78,0.20)",
-    brownTint:    "rgba(200,137,96,0.18)",
-    // Glass — warm translucent dark, acts like a softly-lit pane
-    // over a dark counter. Border stays bright to catch lamp light.
-    glassFill:      "rgba(70,48,30,0.58)",
-    glassFillLite:  "rgba(70,48,30,0.38)",
-    glassFillHeavy: "rgba(70,48,30,0.72)",
-    glassBorder:    "rgba(255,230,198,0.25)",
-    hairline:       "rgba(242,230,208,0.12)",
+    brownTint:    "rgba(200,166,127,0.16)",
+    // Glass — cool translucent slate. No warm cast. Border is
+    // neutral white so the pane catches moonlight, not lamplight.
+    glassFill:      "rgba(38,44,54,0.58)",
+    glassFillLite:  "rgba(38,44,54,0.38)",
+    glassFillHeavy: "rgba(38,44,54,0.72)",
+    glassBorder:    "rgba(255,255,255,0.22)",
+    hairline:       "rgba(238,239,243,0.12)",
     ctaTop:    "#E17736",
     ctaBottom: "#B55620",
     ctaText:   "#FFF4E4",
   },
   shadow: {
-    // On dark themes the "light reflection" comes from ABOVE the
-    // pane (warmer inset top) and the drop sits darker/deeper.
+    // Neutral-white top inset instead of warm cream — moon above,
+    // not lamp.
     glass: shadowStack({
-      drop:         "0 24px 48px rgba(0,0,0,0.45)",
-      drop2:        "0 6px 14px rgba(0,0,0,0.28)",
-      topInset:     "rgba(255,230,198,0.20)",
-      bottomInset:  "rgba(0,0,0,0.25)",
+      drop:         "0 24px 48px rgba(0,0,0,0.48)",
+      drop2:        "0 6px 14px rgba(0,0,0,0.30)",
+      topInset:     "rgba(255,255,255,0.18)",
+      bottomInset:  "rgba(0,0,0,0.28)",
     }),
     soft: "0 8px 20px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20)",
     lift: shadowStack({
       drop:         "0 30px 60px rgba(0,0,0,0.55)",
       drop2:        "0 10px 20px rgba(0,0,0,0.32)",
-      topInset:     "rgba(255,230,198,0.24)",
-      bottomInset:  "rgba(0,0,0,0.25)",
+      topInset:     "rgba(255,255,255,0.22)",
+      bottomInset:  "rgba(0,0,0,0.28)",
     }),
     cta:  "0 12px 26px rgba(181,86,32,0.50), 0 2px 6px rgba(181,86,32,0.34)",
     inputInset:
       "inset 0 1px 2px rgba(0,0,0,0.35)," +
-      "inset 0 -1px 0 rgba(255,230,198,0.10)," +
+      "inset 0 -1px 0 rgba(255,255,255,0.10)," +
       "0 2px 6px rgba(0,0,0,0.20)",
   },
   backdrop: {
-    base: "linear-gradient(180deg, #271B12 0%, #1C130C 100%)",
+    // Cool slate gradient — genuinely dark, not warm-dark.
+    // One soft teal blob for life + a gentle cool-grey blob so
+    // the glass still has something to bend. Zero burnt/mustard.
+    base: "linear-gradient(180deg, #1A1C22 0%, #121418 100%)",
     blobs: [
-      { bg: "rgba(111,197,180,0.18)", top: "-12%", left: "-12%", size: 500 },
-      { bg: "rgba(227,124,60,0.16)",  top: "55%",  left: "62%",  size: 440 },
-      { bg: "rgba(227,180,78,0.10)",  top: "70%",  left: "-8%",  size: 320 },
+      { bg: "rgba(111,197,180,0.14)", top: "-12%", left: "-12%", size: 500 },
+      { bg: "rgba(140,160,200,0.10)", top: "55%",  left: "62%",  size: 440 },
+      { bg: "rgba(255,255,255,0.04)", top: "70%",  left: "-8%",  size: 320 },
     ],
   },
 };
