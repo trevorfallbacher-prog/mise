@@ -1,37 +1,27 @@
-// Shared visual primitives for the MCM cooking-app experiment —
-// warm background, glass panels, starburst accent, CTA + ghost
-// buttons, status dot. Kept intentionally small so screens compose
-// from the same vocabulary.
+// Shared visual primitives for the MCM cooking-app experiment.
+//
+// Every theme-dependent value (color, shadow, glass recipe) flows
+// through `useTheme()` — screens never hardcode color. Theme-
+// invariant tokens (radius, font) still come from tokens.js since
+// they don't change with time-of-day.
+//
+// Each primitive that paints color props spreads THEME_TRANSITION
+// into its inline style so the browser interpolates between
+// themes when React re-renders with new values.
 
 import { motion } from "framer-motion";
-import {
-  color, radius, shadow, font,
-  glassPanel, ctaButton, ghostButton,
-} from "./tokens";
+import { radius, font } from "./tokens";
+import { useTheme, THEME_TRANSITION } from "./theme";
 
-// --- Background ----------------------------------------------------------
+// --- Background ---------------------------------------------------------
 
-// Warm parchment canvas with two soft MCM color blobs drifting
-// behind the glass. Absolutely positioned so it always fills the
-// nearest positioned parent.
-export function WarmBackdrop({ variant = "pantry" }) {
-  // Blob opacities tuned so glass panels catch color along the
-  // edges without flooding — cook screen in particular needs to
-  // read light + airy, not "sunset through the panel." Teal
-  // top-left + burnt-orange bottom-right stays the compositional
-  // axis; third blob is a gentle warm grounding.
-  const blobs = variant === "cook"
-    ? [
-        { bg: "rgba(47,143,131,0.14)",  top: "-12%", left: "-15%", size: 520 },
-        { bg: "rgba(217,107,43,0.12)",  top: "58%",  left: "65%",  size: 440 },
-        { bg: "rgba(212,166,55,0.08)",  top: "10%",  left: "60%",  size: 320 },
-      ]
-    : [
-        { bg: "rgba(47,143,131,0.14)",  top: "-12%", left: "-12%", size: 500 },
-        { bg: "rgba(217,107,43,0.12)",  top: "55%",  left: "62%",  size: 440 },
-        { bg: "rgba(122,78,45,0.08)",   top: "70%",  left: "-8%",  size: 320 },
-      ];
-
+// Warm parchment canvas with soft MCM color blobs drifting behind
+// the glass. Theme owns the base gradient + blob list, so the
+// backdrop naturally shifts morning→day→evening→night with no
+// screen-level variant knobs. Two decorative starbursts in the
+// corners for MCM flavor, colored from the theme's teal + brown.
+export function WarmBackdrop() {
+  const { theme } = useTheme();
   return (
     <div
       aria-hidden
@@ -39,11 +29,12 @@ export function WarmBackdrop({ variant = "pantry" }) {
         position: "absolute",
         inset: 0,
         overflow: "hidden",
-        background: `linear-gradient(180deg, ${color.cream} 0%, ${color.parchment} 100%)`,
+        background: theme.backdrop.base,
         pointerEvents: "none",
+        ...THEME_TRANSITION,
       }}
     >
-      {blobs.map((b, i) => (
+      {theme.backdrop.blobs.map((b, i) => (
         <div
           key={i}
           style={{
@@ -55,28 +46,26 @@ export function WarmBackdrop({ variant = "pantry" }) {
             background: b.bg,
             borderRadius: "50%",
             filter: "blur(80px)",
+            ...THEME_TRANSITION,
           }}
         />
       ))}
       <Starburst
         size={160}
-        color="rgba(122,78,45,0.10)"
+        color={withAlpha(theme.color.warmBrown, 0.10)}
         style={{ position: "absolute", top: 40, right: -30 }}
       />
       <Starburst
         size={90}
-        color="rgba(47,143,131,0.14)"
+        color={withAlpha(theme.color.teal, 0.14)}
         style={{ position: "absolute", bottom: 80, left: 16 }}
       />
     </div>
   );
 }
 
-// --- Starburst (MCM / Googie motif) --------------------------------------
+// --- Starburst (MCM / Googie motif) -------------------------------------
 
-// A 12-ray starburst rendered as SVG. Used sparingly as a decorative
-// flourish — corner of the backdrop, inside the Cook-complete card,
-// etc. Kept at ~10-14% opacity so it never competes with content.
 export function Starburst({ size = 96, color: c = "rgba(122,78,45,0.14)", style }) {
   const rays = Array.from({ length: 12 });
   const cx = size / 2;
@@ -110,28 +99,26 @@ export function Starburst({ size = 96, color: c = "rgba(122,78,45,0.14)", style 
   );
 }
 
-// --- Glass panel ---------------------------------------------------------
+// --- Glass panel --------------------------------------------------------
 
-// The fundamental liquid-glass surface. Accepts a tone prop so
-// screens can vary the chroma — default is neutral white-glass,
-// "warm" tints slightly mustard for hero cards.
+// The fundamental liquid-glass surface. Tone varies chroma
+// (neutral / warm / cool / input); variant toggles depth treatment
+// (elevated vs sunken). Theme supplies the glass recipe and all
+// tone-specific tints.
 export function GlassPanel({
   children, style, tone = "neutral", variant = "elevated",
   padding = 20, interactive = false, onClick,
 }) {
-  // Tone sets the chroma of the glass (neutral / warm cream /
-  // cool eucalyptus / sunken input tint). Variant sets the depth
-  // treatment — "elevated" floats with a top-edge light reflection,
-  // "input" sinks with an inset shadow so inputs read as surfaces
-  // you type INTO, not panels that sit beside everything else.
-  const toneTint = {
-    neutral: color.glassFill,
-    warm:    "rgba(255,247,232,0.70)",
-    cool:    "rgba(232,244,242,0.70)",
-    input:   "rgba(246,241,232,0.78)",
-  }[tone] || color.glassFill;
+  const { theme, glassPanel } = useTheme();
 
-  const depthShadow = variant === "input" ? shadow.inputInset : shadow.glass;
+  // Tone tints are theme-aware: "warm" tilts cream, "cool" tilts
+  // toward eucalyptus/teal, "input" uses a deeper inset fill.
+  // Night theme's tones still read as warm-dark panels.
+  const toneTint = toneFillFor(theme, tone);
+
+  const depthShadow = variant === "input"
+    ? theme.shadow.inputInset
+    : theme.shadow.glass;
 
   const base = {
     ...glassPanel,
@@ -139,6 +126,7 @@ export function GlassPanel({
     boxShadow: depthShadow,
     padding,
     cursor: interactive ? "pointer" : "default",
+    ...THEME_TRANSITION,
     ...style,
   };
 
@@ -148,7 +136,7 @@ export function GlassPanel({
         role="button"
         tabIndex={0}
         onClick={onClick}
-        whileHover={{ y: -2, boxShadow: shadow.lift }}
+        whileHover={{ y: -2, boxShadow: theme.shadow.lift }}
         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
         style={base}
       >
@@ -159,19 +147,21 @@ export function GlassPanel({
   return <div style={base}>{children}</div>;
 }
 
-// --- Buttons -------------------------------------------------------------
+// --- Buttons ------------------------------------------------------------
 
 export function PrimaryButton({ children, onClick, style, disabled }) {
+  const { ctaButton } = useTheme();
   return (
     <motion.button
       onClick={onClick}
       disabled={disabled}
-      whileHover={!disabled && { scale: 1.02, boxShadow: "0 16px 32px rgba(217,107,43,0.42)" }}
+      whileHover={!disabled && { scale: 1.02 }}
       whileTap={!disabled && { scale: 0.97 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       style={{
         ...ctaButton,
         opacity: disabled ? 0.5 : 1,
+        ...THEME_TRANSITION,
         ...style,
       }}
     >
@@ -181,34 +171,35 @@ export function PrimaryButton({ children, onClick, style, disabled }) {
 }
 
 export function GhostButton({ children, onClick, style }) {
+  const { ghostButton, theme } = useTheme();
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ background: "rgba(255,255,255,0.78)" }}
+      whileHover={{ background: theme.color.glassFill }}
       whileTap={{ scale: 0.97 }}
       transition={{ duration: 0.18 }}
-      style={{ ...ghostButton, ...style }}
+      style={{
+        ...ghostButton,
+        ...THEME_TRANSITION,
+        ...style,
+      }}
     >
       {children}
     </motion.button>
   );
 }
 
-// --- Status dot ----------------------------------------------------------
+// --- Status dot ---------------------------------------------------------
 
-// Small colored dot for pantry status / step progress. Defaults to
-// teal ("you have this / good"). Pass tone="warn" for subtle orange.
 export function StatusDot({ tone = "ok", size = 8, style }) {
-  const c = tone === "ok" ? color.teal
-          : tone === "warn" ? color.burnt
-          : tone === "pending" ? color.mustard
-          : color.inkFaint;
-  // Warn dots get a slightly larger ring + a soft outer glow so
-  // the "expiring soon" signal actually catches the eye without
-  // turning alarming. Other tones keep the quieter treatment.
+  const { theme } = useTheme();
+  const c = tone === "ok"      ? theme.color.teal
+          : tone === "warn"    ? theme.color.burnt
+          : tone === "pending" ? theme.color.mustard
+          : theme.color.inkFaint;
   const boxShadow = tone === "warn"
-    ? `0 0 0 4px ${c}22, 0 0 10px ${c}66`
-    : `0 0 0 3px ${c}22`;
+    ? `0 0 0 4px ${withAlpha(c, 0.13)}, 0 0 10px ${withAlpha(c, 0.40)}`
+    : `0 0 0 3px ${withAlpha(c, 0.13)}`;
   return (
     <span
       aria-hidden
@@ -219,28 +210,31 @@ export function StatusDot({ tone = "ok", size = 8, style }) {
         borderRadius: "50%",
         background: c,
         boxShadow,
+        ...THEME_TRANSITION,
         ...style,
       }}
     />
   );
 }
 
-// --- Checkmark (teal confirmation) ---------------------------------------
+// --- Checkmark ----------------------------------------------------------
 
 export function CheckCircle({ size = 20, checked = true }) {
+  const { theme } = useTheme();
+  const fillOn = theme.color.teal;
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden>
       <circle
         cx="12" cy="12" r="10"
-        fill={checked ? color.teal : "transparent"}
-        stroke={checked ? color.teal : color.inkFaint}
+        fill={checked ? fillOn : "transparent"}
+        stroke={checked ? fillOn : theme.color.inkFaint}
         strokeWidth={checked ? 0 : 1.5}
       />
       {checked && (
         <path
           d="M7.5 12.3 L10.6 15.2 L16.5 9.2"
           fill="none"
-          stroke="#FFF8EE"
+          stroke={theme.color.ctaText}
           strokeWidth={2.2}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -250,9 +244,10 @@ export function CheckCircle({ size = 20, checked = true }) {
   );
 }
 
-// --- Section labels ------------------------------------------------------
+// --- Section labels -----------------------------------------------------
 
 export function Kicker({ children, tone }) {
+  const { theme } = useTheme();
   return (
     <div
       style={{
@@ -261,7 +256,8 @@ export function Kicker({ children, tone }) {
         fontWeight: 500,
         letterSpacing: "0.16em",
         textTransform: "uppercase",
-        color: tone || color.inkMuted,
+        color: tone || theme.color.inkMuted,
+        ...THEME_TRANSITION,
       }}
     >
       {children}
@@ -270,6 +266,7 @@ export function Kicker({ children, tone }) {
 }
 
 export function SerifHeader({ children, size = 36, style }) {
+  const { theme } = useTheme();
   return (
     <h1
       style={{
@@ -279,8 +276,9 @@ export function SerifHeader({ children, size = 36, style }) {
         letterSpacing: "-0.02em",
         fontSize: size,
         lineHeight: 1.05,
-        color: color.ink,
+        color: theme.color.ink,
         margin: 0,
+        ...THEME_TRANSITION,
         ...style,
       }}
     >
@@ -289,35 +287,22 @@ export function SerifHeader({ children, size = 36, style }) {
   );
 }
 
-// --- Glass pill ----------------------------------------------------------
+// --- Glass pill ---------------------------------------------------------
 
-// Interactive glass chip used as filter button, nav tab, top-bar
-// back/context pill. `active` paints the teal gradient + white text
-// used across the app; `size="sm"` tightens padding for dense rows.
-// Prefer this over re-rolling a button style block inline.
 export function GlassPill({
-  children,
-  active = false,
-  onClick,
-  size = "md",
-  style,
+  children, active = false, onClick, size = "md", style,
   as: Tag = motion.button,
 }) {
+  const { theme } = useTheme();
   const pad = size === "sm" ? "6px 12px" : "10px 16px";
   const fontSize = size === "sm" ? 12 : 13;
 
-  // Amped glass: thinner fill + heavy blur + saturation boost so
-  // backdrop color blooms through the pill. Inactive pills get a
-  // bright top-edge highlight + faint bottom inset so they read
-  // as real glass, not flat white. Active pills layer a bigger
-  // colored halo and an inner rim.
   const inactiveBoxShadow =
     "0 1px 2px rgba(30,30,30,0.05)," +
-    "inset 0 1px 0 rgba(255,255,255,0.85)," +
-    "inset 0 -1px 0 rgba(30,30,30,0.05)";
+    `inset 0 1px 0 ${theme.color.glassBorder}`;
   const activeBoxShadow =
-    "0 10px 22px rgba(47,143,131,0.38)," +
-    "0 2px 5px rgba(47,143,131,0.22)," +
+    `0 10px 22px ${withAlpha(theme.color.teal, 0.38)},` +
+    `0 2px 5px ${withAlpha(theme.color.teal, 0.22)},` +
     "inset 0 1px 0 rgba(255,255,255,0.35)";
 
   return (
@@ -336,15 +321,16 @@ export function GlassPill({
         letterSpacing: "0.02em",
         padding: pad,
         borderRadius: radius.pill,
-        border: `1px solid ${active ? color.teal : "rgba(255,255,255,0.85)"}`,
+        border: `1px solid ${active ? theme.color.teal : theme.color.glassBorder}`,
         background: active
-          ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-          : "rgba(255,255,255,0.58)",
-        color: active ? "#FFF8EE" : color.ink,
+          ? `linear-gradient(180deg, ${theme.color.teal} 0%, ${darken(theme.color.teal, 0.18)} 100%)`
+          : theme.color.glassFillLite,
+        color: active ? theme.color.ctaText : theme.color.ink,
         boxShadow: active ? activeBoxShadow : inactiveBoxShadow,
         cursor: "pointer",
         backdropFilter: "blur(20px) saturate(150%)",
         WebkitBackdropFilter: "blur(20px) saturate(150%)",
+        ...THEME_TRANSITION,
         ...style,
       }}
     >
@@ -353,25 +339,13 @@ export function GlassPill({
   );
 }
 
-// --- Tinted pill (display-only, axis-colored) ---------------------------
-
-// Small rounded chip used to display axis data at-a-glance:
-// location, quantity, timer, ingredient amount. `tone` maps into
-// the token palette so screens don't redeclare tint pairs. Not
-// interactive by default — pass `onClick` to make it tappable.
-const TINTED_PILL_TONE = {
-  teal:    { fg: color.teal,      bg: color.tealTint    },
-  aqua:    { fg: color.aqua,      bg: color.aquaTint    },
-  burnt:   { fg: color.burnt,     bg: color.burntTint   },
-  mustard: { fg: color.warmBrown, bg: color.mustardTint },
-  brown:   { fg: color.warmBrown, bg: color.brownTint   },
-  muted:   { fg: color.inkMuted,  bg: "rgba(30,30,30,0.06)" },
-};
+// --- Tinted pill --------------------------------------------------------
 
 export function TintedPill({
   children, tone = "teal", size = "md", mono = false, onClick, style,
 }) {
-  const { fg, bg } = TINTED_PILL_TONE[tone] || TINTED_PILL_TONE.teal;
+  const { theme } = useTheme();
+  const { fg, bg } = tintedPillTone(theme, tone);
   const pad = size === "sm" ? "3px 8px" : "4px 10px";
   const fontSize = size === "sm" ? 10 : 12;
   const clickable = typeof onClick === "function";
@@ -395,6 +369,7 @@ export function TintedPill({
         letterSpacing: mono ? "0.04em" : "0.03em",
         whiteSpace: "nowrap",
         cursor: clickable ? "pointer" : "default",
+        ...THEME_TRANSITION,
         ...style,
       }}
     >
@@ -403,37 +378,31 @@ export function TintedPill({
   );
 }
 
-// --- Back chip (top-bar navigation pill) --------------------------------
+// --- Back chip ----------------------------------------------------------
 
-// Glass-on-parchment back/context button used at the top of
-// secondary screens. Separate from GlassPill because the visual
-// weight (lighter background, softer shadow) is tuned for the
-// nav-bar spot rather than interactive toggles.
 export function BackChip({ children, onClick, style }) {
+  const { theme } = useTheme();
   return (
     <motion.button
       onClick={onClick}
-      whileHover={{ background: "rgba(255,255,255,0.58)" }}
       whileTap={{ scale: 0.96 }}
       transition={{ duration: 0.18 }}
       style={{
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
-        border: `1px solid rgba(255,255,255,0.85)`,
-        background: "rgba(255,255,255,0.58)",
+        border: `1px solid ${theme.color.glassBorder}`,
+        background: theme.color.glassFillLite,
         backdropFilter: "blur(20px) saturate(150%)",
         WebkitBackdropFilter: "blur(20px) saturate(150%)",
         padding: "8px 14px",
         borderRadius: radius.pill,
         fontFamily: font.sans,
         fontSize: 13,
-        color: color.ink,
+        color: theme.color.ink,
         cursor: "pointer",
-        boxShadow:
-          "0 2px 6px rgba(30,30,30,0.06)," +
-          "inset 0 1px 0 rgba(255,255,255,0.85)," +
-          "inset 0 -1px 0 rgba(30,30,30,0.05)",
+        boxShadow: theme.shadow.soft,
+        ...THEME_TRANSITION,
         ...style,
       }}
     >
@@ -442,13 +411,10 @@ export function BackChip({ children, onClick, style }) {
   );
 }
 
-// --- Bottom dock (floating glass tab bar) -------------------------------
+// --- Bottom dock --------------------------------------------------------
 
-// The persistent nav dock floating above the bottom of the screen.
-// Pass an array of tab objects and the id of the active one; the
-// dock paints the active tab with the teal gradient used by
-// GlassPill(active). Ids are stable so consumers can route on them.
 export function BottomDock({ tabs, activeId, onSelect, style }) {
+  const { theme } = useTheme();
   return (
     <div
       style={{
@@ -469,12 +435,13 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
           display: "flex",
           gap: 4,
           padding: 6,
-          background: "rgba(255,255,255,0.62)",
+          background: theme.color.glassFill,
           backdropFilter: "blur(28px) saturate(150%)",
           WebkitBackdropFilter: "blur(28px) saturate(150%)",
-          border: "1px solid rgba(255,255,255,0.85)",
+          border: `1px solid ${theme.color.glassBorder}`,
           borderRadius: radius.pill,
-          boxShadow: shadow.glass,
+          boxShadow: theme.shadow.glass,
+          ...THEME_TRANSITION,
         }}
       >
         {tabs.map((t) => {
@@ -496,11 +463,14 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
                 borderRadius: radius.pill,
                 border: "none",
                 background: active
-                  ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
+                  ? `linear-gradient(180deg, ${theme.color.teal} 0%, ${darken(theme.color.teal, 0.18)} 100%)`
                   : "transparent",
-                color: active ? "#FFF8EE" : color.ink,
+                color: active ? theme.color.ctaText : theme.color.ink,
                 cursor: "pointer",
-                boxShadow: active ? "0 6px 14px rgba(47,143,131,0.30)" : "none",
+                boxShadow: active
+                  ? `0 6px 14px ${withAlpha(theme.color.teal, 0.32)}`
+                  : "none",
+                ...THEME_TRANSITION,
               }}
             >
               <span style={{ fontSize: 15 }}>{t.glyph}</span> {t.label}
@@ -512,25 +482,48 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
   );
 }
 
-// --- Soft divider --------------------------------------------------------
+// --- Status tint overlay ------------------------------------------------
+
+// Subtle temperature wash applied to item-state cards (good / warn)
+// so pantry tiles feel like different states of the same material.
+// Colors derive from theme so the wash follows time-of-day.
+export function statusTintOverlay(theme, status) {
+  if (status === "warn") {
+    return {
+      background:
+        `linear-gradient(160deg, ${withAlpha(theme.color.burnt, 0.10)} 0%,` +
+        ` ${theme.color.glassFillLite} 55%)`,
+    };
+  }
+  if (status === "ok") {
+    return {
+      background:
+        `linear-gradient(160deg, ${withAlpha(theme.color.teal, 0.06)} 0%,` +
+        ` ${theme.color.glassFillLite} 55%)`,
+    };
+  }
+  return null;
+}
+
+// --- Soft divider -------------------------------------------------------
 
 export function HairlineRule({ style }) {
+  const { theme } = useTheme();
   return (
     <div
       aria-hidden
       style={{
         height: 1,
-        background: `linear-gradient(90deg, transparent 0%, ${color.hairline} 50%, transparent 100%)`,
+        background: `linear-gradient(90deg, transparent 0%, ${theme.color.hairline} 50%, transparent 100%)`,
+        ...THEME_TRANSITION,
         ...style,
       }}
     />
   );
 }
 
-// --- Fade-in mount wrapper ----------------------------------------------
+// --- Fade-in ------------------------------------------------------------
 
-// Apple-style gentle mount — opacity 0→1, scale 0.98→1. Use around
-// screen roots so every surface feels like it settles into place.
 export function FadeIn({ children, delay = 0, style }) {
   return (
     <motion.div
@@ -544,4 +537,71 @@ export function FadeIn({ children, delay = 0, style }) {
   );
 }
 
-export { color, radius, shadow, font };
+// --- Internal helpers ---------------------------------------------------
+
+function toneFillFor(theme, tone) {
+  const base = theme.color.glassFill;
+  if (tone === "neutral") return base;
+  if (tone === "input")   return withAlpha(theme.color.paper, 0.85);
+  // "warm" / "cool" nudge the glass tint; on night we keep them
+  // as-is since the dark glass already has a warm cast.
+  if (tone === "warm") {
+    return theme.id === "night"
+      ? theme.color.glassFillHeavy
+      : withAlpha(theme.color.mustard, 0.18);
+  }
+  if (tone === "cool") {
+    return theme.id === "night"
+      ? theme.color.glassFill
+      : withAlpha(theme.color.aqua, 0.22);
+  }
+  return base;
+}
+
+function tintedPillTone(theme, tone) {
+  const c = theme.color;
+  const tones = {
+    teal:    { fg: c.teal,      bg: c.tealTint    },
+    aqua:    { fg: c.aqua,      bg: c.aquaTint    },
+    burnt:   { fg: c.burnt,     bg: c.burntTint   },
+    mustard: { fg: c.warmBrown, bg: c.mustardTint },
+    brown:   { fg: c.warmBrown, bg: c.brownTint   },
+    muted:   { fg: c.inkMuted,  bg: withAlpha(c.ink, 0.06) },
+  };
+  return tones[tone] || tones.teal;
+}
+
+// Hex #RRGGBB → rgba with alpha. Accepts rgba()/rgb() strings
+// too and rewrites their alpha channel. Keeps primitives free
+// of color-math sprinkled inline.
+export function withAlpha(colorStr, alpha) {
+  if (!colorStr) return colorStr;
+  if (colorStr.startsWith("#")) {
+    const h = colorStr.slice(1);
+    const r = parseInt(h.slice(0, 2), 16);
+    const g = parseInt(h.slice(2, 4), 16);
+    const b = parseInt(h.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  const m = colorStr.match(/rgba?\(([^)]+)\)/);
+  if (m) {
+    const parts = m[1].split(",").map((s) => s.trim());
+    return `rgba(${parts[0]},${parts[1]},${parts[2]},${alpha})`;
+  }
+  return colorStr;
+}
+
+// Darken a hex color by `amount` (0..1) — used for the bottom
+// stop of the teal pill/dock gradient so the recipe scales with
+// whatever teal the active theme ships.
+function darken(hex, amount) {
+  if (!hex || !hex.startsWith("#")) return hex;
+  const h = hex.slice(1);
+  let r = parseInt(h.slice(0, 2), 16);
+  let g = parseInt(h.slice(2, 4), 16);
+  let b = parseInt(h.slice(4, 6), 16);
+  r = Math.max(0, Math.round(r * (1 - amount)));
+  g = Math.max(0, Math.round(g * (1 - amount)));
+  b = Math.max(0, Math.round(b * (1 - amount)));
+  return `rgb(${r},${g},${b})`;
+}

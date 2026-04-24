@@ -9,8 +9,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   GlassPanel, PrimaryButton, GhostButton,
   Kicker, SerifHeader, HairlineRule, Starburst,
+  withAlpha,
 } from "./primitives";
-import { color, radius, font, shadow } from "./tokens";
+import { useTheme, THEME_TRANSITION } from "./theme";
+import { radius, font } from "./tokens";
 
 const UNITS = [
   { id: "tsp",   label: "tsp",    hint: "teaspoon"    },
@@ -32,6 +34,7 @@ export default function UnitPickerModal({
   subject = "butter",
   initialAmount = 1,
 }) {
+  const { theme } = useTheme();
   const [unit, setUnit] = useState(initialUnit);
   const [amount, setAmount] = useState(initialAmount);
 
@@ -63,17 +66,18 @@ export default function UnitPickerModal({
             position: "fixed",
             inset: 0,
             zIndex: 50,
-            // Warm cream wash over a very light dim — the modal
-            // should brighten the screen, not darken it. Teal +
-            // burnt-orange radials sit on top so the panel still
-            // has something to bend along its edges.
+            // Warm paper wash + theme teal/burnt radials so the
+            // modal stays cohesive with the active time-of-day
+            // palette. Dim layer derives from the theme's ink so
+            // night mode tints darker, morning stays airy.
             background:
-              "radial-gradient(80% 60% at 50% 30%, rgba(255,244,220,0.55) 0%, transparent 75%)," +
-              "radial-gradient(50% 40% at 10% 85%, rgba(47,143,131,0.18) 0%, transparent 70%)," +
-              "radial-gradient(50% 40% at 90% 85%, rgba(217,107,43,0.14) 0%, transparent 70%)," +
-              "rgba(30,20,10,0.14)",
+              `radial-gradient(80% 60% at 50% 30%, ${withAlpha(theme.color.paper, 0.55)} 0%, transparent 75%),` +
+              `radial-gradient(50% 40% at 10% 85%, ${withAlpha(theme.color.teal, 0.18)} 0%, transparent 70%),` +
+              `radial-gradient(50% 40% at 90% 85%, ${withAlpha(theme.color.burnt, 0.14)} 0%, transparent 70%),` +
+              `${withAlpha(theme.color.ink, 0.14)}`,
             backdropFilter: "blur(16px) saturate(140%)",
             WebkitBackdropFilter: "blur(16px) saturate(140%)",
+            ...THEME_TRANSITION,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -100,7 +104,7 @@ export default function UnitPickerModal({
               />
 
               {/* --- Header ------------------------------------------ */}
-              <Kicker tone={color.burnt}>Unit</Kicker>
+              <Kicker tone={theme.color.burnt}>Unit</Kicker>
               <SerifHeader size={30} style={{ marginTop: 6 }}>
                 How much {subject}?
               </SerifHeader>
@@ -115,13 +119,13 @@ export default function UnitPickerModal({
                 <div style={{
                   minWidth: 120, textAlign: "center",
                   fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
-                  fontSize: 48, lineHeight: 1, color: color.ink,
+                  fontSize: 48, lineHeight: 1, color: theme.color.ink,
                   letterSpacing: "-0.02em",
                 }}>
                   {formatAmount(amount)}
                   <span style={{
                     fontFamily: font.mono, fontSize: 16,
-                    color: color.warmBrown, marginLeft: 6,
+                    color: theme.color.warmBrown, marginLeft: 6,
                     letterSpacing: "0.04em",
                     fontStyle: "normal", fontWeight: 500,
                   }}>
@@ -153,17 +157,18 @@ export default function UnitPickerModal({
                         gap: 2,
                         padding: "12px 4px",
                         borderRadius: radius.md,
-                        border: `1px solid ${active ? color.teal : "rgba(255,255,255,0.85)"}`,
+                        border: `1px solid ${active ? theme.color.teal : theme.color.glassBorder}`,
                         background: active
-                          ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-                          : "rgba(255,255,255,0.62)",
-                        color: active ? "#FFF8EE" : color.ink,
+                          ? `linear-gradient(180deg, ${theme.color.teal} 0%, ${withAlpha(theme.color.teal, 1)} 100%)`
+                          : theme.color.glassFill,
+                        color: active ? theme.color.ctaText : theme.color.ink,
                         boxShadow: active
-                          ? "0 10px 22px rgba(47,143,131,0.32), inset 0 1px 0 rgba(255,255,255,0.30)"
-                          : "inset 0 1px 0 rgba(255,255,255,0.85), inset 0 -1px 0 rgba(30,30,30,0.05)",
+                          ? `0 10px 22px ${withAlpha(theme.color.teal, 0.32)}, inset 0 1px 0 rgba(255,255,255,0.30)`
+                          : `inset 0 1px 0 ${theme.color.glassBorder}, inset 0 -1px 0 ${withAlpha(theme.color.ink, 0.05)}`,
                         cursor: "pointer",
                         backdropFilter: "blur(18px) saturate(150%)",
                         WebkitBackdropFilter: "blur(18px) saturate(150%)",
+                        ...THEME_TRANSITION,
                       }}
                     >
                       <span style={{
@@ -174,7 +179,7 @@ export default function UnitPickerModal({
                       </span>
                       <span style={{
                         fontFamily: font.sans, fontSize: 10,
-                        color: active ? "rgba(255,248,238,0.8)" : color.inkFaint,
+                        color: active ? withAlpha(theme.color.ctaText, 0.8) : theme.color.inkFaint,
                       }}>
                         {u.hint}
                       </span>
@@ -188,12 +193,13 @@ export default function UnitPickerModal({
                 marginTop: 16,
                 padding: "10px 14px",
                 borderRadius: radius.md,
-                background: "rgba(47,143,131,0.08)",
-                border: "1px solid rgba(47,143,131,0.18)",
+                background: withAlpha(theme.color.teal, 0.08),
+                border: `1px solid ${withAlpha(theme.color.teal, 0.18)}`,
                 fontFamily: font.mono, fontSize: 12,
-                color: color.teal,
+                color: theme.color.teal,
                 letterSpacing: "0.02em",
                 textAlign: "center",
+                ...THEME_TRANSITION,
               }}>
                 {CONVERSION}
               </div>
@@ -223,6 +229,7 @@ export default function UnitPickerModal({
 // --- local helpers -------------------------------------------------------
 
 function StepperButton({ onClick, label }) {
+  const { theme } = useTheme();
   return (
     <motion.button
       onClick={onClick}
@@ -231,17 +238,18 @@ function StepperButton({ onClick, label }) {
       aria-label={label === "+" ? "Increase" : "Decrease"}
       style={{
         width: 44, height: 44, borderRadius: "50%",
-        border: `1px solid rgba(255,255,255,0.85)`,
-        background: "rgba(255,255,255,0.68)",
+        border: `1px solid ${theme.color.glassBorder}`,
+        background: theme.color.glassFillHeavy,
         backdropFilter: "blur(20px) saturate(150%)",
         WebkitBackdropFilter: "blur(20px) saturate(150%)",
         fontFamily: font.sans, fontSize: 22, fontWeight: 500,
-        color: color.warmBrown,
+        color: theme.color.warmBrown,
         cursor: "pointer",
         boxShadow:
-          "0 2px 6px rgba(30,30,30,0.08)," +
-          "inset 0 1px 0 rgba(255,255,255,0.85)," +
-          "inset 0 -1px 0 rgba(30,30,30,0.05)",
+          `0 2px 6px ${withAlpha(theme.color.ink, 0.06)},` +
+          `inset 0 1px 0 ${theme.color.glassBorder},` +
+          `inset 0 -1px 0 ${withAlpha(theme.color.ink, 0.04)}`,
+        ...THEME_TRANSITION,
       }}
     >
       {label}

@@ -8,9 +8,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton, GhostButton,
   CheckCircle, Kicker, SerifHeader, FadeIn, Starburst,
-  BackChip, TintedPill,
+  BackChip, TintedPill, withAlpha,
 } from "./primitives";
-import { color, font } from "./tokens";
+import { useTheme, THEME_TRANSITION } from "./theme";
+import { font } from "./tokens";
 
 const STEPS = [
   {
@@ -47,6 +48,7 @@ const STEPS = [
 ];
 
 export default function CookScreen({ onBack, onOpenUnitPicker }) {
+  const { theme } = useTheme();
   const [stepIdx, setStepIdx] = useState(1);
   const step = STEPS[stepIdx];
   const total = STEPS.length;
@@ -56,21 +58,7 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
 
   return (
     <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
-      <WarmBackdrop variant="cook" />
-      {/* Simulated kitchen haze — a second, blurred gradient painting
-          for depth behind the glass panel. */}
-      <div
-        aria-hidden
-        style={{
-          position: "absolute", inset: 0,
-          background:
-            "radial-gradient(60% 50% at 30% 20%, rgba(212,166,55,0.35) 0%, transparent 70%)," +
-            "radial-gradient(50% 40% at 80% 80%, rgba(47,143,131,0.30) 0%, transparent 70%)," +
-            "radial-gradient(40% 30% at 20% 90%, rgba(217,107,43,0.20) 0%, transparent 70%)",
-          filter: "blur(20px)",
-          pointerEvents: "none",
-        }}
-      />
+      <WarmBackdrop />
 
       <div style={{
         position: "relative",
@@ -91,17 +79,18 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 8,
               padding: "6px 14px",
-              background: "rgba(255,255,255,0.58)",
+              background: theme.color.glassFillLite,
               backdropFilter: "blur(20px) saturate(150%)",
               WebkitBackdropFilter: "blur(20px) saturate(150%)",
               borderRadius: 999,
               fontFamily: font.mono, fontSize: 11,
-              color: color.inkMuted, letterSpacing: "0.12em",
+              color: theme.color.inkMuted, letterSpacing: "0.12em",
               textTransform: "uppercase",
-              border: `1px solid rgba(255,255,255,0.85)`,
+              border: `1px solid ${theme.color.glassBorder}`,
               boxShadow:
-                "inset 0 1px 0 rgba(255,255,255,0.85)," +
-                "inset 0 -1px 0 rgba(30,30,30,0.05)",
+                `inset 0 1px 0 ${theme.color.glassBorder},` +
+                `inset 0 -1px 0 ${withAlpha(theme.color.ink, 0.04)}`,
+              ...THEME_TRANSITION,
             }}>
               Lemon-Butter Pasta
             </div>
@@ -125,10 +114,10 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
                     width: current ? 32 : 12,
                     borderRadius: 999,
                     background:
-                      current ? color.burnt
-                      : past  ? color.teal
-                      : "rgba(30,30,30,0.15)",
-                    transition: "all 0.32s cubic-bezier(0.22, 1, 0.36, 1)",
+                      current ? theme.color.burnt
+                      : past  ? theme.color.teal
+                      : withAlpha(theme.color.ink, 0.15),
+                    transition: "all 0.32s cubic-bezier(0.22, 1, 0.36, 1), background 700ms ease",
                   }}
                 />
               );
@@ -160,7 +149,7 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
                 style={{ position: "absolute", top: -40, right: -30 }}
               />
 
-              <Kicker tone={color.burnt}>{step.kicker}</Kicker>
+              <Kicker tone={theme.color.burnt}>{step.kicker}</Kicker>
 
               <SerifHeader size={44} style={{ marginTop: 10 }}>
                 {step.title}
@@ -180,14 +169,14 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
 
               <p style={{
                 marginTop: 16, fontFamily: font.sans, fontSize: 16,
-                lineHeight: 1.55, color: color.ink,
+                lineHeight: 1.55, color: theme.color.ink,
               }}>
                 {step.body}
               </p>
 
               <div style={{
                 marginTop: 22, paddingTop: 18,
-                borderTop: `1px solid ${color.hairline}`,
+                borderTop: `1px solid ${theme.color.hairline}`,
               }}>
                 <Kicker>You'll need</Kicker>
                 <ul style={{ listStyle: "none", padding: 0, margin: "12px 0 0" }}>
@@ -201,7 +190,7 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
                         display: "flex", alignItems: "center", gap: 12,
                         padding: "10px 0",
                         borderBottom: i === step.ingredients.length - 1
-                          ? "none" : `1px solid ${color.hairline}`,
+                          ? "none" : `1px solid ${theme.color.hairline}`,
                       }}
                     >
                       <CheckCircle checked={ing.done} />
@@ -213,7 +202,7 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
                           padding: 0, cursor: "pointer",
                           fontFamily: font.serif, fontStyle: "italic",
                           fontWeight: 300, fontSize: 18,
-                          color: ing.done ? color.ink : color.inkMuted,
+                          color: ing.done ? theme.color.ink : theme.color.inkMuted,
                           letterSpacing: "-0.01em",
                         }}
                       >

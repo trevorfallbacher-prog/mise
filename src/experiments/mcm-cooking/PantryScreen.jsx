@@ -9,8 +9,10 @@ import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
   GlassPill, TintedPill, BottomDock,
+  statusTintOverlay, withAlpha,
 } from "./primitives";
-import { color, radius, font } from "./tokens";
+import { useTheme, THEME_TRANSITION } from "./theme";
+import { font } from "./tokens";
 
 const ITEMS = [
   { id: 1, emoji: "🧈", name: "Kerrygold Butter",    qty: "1 stick",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 12 },
@@ -36,6 +38,7 @@ const FILTERS = [
 ];
 
 export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
+  const { theme } = useTheme();
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
 
@@ -76,7 +79,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
           </SerifHeader>
           <p style={{
             marginTop: 8, fontFamily: font.sans, fontSize: 15,
-            color: color.inkMuted, lineHeight: 1.45, maxWidth: 340,
+            color: theme.color.inkMuted, lineHeight: 1.45, maxWidth: 340,
           }}>
             Twelve good things on the shelf. Enough for dinner, breakfast,
             and a quiet afternoon snack.
@@ -103,7 +106,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
                 background: "transparent",
                 fontFamily: font.sans,
                 fontSize: 15,
-                color: color.ink,
+                color: theme.color.ink,
               }}
             />
             {query && (
@@ -112,7 +115,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
                 aria-label="Clear search"
                 style={{
                   border: "none", background: "transparent", cursor: "pointer",
-                  color: color.inkMuted, fontFamily: font.mono, fontSize: 12,
+                  color: theme.color.inkMuted, fontFamily: font.mono, fontSize: 12,
                 }}
               >
                 CLEAR
@@ -164,7 +167,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             <div style={{
               marginTop: 40, textAlign: "center",
               fontFamily: font.serif, fontStyle: "italic",
-              fontSize: 20, color: color.inkMuted,
+              fontSize: 20, color: theme.color.inkMuted,
             }}>
               Nothing matches that search.
             </div>
@@ -189,15 +192,15 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             />
             <div style={{ fontSize: 36, lineHeight: 1 }}>🍳</div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <Kicker tone={color.burnt}>Ready when you are</Kicker>
+              <Kicker tone={theme.color.burnt}>Ready when you are</Kicker>
               <div style={{
                 fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
-                fontSize: 20, color: color.ink, marginTop: 2, letterSpacing: "-0.01em",
+                fontSize: 20, color: theme.color.ink, marginTop: 2, letterSpacing: "-0.01em",
               }}>
                 Lemon-butter pasta
               </div>
               <div style={{
-                fontFamily: font.sans, fontSize: 12, color: color.inkMuted, marginTop: 2,
+                fontFamily: font.sans, fontSize: 12, color: theme.color.inkMuted, marginTop: 2,
               }}>
                 6 of 7 ingredients on hand · 18 min
               </div>
@@ -228,17 +231,12 @@ const NAV_TABS = [
 // --- Sub-components ------------------------------------------------------
 
 function PantryCard({ item, onPick }) {
+  const { theme } = useTheme();
   const warn = item.status === "warn";
-  // Warn cards pick up a gentle burnt-tinted overlay so "expires
-  // soon" is noticeable at the card level without being alarming.
-  // Glass recipe still comes from GlassPanel — we just layer a
-  // soft warm wash on top via background-image.
-  const warnOverlay = warn
-    ? {
-        background:
-          "linear-gradient(160deg, rgba(217,107,43,0.10) 0%, rgba(255,255,255,0.55) 55%)",
-      }
-    : null;
+  // Warn cards pick up a gentle theme-derived burnt wash so
+  // "expires soon" is noticeable at the card level without being
+  // alarming. Wash follows time-of-day automatically.
+  const warnOverlay = warn ? statusTintOverlay(theme, "warn") : null;
 
   return (
     <GlassPanel
@@ -264,14 +262,14 @@ function PantryCard({ item, onPick }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
-          fontSize: 18, lineHeight: 1.15, color: color.ink,
+          fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
           letterSpacing: "-0.01em",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {item.name}
         </div>
         <div style={{
-          fontFamily: font.mono, fontSize: 11, color: color.inkFaint,
+          fontFamily: font.mono, fontSize: 11, color: theme.color.inkFaint,
           marginTop: 4, letterSpacing: "0.02em",
         }}>
           {item.qty}
@@ -288,7 +286,7 @@ function PantryCard({ item, onPick }) {
         </TintedPill>
         <span style={{
           fontFamily: font.mono, fontSize: 10,
-          color: warn ? color.burnt : color.inkMuted,
+          color: warn ? theme.color.burnt : theme.color.inkMuted,
           whiteSpace: "nowrap",
           fontWeight: warn ? 500 : 400,
         }}>
@@ -300,10 +298,11 @@ function PantryCard({ item, onPick }) {
 }
 
 function SearchGlyph() {
+  const { theme } = useTheme();
   return (
     <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden>
-      <circle cx="11" cy="11" r="7" fill="none" stroke={color.inkMuted} strokeWidth="1.6" />
-      <path d="M16.5 16.5 L21 21" stroke={color.inkMuted} strokeWidth="1.6" strokeLinecap="round" />
+      <circle cx="11" cy="11" r="7" fill="none" stroke={theme.color.inkMuted} strokeWidth="1.6" />
+      <path d="M16.5 16.5 L21 21" stroke={theme.color.inkMuted} strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
 }
