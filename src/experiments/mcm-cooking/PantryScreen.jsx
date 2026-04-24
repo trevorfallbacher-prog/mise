@@ -260,6 +260,12 @@ export default function PantryScreen({
   // in the pantry row's native order so the user sees relevance,
   // not an arbitrary sort).
   const [sortBy, setSortBy] = useState("expiring");
+  // Category filter inside a drilled tile. null = no filter
+  // (all items in the tile shown). String value = a typeLabel
+  // (e.g. "Cheese") that matches each card's `typeLabel`.
+  // Resets when the user changes drilled tile, switches
+  // location, or starts searching.
+  const [categoryFilter, setCategoryFilter] = useState(null);
   // Tracks whether the search input has keyboard focus so the
   // surrounding GlassPanel can show a focus ring. The panel's
   // own border transitions to a warm teal accent when focused —
@@ -406,16 +412,46 @@ export default function PantryScreen({
   const visible = useMemo(() => {
     if (searchHits) return searchHits;
     if (!drilledTile) return [];
-    const items = cardsByLocTile[locationTab]?.[drilledTile.id] || [];
+    let items = cardsByLocTile[locationTab]?.[drilledTile.id] || [];
+    // Optional category filter — when set, keep only items whose
+    // typeLabel matches. Null/missing typeLabel never matches a
+    // filter, so unspecified items drop out cleanly.
+    if (categoryFilter) {
+      items = items.filter(it => it.typeLabel === categoryFilter);
+    }
     return sortItems(items, sortBy);
-  }, [searchHits, drilledTile, cardsByLocTile, locationTab, sortBy]);
+  }, [searchHits, drilledTile, cardsByLocTile, locationTab, sortBy, categoryFilter]);
+
+  // Categories present in the current drilled tile, with counts.
+  // Used to render the CategoryFilter pill row above the items
+  // grid. Recomputed when the drilled tile or its items change.
+  const categoryOptions = useMemo(() => {
+    if (!drilledTile) return [];
+    const items = cardsByLocTile[locationTab]?.[drilledTile.id] || [];
+    const counts = new Map();
+    for (const it of items) {
+      if (!it.typeLabel) continue;
+      counts.set(it.typeLabel, (counts.get(it.typeLabel) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([label, count]) => ({ label, count }));
+  }, [drilledTile, cardsByLocTile, locationTab]);
 
   // Switching location while drilled = bail to the tile grid of
   // the new location. Same behavior as classic Kitchen.
   const switchLocation = (id) => {
     setLocationTab(id);
     setDrilledTile(null);
+    setCategoryFilter(null);
   };
+
+  // Reset the category filter whenever the drilled tile changes
+  // (different tile = different categories) or when search
+  // activates (search bypasses the per-tile filter axis).
+  useEffect(() => {
+    setCategoryFilter(null);
+  }, [drilledTile, query]);
 
   // Per-tile warn count — how many items in each tile are
   // expiring soon. Renders as a small burnt-orange dot on the
@@ -846,6 +882,9 @@ export default function PantryScreen({
               sortBy={sortBy}
               onSortChange={setSortBy}
               onBack={() => setDrilledTile(null)}
+              categoryOptions={categoryOptions}
+              categoryFilter={categoryFilter}
+              onCategoryChange={setCategoryFilter}
             />
           </FadeIn>
         )}
@@ -1707,7 +1746,7 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
 // sort selector, and an obvious back button. Mirrors classic
 // Kitchen's drill-in moment but in MCM's voice (serif, glass,
 // warm accents).
-function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortChange, onBack }) {
+function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortChange, onBack, categoryOptions = [], categoryFilter, onCategoryChange }) {
   const { theme } = useTheme();
   const iconUrl = tileIconFor(tile.id, location);
   // Active location's dot color (Fridge cool blue, Pantry burnt
@@ -1902,6 +1941,19 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
       {count > 1 && (
         <SortSelector sortBy={sortBy} onSortChange={onSortChange} />
       )}
+      {/* Category filter — pills for each food type present in
+          the drilled tile (e.g. "All / Cheese / Yogurt / Eggs"
+          inside Dairy & Eggs). Lets the user narrow to a single
+          category without leaving the tile. Only renders when
+          the tile actually has multiple categories — a single-
+          category tile doesn't need a filter row. */}
+      {categoryOptions.length > 1 && (
+        <CategoryFilter
+          options={categoryOptions}
+          value={categoryFilter}
+          onChange={onCategoryChange}
+        />
+      )}
     </div>
   );
 }
@@ -1957,6 +2009,88 @@ function SortSelector({ sortBy, onSortChange }) {
         );
       })}
     </div>
+  );
+}
+
+// Category filter — pill row of food types present in the
+// drilled tile, with counts. "All" pill at the head clears the
+// filter; tapping any specific pill narrows to that category.
+// Mirrors SortSelector's visual but uses burnt tinting on the
+// active pill (matches the orange CATEGORY axis color the
+// per-item food-type pill uses elsewhere).
+function CategoryFilter({ options, value, onChange }) {
+  const { theme } = useTheme();
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 6,
+      marginLeft: 52, // align under the icon column for visual
+                      // siblinghood with SortSelector above
+      flexWrap: "wrap",
+    }}>
+      <span style={{
+        fontFamily: font.mono, fontSize: 10,
+        letterSpacing: "0.12em", textTransform: "uppercase",
+        color: theme.color.inkFaint,
+        marginRight: 2,
+      }}>
+        Category
+      </span>
+      <CategoryPill
+        active={value === null}
+        onClick={() => onChange(null)}
+        label="All"
+        count={null}
+      />
+      {options.map(opt => (
+        <CategoryPill
+          key={opt.label}
+          active={value === opt.label}
+          onClick={() => onChange(opt.label)}
+          label={opt.label}
+          count={opt.count}
+        />
+      ))}
+    </div>
+  );
+}
+
+function CategoryPill({ active, onClick, label, count }) {
+  const { theme } = useTheme();
+  return (
+    <button
+      onClick={onClick}
+      className="mcm-focusable"
+      style={{
+        fontFamily: font.mono, fontSize: 10,
+        letterSpacing: "0.08em", textTransform: "uppercase",
+        padding: "3px 8px",
+        borderRadius: 999,
+        // Active = burnt tint (matches CATEGORY axis color);
+        // inactive = transparent. Border darkens to hairline
+        // on active so the pill reads as filled, not floating.
+        border: active
+          ? `1px solid ${withAlpha(theme.color.burnt, 0.4)}`
+          : "1px solid transparent",
+        background: active
+          ? withAlpha(theme.color.burnt, 0.18)
+          : "transparent",
+        color: active ? theme.color.ink : theme.color.inkMuted,
+        cursor: "pointer",
+        display: "inline-flex", alignItems: "center", gap: 4,
+        ...THEME_TRANSITION,
+      }}
+    >
+      <span>{label}</span>
+      {count != null && (
+        <span style={{
+          fontWeight: 500,
+          color: active ? theme.color.inkMuted : theme.color.inkFaint,
+          opacity: 0.85,
+        }}>
+          {count}
+        </span>
+      )}
+    </button>
   );
 }
 
