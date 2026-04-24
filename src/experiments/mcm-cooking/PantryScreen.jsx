@@ -30,6 +30,7 @@ import { FRIDGE_TILES,  tileIdForItem          as fridgeTileFor  } from "../../l
 import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../lib/pantryTiles";
 import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
 import { findIngredient, hubForIngredient } from "../../data/ingredients";
+import { findFoodType } from "../../data/foodTypes";
 import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 
 const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
@@ -180,6 +181,13 @@ function toCard(raw) {
   const status = days != null && days <= 3 ? "warn" : "ok";
   const cat = raw.category || "pantry";
   const location = CATEGORY_LABELS[cat] || (cat[0]?.toUpperCase() + cat.slice(1)) || "Pantry";
+  // Food-type label for the per-item category pill. Resolves the
+  // typeId (WWEIA wweia_cheese / wweia_yogurt / etc.) to its
+  // human label ("Cheese", "Yogurt"). Falls back to the broad
+  // category ("Dairy") when the item has no typeId set; null
+  // when even that's missing so the pill simply hides.
+  const foodTypeLabel = findFoodType(raw.typeId)?.label
+    || (raw.category ? raw.category[0].toUpperCase() + raw.category.slice(1) : null);
   return {
     id:       raw.id,
     emoji:    raw.emoji || "🍽️",
@@ -190,6 +198,7 @@ function toCard(raw) {
     cat,
     status,
     days,
+    typeLabel: foodTypeLabel,
     // Timestamps used for sort orderings in the drilled view.
     // `purchasedAt` may be null for manual-add rows that never
     // went through the scan flow; sort falls back to createdAt
@@ -1701,13 +1710,35 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
 function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortChange, onBack }) {
   const { theme } = useTheme();
   const iconUrl = tileIconFor(tile.id, location);
+  // Active location's dot color (Fridge cool blue, Pantry burnt
+  // orange, Freezer icy). Used to tint the accent rule + icon
+  // halo so the drilled view visually carries the location it
+  // belongs to — gives the user a "you're inside a Fridge tile"
+  // cue distinct from the neutral tile-grid view above.
+  const accent = LOCATION_DOT[location] || theme.color.inkMuted;
   return (
     <div style={{
       marginTop: 20,
       display: "flex",
       flexDirection: "column",
       gap: 10,
+      position: "relative",
     }}>
+      {/* Top accent rule — a thin colored line spanning the
+          drilled header that visually ties the view to its
+          parent location's dot color. Subtle (3px tall, full
+          width of the header), but enough to distinguish the
+          drilled state from the neutral tile-grid view. */}
+      <span
+        aria-hidden
+        style={{
+          height: 3,
+          width: 56,
+          borderRadius: 999,
+          background: accent,
+          opacity: 0.85,
+        }}
+      />
       <div style={{
         display: "flex",
         alignItems: "center",
@@ -2414,13 +2445,21 @@ function PantryCard({ item, onPick, tileLabel = null }) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <TintedPill
-          tone="teal"
-          size="sm"
-          style={{ overflow: "hidden", textOverflow: "ellipsis" }}
-        >
-          {item.location}
-        </TintedPill>
+        {/* Category pill — shows the WWEIA food type ("Cheese",
+            "Yogurt", "Sausages") rather than the tile name (which
+            every item in the drilled tile would share, so was
+            redundant). Tinted burnt to match CLAUDE.md's reserved
+            orange CATEGORY axis color. Hidden when no typeLabel
+            is resolvable. */}
+        {item.typeLabel ? (
+          <TintedPill
+            tone="burnt"
+            size="sm"
+            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {item.typeLabel}
+          </TintedPill>
+        ) : <span />}
         <span style={{
           fontFamily: font.mono, fontSize: 10,
           // Three-tier urgency color. Eye-scan tells the user
