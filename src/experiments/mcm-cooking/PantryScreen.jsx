@@ -16,11 +16,43 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
-  GlassPill, TintedPill, BottomDock,
+  GlassPill, TintedPill, BottomDock, BackChip,
   statusTintOverlay, withAlpha,
 } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
-import { font } from "./tokens";
+import { font, radius } from "./tokens";
+
+// Tile system — re-using the exact same classifier the classic
+// Kitchen tile view uses, so an item that lives under "Dairy & Eggs"
+// in the old UI lives in the SAME tile here. Location axis (fridge
+// / pantry / freezer) sits above the tile axis per CLAUDE.md.
+import { FRIDGE_TILES,  tileIdForItem          as fridgeTileFor  } from "../../lib/fridgeTiles";
+import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../lib/pantryTiles";
+import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
+import { findIngredient, hubForIngredient } from "../../data/ingredients";
+
+const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
+
+// The three locations in top-to-bottom kitchen order. Each carries
+// the tile manifest + the classifier that maps items to tiles
+// within it. Order here is the order the tabs render in.
+const LOCATIONS = [
+  { id: "fridge",  label: "Fridge",  emoji: "🧊", tiles: FRIDGE_TILES,  classify: fridgeTileFor  },
+  { id: "pantry",  label: "Pantry",  emoji: "🥫", tiles: PANTRY_TILES,  classify: pantryTileFor  },
+  { id: "freezer", label: "Freezer", emoji: "❄️", tiles: FREEZER_TILES, classify: freezerTileFor },
+];
+
+// Fallback mapping for Showcase demo items (they don't carry the
+// real location / tileId axes). Keeps the design-reference
+// surface useful — tapping into demo "dairy" lands in the Dairy
+// & Eggs tile with its four demo cards, same grouping the
+// production pantry does.
+const DEMO_CAT_MAP = {
+  dairy:   { location: "fridge", tileId: "dairy"        },
+  produce: { location: "fridge", tileId: "produce"      },
+  meat:    { location: "fridge", tileId: "meat_poultry" },
+  pantry:  { location: "pantry", tileId: "pasta_grains" },
+};
 
 // Hardcoded demo items — only used when PantryScreen is rendered
 // standalone (Showcase.jsx) without an `items` prop. Kept so the
@@ -38,14 +70,6 @@ const DEMO_ITEMS = [
   { id:10, emoji: "🫒", name: "Olive Oil",            qty: "500 ml",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 120 },
   { id:11, emoji: "🐟", name: "Wild Salmon",          qty: "0.75 lb",    location: "Meat & Seafood",  cat: "meat",    status: "warn",    days: 1 },
   { id:12, emoji: "🍗", name: "Chicken Thighs",       qty: "1.5 lb",     location: "Meat & Seafood",  cat: "meat",    status: "ok",      days: 3 },
-];
-
-const FILTERS = [
-  { id: "all",     label: "All"      },
-  { id: "dairy",   label: "Dairy"    },
-  { id: "produce", label: "Produce"  },
-  { id: "meat",    label: "Meat"     },
-  { id: "pantry",  label: "Pantry"   },
 ];
 
 // Pretty label for the STORED IN pill — maps Kitchen's category
@@ -99,18 +123,55 @@ function formatQty(amount, unit) {
   return unit ? `${display} ${unit}` : display;
 }
 
+// Classify a raw pantry row into a (location, tileId) pair. Tries
+// the item's explicit placement first (row.location + row.tileId,
+// set by Kitchen when the user dragged the card into a specific
+// tile), falls back to the location-specific classifier that
+// Kitchen itself uses so items without explicit placement land in
+// the same tile the classic UI would put them in. Returns
+// `{ location, tileId }` with sensible defaults when both paths
+// give up ("pantry" / "misc").
+function classifyItem(raw) {
+  if (!raw) return { location: "pantry", tileId: "misc" };
+  // Explicit user placement wins.
+  const location = raw.location || defaultLocationForCategory(raw.category);
+  if (raw.tileId) return { location, tileId: raw.tileId };
+  // Otherwise re-run the classic Kitchen classifier for this location.
+  const loc = LOCATIONS.find(l => l.id === location);
+  if (!loc) return { location: "pantry", tileId: "misc" };
+  const tileId = loc.classify(raw, CLASSIFIER_HELPERS) || "misc";
+  return { location, tileId };
+}
+
+// Coarse default — the app has a full `defaultLocationForCategory`
+// helper elsewhere, but for the purposes of the tile grid we only
+// need a best-guess when the row doesn't carry an explicit
+// location. Matches the reserved-word defaults in CLAUDE.md.
+function defaultLocationForCategory(category) {
+  if (!category) return "pantry";
+  const c = String(category).toLowerCase();
+  if (["dairy", "produce", "meat", "seafood", "drinks", "condiments", "herbs", "bread", "leftovers"].includes(c)) return "fridge";
+  if (c.startsWith("frozen")) return "freezer";
+  return "pantry";
+}
+
 // Map a raw pantry row (from usePantry) OR a demo row into the
 // card shape the PantryCard renderer expects. Detects by whether
 // `.qty` is pre-baked (demo) vs. derived from `.amount` / `.unit`
 // (real). Keeps the downstream card component dumb — it sees
-// ONE shape regardless of source.
+// ONE shape regardless of source. Also stamps `_location` +
+// `_tileId` so the tile-first grouping layer can bucket the card
+// without re-classifying on every render.
 function toCard(raw) {
   if (raw == null) return null;
-  // Demo row — already in card shape. Pass through.
+  // Demo row — already in card shape. Stamp a synthetic
+  // (location, tileId) so Showcase's tile view looks populated.
   if (typeof raw.qty === "string" && typeof raw.cat === "string") {
-    return raw;
+    const fallback = DEMO_CAT_MAP[raw.cat] || { location: "pantry", tileId: "misc" };
+    return { ...raw, _location: fallback.location, _tileId: fallback.tileId };
   }
-  // Real pantry row — derive card fields.
+  // Real pantry row — derive card fields + classify into tile.
+  const { location: _location, tileId: _tileId } = classifyItem(raw);
   const days = daysUntil(raw.expiresAt);
   const status = days != null && days <= 3 ? "warn" : "ok";
   const cat = raw.category || "pantry";
@@ -128,6 +189,8 @@ function toCard(raw) {
     // the caller (App.jsx wants to open ItemCard with the full
     // pantry row, not the trimmed card shape).
     _raw: raw,
+    _location,
+    _tileId,
   };
 }
 
@@ -139,7 +202,17 @@ export default function PantryScreen({
   hideDock = false,
 }) {
   const { theme } = useTheme();
-  const [filter, setFilter] = useState("all");
+  // Three-level navigation mirroring the classic Kitchen:
+  //   locationTab  — fridge / pantry / freezer
+  //   drilledTile  — which tile inside that location is expanded
+  //                  (null = show the tile grid, set = show items)
+  //   query        — when typed, bypasses the hierarchy and shows
+  //                  matching items globally (cross-location) so a
+  //                  search for "butter" surfaces both the fridge
+  //                  stick AND the frozen cultured butter block
+  //                  without the user having to guess which tab.
+  const [locationTab, setLocationTab] = useState("fridge");
+  const [drilledTile, setDrilledTile] = useState(null);
   const [query, setQuery] = useState("");
 
   // Normalize once — everything downstream reads from `cards`.
@@ -148,13 +221,53 @@ export default function PantryScreen({
     [items]
   );
 
-  const visible = useMemo(() => cards.filter((it) => {
-    if (filter !== "all" && it.cat !== filter) return false;
-    if (query && !it.name.toLowerCase().includes(query.toLowerCase())) return false;
-    return true;
-  }), [cards, filter, query]);
+  // Bucket cards by (location, tileId). Rebuilds only when the
+  // pantry itself changes — not on every tab flip — so tapping
+  // between Fridge / Pantry / Freezer is an instant re-read.
+  const cardsByLocTile = useMemo(() => {
+    const map = {};
+    for (const card of cards) {
+      const locKey = card._location || "pantry";
+      const tileKey = card._tileId || "misc";
+      if (!map[locKey]) map[locKey] = {};
+      if (!map[locKey][tileKey]) map[locKey][tileKey] = [];
+      map[locKey][tileKey].push(card);
+    }
+    return map;
+  }, [cards]);
+
+  // Active location manifest — tile array + classifier + label.
+  const activeLocation = useMemo(
+    () => LOCATIONS.find(l => l.id === locationTab) || LOCATIONS[0],
+    [locationTab]
+  );
+
+  // Search bypasses the tile hierarchy — show matching items
+  // from anywhere so the user doesn't have to remember which
+  // tile their grocery-run brand ended up in.
+  const searchHits = useMemo(() => {
+    if (!query) return null;
+    const q = query.toLowerCase();
+    return cards.filter(it => it.name.toLowerCase().includes(q));
+  }, [cards, query]);
 
   const goodCount = cards.filter((i) => i.status === "ok").length;
+  // Items visible in the current tile drill-down — derived lazily
+  // so the grid can reuse the same PantryCard renderer that the
+  // flat version used. When no tile drilled, `visible` is unused
+  // (tile grid renders instead).
+  const visible = useMemo(() => {
+    if (searchHits) return searchHits;
+    if (!drilledTile) return [];
+    return cardsByLocTile[locationTab]?.[drilledTile.id] || [];
+  }, [searchHits, drilledTile, cardsByLocTile, locationTab]);
+
+  // Switching location while drilled = bail to the tile grid of
+  // the new location. Same behavior as classic Kitchen.
+  const switchLocation = (id) => {
+    setLocationTab(id);
+    setDrilledTile(null);
+  };
 
   return (
     <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
@@ -269,68 +382,71 @@ export default function PantryScreen({
             )}
           </GlassPanel>
 
-          <div style={{
-            display: "flex", gap: 8, marginTop: 14,
-            overflowX: "auto", paddingBottom: 4,
-          }}>
-            {FILTERS.map((f) => (
-              <GlassPill
-                key={f.id}
-                active={filter === f.id}
-                onClick={() => setFilter(f.id)}
-              >
-                {f.label}
-              </GlassPill>
-            ))}
-          </div>
+          {/* Location tabs — Fridge / Pantry / Freezer. Mirrors
+              classic Kitchen's storageTab axis but rendered as the
+              same GlassPill row the MCM demo used for category
+              filters, so the visual shape of the row is preserved.
+              Hidden while search is active — when a user types,
+              the hierarchy gets bypassed and matching items show
+              across all locations. */}
+          {!query && (
+            <div style={{
+              display: "flex", gap: 8, marginTop: 14,
+              overflowX: "auto", paddingBottom: 4,
+            }}>
+              {LOCATIONS.map((loc) => (
+                <GlassPill
+                  key={loc.id}
+                  active={locationTab === loc.id}
+                  onClick={() => switchLocation(loc.id)}
+                >
+                  <span style={{ marginRight: 6 }}>{loc.emoji}</span>
+                  {loc.label}
+                </GlassPill>
+              ))}
+            </div>
+          )}
         </FadeIn>
 
-        {/* --- Grid ----------------------------------------------------- */}
-        <div style={{
-          // Auto-fit grid — 2 columns on phones (each card ≥200px,
-          // two fit at 440+px of column width), 3 on tablets, 4 on
-          // desktop. `minmax(200px, 1fr)` means "at least 200px per
-          // card, grow to fill the row." This replaces the fixed
-          // "1fr 1fr" which forced 2 huge cards on any viewport.
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-          gap: 12,
-          marginTop: 20,
-        }}>
-          <AnimatePresence mode="popLayout">
-            {visible.map((it, i) => (
-              <motion.div
-                key={it.id}
-                layout
-                initial={{ opacity: 0, scale: 0.96, y: 8 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.96 }}
-                transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
-              >
-                <PantryCard
-                  item={it}
-                  onPick={() => {
-                    // Prefer the real-items edit handler. Fall through to
-                    // the unit-picker demo when rendered standalone —
-                    // keeps Showcase.jsx's "tap a card to see the unit
-                    // modal" design demo working untouched.
-                    if (onOpenItem && it._raw) onOpenItem(it._raw);
-                    else if (onOpenUnitPicker) onOpenUnitPicker();
-                  }}
-                />
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
+        {/* --- Back chip (drilled into a tile) ------------------------- */}
+        {drilledTile && !query && (
+          <FadeIn>
+            <div style={{ marginTop: 20 }}>
+              <BackChip onClick={() => setDrilledTile(null)}>
+                ← {drilledTile.emoji} {drilledTile.label}
+              </BackChip>
+            </div>
+          </FadeIn>
+        )}
 
-        {visible.length === 0 && (
+        {/* --- Body: either TILE grid, ITEM grid, or SEARCH hits ------- */}
+        {(() => {
+          // Search mode — flat item grid, cross-location.
+          if (query) {
+            return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+          }
+          // Drilled tile mode — item grid filtered to that tile.
+          if (drilledTile) {
+            return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+          }
+          // Default — tile grid for the active location.
+          return (
+            <TileGrid
+              location={activeLocation}
+              cardsByTile={cardsByLocTile[locationTab] || {}}
+              onPickTile={setDrilledTile}
+            />
+          );
+        })()}
+
+        {((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
           <FadeIn>
             <div style={{
               marginTop: 40, textAlign: "center",
               fontFamily: font.serif, fontStyle: "italic",
               fontSize: 20, color: theme.color.skyInkMuted,
             }}>
-              Nothing matches that search.
+              {query ? "Nothing matches that search." : "This tile is empty."}
             </div>
           </FadeIn>
         )}
@@ -408,6 +524,151 @@ const NAV_TABS = [
 ];
 
 // --- Sub-components ------------------------------------------------------
+
+// Item grid — the animated 2-to-N column grid used for BOTH the
+// drilled-tile view and the search-hits view. Factored out so the
+// card-layout code isn't duplicated across the two render branches.
+function ItemGrid({ items, onOpenItem, onOpenUnitPicker }) {
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+      gap: 12,
+      marginTop: 20,
+    }}>
+      <AnimatePresence mode="popLayout">
+        {items.map((it, i) => (
+          <motion.div
+            key={it.id}
+            layout
+            initial={{ opacity: 0, scale: 0.96, y: 8 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96 }}
+            transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <PantryCard
+              item={it}
+              onPick={() => {
+                if (onOpenItem && it._raw) onOpenItem(it._raw);
+                else if (onOpenUnitPicker) onOpenUnitPicker();
+              }}
+            />
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Tile grid — the top-level "pick a shelf" view shown when no
+// tile is drilled and no search is active. Each tile card shows
+// emoji + label + blurb + an item count. Empty tiles dim to
+// ~45% so the populated ones pop, same visual pattern the
+// classic Kitchen uses.
+function TileGrid({ location, cardsByTile, onPickTile }) {
+  return (
+    <div style={{
+      display: "grid",
+      // Slightly larger minimum (220) than the item grid — tile
+      // cards carry more text (label + blurb + count) and need
+      // room to breathe. Still auto-fits so desktop gets 3+ cols.
+      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+      gap: 14,
+      marginTop: 20,
+    }}>
+      <AnimatePresence mode="popLayout">
+        {location.tiles.map((tile, i) => {
+          const count = (cardsByTile[tile.id] || []).length;
+          return (
+            <motion.div
+              key={tile.id}
+              layout
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={{ duration: 0.32, delay: i * 0.02, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <TileCard tile={tile} count={count} onPick={() => onPickTile(tile)} />
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// Tile card — the "Dairy & Eggs · 12 items" shelf-choice card.
+// Taller than an item card so the emoji has space to dominate and
+// the blurb below the label has breathing room. Empty tiles
+// render dimmed + non-interactive so the user doesn't drill into
+// a known-empty shelf.
+function TileCard({ tile, count, onPick }) {
+  const { theme } = useTheme();
+  const empty = count === 0;
+  return (
+    <GlassPanel
+      interactive={!empty}
+      onClick={empty ? undefined : onPick}
+      padding={16}
+      style={{
+        display: "flex", flexDirection: "column", gap: 10,
+        minHeight: 150,
+        opacity: empty ? 0.45 : 1,
+        cursor: empty ? "default" : "pointer",
+        // Subtle desaturation on empty tiles so they read as
+        // "not available" not "dimmed but tappable." Matches the
+        // grayscale treatment classic Kitchen uses for its empty
+        // tile cards.
+        filter: empty ? "grayscale(40%)" : "none",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+        <div style={{
+          fontSize: 38, lineHeight: 1,
+          filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+        }}>
+          {tile.emoji}
+        </div>
+        {/* Count pill — DM Mono so it reads as metadata, not a
+            header. Hidden on empty tiles since "0 items" adds
+            noise without signal. */}
+        {!empty && (
+          <div style={{
+            fontFamily: font.mono, fontSize: 10,
+            padding: "3px 8px",
+            borderRadius: radius.pill,
+            background: withAlpha(theme.color.ink, 0.06),
+            color: theme.color.inkMuted,
+            letterSpacing: "0.06em",
+            whiteSpace: "nowrap",
+            textTransform: "uppercase",
+          }}>
+            {count} {count === 1 ? "item" : "items"}
+          </div>
+        )}
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
+          fontSize: 20, lineHeight: 1.15, color: theme.color.ink,
+          letterSpacing: "-0.01em",
+        }}>
+          {tile.label}
+        </div>
+        {tile.blurb && (
+          <div style={{
+            fontFamily: font.sans, fontSize: 12,
+            color: theme.color.inkFaint,
+            marginTop: 4, lineHeight: 1.4,
+          }}>
+            {tile.blurb}
+          </div>
+        )}
+      </div>
+    </GlassPanel>
+  );
+}
 
 function PantryCard({ item, onPick }) {
   const { theme } = useTheme();
