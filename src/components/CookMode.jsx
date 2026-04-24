@@ -934,7 +934,7 @@ export default function CookMode({
                       {tappable && <span style={{ color:"#444", fontSize:11 }}>ⓘ</span>}
                     </span>
                   </button>
-                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500, flexShrink:0 }}>{ing.amount}</span>
+                  <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#f5c842", fontWeight:500, flexShrink:0 }}>{applyPreferredUnit(ing.amount, ing, DISPLAY_CONTEXT.COOK) || ing.amount}</span>
                 </div>
                 {badge && (
                   <div style={{ marginTop:6, display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
