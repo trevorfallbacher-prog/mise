@@ -70,6 +70,8 @@ export function canonicalImageUrlFor(canonicalId, info) {
 // id below; tileIconFor checks the prefixed form first.
 const BUNDLED_TILE_SLUGS = new Set([
   // empty — drop SVGs in public/icons/tiles/ and register here
+  "produce"
+  
 ]);
 
 export function tileIconFor(tileId, location) {
