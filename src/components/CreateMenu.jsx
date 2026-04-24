@@ -268,6 +268,13 @@ export default function CreateMenu({
             onSave={async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
               await schedule({
                 recipeSlug: scheduling.slug,
+                // Stamp the author on scheduled_meals (migration 0139)
+                // so the cook-time resolver picks this user's row out
+                // of the shared (self + family) slug pool — otherwise
+                // a same-slug family recipe can shadow it at cook time.
+                // The save just before setScheduling() landed the row
+                // under this userId, so it's the right author here.
+                recipeUserId: userId,
                 scheduledFor,
                 notificationSettings,
                 note,
@@ -358,6 +365,11 @@ export default function CreateMenu({
             onSave={async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
               await schedule({
                 recipeSlug: scheduling.slug,
+                // Author stamp — see the custom-mode callback above.
+                // Without this, scheduled_meals.recipe_user_id is null
+                // and the cook-time resolver can't tell this row's
+                // ingredients from a family member's same-slug recipe.
+                recipeUserId: userId,
                 scheduledFor,
                 notificationSettings,
                 note,
