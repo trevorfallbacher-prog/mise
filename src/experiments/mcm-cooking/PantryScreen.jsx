@@ -1610,7 +1610,7 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
             view enters via AnimatePresence). */}
         <motion.div
           layoutId={`tile-icon-${location}-${tile.id}`}
-          style={{ width: 44, height: 44, flexShrink: 0 }}
+          style={{ position: "relative", width: 44, height: 44, flexShrink: 0 }}
         >
           {iconUrl ? (
             <img
@@ -1625,6 +1625,32 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
               filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
             }}>
               {tile.emoji}
+            </div>
+          )}
+          {/* Blue stock badge on the drilled icon — matches the
+              TileCard corner badge so drilling in visually
+              preserves the "how many here" indicator. Hidden
+              when count is 0 (tile is empty — no stock signal
+              to communicate). */}
+          {count > 0 && (
+            <div
+              title={`${count} item${count === 1 ? "" : "s"}`}
+              style={{
+                position: "absolute",
+                top: -2, right: -4,
+                minWidth: 18, height: 18,
+                padding: "0 5px",
+                borderRadius: 999,
+                background: theme.color.teal,
+                color: theme.color.ctaText,
+                fontFamily: font.mono, fontSize: 10, fontWeight: 600,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                letterSpacing: "-0.02em",
+                boxShadow: `0 2px 6px ${withAlpha(theme.color.teal, 0.40)}`,
+                border: `1px solid ${theme.color.glassBorder}`,
+              }}
+            >
+              {count}
             </div>
           )}
         </motion.div>
@@ -2026,13 +2052,12 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
               minWidth: 18, height: 18,
               padding: "0 5px",
               borderRadius: 999,
-              background: LOCATION_DOT.fridge, // #2F5A85 — deep
-                                               // blue, stock feel
+              background: theme.color.teal,
               color: theme.color.ctaText,
               fontFamily: font.mono, fontSize: 10, fontWeight: 600,
               display: "inline-flex", alignItems: "center", justifyContent: "center",
               letterSpacing: "-0.02em",
-              boxShadow: "0 2px 6px rgba(30,55,100,0.35)",
+              boxShadow: `0 2px 6px ${withAlpha(theme.color.teal, 0.40)}`,
               border: `1px solid ${theme.color.glassBorder}`,
             }}
           >
