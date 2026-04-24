@@ -29,6 +29,8 @@ import { useProfile } from "./lib/useProfile";
 import { useAvatars } from "./lib/useAvatars";
 import { usePantry } from "./lib/usePantry";
 import { useShoppingList } from "./lib/useShoppingList";
+import { useMonthlySpend } from "./lib/useMonthlySpend";
+import ReceiptHistoryModal from "./components/ReceiptHistoryModal";
 import { useRelationships } from "./lib/useRelationships";
 import { useNotifications } from "./lib/useNotifications";
 import { ToastProvider, useToast } from "./lib/toast";
@@ -245,6 +247,11 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   // are now driven by the inbound notifications row (which the DB trigger
   // produces), so all surfaces stay in sync with one another.
   const [pantry, setPantry, pantryLoading] = usePantry(user?.id, familyKey);
+  // Monthly receipt spend for the hero spend chip. Cheap query
+  // (scoped to the current month, user's own receipts) — refreshKey
+  // stays 0 since realtime pantry/receipt changes don't need to
+  // re-trigger this often.
+  const { cents: spendCents } = useMonthlySpend(user?.id);
   const [shoppingList, setShoppingList]   = useShoppingList(user?.id, familyKey);
 
   // Persistent inbox + ephemeral toast + browser notification, all wired off
@@ -273,6 +280,10 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   // above the MCM screen instead of inside its motion wrapper
   // (which would clip modals and duplicate portals).
   const [mcmOpenItem, setMcmOpenItem]     = useState(null);
+  // Whether the MCM-hero receipt button has opened the receipt-
+  // history modal. Rendered at App-level (not inside MCM) so the
+  // modal stacks above everything including the floating dock.
+  const [mcmReceiptsOpen, setMcmReceiptsOpen] = useState(false);
   // `forceClassicPantry` — one-tap escape hatch back to the classic
   // Kitchen render for the Pantry tab. Not wired to a UI yet; exists
   // so we can flip it via devtools / localStorage if the MCM path
@@ -633,6 +644,8 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                   // feeds the badge on the cart button.
                   onGoToShopping={() => setPantryView("shopping")}
                   shoppingCount={Array.isArray(shoppingList) ? shoppingList.length : 0}
+                  onOpenReceipts={() => setMcmReceiptsOpen(true)}
+                  spendCents={spendCents}
                   hideDock
                 />
               </MCMThemeProvider>
@@ -698,6 +711,28 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
           />
         );
       })()}
+
+      {/* Receipt history from the MCM hero's receipt button.
+          Same component Kitchen uses. Tapping a specific receipt
+          forwards through classic Kitchen's deepLink system:
+          close the history modal, flip pantryView out of "stock"
+          (Kitchen renders in "shopping" view and consumes the
+          deep link), and set the receipt deepLink so
+          ReceiptView stacks above. User sees the receipt
+          contents, closes it, lands back on classic Kitchen
+          shopping — a reasonable re-entry point since they just
+          paged through receipts. */}
+      {mcmReceiptsOpen && (
+        <ReceiptHistoryModal
+          userId={user.id}
+          onOpenReceipt={(id) => {
+            setMcmReceiptsOpen(false);
+            setPantryView("shopping");
+            setDeepLink({ kind: "receipt", id });
+          }}
+          onClose={() => setMcmReceiptsOpen(false)}
+        />
+      )}
 
       {settingsOpen && (
         <Settings

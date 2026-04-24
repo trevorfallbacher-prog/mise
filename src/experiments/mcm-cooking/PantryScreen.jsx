@@ -223,6 +223,12 @@ export default function PantryScreen({
   // (keeps Showcase clean).
   onGoToShopping,
   shoppingCount = 0,
+  // Receipts bridge — onOpenReceipts callback + current-month
+  // spend in cents. When wired, the hero top-right shows a
+  // spend chip + receipt button alongside the cart. Both
+  // undefined in Showcase.
+  onOpenReceipts,
+  spendCents = 0,
   hideDock = false,
 }) {
   const { theme } = useTheme();
@@ -573,8 +579,36 @@ export default function PantryScreen({
             shopping list view via the onGoToShopping callback
             (App.jsx flips pantryView → "shopping"). Hidden when
             the prop isn't wired (Showcase mode, design demo). */}
-        {onGoToShopping && (
-          <CartButton count={shoppingCount} onClick={onGoToShopping} />
+        {/* Top-right toolbar cluster. Holds (L→R):
+              - Spend chip: this-month receipt total, DM Mono
+                style. Tapping it also opens receipts (same as
+                the receipt button), so users who read the
+                dollar amount can drill into what they spent.
+              - Receipt button: bundled receipt.svg icon,
+                opens ReceiptHistoryModal.
+              - Cart button: shopping list.
+            All three are siblings in a flex row so they align
+            cleanly without position:absolute math-matching. */}
+        {(onGoToShopping || onOpenReceipts) && (
+          <div style={{
+            position: "absolute",
+            top: 22,
+            right: 20,
+            zIndex: 4,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 10,
+          }}>
+            {onOpenReceipts && spendCents > 0 && (
+              <SpendChip cents={spendCents} onClick={onOpenReceipts} />
+            )}
+            {onOpenReceipts && (
+              <ReceiptButton onClick={onOpenReceipts} />
+            )}
+            {onGoToShopping && (
+              <CartButton count={shoppingCount} onClick={onGoToShopping} />
+            )}
+          </div>
         )}
         {/* --- Hero — text sits DIRECTLY on the backdrop (no glass
              surface behind it), so it uses theme.color.skyInk /
@@ -1076,6 +1110,122 @@ const NAV_TABS = [
 // pill with the bundled shopping_cart.svg inside; when the
 // shopping list has items a small burnt count badge rides on
 // the upper-right corner of the icon.
+// Receipt button — 60×60 glass pill with the bundled
+// receipt.svg. Sits to the left of CartButton in the top-right
+// cluster. Same interaction style as CartButton (spring entry,
+// hover lift, tap scale, focus ring) so the cluster reads as
+// one toolbar rather than three disparate buttons.
+function ReceiptButton({ onClick }) {
+  const { theme } = useTheme();
+  return (
+    <motion.button
+      onClick={onClick}
+      aria-label="Receipt history"
+      title="Receipt history"
+      className="mcm-focusable"
+      whileHover={{ y: -2, scale: 1.04 }}
+      whileTap={{ scale: 0.94 }}
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 380, damping: 26 }}
+      style={{
+        position: "relative",
+        width: 60,
+        height: 60,
+        borderRadius: 999,
+        border: `1px solid ${theme.color.glassBorder}`,
+        background: theme.color.glassFillHeavy,
+        backdropFilter: "blur(14px) saturate(150%)",
+        WebkitBackdropFilter: "blur(14px) saturate(150%)",
+        boxShadow: theme.shadow.soft,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        padding: 0,
+        ...THEME_TRANSITION,
+      }}
+    >
+      <img
+        src="/icons/receipt.svg"
+        alt=""
+        aria-hidden
+        style={{
+          width: 38, height: 38, objectFit: "contain",
+          filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
+        }}
+      />
+    </motion.button>
+  );
+}
+
+// Spend chip — current-month receipt spend in a compact pill
+// that sits to the left of the receipt + cart buttons. Tappable:
+// routes to the same onOpenReceipts handler as the receipt
+// button so a user looking at the dollar amount can drill into
+// what they spent in one tap. Formats cents → short dollars
+// (e.g. $127.50 → "$128" when rounded, $12.35 → "$12"). No
+// cents shown since the precision isn't useful in a hero chip.
+function SpendChip({ cents, onClick }) {
+  const { theme } = useTheme();
+  const dollars = Math.round(cents / 100);
+  const formatted = dollars >= 1000
+    ? `$${(dollars / 1000).toFixed(1)}k`
+    : `$${dollars}`;
+  return (
+    <motion.button
+      onClick={onClick}
+      aria-label={`Spent ${formatted} this month — tap to view receipts`}
+      title={`Spent ${formatted} this month`}
+      className="mcm-focusable"
+      whileHover={{ y: -1, scale: 1.02 }}
+      whileTap={{ scale: 0.96 }}
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: "spring", stiffness: 380, damping: 26 }}
+      style={{
+        display: "inline-flex",
+        flexDirection: "column",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        padding: "8px 14px",
+        borderRadius: 999,
+        border: `1px solid ${theme.color.glassBorder}`,
+        background: theme.color.glassFillHeavy,
+        backdropFilter: "blur(14px) saturate(150%)",
+        WebkitBackdropFilter: "blur(14px) saturate(150%)",
+        boxShadow: theme.shadow.soft,
+        cursor: "pointer",
+        color: theme.color.ink,
+        ...THEME_TRANSITION,
+      }}
+    >
+      <span style={{
+        fontFamily: font.mono,
+        fontSize: 9,
+        fontWeight: 500,
+        letterSpacing: "0.12em",
+        textTransform: "uppercase",
+        color: theme.color.inkFaint,
+        lineHeight: 1,
+        marginBottom: 2,
+      }}>
+        This month
+      </span>
+      <span style={{
+        fontFamily: font.display,
+        fontSize: 20,
+        fontWeight: 580,
+        fontVariationSettings: "'wdth' 100, 'wght' 580, 'opsz' 22",
+        letterSpacing: "-0.02em",
+        lineHeight: 1,
+      }}>
+        {formatted}
+      </span>
+    </motion.button>
+  );
+}
+
 function CartButton({ count = 0, onClick }) {
   const { theme } = useTheme();
   const label = count === 0
@@ -1093,10 +1243,7 @@ function CartButton({ count = 0, onClick }) {
       animate={{ opacity: 1, scale: 1 }}
       transition={{ type: "spring", stiffness: 380, damping: 26 }}
       style={{
-        position: "absolute",
-        top: 22,
-        right: 20,
-        zIndex: 4,
+        position: "relative",
         width: 60,
         height: 60,
         borderRadius: 999,
