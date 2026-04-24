@@ -177,6 +177,7 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "stick",
     preferredUnit: { us: "tbsp", metric: "g" },
+    measuredIn:    { us: "oz",   metric: "g" },
     estCentsPerBase: 1.5, // ~$6.80/lb
     nutrition: { per: "100g", kcal: 717, protein_g: 0.9, fat_g: 81, carb_g: 0.1, sodium_mg: 11 },
   },
@@ -1271,6 +1272,7 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "cup",
     preferredUnit: { us: "cup", metric: "g" },
+    measuredIn:    { us: "lb",  metric: "kg" },
     nutrition: { per: "100g", kcal: 364, protein_g: 10, fat_g: 1, carb_g: 76, fiber_g: 2.7, sodium_mg: 2 },
   },
   {
@@ -1409,6 +1411,7 @@ export const INGREDIENTS = [
     ],
     defaultUnit: "cup",
     preferredUnit: { us: "cup", metric: "g" },
+    measuredIn:    { us: "lb",  metric: "kg" },
   },
   {
     id: "olive_oil", name: "Olive Oil", emoji: "🫒", category: "pantry",

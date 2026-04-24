@@ -37,6 +37,16 @@ export {
 
 export { convertStrict, convertOrThrow } from "./units/convert";
 
+export {
+  DISPLAY_CONTEXT,
+  getDisplayUnitForIngredient,
+  getDisplayLabelForIngredient,
+  getUnitPickerOptions,
+  getUserOverride,
+  setUserOverride,
+  clearUserOverride,
+} from "./units/display";
+
 import { normalizeUnitId } from "./units/aliases";
 import {
   MASS_FACTORS_G,

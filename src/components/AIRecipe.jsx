@@ -22,7 +22,7 @@ import {
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
 import UnitPicker from "./UnitPicker";
-import { applyPreferredUnit, prefKeyForIngredient, useUnitPrefsVersion } from "../lib/unitPrefs";
+import { applyPreferredUnit, prefKeyForIngredient, useUnitPrefsVersion, DISPLAY_CONTEXT } from "../lib/unitPrefs";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -3051,7 +3051,7 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
   useUnitPrefsVersion();
   const effectiveIngredients = ingredients.map((ing, i) => {
     if (amountOverrides[i] != null) return { ...ing, amount: amountOverrides[i] };
-    const prefApplied = applyPreferredUnit(ing.amount, ing);
+    const prefApplied = applyPreferredUnit(ing.amount, ing, DISPLAY_CONTEXT.COOK);
     return prefApplied !== ing.amount ? { ...ing, amount: prefApplied } : ing;
   });
   const pairings = pairRecipeIngredients(effectiveIngredients, pantry || []);
@@ -3179,6 +3179,7 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
             ingredientId={row.ingredientId}
             itemName={row.item}
             prefKey={prefKeyForIngredient(row)}
+            context={DISPLAY_CONTEXT.COOK}
             onPick={(newAmount) => {
               setAmountOverrides(prev => ({ ...prev, [pickerIdx]: newAmount }));
             }}
