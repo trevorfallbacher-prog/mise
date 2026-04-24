@@ -559,15 +559,11 @@ export default function PantryScreen({
         </LayoutGroup>
 
         {((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
-          <FadeIn>
-            <div style={{
-              marginTop: 40, textAlign: "center",
-              fontFamily: font.serif, fontStyle: "italic",
-              fontSize: 20, color: theme.color.skyInkMuted,
-            }}>
-              {query ? "Nothing matches that search." : "This tile is empty."}
-            </div>
-          </FadeIn>
+          <EmptyState
+            kind={query ? "no-matches" : "empty-tile"}
+            query={query}
+            tile={drilledTile}
+          />
         )}
 
         {/* --- Cook CTA ------------------------------------------------- */}
@@ -696,6 +692,69 @@ const NAV_TABS = [
 ];
 
 // --- Sub-components ------------------------------------------------------
+
+// Empty state — shown when a drilled tile has no items OR a
+// search returns zero hits. Uses a small Starburst ornament
+// behind the copy (same motif the WarmBackdrop uses, just
+// smaller and centered) so the "nothing here" moment still
+// feels like part of the design system rather than a bare
+// error screen. Copy is warmer than plain "Nothing matches"
+// — pantries are a personal space, and empty states are a
+// good chance to sound human.
+function EmptyState({ kind, query, tile }) {
+  const { theme } = useTheme();
+  const title = kind === "no-matches"
+    ? `Nothing called "${query}"`
+    : tile
+      ? `${tile.label} is bare`
+      : "This tile is empty";
+  const body = kind === "no-matches"
+    ? "Try a different name, or tap a location tab to browse the shelves."
+    : "Scan a grocery receipt or add items manually to stock this shelf.";
+  return (
+    <FadeIn>
+      <div style={{
+        position: "relative",
+        marginTop: 48,
+        padding: "48px 20px",
+        textAlign: "center",
+        overflow: "hidden",
+      }}>
+        <Starburst
+          size={200}
+          color={withAlpha(theme.color.warmBrown, 0.08)}
+          style={{
+            position: "absolute",
+            top: "50%", left: "50%",
+            transform: "translate(-50%, -50%)",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <div style={{
+            fontFamily: font.serif, fontStyle: "italic",
+            fontSize: 22, lineHeight: 1.2,
+            color: theme.color.ink,
+            letterSpacing: "-0.01em",
+          }}>
+            {title}
+          </div>
+          <div style={{
+            marginTop: 8,
+            fontFamily: font.sans, fontSize: 13,
+            color: theme.color.inkMuted,
+            lineHeight: 1.5,
+            maxWidth: 300,
+            margin: "8px auto 0",
+          }}>
+            {body}
+          </div>
+        </div>
+      </div>
+    </FadeIn>
+  );
+}
 
 // Location tabs — segmented control for fridge / pantry / freezer.
 // Replaces a plain pill-row with a unified segmented element so
@@ -1058,6 +1117,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker }) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96 }}
             whileTap={{ scale: 0.97 }}
+            whileHover={{ y: -2, scale: 1.01 }}
             transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
           >
             <PantryCard
@@ -1108,6 +1168,11 @@ function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
               // slam; pairs with the 0.22s body crossfade when
               // the user commits by drilling in.
               whileTap={empty ? undefined : { scale: 0.97 }}
+              // Hover lift (desktop / trackpad) — 2px rise with
+              // a 1% scale nudges the card toward the viewer so
+              // the glass material reads more as a solid object
+              // than a flat overlay. Ignored on empty tiles.
+              whileHover={empty ? undefined : { y: -2, scale: 1.01 }}
               transition={{ duration: 0.32, delay: i * 0.02, ease: [0.22, 1, 0.36, 1] }}
             >
               <TileCard
