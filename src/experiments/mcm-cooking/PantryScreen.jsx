@@ -12,7 +12,7 @@
 // which source it got.
 
 import { useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
@@ -470,22 +470,11 @@ export default function PantryScreen({
           )}
         </FadeIn>
 
-        {/* --- Drilled-tile header (richer than a back chip) ---------- */}
-        {drilledTile && !query && (
-          <FadeIn>
-            <DrilledTileHeader
-              tile={drilledTile}
-              location={locationTab}
-              count={visible.length}
-              warnCount={warnCountByTile[`${locationTab}:${drilledTile.id}`] || 0}
-              sortBy={sortBy}
-              onSortChange={setSortBy}
-              onBack={() => setDrilledTile(null)}
-            />
-          </FadeIn>
-        )}
-
-        {/* --- Search summary (which locations did we find hits in?) -- */}
+        {/* --- Search summary (which locations did we find hits in?) --
+            Drilled-tile header now lives inside LayoutGroup below so
+            its icon can participate in a shared-element morph from
+            the tapped tile card. Search summary stays up here since
+            search doesn't participate in the tile layout. */}
         {query && (
           <FadeIn>
             <SearchSummary hits={visible} query={query} onClear={() => setQuery("")} />
@@ -493,33 +482,53 @@ export default function PantryScreen({
         )}
 
         {/* --- Body: TILE grid / drilled ITEM grid / SEARCH hits -------
-            AnimatePresence at this level crossfades the three
-            modes so tapping a tile doesn't pop the grid off and
-            slam the items down — it's a smooth handoff. `mode="wait"`
-            holds the next subtree until the previous finishes
-            exiting so the two grids don't stack mid-transition. */}
-        <AnimatePresence mode="wait" initial={false}>
-          <motion.div
-            key={query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-          >
-            {(() => {
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
-              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
-              return (
-                <TileGrid
-                  location={activeLocation}
-                  cardsByTile={cardsByLocTile[locationTab] || {}}
-                  warnCountByTile={warnCountByTile}
-                  onPickTile={setDrilledTile}
-                />
-              );
-            })()}
-          </motion.div>
-        </AnimatePresence>
+            LayoutGroup lets shared `layoutId` elements animate
+            across sibling mount/unmount boundaries — specifically,
+            the tile-icon slot on a TileCard morphs into the same
+            position as the drilled header's icon slot when the
+            user taps a tile. The outer AnimatePresence handles
+            the crossfade between modes; LayoutGroup tracks the
+            layoutIds across those mode swaps so framer can
+            animate a single element between positions. */}
+        <LayoutGroup>
+          {/* Drilled-tile header (richer than a back chip) */}
+          {drilledTile && !query && (
+            <FadeIn>
+              <DrilledTileHeader
+                tile={drilledTile}
+                location={locationTab}
+                count={visible.length}
+                warnCount={warnCountByTile[`${locationTab}:${drilledTile.id}`] || 0}
+                sortBy={sortBy}
+                onSortChange={setSortBy}
+                onBack={() => setDrilledTile(null)}
+              />
+            </FadeIn>
+          )}
+
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            >
+              {(() => {
+                if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+                if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+                return (
+                  <TileGrid
+                    location={activeLocation}
+                    cardsByTile={cardsByLocTile[locationTab] || {}}
+                    warnCountByTile={warnCountByTile}
+                    onPickTile={setDrilledTile}
+                  />
+                );
+              })()}
+            </motion.div>
+          </AnimatePresence>
+        </LayoutGroup>
 
         {((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
           <FadeIn>
@@ -709,10 +718,17 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
         >
           ←
         </button>
-        {/* Tile icon — matches the tile-grid card's icon slot so
-            the visual "shared thing" between before/after carries
-            through even without a true layoutId animation. */}
-        <div style={{ width: 44, height: 44, flexShrink: 0 }}>
+        {/* Tile icon — shared-element animation target. Same
+            layoutId as the icon slot inside TileCard, so framer-
+            motion morphs the icon from the tapped tile's position
+            into this header slot when the user drills in. Works
+            because both elements live under the same <LayoutGroup>
+            and only one mounts at a time (tile grid exits → drilled
+            view enters via AnimatePresence). */}
+        <motion.div
+          layoutId={`tile-icon-${location}-${tile.id}`}
+          style={{ width: 44, height: 44, flexShrink: 0 }}
+        >
           {iconUrl ? (
             <img
               src={iconUrl}
@@ -728,7 +744,7 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
               {tile.emoji}
             </div>
           )}
-        </div>
+        </motion.div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
             fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
@@ -1004,10 +1020,15 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
         {/* Icon slot — bundled SVG when available, emoji fallback
-            otherwise. Wrapped in a small positioned box so the
-            warn-dot can sit as a badge on the icon's upper-right
-            corner for triage-at-a-glance. */}
-        <div style={{ position: "relative", width: 44, height: 44, flexShrink: 0 }}>
+            otherwise. motion.div with layoutId so the icon morphs
+            into the drilled-header's icon position when the user
+            taps this tile — the visual "zooming into the shelf"
+            moment that makes the drill-in feel intentional rather
+            than a hard cut. */}
+        <motion.div
+          layoutId={`tile-icon-${location}-${tile.id}`}
+          style={{ position: "relative", width: 44, height: 44, flexShrink: 0 }}
+        >
           {iconUrl ? (
             <img
               src={iconUrl}
@@ -1045,7 +1066,7 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
               {warnCount}
             </div>
           )}
-        </div>
+        </motion.div>
         {/* Count pill — DM Mono so it reads as metadata, not a
             header. Hidden on empty tiles since "0 items" adds
             noise without signal. */}
