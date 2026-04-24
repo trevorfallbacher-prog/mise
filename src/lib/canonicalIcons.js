@@ -71,7 +71,7 @@ export function canonicalImageUrlFor(canonicalId, info) {
 const BUNDLED_TILE_SLUGS = new Set([
   // empty — drop SVGs in public/icons/tiles/ and register here
   "produce"
-  
+  "dairy"
 ]);
 
 export function tileIconFor(tileId, location) {
