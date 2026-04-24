@@ -566,42 +566,63 @@ export default function PantryScreen({
           />
         )}
 
-        {/* --- Cook CTA ------------------------------------------------- */}
-        <FadeIn delay={0.12}>
-          <GlassPanel
-            tone="warm"
-            padding={18}
-            style={{
-              marginTop: 28,
-              display: "flex", alignItems: "center", gap: 14,
-              position: "relative", overflow: "hidden",
-            }}
-          >
-            <Starburst
-              size={140}
-              color="rgba(217,107,43,0.14)"
-              style={{ position: "absolute", top: -40, right: -40 }}
-            />
-            <div style={{ fontSize: 36, lineHeight: 1 }}>🍳</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <Kicker tone={theme.color.burnt}>Ready when you are</Kicker>
-              <div style={{
-                fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
-                fontSize: 20, color: theme.color.ink, marginTop: 2, letterSpacing: "-0.01em",
-              }}>
-                Lemon-butter pasta
+        {/* --- Bottom CTA -------------------------------------------
+            Two modes here, picked by which props are wired:
+              - Showcase / demo mode (onStartCooking provided, no
+                onOpenItem): the MCM design-reference Cook CTA
+                with the hardcoded "Lemon-butter pasta" preview.
+              - Real mode (onOpenItem provided): a triage CTA
+                that only appears when there are warn items, and
+                tapping it opens the first expiring item in the
+                shared ItemCard overlay. Real users care about
+                "what needs using" here, not a fake recipe pitch.
+            Neither CTA shows while drilled or searching — the
+            active flow already has its own focus. */}
+        {!drilledTile && !query && onStartCooking && !onOpenItem && (
+          <FadeIn delay={0.12}>
+            <GlassPanel
+              tone="warm"
+              padding={18}
+              style={{
+                marginTop: 28,
+                display: "flex", alignItems: "center", gap: 14,
+                position: "relative", overflow: "hidden",
+              }}
+            >
+              <Starburst
+                size={140}
+                color="rgba(217,107,43,0.14)"
+                style={{ position: "absolute", top: -40, right: -40 }}
+              />
+              <div style={{ fontSize: 36, lineHeight: 1 }}>🍳</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Kicker tone={theme.color.burnt}>Ready when you are</Kicker>
+                <div style={{
+                  fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
+                  fontSize: 20, color: theme.color.ink, marginTop: 2, letterSpacing: "-0.01em",
+                }}>
+                  Lemon-butter pasta
+                </div>
+                <div style={{
+                  fontFamily: font.sans, fontSize: 12, color: theme.color.inkMuted, marginTop: 2,
+                }}>
+                  6 of 7 ingredients on hand · 18 min
+                </div>
               </div>
-              <div style={{
-                fontFamily: font.sans, fontSize: 12, color: theme.color.inkMuted, marginTop: 2,
-              }}>
-                6 of 7 ingredients on hand · 18 min
-              </div>
-            </div>
-            <PrimaryButton onClick={onStartCooking} style={{ padding: "12px 18px", fontSize: 14 }}>
-              Cook
-            </PrimaryButton>
-          </GlassPanel>
-        </FadeIn>
+              <PrimaryButton onClick={onStartCooking} style={{ padding: "12px 18px", fontSize: 14 }}>
+                Cook
+              </PrimaryButton>
+            </GlassPanel>
+          </FadeIn>
+        )}
+
+        {!drilledTile && !query && onOpenItem && warnCount > 0 && (
+          <TriageCTA
+            warnCount={warnCount}
+            firstExpiring={firstExpiring(cards)}
+            onOpenItem={onOpenItem}
+          />
+        )}
       </div>
 
       {!hideDock && (
@@ -692,6 +713,89 @@ const NAV_TABS = [
 ];
 
 // --- Sub-components ------------------------------------------------------
+
+// Triage CTA — the real-mode replacement for the design-demo
+// "Cook · Lemon-butter pasta" card. Only renders in real-items
+// mode (when onOpenItem is wired) AND only when there are warn
+// items to triage. Copy pivots with count: singular / plural /
+// "all gone today" flavor. Tap opens the single most-urgent
+// item's editor via the same shared overlay the tile cards use.
+// When count > 1, the button's label doubles as "see all" and
+// we pre-select the FIRST-expiring row — user can close and
+// re-open from the pantry to reach the next one, rather than
+// the CTA itself becoming a list.
+function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
+  const { theme } = useTheme();
+  if (!firstExpiring) return null;
+  const days = firstExpiring.days;
+  const daysCopy = days == null
+    ? "now"
+    : days < 0
+      ? "already past"
+      : days === 0
+        ? "today"
+        : `in ${days} day${days === 1 ? "" : "s"}`;
+  const kicker = warnCount === 1 ? "One to use soon" : `${warnCount} to use soon`;
+  const body = firstExpiring.name;
+  const sub = `Expires ${daysCopy}${firstExpiring.brand ? ` · ${firstExpiring.brand}` : ""}`;
+  return (
+    <FadeIn delay={0.12}>
+      <GlassPanel
+        tone="warm"
+        padding={18}
+        style={{
+          marginTop: 28,
+          display: "flex", alignItems: "center", gap: 14,
+          position: "relative", overflow: "hidden",
+        }}
+      >
+        <Starburst
+          size={140}
+          color="rgba(217,107,43,0.14)"
+          style={{ position: "absolute", top: -40, right: -40 }}
+        />
+        <div style={{ fontSize: 36, lineHeight: 1 }}>⏳</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Kicker tone={theme.color.burnt}>{kicker}</Kicker>
+          <div style={{
+            fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
+            fontSize: 20, color: theme.color.ink, marginTop: 2, letterSpacing: "-0.01em",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {body}
+          </div>
+          <div style={{
+            fontFamily: font.sans, fontSize: 12, color: theme.color.inkMuted, marginTop: 2,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {sub}
+          </div>
+        </div>
+        <PrimaryButton
+          onClick={() => onOpenItem(firstExpiring._raw)}
+          style={{ padding: "12px 18px", fontSize: 14 }}
+        >
+          Open
+        </PrimaryButton>
+      </GlassPanel>
+    </FadeIn>
+  );
+}
+
+// Given a list of cards, pick the single most urgent warn item.
+// Tie-breaker: the earliest expiry date (smallest days), then the
+// first in pantry order. Null when no cards warn.
+function firstExpiring(cards) {
+  let best = null;
+  for (const c of cards) {
+    if (c.status !== "warn") continue;
+    if (best == null) { best = c; continue; }
+    const bd = best.days == null ? Number.POSITIVE_INFINITY : best.days;
+    const cd = c.days    == null ? Number.POSITIVE_INFINITY : c.days;
+    if (cd < bd) best = c;
+  }
+  return best;
+}
 
 // Empty state — shown when a drilled tile has no items OR a
 // search returns zero hits. Uses a small Starburst ornament
