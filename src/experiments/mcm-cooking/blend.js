@@ -59,6 +59,15 @@ function serializeColor([r, g, b, a]) {
   return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${+a.toFixed(3)})`;
 }
 
+// Rewrite a color's alpha channel. Local to blend.js so the cross-
+// mode ink derivation below doesn't have to reach into primitives
+// (which sits above blend in the import graph). Accepts the same
+// shapes as parseColor — #hex / rgb() / rgba().
+function withAlpha(colorStr, alpha) {
+  const [r, g, b] = parseColor(colorStr);
+  return serializeColor([r, g, b, alpha]);
+}
+
 // --- Blends -------------------------------------------------------------
 
 // Linear interpolate between two color strings. `t` is a 0..1
@@ -297,9 +306,23 @@ export function blendThemes(a, b, t) {
       blendedColor.glassFill, blendedColor.cream,
     );
     const inkSide = pickInkSide(a, b, effectiveGlass, "ink");
-    for (const k of INK_SNAP_KEYS) {
-      blendedColor[k] = inkSide.color[k];
-    }
+    // Main ink + hairline snap to the winning side's tuned hex.
+    blendedColor.ink      = inkSide.color.ink;
+    blendedColor.hairline = inkSide.color.hairline;
+    // Muted / faint tiers DERIVE as alpha-steps of the snapped main
+    // ink, rather than snapping to the winning side's hand-tuned
+    // inkMuted / inkFaint hex. During a cross-mode blend the glass
+    // composites down through a mid-tan (~rgb 124,108,89 at 5:30 AM
+    // / 8:45 PM). The anchor's tuned `inkFaint` is a ~mid-brown
+    // (e.g. dawn's #7A5741) tuned against that theme's OWN fully-
+    // resolved surface — on the mid-tan transitional surface it
+    // sits at ~1.4:1 and reads as invisible, which is the "1 stick"
+    // fall-off at dawn/dusk. Alpha-stepped ink composites against
+    // the actual surface the user sees, so the faint tier's
+    // contrast tracks the main tier's contrast proportionally
+    // instead of collapsing through the mid-tone crossover.
+    blendedColor.inkMuted = withAlpha(inkSide.color.ink, 0.72);
+    blendedColor.inkFaint = withAlpha(inkSide.color.ink, 0.48);
   } else {
     for (const k of INK_SNAP_KEYS) {
       blendedColor[k] = blendColor(a.color[k], b.color[k], t);
