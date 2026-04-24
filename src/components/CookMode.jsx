@@ -10,6 +10,7 @@ import { pairRecipeIngredients, describePairing, normalizeForMatch, sameCanonica
 import { useCookSession } from "../lib/useCookSession";
 import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { useUserRecipes } from "../lib/useUserRecipes";
+import { supabase } from "../lib/supabase";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 import { useWebPush } from "../lib/useWebPush";
@@ -586,6 +587,69 @@ export default function CookMode({
     }
   };
 
+  // Share sheet — the "↗ SHARE" button in the overview top bar opens
+  // a picker listing FAMILY + FRIENDS. Tap a person → insert a
+  // notifications row so they get pinged that this recipe was
+  // shared with them. For family taps, we also flip shared=true on
+  // the user_recipes row so they can actually OPEN the recipe; for
+  // friends, user_recipes RLS doesn't grant visibility today, so
+  // the notification plus a native-share fallback (Web Share API)
+  // is the honest v1. Local `sentIds` tracks which recipients have
+  // been pinged this session so the button flips to "✓ SENT" —
+  // prevents accidental double-pings.
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
+  const [sentIds, setSentIds] = useState(new Set());
+  const openShareSheet = () => setShareSheetOpen(true);
+  const closeShareSheet = () => setShareSheetOpen(false);
+  const sendShareTo = async (recipientId, isFamilyMember) => {
+    if (!recipientId || !recipe || sentIds.has(recipientId)) return;
+    // Optimistic mark-as-sent so the UI flips before the server round-trip.
+    setSentIds(prev => new Set(prev).add(recipientId));
+    try {
+      // Auto-share to family so they can actually read the recipe.
+      // Fire-and-forget — a failure here shouldn't block the notif.
+      if (isFamilyMember && canShare && !isShared && ownRecipeRow) {
+        setRecipeSharing(ownRecipeRow.id, { shared: true }).catch(e =>
+          console.warn("[cookMode] auto-share on send failed:", e?.message || e),
+        );
+      }
+      await supabase.from("notifications").insert({
+        user_id:  recipientId,
+        actor_id: userId,
+        msg:      `shared "${recipe.title || "a recipe"}" with you`,
+        emoji:    recipe.emoji || "🍽️",
+        kind:     "info",
+      });
+    } catch (e) {
+      // Roll back the optimistic sent-mark on failure.
+      setSentIds(prev => {
+        const next = new Set(prev);
+        next.delete(recipientId);
+        return next;
+      });
+      console.error("[cookMode] share-to-person failed:", e);
+    }
+  };
+  // Native share fallback for "everyone else" — OS share sheet
+  // (iMessage, email, copy link, whatever the device offers).
+  // Chained off the sheet so the user has a clear "off-app" path.
+  const [copiedLink, setCopiedLink] = useState(false);
+  const shareViaNative = async () => {
+    if (!recipe) return;
+    const title = recipe.title || "Recipe";
+    const text  = `${title} — recipe from mise`;
+    const url   = typeof window !== "undefined" ? window.location.href : "";
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title, text, url });
+      } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url ? `${title}\n${url}` : title);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 1800);
+      }
+    } catch (_) { /* user cancelled — swallow */ }
+  };
+
   // Nutrition rollup for the recipe — drives the calorie tile in the
   // meta row below. Pulls from the full resolver chain (pantry
   // override → brand_nutrition → ingredient_info → bundled canonical
@@ -938,58 +1002,37 @@ export default function CookMode({
   if (view === "overview") return (
     <div style={{ padding:"20px 24px 40px", maxWidth:480, margin:"0 auto" }}>
       {/* Top bar — left: ← back to the browser (minimizes if a session
-          is live, just closes otherwise). Right: ✕ EXIT button that
-          tears the cook down, available from the PREVIEW screen so
-          the author isn't forced into the cook view just to bail. */}
-      {onExit && (
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+          is live, just closes otherwise). Right: ↗ share-arrow that
+          opens the native share sheet for sending this recipe to
+          anyone (text, email, messages, …). EXIT moved to the bottom
+          of the screen so it reads as a deliberate action next to
+          SCHEDULE / START COOKING — not a corner accessory that gets
+          lost the moment the user scrolls. */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:4 }}>
+        {onExit ? (
           <button onClick={onExit} style={{
             background:"none", border:"none", color:"#666", fontSize:22,
             cursor:"pointer", padding:0,
           }}>←</button>
-          {confirmExit ? (
-            <span style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <button
-                onClick={() => setConfirmExit(false)}
-                style={{
-                  background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
-                  borderRadius:20, padding:"8px 12px",
-                  fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.12em",
-                  cursor:"pointer",
-                }}
-              >
-                KEEP
-              </button>
-              <button
-                onClick={exitCook}
-                style={{
-                  background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
-                  borderRadius:20, padding:"8px 12px",
-                  fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
-                  cursor:"pointer",
-                }}
-              >
-                END COOK
-              </button>
-            </span>
-          ) : (
-            <button
-              onClick={() => setConfirmExit(true)}
-              title="End cook and drop this recipe"
-              style={{
-                display:"inline-flex", alignItems:"center", gap:6,
-                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
-                borderRadius:20, padding:"10px 18px",
-                fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, letterSpacing:"0.12em",
-                cursor:"pointer",
-                boxShadow:"0 0 20px rgba(220,38,38,0.4)",
-              }}
-            >
-              ✕ EXIT
-            </button>
-          )}
-        </div>
-      )}
+        ) : <span />}
+        <button
+          onClick={openShareSheet}
+          title="Share recipe"
+          aria-label="Share recipe"
+          style={{
+            display:"inline-flex", alignItems:"center", gap:6,
+            background: "#1a1408",
+            border: "1px solid #3a2f10",
+            color: "#f5c842",
+            borderRadius:20, padding:"10px 16px",
+            fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700,
+            letterSpacing:"0.12em", cursor:"pointer",
+          }}
+        >
+          <span style={{ fontSize:16, lineHeight:1 }}>↗</span>
+          SHARE
+        </button>
+      </div>
       <div style={{ marginTop:12 }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:11, color:"#f5c842", letterSpacing:"0.15em", marginBottom:8 }}>
           {(recipe.cuisine || "").toUpperCase()} · {(recipe.category || "").toUpperCase()}
@@ -998,31 +1041,55 @@ export default function CookMode({
         {recipe.subtitle && (
           <p style={{ fontFamily:"'Fraunces',serif", fontStyle:"italic", fontSize:18, color:"#888", marginTop:4 }}>{recipe.subtitle}</p>
         )}
-        {/* SHARE WITH FAMILY toggle — preview-screen placement so the
-            author decides sharing at the moment they see the whole
-            recipe, not buried inside a row in the template picker.
-            Only rendered when the viewer owns this recipe (the
-            authoritative check: a matching user_recipes row where
-            user_id is the viewer). Bundled recipes and family-
-            authored recipes both fall past this gate — neither is
-            share-able by the viewer. */}
+        {/* SHARE WITH FAMILY — a proper flippable on/off switch, not
+            a click-to-toggle pill. Visual language matches the
+            notification-opt-in toggles in SchedulePicker so the two
+            family-facing controls feel like siblings. Only rendered
+            when the viewer owns this recipe; bundled and family-
+            authored recipes skip this row entirely. The whole row is
+            tappable (label included) so the target area is generous
+            on touch. */}
         {canShare && (
           <button
             onClick={toggleShare}
-            title={isShared ? "Shared with family — tap to make private" : "Private — tap to share with family"}
+            title={isShared ? "Tap to make private" : "Tap to share with family"}
             style={{
-              marginTop: 12,
-              display: "inline-flex", alignItems: "center", gap: 8,
-              padding: "8px 14px",
-              background: isShared ? "#14201a" : "#1a1a1a",
-              border: `1px solid ${isShared ? "#2a4a28" : "#2a2a2a"}`,
-              color: isShared ? "#a3d977" : "#aaa",
-              borderRadius: 20,
-              fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
-              letterSpacing: "0.1em", cursor: "pointer",
+              marginTop: 14, width: "100%",
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 14px",
+              background: isShared ? "#14201a" : "#141414",
+              border: `1px solid ${isShared ? "#2a4a28" : "#242424"}`,
+              borderRadius: 12, cursor: "pointer",
             }}
           >
-            {isShared ? "🤝 SHARED WITH FAMILY" : "🔒 SHARE WITH FAMILY"}
+            <div style={{
+              width: 42, height: 24, borderRadius: 12, flexShrink: 0,
+              background: isShared ? "#a3d977" : "#2a2a2a",
+              position: "relative", transition: "background 0.2s",
+            }}>
+              <div style={{
+                position: "absolute", top: 2, left: isShared ? 20 : 2,
+                width: 20, height: 20, borderRadius: "50%",
+                background: isShared ? "#0f1a0f" : "#888",
+                transition: "left 0.2s",
+              }} />
+            </div>
+            <div style={{ flex: 1, textAlign: "left" }}>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                color: isShared ? "#f0ece4" : "#bbb",
+              }}>
+                Share with family
+              </div>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 10,
+                color: "#666", letterSpacing: "0.06em", marginTop: 2,
+              }}>
+                {isShared
+                  ? "Family can cook this recipe"
+                  : "Only you can see this recipe"}
+              </div>
+            </div>
           </button>
         )}
       </div>
@@ -1381,7 +1448,53 @@ export default function CookMode({
           </div>
         )}
       </div>
-      <div style={{ display:"flex", gap:10, marginTop:32 }}>
+      {/* Bottom action row — EXIT pinned here (not top) so it sits
+          with SCHEDULE / START COOKING as a peer. Small, muted red,
+          two-tap confirm ("Are you sure?"). If the user wants out
+          of the recipe entirely, they find it next to the cook
+          primary button, not tucked in a corner. */}
+      <div style={{ display:"flex", gap:10, marginTop:32, alignItems:"stretch" }}>
+        {confirmExit ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+            <button
+              onClick={exitCook}
+              title="End cook and drop this recipe"
+              style={{
+                padding:"8px 12px",
+                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
+                borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:700,
+                letterSpacing:"0.1em", cursor:"pointer",
+              }}
+            >
+              YES, EXIT
+            </button>
+            <button
+              onClick={() => setConfirmExit(false)}
+              style={{
+                padding:"8px 12px",
+                background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
+                borderRadius:10, fontFamily:"'DM Mono',monospace", fontSize:10,
+                letterSpacing:"0.1em", cursor:"pointer",
+              }}
+            >
+              KEEP
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmExit(true)}
+            title="Exit — drop this recipe"
+            aria-label="Exit"
+            style={{
+              flexShrink:0, padding:"18px 12px",
+              background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+              borderRadius:14, fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600,
+              letterSpacing:"0.08em", cursor:"pointer",
+            }}
+          >
+            ✕ EXIT
+          </button>
+        )}
         {onSchedule && (
           <button
             onClick={onSchedule}
@@ -1420,6 +1533,18 @@ export default function CookMode({
           onClose={() => setCardIng(null)}
         />
       )}
+      {shareSheetOpen && (
+        <ShareRecipeSheet
+          recipe={recipe}
+          family={family}
+          friends={friends}
+          sentIds={sentIds}
+          onSend={sendShareTo}
+          onShareNative={shareViaNative}
+          copiedLink={copiedLink}
+          onClose={closeShareSheet}
+        />
+      )}
     </div>
   );
 
@@ -1431,72 +1556,21 @@ export default function CookMode({
           message family / whatever, without ending the session.
           Session endures 2h; explicit end is still via DONE LOG IT. */}
       {onExit && (
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4, gap:8 }}>
-          <button
-            onClick={onExit}
-            title="Step out — timer keeps running"
-            aria-label="Minimize cook view"
-            style={{
-              display:"inline-flex", alignItems:"center", gap:8,
-              background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb",
-              borderRadius:20, padding:"8px 14px",
-              fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.14em",
-              cursor:"pointer",
-            }}
-          >
-            <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
-            MINIMIZE
-          </button>
-          {/* EXIT — available at any point in the cook. First tap arms
-              a confirm so an accidental thumb can't drop a braise the
-              cook has been tending for 45 minutes. Second tap tears
-              down the cook_sessions row (status='abandoned') and
-              closes CookMode. Timer pushes for the session are purged
-              inside telemetry.endCook so stale notifications don't
-              fire after the cook is gone. */}
-          {confirmExit ? (
-            <span style={{ display:"flex", alignItems:"center", gap:6 }}>
-              <button
-                onClick={() => setConfirmExit(false)}
-                style={{
-                  background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
-                  borderRadius:20, padding:"8px 12px",
-                  fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.12em",
-                  cursor:"pointer",
-                }}
-              >
-                KEEP COOKING
-              </button>
-              <button
-                onClick={exitCook}
-                style={{
-                  background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
-                  borderRadius:20, padding:"8px 12px",
-                  fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
-                  cursor:"pointer",
-                }}
-              >
-                END COOK
-              </button>
-            </span>
-          ) : (
-            <button
-              onClick={() => setConfirmExit(true)}
-              title="End cook and drop this recipe"
-              aria-label="Exit cook"
-              style={{
-                display:"inline-flex", alignItems:"center", gap:6,
-                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
-                borderRadius:20, padding:"10px 18px",
-                fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, letterSpacing:"0.12em",
-                cursor:"pointer",
-                boxShadow:"0 0 20px rgba(220,38,38,0.4)",
-              }}
-            >
-              ✕ EXIT
-            </button>
-          )}
-        </div>
+        <button
+          onClick={onExit}
+          title="Step out — timer keeps running"
+          aria-label="Minimize cook view"
+          style={{
+            display:"inline-flex", alignItems:"center", gap:8,
+            background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#bbb",
+            borderRadius:20, padding:"8px 14px",
+            fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.14em",
+            cursor:"pointer", marginTop:4,
+          }}
+        >
+          <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
+          MINIMIZE
+        </button>
       )}
       <div style={{ height:3, background:"#222", borderRadius:2, marginTop:16, overflow:"hidden" }}>
         <div style={{ height:"100%", background:"#f5c842", borderRadius:2, width:`${progress}%`, transition:"width 0.5s ease" }} />
@@ -1798,7 +1872,12 @@ export default function CookMode({
           <p style={{ fontSize:13, color:"#7ec87e", lineHeight:1.5, fontStyle:"italic" }}>{step.tip}</p>
         </div>
       )}
-      <div style={{ display:"flex", gap:12, marginTop:24 }}>
+      {/* Bottom action row — PREV / DONE NEXT / tiny EXIT. EXIT pinned
+          here (not top) so it stays visible while the cook scrolls
+          through step content; always one glance from the primary
+          action. Two-tap confirm ("Are you sure?" → END COOK) lives
+          inline so accidental taps can't kill a 45-min braise. */}
+      <div style={{ display:"flex", gap:10, marginTop:24, alignItems:"stretch" }}>
         <button onClick={()=>setActiveStep(s=>Math.max(0,s-1))} disabled={activeStep===0} style={{ flex:1, padding:"14px", background:"#1a1a1a", border:"1px solid #2a2a2a", color: activeStep===0?"#444":"#bbb", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, cursor: activeStep===0?"not-allowed":"pointer" }}>← PREV</button>
         {activeStep < steps.length-1 ? (
           <button onClick={markDone} style={{ flex:2, padding:"14px", background: completedSteps.has(activeStep)?"#1a3a1a":"#f5c842", color: completedSteps.has(activeStep)?"#4ade80":"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer", transition:"all 0.3s" }}>
@@ -1817,6 +1896,47 @@ export default function CookMode({
             setCompleting(true);
           }} className="mise-cta" style={{ flex:2, padding:"14px", background:"#22c55e", color:"#111", border:"none", borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:600, cursor:"pointer" }}>
             🍝 DONE! LOG IT →
+          </button>
+        )}
+        {confirmExit ? (
+          <div style={{ display:"flex", flexDirection:"column", gap:4, flexShrink:0 }}>
+            <button
+              onClick={exitCook}
+              title="End cook and drop this recipe"
+              style={{
+                padding:"6px 10px",
+                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
+                borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:700,
+                letterSpacing:"0.08em", cursor:"pointer",
+              }}
+            >
+              YES, END
+            </button>
+            <button
+              onClick={() => setConfirmExit(false)}
+              style={{
+                padding:"6px 10px",
+                background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
+                borderRadius:8, fontFamily:"'DM Mono',monospace", fontSize:9,
+                letterSpacing:"0.08em", cursor:"pointer",
+              }}
+            >
+              KEEP
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => setConfirmExit(true)}
+            title="Exit cook — sure?"
+            aria-label="Exit cook"
+            style={{
+              flexShrink:0, padding:"14px 10px",
+              background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+              borderRadius:12, fontFamily:"'DM Mono',monospace", fontSize:9, fontWeight:600,
+              letterSpacing:"0.08em", cursor:"pointer",
+            }}
+          >
+            ✕ EXIT
           </button>
         )}
       </div>
@@ -1921,3 +2041,175 @@ const cookSwapClearBtn = {
   letterSpacing: "0.06em", cursor: "pointer",
 };
 
+// Share-with-a-person sheet. Modal listing family + friends with a
+// quick "SEND" tap per row. Sent recipients flip to "✓ SENT" locally
+// so rapid taps don't re-ping the same person. A "SHARE EXTERNALLY"
+// row at the bottom hands off to the OS native share sheet (Web
+// Share API) or, on desktop, copies the recipe URL to clipboard.
+// Separate from the family-visibility toggle on the preview — the
+// toggle controls RLS visibility, this sheet sends individualized
+// notifications.
+function ShareRecipeSheet({ recipe, family = [], friends = [], sentIds, onSend, onShareNative, copiedLink, onClose }) {
+  // Dedupe by otherId in case the relationships hook surfaces the
+  // same person twice under different rows (shouldn't happen, but
+  // the guard is cheap). Skip any row without a name so the sheet
+  // doesn't render ghost entries.
+  const familyRows = (family || [])
+    .filter(f => f?.otherId && f?.other?.name)
+    .filter((f, i, arr) => arr.findIndex(x => x.otherId === f.otherId) === i);
+  const friendRows = (friends || [])
+    .filter(f => f?.otherId && f?.other?.name)
+    .filter((f, i, arr) => arr.findIndex(x => x.otherId === f.otherId) === i);
+  const hasAnyone = familyRows.length + friendRows.length > 0;
+
+  const Row = ({ person, isFamily }) => {
+    const sent = sentIds?.has(person.otherId);
+    return (
+      <button
+        onClick={() => onSend(person.otherId, isFamily)}
+        disabled={sent}
+        style={{
+          display: "flex", alignItems: "center", gap: 12,
+          padding: "12px 14px", width: "100%",
+          background: sent ? "#0f1a0f" : "#161616",
+          border: `1px solid ${sent ? "#1e3a1e" : "#2a2a2a"}`,
+          borderRadius: 12, cursor: sent ? "default" : "pointer",
+          textAlign: "left",
+        }}
+      >
+        <div style={{
+          width: 36, height: 36, borderRadius: "50%",
+          background: "#1a1a1a", border: "1px solid #2a2a2a",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontFamily: "'Fraunces',serif", fontSize: 16, color: "#f0ece4",
+          flexShrink: 0,
+        }}>
+          {String(person.other?.name || "?").trim().charAt(0).toUpperCase()}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{
+            fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+            color: sent ? "#9bbf9b" : "#f0ece4",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          }}>
+            {person.other.name}
+          </div>
+          <div style={{
+            fontFamily: "'DM Mono',monospace", fontSize: 9,
+            color: "#666", letterSpacing: "0.08em", marginTop: 2,
+          }}>
+            {isFamily ? "FAMILY" : "FRIEND"}
+          </div>
+        </div>
+        <span style={{
+          fontFamily: "'DM Mono',monospace", fontSize: 10, fontWeight: 700,
+          letterSpacing: "0.12em", flexShrink: 0,
+          color: sent ? "#4ade80" : "#f5c842",
+        }}>
+          {sent ? "✓ SENT" : "SEND"}
+        </span>
+      </button>
+    );
+  };
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#000000dd", zIndex: 310,
+      display: "flex", alignItems: "flex-end",
+      maxWidth: 480, margin: "0 auto",
+    }}>
+      <div style={{
+        width: "100%", background: "#141414",
+        borderRadius: "20px 20px 0 0", padding: "20px 22px 30px",
+        maxHeight: "80vh", display: "flex", flexDirection: "column",
+      }}>
+        <div style={{ width: 36, height: 4, background: "#2a2a2a", borderRadius: 2, margin: "0 auto 16px" }} />
+        <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#f5c842", letterSpacing: "0.14em" }}>
+          SHARE RECIPE
+        </div>
+        <div style={{ fontFamily: "'Fraunces',serif", fontStyle: "italic", fontSize: 22, color: "#f0ece4", fontWeight: 300, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {recipe?.title || "Recipe"}
+        </div>
+
+        <div style={{ marginTop: 18, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+          {familyRows.length > 0 && (
+            <>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#a3d977", letterSpacing: "0.12em", marginTop: 2 }}>
+                FAMILY
+              </div>
+              {familyRows.map(f => <Row key={`fam-${f.otherId}`} person={f} isFamily={true} />)}
+            </>
+          )}
+          {friendRows.length > 0 && (
+            <>
+              <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#d9b877", letterSpacing: "0.12em", marginTop: 8 }}>
+                FRIENDS
+              </div>
+              {friendRows.map(f => <Row key={`fr-${f.otherId}`} person={f} isFamily={false} />)}
+            </>
+          )}
+          {!hasAnyone && (
+            <div style={{
+              padding: "20px 16px", textAlign: "center",
+              fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#666",
+              background: "#0f0f0f", border: "1px solid #1e1e1e", borderRadius: 12,
+            }}>
+              No family or friends linked yet. Use the button below to share via text / email / link instead.
+            </div>
+          )}
+
+          {/* OS share / copy-link fallback — always available. */}
+          <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 9, color: "#666", letterSpacing: "0.12em", marginTop: 10 }}>
+            OR
+          </div>
+          <button
+            onClick={onShareNative}
+            style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "12px 14px", width: "100%",
+              background: copiedLink ? "#14201a" : "#161616",
+              border: `1px solid ${copiedLink ? "#2a4a28" : "#2a2a2a"}`,
+              borderRadius: 12, cursor: "pointer", textAlign: "left",
+            }}
+          >
+            <div style={{
+              width: 36, height: 36, borderRadius: "50%",
+              background: "#1a1408", border: "1px solid #3a2f10",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 18, color: "#f5c842", flexShrink: 0,
+            }}>
+              ↗
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontFamily: "'DM Sans',sans-serif", fontSize: 14,
+                color: copiedLink ? "#a3d977" : "#f0ece4",
+              }}>
+                {copiedLink ? "Link copied to clipboard" : "Share via text, email, or link"}
+              </div>
+              <div style={{
+                fontFamily: "'DM Mono',monospace", fontSize: 9,
+                color: "#666", letterSpacing: "0.08em", marginTop: 2,
+              }}>
+                EXTERNAL
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <button
+          onClick={onClose}
+          style={{
+            marginTop: 14, padding: "14px",
+            background: "#1a1a1a", border: "1px solid #2a2a2a",
+            color: "#888", borderRadius: 12,
+            fontFamily: "'DM Mono',monospace", fontSize: 12,
+            letterSpacing: "0.08em", cursor: "pointer",
+          }}
+        >
+          DONE
+        </button>
+      </div>
+    </div>
+  );
+}
