@@ -268,6 +268,212 @@ export function SerifHeader({ children, size = 36, style }) {
   );
 }
 
+// --- Glass pill ----------------------------------------------------------
+
+// Interactive glass chip used as filter button, nav tab, top-bar
+// back/context pill. `active` paints the teal gradient + white text
+// used across the app; `size="sm"` tightens padding for dense rows.
+// Prefer this over re-rolling a button style block inline.
+export function GlassPill({
+  children,
+  active = false,
+  onClick,
+  size = "md",
+  style,
+  as: Tag = motion.button,
+}) {
+  const pad = size === "sm" ? "6px 12px" : "10px 16px";
+  const fontSize = size === "sm" ? 12 : 13;
+
+  return (
+    <Tag
+      onClick={onClick}
+      whileTap={{ scale: 0.95 }}
+      transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        flexShrink: 0,
+        fontFamily: font.sans,
+        fontSize,
+        fontWeight: 500,
+        letterSpacing: "0.02em",
+        padding: pad,
+        borderRadius: radius.pill,
+        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.10)"}`,
+        background: active
+          ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
+          : "rgba(255,255,255,0.65)",
+        color: active ? "#FFF8EE" : color.ink,
+        boxShadow: active ? "0 8px 18px rgba(47,143,131,0.30)" : "none",
+        cursor: "pointer",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        ...style,
+      }}
+    >
+      {children}
+    </Tag>
+  );
+}
+
+// --- Tinted pill (display-only, axis-colored) ---------------------------
+
+// Small rounded chip used to display axis data at-a-glance:
+// location, quantity, timer, ingredient amount. `tone` maps into
+// the token palette so screens don't redeclare tint pairs. Not
+// interactive by default — pass `onClick` to make it tappable.
+const TINTED_PILL_TONE = {
+  teal:    { fg: color.teal,      bg: color.tealTint    },
+  aqua:    { fg: color.aqua,      bg: color.aquaTint    },
+  burnt:   { fg: color.burnt,     bg: color.burntTint   },
+  mustard: { fg: color.warmBrown, bg: color.mustardTint },
+  brown:   { fg: color.warmBrown, bg: color.brownTint   },
+  muted:   { fg: color.inkMuted,  bg: "rgba(30,30,30,0.06)" },
+};
+
+export function TintedPill({
+  children, tone = "teal", size = "md", mono = false, onClick, style,
+}) {
+  const { fg, bg } = TINTED_PILL_TONE[tone] || TINTED_PILL_TONE.teal;
+  const pad = size === "sm" ? "3px 8px" : "4px 10px";
+  const fontSize = size === "sm" ? 10 : 12;
+  const clickable = typeof onClick === "function";
+
+  return (
+    <span
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontFamily: mono ? font.mono : font.sans,
+        fontSize,
+        fontWeight: 500,
+        color: fg,
+        background: bg,
+        padding: pad,
+        borderRadius: radius.pill,
+        letterSpacing: mono ? "0.04em" : "0.03em",
+        whiteSpace: "nowrap",
+        cursor: clickable ? "pointer" : "default",
+        ...style,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+// --- Back chip (top-bar navigation pill) --------------------------------
+
+// Glass-on-parchment back/context button used at the top of
+// secondary screens. Separate from GlassPill because the visual
+// weight (lighter background, softer shadow) is tuned for the
+// nav-bar spot rather than interactive toggles.
+export function BackChip({ children, onClick, style }) {
+  return (
+    <motion.button
+      onClick={onClick}
+      whileHover={{ background: "rgba(255,255,255,0.78)" }}
+      whileTap={{ scale: 0.96 }}
+      transition={{ duration: 0.18 }}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        border: `1px solid ${color.hairline}`,
+        background: "rgba(255,255,255,0.55)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        padding: "8px 14px",
+        borderRadius: radius.pill,
+        fontFamily: font.sans,
+        fontSize: 13,
+        color: color.ink,
+        cursor: "pointer",
+        boxShadow: shadow.soft,
+        ...style,
+      }}
+    >
+      {children}
+    </motion.button>
+  );
+}
+
+// --- Bottom dock (floating glass tab bar) -------------------------------
+
+// The persistent nav dock floating above the bottom of the screen.
+// Pass an array of tab objects and the id of the active one; the
+// dock paints the active tab with the teal gradient used by
+// GlassPill(active). Ids are stable so consumers can route on them.
+export function BottomDock({ tabs, activeId, onSelect, style }) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        bottom: 16,
+        left: 0,
+        right: 0,
+        display: "flex",
+        justifyContent: "center",
+        pointerEvents: "none",
+        zIndex: 5,
+        ...style,
+      }}
+    >
+      <div
+        style={{
+          pointerEvents: "auto",
+          display: "flex",
+          gap: 4,
+          padding: 6,
+          background: "rgba(255,255,255,0.72)",
+          backdropFilter: "blur(20px) saturate(150%)",
+          WebkitBackdropFilter: "blur(20px) saturate(150%)",
+          border: "1px solid rgba(255,255,255,0.6)",
+          borderRadius: radius.pill,
+          boxShadow: shadow.glass,
+        }}
+      >
+        {tabs.map((t) => {
+          const active = t.id === activeId;
+          return (
+            <motion.button
+              key={t.id}
+              onClick={() => onSelect && onSelect(t.id)}
+              whileTap={{ scale: 0.95 }}
+              transition={{ duration: 0.18 }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontFamily: font.sans,
+                fontSize: 13,
+                fontWeight: 500,
+                padding: "10px 16px",
+                borderRadius: radius.pill,
+                border: "none",
+                background: active
+                  ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
+                  : "transparent",
+                color: active ? "#FFF8EE" : color.ink,
+                cursor: "pointer",
+                boxShadow: active ? "0 6px 14px rgba(47,143,131,0.30)" : "none",
+              }}
+            >
+              <span style={{ fontSize: 15 }}>{t.glyph}</span> {t.label}
+            </motion.button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // --- Soft divider --------------------------------------------------------
 
 export function HairlineRule({ style }) {

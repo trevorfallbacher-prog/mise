@@ -8,8 +8,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton, GhostButton,
   CheckCircle, Kicker, SerifHeader, FadeIn, Starburst,
+  BackChip, TintedPill,
 } from "./primitives";
-import { color, radius, shadow, font } from "./tokens";
+import { color, font } from "./tokens";
 
 const STEPS = [
   {
@@ -85,22 +86,7 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
             display: "flex", alignItems: "center", justifyContent: "space-between",
             marginBottom: 16,
           }}>
-            <button
-              onClick={onBack}
-              style={{
-                display: "inline-flex", alignItems: "center", gap: 6,
-                border: "none", background: "rgba(255,255,255,0.55)",
-                backdropFilter: "blur(12px)",
-                WebkitBackdropFilter: "blur(12px)",
-                padding: "8px 14px", borderRadius: 999,
-                fontFamily: font.sans, fontSize: 13, color: color.ink,
-                cursor: "pointer",
-                border2: `1px solid ${color.hairline}`,
-                boxShadow: shadow.soft,
-              }}
-            >
-              ← Pantry
-            </button>
+            <BackChip onClick={onBack}>← Pantry</BackChip>
 
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 8,
@@ -178,19 +164,14 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
               </SerifHeader>
 
               {step.timer && (
-                <div style={{
-                  marginTop: 14,
-                  display: "inline-flex", alignItems: "center", gap: 8,
-                  alignSelf: "flex-start",
-                  fontFamily: font.mono, fontSize: 12,
-                  color: color.warmBrown,
-                  background: color.mustardTint,
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                }}>
-                  <ClockGlyph /> {step.timer}
+                <div style={{ marginTop: 14, alignSelf: "flex-start" }}>
+                  <TintedPill
+                    tone="mustard"
+                    mono
+                    style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}
+                  >
+                    <ClockGlyph /> {step.timer}
+                  </TintedPill>
                 </div>
               )}
 
@@ -235,16 +216,13 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
                       >
                         {ing.name}
                       </button>
-                      <span style={{
-                        fontFamily: font.mono, fontSize: 13,
-                        color: ing.done ? color.teal : color.burnt,
-                        background: ing.done ? color.tealTint : color.burntTint,
-                        padding: "3px 10px", borderRadius: 999,
-                        letterSpacing: "0.04em",
-                        whiteSpace: "nowrap",
-                      }}>
+                      <TintedPill
+                        tone={ing.done ? "teal" : "burnt"}
+                        mono
+                        onClick={onOpenUnitPicker}
+                      >
                         {ing.amt}
-                      </span>
+                      </TintedPill>
                     </motion.li>
                   ))}
                 </ul>

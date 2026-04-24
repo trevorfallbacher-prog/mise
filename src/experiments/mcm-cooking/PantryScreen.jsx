@@ -8,8 +8,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
+  GlassPill, TintedPill, BottomDock,
 } from "./primitives";
-import { color, radius, shadow, font } from "./tokens";
+import { color, radius, font } from "./tokens";
 
 const ITEMS = [
   { id: 1, emoji: "🧈", name: "Kerrygold Butter",    qty: "1 stick",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 12 },
@@ -120,36 +121,15 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             display: "flex", gap: 8, marginTop: 14,
             overflowX: "auto", paddingBottom: 4,
           }}>
-            {FILTERS.map((f) => {
-              const active = filter === f.id;
-              return (
-                <motion.button
-                  key={f.id}
-                  onClick={() => setFilter(f.id)}
-                  whileTap={{ scale: 0.95 }}
-                  style={{
-                    flexShrink: 0,
-                    fontFamily: font.sans,
-                    fontSize: 13,
-                    fontWeight: 500,
-                    letterSpacing: "0.02em",
-                    padding: "8px 16px",
-                    borderRadius: radius.pill,
-                    border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.10)"}`,
-                    background: active
-                      ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-                      : "rgba(255,255,255,0.65)",
-                    color: active ? "#FFF8EE" : color.ink,
-                    boxShadow: active ? "0 8px 18px rgba(47,143,131,0.30)" : "none",
-                    cursor: "pointer",
-                    backdropFilter: "blur(12px)",
-                    WebkitBackdropFilter: "blur(12px)",
-                  }}
-                >
-                  {f.label}
-                </motion.button>
-              );
-            })}
+            {FILTERS.map((f) => (
+              <GlassPill
+                key={f.id}
+                active={filter === f.id}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+              </GlassPill>
+            ))}
           </div>
         </FadeIn>
 
@@ -226,10 +206,21 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
         </FadeIn>
       </div>
 
-      <BottomTabBar />
+      <BottomDock
+        tabs={NAV_TABS}
+        activeId="pantry"
+        onSelect={(id) => { if (id === "cook") onStartCooking && onStartCooking(); }}
+      />
     </div>
   );
 }
+
+const NAV_TABS = [
+  { id: "pantry", label: "Pantry", glyph: "🥫" },
+  { id: "cook",   label: "Cook",   glyph: "🍳" },
+  { id: "plan",   label: "Plan",   glyph: "📅" },
+  { id: "you",    label: "You",    glyph: "🌿" },
+];
 
 // --- Sub-components ------------------------------------------------------
 
@@ -273,16 +264,13 @@ function PantryCard({ item, onPick }) {
       </div>
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        <span style={{
-          fontFamily: font.sans, fontSize: 10, fontWeight: 500,
-          color: color.teal, background: color.tealTint,
-          padding: "4px 8px", borderRadius: radius.pill,
-          letterSpacing: "0.04em",
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          maxWidth: "100%",
-        }}>
+        <TintedPill
+          tone="teal"
+          size="sm"
+          style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+        >
           {item.location}
-        </span>
+        </TintedPill>
         <span style={{
           fontFamily: font.mono, fontSize: 10,
           color: warn ? color.burnt : color.inkMuted,
@@ -304,49 +292,3 @@ function SearchGlyph() {
   );
 }
 
-function BottomTabBar() {
-  const tabs = [
-    { id: "pantry", label: "Pantry", glyph: "🥫", active: true  },
-    { id: "cook",   label: "Cook",   glyph: "🍳", active: false },
-    { id: "plan",   label: "Plan",   glyph: "📅", active: false },
-    { id: "you",    label: "You",    glyph: "🌿", active: false },
-  ];
-  return (
-    <div style={{
-      position: "fixed", bottom: 16, left: 0, right: 0,
-      display: "flex", justifyContent: "center",
-      pointerEvents: "none", zIndex: 5,
-    }}>
-      <div style={{
-        pointerEvents: "auto",
-        display: "flex", gap: 4,
-        padding: 6,
-        background: "rgba(255,255,255,0.72)",
-        backdropFilter: "blur(20px) saturate(150%)",
-        WebkitBackdropFilter: "blur(20px) saturate(150%)",
-        border: "1px solid rgba(255,255,255,0.6)",
-        borderRadius: 999,
-        boxShadow: shadow.glass,
-      }}>
-        {tabs.map((t) => (
-          <button
-            key={t.id}
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 6,
-              fontFamily: font.sans, fontSize: 13, fontWeight: 500,
-              padding: "10px 16px", borderRadius: 999, border: "none",
-              background: t.active
-                ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-                : "transparent",
-              color: t.active ? "#FFF8EE" : color.ink,
-              cursor: "pointer",
-              boxShadow: t.active ? "0 6px 14px rgba(47,143,131,0.30)" : "none",
-            }}
-          >
-            <span style={{ fontSize: 15 }}>{t.glyph}</span> {t.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
