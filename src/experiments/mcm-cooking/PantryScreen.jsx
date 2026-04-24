@@ -1267,9 +1267,16 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
       // and the dock comes back). Quick and springy so it feels
       // like an affordance appearing, not a full screen
       // transition.
-      initial={{ opacity: 0, y: 24 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 24 }}
+      //
+      // x: "-50%" is INSIDE the framer animate object (not in
+      // CSS transform) because framer-motion writes a single
+      // transform property based on its motion values, and any
+      // CSS `transform` on the same element gets overwritten.
+      // Putting -50% here means the dock stays centered through
+      // every animation frame.
+      initial={{ opacity: 0, x: "-50%", y: 24 }}
+      animate={{ opacity: 1, x: "-50%", y: 0 }}
+      exit={{ opacity: 0, x: "-50%", y: 24 }}
       transition={{ type: "spring", stiffness: 360, damping: 30 }}
       style={{
       position: "fixed",
@@ -1278,7 +1285,6 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
       // visual gap above a ~80px dark nav bar; bump if the nav is
       // taller on a given device.
       bottom: 96,
-      transform: "translateX(-50%)",
       zIndex: 20,
       display: "flex",
       gap: 4,
