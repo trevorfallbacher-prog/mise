@@ -1,6 +1,6 @@
 import ModalSheet from "./ModalSheet";
 import { COLOR, FONT, CHIP_TONES, pickerKicker, pickerTitle, pickerOptionStyle } from "../lib/tokens";
-import { findIngredient, unitLabel } from "../data/ingredients";
+import { findIngredient } from "../data/ingredients";
 import { convert, convertWithBridge, convertUniversal, formatQty, universalLadderFor } from "../lib/unitConvert";
 import { parseAmountString } from "../lib/nutrition";
 
@@ -61,11 +61,11 @@ export default function UnitPicker({
   // families, offer the universal siblings so the cook can still
   // flip tbsp → cup on a free-text ingredient.
   const universal = currentUnit && !ingredient ? universalLadderFor(currentUnit) : [];
-  const universalOpts = universal.map(id => ({ id, label: unitLabel(id) || id, toBase: 1 }));
+  const universalOpts = universal.map(id => ({ id, label: id, toBase: 1 }));
 
   const base = ladder.length > 0 ? ladder : universalOpts;
   const options = currentUnit && !base.some(u => u.id === currentUnit)
-    ? [{ id: currentUnit, label: unitLabel(currentUnit) || currentUnit, toBase: 1 }, ...base]
+    ? [{ id: currentUnit, label: currentUnit, toBase: 1 }, ...base]
     : base;
 
   const pick = (newUnitId) => {
@@ -81,7 +81,7 @@ export default function UnitPicker({
     if (res.ok && Number.isFinite(res.value) && res.value > 0) {
       // Without an ingredient, formatQty can't fetch a nice label,
       // so hand it a stub with a units[] for the chosen unit.
-      const formattable = ingredient || { units: [{ id: newUnitId, label: unitLabel(newUnitId) || newUnitId }] };
+      const formattable = ingredient || { units: [{ id: newUnitId, label: newUnitId }] };
       onPick(formatQty({ amount: res.value, unit: newUnitId }, formattable));
     }
     onClose();
@@ -120,7 +120,7 @@ export default function UnitPicker({
                   fontSize: 14,
                 }}
               >
-                <span style={{ flex: 1 }}>{u.label || unitLabel(u.id) || u.id}</span>
+                <span style={{ flex: 1 }}>{u.label || u.id}</span>
                 {isOn && <span style={{ fontFamily: FONT.mono, fontSize: 12 }}>✓</span>}
               </button>
             </li>
