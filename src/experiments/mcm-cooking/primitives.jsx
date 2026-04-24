@@ -64,6 +64,11 @@ export function WarmBackdrop() {
   const moon = moonArc(hour);
   const dayDecor   = daytimeOpacity(hour);
   const nightDecor = nighttimeOpacity(hour);
+  // Fraction of the 21h→5h night plateau passed. 0 at 21h, ~0.38
+  // at midnight, 1 at 5h. Negative outside the plateau so
+  // non-night hours skip the progression.
+  const np = nightProgress(hour);
+  const isNight = np >= 0;
 
   // CSS transition on the celestial wrappers — lets the browser
   // interpolate each new transform/opacity from the previous frame.
@@ -72,6 +77,12 @@ export function WarmBackdrop() {
   const celestialTransition =
     "transform 800ms cubic-bezier(0.22, 1, 0.36, 1)," +
     "opacity 800ms ease";
+  // Slower transition for the hourly night-drift, so the minute-
+  // tick auto updates feel like continuous cosmic motion rather
+  // than stepped.
+  const nightDriftTransition =
+    "transform 2000ms ease," +
+    "opacity 2000ms ease";
 
   return (
     <div
@@ -86,6 +97,32 @@ export function WarmBackdrop() {
       }}
     >
       <style>{SKY_DRIFT_CSS}</style>
+
+      {/* DEEP-NIGHT WASH — subtle cool-blue vignette at the top of
+          the sky that fades in around midnight and out again by
+          dawn. Without this the 21h→5h window is palette-identical
+          every minute (blendThemes short-circuits on the
+          night===night anchor pair). This gives the night an
+          actual arc: dusk handoff warm, midnight deep cool, pre-
+          dawn warming again. Radial so it concentrates where the
+          moon peaks instead of washing the horizon. */}
+      {isNight && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "radial-gradient(ellipse 80% 50% at 50% 20%, " +
+              "rgba(30,45,90,0.22) 0%, " +
+              "rgba(30,45,90,0.10) 45%, " +
+              "transparent 75%)",
+            opacity: midnightCurve(np),
+            transition: nightDriftTransition,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
       {theme.backdrop.blobs.map((b, i) => (
         <div
           key={i}
@@ -95,13 +132,28 @@ export function WarmBackdrop() {
             left: b.left,
             width: b.size,
             height: b.size,
-            background: b.bg,
-            borderRadius: "50%",
-            filter: "blur(80px)",
-            animation: `mcm-drift-${i % 3} ${DRIFT_DURATIONS[i % 3]}s ease-in-out infinite`,
-            ...THEME_TRANSITION,
+            // Hour-driven translate during the night plateau: each
+            // blob drifts east→west alongside the moon (same
+            // direction Earth's rotation moves the real sky), with
+            // a per-blob offset so they don't march in lockstep.
+            // Non-night hours get 0 offset — the anchor blend
+            // already handles drift via the theme transition.
+            transform: isNight ? nightBlobDrift(i, np) : "none",
+            transition: isNight ? nightDriftTransition : undefined,
           }}
-        />
+        >
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              background: b.bg,
+              borderRadius: "50%",
+              filter: "blur(80px)",
+              animation: `mcm-drift-${i % 3} ${DRIFT_DURATIONS[i % 3]}s ease-in-out infinite`,
+              ...THEME_TRANSITION,
+            }}
+          />
+        </div>
       ))}
 
       {/* SUN — big warm starburst arcing east→west across the day. */}
@@ -229,6 +281,51 @@ function nighttimeOpacity(hour) {
   if (hour >= 21 && hour < 21.5)   return (hour - 21) / 0.5;
   if (hour > 4.5 && hour < 5)      return (5 - hour) / 0.5;
   return 0;
+}
+
+// How far into the 21h→5h night plateau we are. 0 at 21h, ~0.375
+// at midnight, 1 at 5h. Returns -1 outside the plateau so callers
+// can skip night-specific modulation. The palette itself is flat
+// across this whole window (blendThemes short-circuits on the
+// night-anchor pair), so anything we want to animate across the
+// night has to drive from this scalar, not from the theme.
+function nightProgress(hour) {
+  if (hour >= 21)      return (hour - 21) / 8;
+  if (hour <= 5)       return (hour + 3) / 8;
+  return -1;
+}
+
+// Bell curve peaking at midnight (np ≈ 0.375). 0 at the 21h /
+// 5h edges, 1 at peak. Used for the deep-night wash and anything
+// else that should intensify around true midnight and fade toward
+// the dusk/dawn handoffs.
+function midnightCurve(np) {
+  if (np < 0 || np > 1) return 0;
+  // Shift so the peak lands at actual midnight (np = 3/8 = 0.375)
+  // rather than the midpoint of the plateau.
+  const shifted = (np - 0.375) / (np < 0.375 ? 0.375 : 0.625);
+  return Math.max(0, 1 - shifted * shifted);
+}
+
+// Directional translate for each backdrop blob across the night.
+// Each blob drifts east→west (left→right in screen coords, same
+// direction as the moon arc), offset by a per-blob phase so they
+// don't all move in unison. Range ±NIGHT_DRIFT_PX centered on 0
+// at peak night, so blobs start shifted east at dusk handoff, pass
+// through their nominal anchor positions around midnight, and
+// finish shifted west by dawn handoff — the cosmic-drift read.
+const NIGHT_DRIFT_PX = 70;
+function nightBlobDrift(i, np) {
+  // Per-blob phase offset so the three blobs trace slightly
+  // different paths. Blob 0 leads, blob 1 trails, blob 2 sits
+  // between. Values are small fractions of the full range.
+  const phase = [0, 0.12, -0.08][i % 3];
+  const shifted = np + phase;
+  const tx = (shifted - 0.5) * 2 * NIGHT_DRIFT_PX;
+  // Small vertical bobble — different per blob — so the drift
+  // doesn't read as a dead-flat pan.
+  const ty = Math.sin(shifted * Math.PI * 2) * 12 * [1, -1, 0.6][i % 3];
+  return `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px)`;
 }
 
 // --- Starburst (MCM / Googie motif) -------------------------------------
@@ -822,13 +919,31 @@ function toneFillFor(theme, tone) {
 
 function tintedPillTone(theme, tone) {
   const c = theme.color;
-  // `fg` is derived by DARKENING the hue rather than reusing the
-  // same hue as `bg`. When the tint alpha is bumped (dawn/dusk
-  // themes, blended transitions), a bg at 40%+ alpha becomes
-  // strongly colored — and a same-hue fg disappears into it
-  // (teal-on-teal / orange-on-orange). A 55% darker fg sits
-  // consistently below the bg's luminance regardless of how
-  // opaque the tint ends up.
+  // The darkened-fg recipe below assumes the CARD GLASS the pill
+  // sits on is bright enough that a darker-than-bg fg lands below
+  // the bg's luminance. That holds for morning / day / evening /
+  // dawn / dusk (bright cream glass fills). It does NOT hold at
+  // night: the glass is a warm amber translucent (rgba 70,50,28,
+  // 0.62) that composites over the cool slate sky into a DARK
+  // brown surface. A 55%-darkened teal over dark brown collapses
+  // to ~1.5:1 — the "all night those pills in blue are too faded"
+  // readout. On dark-glass themes we flip the direction: fg stays
+  // at the full accent hue (so the PILL OCCURS ABOVE the amber
+  // glass luminance) and bg bumps to ~0.30 alpha so the tint
+  // actually colors the surface visibly.
+  if (isLightInk(c.ink)) {
+    return {
+      teal:    { fg: c.teal,      bg: withAlpha(c.teal,      0.30) },
+      aqua:    { fg: c.aqua,      bg: withAlpha(c.aqua,      0.30) },
+      burnt:   { fg: c.burnt,     bg: withAlpha(c.burnt,     0.30) },
+      mustard: { fg: c.mustard,   bg: withAlpha(c.mustard,   0.28) },
+      brown:   { fg: c.warmBrown, bg: withAlpha(c.warmBrown, 0.30) },
+      muted:   { fg: c.inkMuted,  bg: withAlpha(c.ink,       0.10) },
+    }[tone] || { fg: c.teal, bg: withAlpha(c.teal, 0.30) };
+  }
+  // Bright-glass themes — original darkened-fg recipe. `fg` sits
+  // consistently below bg luminance regardless of how opaque the
+  // blended tint ends up.
   const tones = {
     teal:    { fg: darken(c.teal,  0.55), bg: c.tealTint    },
     aqua:    { fg: darken(c.aqua,  0.55), bg: c.aquaTint    },
@@ -838,6 +953,30 @@ function tintedPillTone(theme, tone) {
     muted:   { fg: c.inkMuted,            bg: withAlpha(c.ink, 0.06) },
   };
   return tones[tone] || tones.teal;
+}
+
+// BT.601 perceived luminance on a #hex / rgb() / rgba() string.
+// Used to branch the pill recipe on whether the theme's `ink` is
+// light (night-mode, dark glass) or dark (bright glass). Duplicated
+// from blend.js's internal helper so primitives doesn't reach
+// across the import boundary for a one-liner.
+function isLightInk(colorStr) {
+  if (!colorStr) return false;
+  let r = 0, g = 0, b = 0;
+  if (colorStr.startsWith("#")) {
+    const h = colorStr.length === 4
+      ? colorStr.slice(1).split("").map((c) => c + c).join("")
+      : colorStr.slice(1);
+    r = parseInt(h.slice(0, 2), 16);
+    g = parseInt(h.slice(2, 4), 16);
+    b = parseInt(h.slice(4, 6), 16);
+  } else {
+    const m = colorStr.match(/rgba?\(([^)]+)\)/);
+    if (!m) return false;
+    const parts = m[1].split(",").map((s) => parseFloat(s.trim()));
+    r = parts[0]; g = parts[1]; b = parts[2];
+  }
+  return (r * 0.299 + g * 0.587 + b * 0.114) / 255 > 0.5;
 }
 
 // Hex #RRGGBB → rgba with alpha. Accepts rgba()/rgb() strings

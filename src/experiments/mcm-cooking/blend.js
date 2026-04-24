@@ -331,14 +331,24 @@ export function blendThemes(a, b, t) {
 
   if (crossingSkyMode) {
     const skySide = pickInkSide(a, b, blendedColor.cream, "skyInk");
-    for (const k of SKY_INK_SNAP_KEYS) {
-      blendedColor[k] = skySide.color[k];
-    }
+    blendedColor.skyInk = skySide.color.skyInk;
   } else {
-    for (const k of SKY_INK_SNAP_KEYS) {
-      blendedColor[k] = blendColor(a.color[k], b.color[k], t);
-    }
+    blendedColor.skyInk = blendColor(a.color.skyInk, b.color.skyInk, t);
   }
+  // skyInkMuted DERIVES as an alpha-step of the resolved skyInk
+  // rather than blending its own hex. The anchor's tuned
+  // skyInkMuted (e.g. dawn's #DBC3A0, night's #B6A180) sits around
+  // lum 0.40–0.55, which reads fine against a flat dark backdrop
+  // but drops to ~2:1 when the subtitle happens to sit over one of
+  // the warm ambient blobs that locally brightens the backdrop to
+  // a mid-brown (~rgb 115,57,44 @ 5:45 AM under dawn's orange
+  // blob). An alpha-step of the snapped skyInk composites against
+  // that actual local backdrop, so the muted tier's rendered
+  // brightness tracks whatever the sky is doing underneath rather
+  // than sitting at a fixed mid-luminance that collides with
+  // blob-lit spots. 0.82 alpha keeps it visibly de-emphasized vs
+  // the full-brightness skyInk above it.
+  blendedColor.skyInkMuted = withAlpha(blendedColor.skyInk, 0.82);
   for (const k of Object.keys(a.shadow)) {
     blendedShadow[k] = blendCssString(a.shadow[k], b.shadow[k], t);
   }
