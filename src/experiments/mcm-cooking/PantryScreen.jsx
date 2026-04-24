@@ -1144,28 +1144,32 @@ function TileGridSkeleton() {
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-      gap: 14,
+      // Matches TileGrid's auto-fit columns and gap so the
+      // skeleton → real transition doesn't reflow widths.
+      gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+      gap: 12,
       marginTop: 20,
     }}>
       {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
         <GlassPanel
           key={i}
-          padding={16}
+          padding={14}
           style={{
-            display: "flex", flexDirection: "column",
-            gap: 10,
-            minHeight: 150,
+            // Mirror the new horizontal TileCard layout so the
+            // skeleton looks like the real thing is about to
+            // land there — icon left, text column right.
+            display: "flex", flexDirection: "row", alignItems: "center", gap: 14,
+            minHeight: 96,
             opacity: 0.7,
           }}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ ...block(44, 44), borderRadius: 8 }} />
-            <div style={block(48, 14)} />
-          </div>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, justifyContent: "flex-end" }}>
-            <div style={block("70%", 18)} />
-            <div style={block("45%", 12)} />
+          <div style={{ ...block(56, 56), borderRadius: 10, flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ ...block("60%", 16) }} />
+              <div style={{ ...block(32, 12) }} />
+            </div>
+            <div style={block("80%", 11)} />
           </div>
         </GlassPanel>
       ))}
@@ -1727,11 +1731,14 @@ function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
   return (
     <div style={{
       display: "grid",
-      // Slightly larger minimum (220) than the item grid — tile
-      // cards carry more text (label + blurb + count) and need
-      // room to breathe. Still auto-fits so desktop gets 3+ cols.
-      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-      gap: 14,
+      // Horizontal tile layout means each card is short (~96px
+      // tall) and wants to be ~280-320px wide for the label +
+      // blurb line to breathe without wrapping. auto-fit +
+      // minmax(300, 1fr) gives 1 col on phones, 2 on tablets,
+      // 3 on desktop — fills the 960px content column at 3
+      // cards without leaving phone-width gaps.
+      gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+      gap: 12,
       marginTop: 20,
     }}>
       <AnimatePresence mode="popLayout">
@@ -1791,121 +1798,119 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
     <GlassPanel
       interactive={!empty}
       onClick={empty ? undefined : onPick}
-      padding={16}
+      padding={14}
       style={{
-        display: "flex", flexDirection: "column", gap: 10,
-        minHeight: 150,
+        // Horizontal layout: icon on the left, label + blurb +
+        // count stacked on the right. Replaces the previous
+        // stacked layout that had a ton of dead vertical space
+        // (icon at top-left, label dropped to the bottom). This
+        // reads more like an entry in a kitchen ledger — bigger
+        // icon, tighter card, multi-column friendly.
+        display: "flex", flexDirection: "row", alignItems: "center", gap: 14,
+        minHeight: 96,
         opacity: empty ? 0.45 : 1,
         cursor: empty ? "default" : "pointer",
         // Subtle desaturation on empty tiles so they read as
-        // "not available" not "dimmed but tappable." Matches the
-        // grayscale treatment classic Kitchen uses for its empty
-        // tile cards.
+        // "not available" not "dimmed but tappable."
         filter: empty ? "grayscale(40%)" : "none",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
-        {/* Icon slot — bundled SVG when available, emoji fallback
-            otherwise. motion.div with layoutId so the icon morphs
-            into the drilled-header's icon position when the user
-            taps this tile — the visual "zooming into the shelf"
-            moment that makes the drill-in feel intentional rather
-            than a hard cut. */}
-        <motion.div
-          layoutId={`tile-icon-${location}-${tile.id}`}
-          style={{ position: "relative", width: 44, height: 44, flexShrink: 0 }}
-        >
-          {iconUrl ? (
-            <img
-              src={iconUrl}
-              alt=""
-              style={{
-                width: "100%", height: "100%", objectFit: "contain",
-                filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-              }}
-            />
-          ) : (
-            <div style={{
-              fontSize: 38, lineHeight: 1,
+      {/* Icon slot — bundled SVG when available, emoji fallback
+          otherwise. motion.div with layoutId so the icon morphs
+          into the drilled-header's icon position when the user
+          taps this tile. Bumped to 56px here (was 44) since it's
+          now the primary visual element of the card. */}
+      <motion.div
+        layoutId={`tile-icon-${location}-${tile.id}`}
+        style={{ position: "relative", width: 56, height: 56, flexShrink: 0 }}
+      >
+        {iconUrl ? (
+          <img
+            src={iconUrl}
+            alt=""
+            style={{
+              width: "100%", height: "100%", objectFit: "contain",
               filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-            }}>
-              {tile.emoji}
-            </div>
-          )}
-          {warnCount > 0 && (
-            <motion.div
-              title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
-              // Gentle breathing pulse draws the eye to tiles that
-              // need attention without feeling alarming. Scales ±4%
-              // and box-shadow halo grows/shrinks in sync so the
-              // badge feels like a soft heartbeat rather than a
-              // hard blink. 2.4s cycle is slow enough to feel
-              // ambient, fast enough to read as motion.
-              animate={{
-                scale: [1, 1.06, 1],
-                boxShadow: [
-                  "0 2px 6px rgba(168,73,17,0.35)",
-                  "0 2px 14px rgba(168,73,17,0.55)",
-                  "0 2px 6px rgba(168,73,17,0.35)",
-                ],
-              }}
-              transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
-              style={{
-                position: "absolute",
-                top: -2, right: -4,
-                minWidth: 16, height: 16,
-                padding: "0 4px",
-                borderRadius: 999,
-                background: theme.color.burnt,
-                color: theme.color.ctaText,
-                fontFamily: font.mono, fontSize: 9, fontWeight: 600,
-                display: "inline-flex", alignItems: "center", justifyContent: "center",
-                letterSpacing: "-0.02em",
-              }}
-            >
-              {warnCount}
-            </motion.div>
-          )}
-        </motion.div>
-        {/* Count pill — DM Mono so it reads as metadata, not a
-            header. Hidden on empty tiles since "0 items" adds
-            noise without signal. */}
-        {!empty && (
+            }}
+          />
+        ) : (
           <div style={{
-            fontFamily: font.mono, fontSize: 10,
-            padding: "3px 8px",
-            borderRadius: radius.pill,
-            background: withAlpha(theme.color.ink, 0.06),
-            color: theme.color.inkMuted,
-            letterSpacing: "0.06em",
-            whiteSpace: "nowrap",
-            textTransform: "uppercase",
+            fontSize: 48, lineHeight: 1,
+            filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
           }}>
-            {count} {count === 1 ? "item" : "items"}
+            {tile.emoji}
           </div>
         )}
-      </div>
+        {warnCount > 0 && (
+          <motion.div
+            title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
+            animate={{
+              scale: [1, 1.06, 1],
+              boxShadow: [
+                "0 2px 6px rgba(168,73,17,0.35)",
+                "0 2px 14px rgba(168,73,17,0.55)",
+                "0 2px 6px rgba(168,73,17,0.35)",
+              ],
+            }}
+            transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
+            style={{
+              position: "absolute",
+              top: -2, right: -4,
+              minWidth: 18, height: 18,
+              padding: "0 5px",
+              borderRadius: 999,
+              background: theme.color.burnt,
+              color: theme.color.ctaText,
+              fontFamily: font.mono, fontSize: 10, fontWeight: 600,
+              display: "inline-flex", alignItems: "center", justifyContent: "center",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {warnCount}
+          </motion.div>
+        )}
+      </motion.div>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* Text column — label + count pill on the same row at the
+          top, blurb below. minWidth 0 so long blurbs truncate
+          instead of forcing the card to grow past its column. */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
         <div style={{
-          // Truculenta to match the drilled-header register — tile
-          // cards read as shelf headers, not book titles. Narrower
-          // than the drilled header (wdth 102 vs 104) and lighter
-          // (wght 540 vs 580) so it reads as a deck of cards rather
-          // than a stack of mastheads.
-          fontFamily: font.display,
-          fontWeight: 540,
-          fontVariationSettings: "'wdth' 102, 'wght' 540, 'opsz' 20",
-          fontSize: 20, lineHeight: 1.1, color: theme.color.ink,
-          letterSpacing: "-0.015em",
+          display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8,
         }}>
-          {tile.label}
+          <div style={{
+            fontFamily: font.display,
+            fontWeight: 560,
+            fontVariationSettings: "'wdth' 100, 'wght' 560, 'opsz' 20",
+            fontSize: 19, lineHeight: 1.1, color: theme.color.ink,
+            letterSpacing: "-0.015em",
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            flex: 1, minWidth: 0,
+          }}>
+            {tile.label}
+          </div>
+          {!empty && (
+            <div style={{
+              fontFamily: font.mono, fontSize: 10,
+              padding: "2px 7px",
+              borderRadius: radius.pill,
+              background: withAlpha(theme.color.ink, 0.06),
+              color: theme.color.inkMuted,
+              letterSpacing: "0.06em",
+              whiteSpace: "nowrap",
+              textTransform: "uppercase",
+              flexShrink: 0,
+            }}>
+              {count}
+            </div>
+          )}
         </div>
         {tile.blurb && (
           <div style={{
             fontFamily: font.sans, fontSize: 12,
             color: theme.color.inkFaint,
-            marginTop: 4, lineHeight: 1.4,
+            lineHeight: 1.4,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             {tile.blurb}
           </div>
