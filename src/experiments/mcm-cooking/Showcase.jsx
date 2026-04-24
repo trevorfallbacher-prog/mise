@@ -3,26 +3,27 @@
 // the Pantry screen as the default entry point and layers the
 // Cook screen + Unit picker modal on top as the user navigates.
 //
-// Wraps everything in ThemeProvider so the three screens pick
-// up morning / day / evening / night from the wall clock. A
-// tiny floating override picker in the corner lets us scrub
-// between themes for design review.
+// Wraps everything in ThemeProvider so the three screens pick up
+// a fractional-hour blend of morning / day / evening / night. A
+// fine-grained slider in the top-right scrubs through the day at
+// 15-minute steps — 6:45am and 4:30am render visibly differently
+// because the theme is a continuous blend, not four discrete
+// snapshots.
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import PantryScreen from "./PantryScreen";
 import CookScreen from "./CookScreen";
 import UnitPickerModal from "./UnitPickerModal";
 import {
-  ThemeProvider, useTheme, THEMES, getTimeTheme,
-  THEME_TRANSITION,
+  ThemeProvider, useTheme, THEMES, currentHour, THEME_TRANSITION,
 } from "./theme";
 import { withAlpha } from "./primitives";
 import { font, radius } from "./tokens";
 
 export default function Showcase() {
   return (
-    <ThemeProvider initial="auto">
+    <ThemeProvider>
       <ShowcaseInner />
     </ThemeProvider>
   );
@@ -75,59 +76,38 @@ function ShowcaseInner() {
         onApply={() => {}}
       />
 
-      <ThemePicker />
+      <ThemeScrubber />
     </div>
   );
 }
 
 // --- Theme scrubber -----------------------------------------------------
 
-// Floating glass panel in the top-right with an hour slider
-// (0–23) + auto toggle. Dragging the slider sets a fake "now",
-// feeds it through getTimeTheme(), and pushes the resolved
-// morning/day/evening/night id into the provider — so the browser's
-// 700ms cross-fade (THEME_TRANSITION) kicks in at each boundary
-// and the reviewer sees the progression smoothly as they scrub.
+// Floating glass panel in the top-right. Auto follows the wall
+// clock; drag the slider to pin a fractional hour (0–24, 15-min
+// steps) and the theme continuously blends through all four
+// anchors as you scrub — 6:45am and 4:30am produce visibly
+// different rendered states because they sit at different
+// fractional positions between the night/morning anchor pair.
 //
-// "Auto" releases the override and lets the provider re-resolve
-// from the wall clock.
-function ThemePicker() {
-  const { theme, themeId, setThemeId } = useTheme();
+// Track + thumb are styled via a scoped <style> block reading
+// theme tokens through CSS custom properties, so the control
+// itself cross-fades with everything else on the page.
+function ThemeScrubber() {
+  const { theme, hour, isAuto, setHour, clearHour } = useTheme();
 
-  // Local slider hour. When `isAuto` is true we just mirror the
-  // real clock hour so the thumb stays where "now" is. When the
-  // user drags, we flip to manual and drive the theme from hour.
-  const [sliderHour, setSliderHour] = useState(() => new Date().getHours());
-  const isAuto = themeId === "auto";
-
-  // Keep the thumb tracking the clock while in auto.
-  useEffect(() => {
-    if (!isAuto) return;
-    const id = setInterval(() => setSliderHour(new Date().getHours()), 60 * 1000);
-    return () => clearInterval(id);
-  }, [isAuto]);
-
-  const shownHour = isAuto ? new Date().getHours() : sliderHour;
-  const resolvedId = getTimeTheme(shownHour);
-  const resolvedLabel = THEMES[resolvedId].label;
+  const displayHour = Math.max(0, Math.min(23.999, hour));
+  const sliderValue = Math.round(displayHour * 4); // quarter-hour units (0..95)
 
   const handleScrub = (e) => {
-    const h = Number(e.target.value);
-    setSliderHour(h);
-    setThemeId(getTimeTheme(h));
+    const quarters = Number(e.target.value);
+    setHour(quarters / 4);
   };
 
-  const onAuto = () => {
-    setThemeId("auto");
-    setSliderHour(new Date().getHours());
-  };
+  const onAuto = () => clearHour();
+  const nearestLabel = nearestAnchorLabel(displayHour);
+  const timeLabel = formatHour(displayHour);
 
-  // Format 0–23 as "7am / 2pm / 12am" for the live label.
-  const hourLabel = formatHour(shownHour);
-
-  // Inject a tiny scoped stylesheet so the native <input type="range">
-  // picks up our thumb + track styling. Scoped by class so it can't
-  // leak into any other sliders that might land on the page later.
   return (
     <>
       <style>{RANGE_CSS}</style>
@@ -179,15 +159,12 @@ function ThemePicker() {
         <div
           className="mcm-slider"
           style={{
-            // CSS custom props drive the track colors so the same
-            // rules in RANGE_CSS theme themselves.
             "--mcm-track-fill":   theme.color.teal,
             "--mcm-track-empty":  theme.color.hairline,
             "--mcm-thumb-bg":     theme.color.glassFillHeavy,
             "--mcm-thumb-border": theme.color.glassBorder,
             "--mcm-thumb-accent": theme.color.teal,
-            // Fill the track up to the current value.
-            "--mcm-progress":     `${(shownHour / 23) * 100}%`,
+            "--mcm-progress":     `${(displayHour / 23.999) * 100}%`,
             display: "flex",
             alignItems: "center",
           }}
@@ -195,12 +172,12 @@ function ThemePicker() {
           <input
             type="range"
             min="0"
-            max="23"
+            max="95"
             step="1"
-            value={shownHour}
+            value={sliderValue}
             onChange={handleScrub}
             aria-label="Time of day"
-            style={{ width: 180 }}
+            style={{ width: 200 }}
           />
         </div>
 
@@ -210,7 +187,7 @@ function ThemePicker() {
             flexDirection: "column",
             alignItems: "flex-end",
             lineHeight: 1.1,
-            minWidth: 56,
+            minWidth: 68,
           }}
         >
           <span style={{
@@ -218,7 +195,7 @@ function ThemePicker() {
             color: theme.color.inkMuted, letterSpacing: "0.06em",
             ...THEME_TRANSITION,
           }}>
-            {hourLabel}
+            {timeLabel}
           </span>
           <span style={{
             fontFamily: font.serif, fontStyle: "italic",
@@ -226,7 +203,7 @@ function ThemePicker() {
             color: theme.color.ink,
             ...THEME_TRANSITION,
           }}>
-            {resolvedLabel}
+            {nearestLabel}
           </span>
         </div>
       </div>
@@ -234,16 +211,41 @@ function ThemePicker() {
   );
 }
 
+// --- helpers -----------------------------------------------------------
+
+// 6.75 → "6:45am". Rounds to the nearest minute for readability.
 function formatHour(h) {
-  const period = h < 12 ? "am" : "pm";
-  const hr = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return `${hr}${period}`;
+  const hrInt = Math.floor(h);
+  const mins  = Math.round((h - hrInt) * 60);
+  const period = hrInt < 12 ? "am" : "pm";
+  const hr12 = hrInt === 0 ? 12 : hrInt > 12 ? hrInt - 12 : hrInt;
+  const mm = String(mins).padStart(2, "0");
+  return `${hr12}:${mm}${period}`;
 }
 
-// Scoped range-input styling. Browsers don't let us style the
-// thumb/track from inline styles, so we inject a small rule set
-// that reads theme values through CSS custom props set on the
-// wrapper. Keeps everything on the same cross-fade timeline.
+// Which anchor is closest to this hour? Used for the "Morning"/
+// "Day"/"Evening"/"Night" label line under the clock time.
+function nearestAnchorLabel(h) {
+  let best = null;
+  let bestDist = Infinity;
+  for (const id of Object.keys(THEMES)) {
+    const anchor = THEMES[id];
+    const d1 = Math.abs(h - anchor.hour);
+    const d2 = Math.abs(h - anchor.hour + 24); // wrap
+    const d3 = Math.abs(h - anchor.hour - 24);
+    const d  = Math.min(d1, d2, d3);
+    if (d < bestDist) {
+      bestDist = d;
+      best = anchor;
+    }
+  }
+  return best ? best.label : "—";
+}
+
+// Scoped range-input styling. Browsers don't expose thumb/track
+// to inline styles, so we inject a small rule set that reads
+// theme values through CSS custom properties set on the wrapper.
+// Keeps everything on the same cross-fade timeline.
 const RANGE_CSS = `
 .mcm-slider input[type="range"] {
   -webkit-appearance: none;

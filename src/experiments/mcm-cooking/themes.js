@@ -28,6 +28,11 @@ function shadowStack({ drop, drop2, topInset, bottomInset }) {
 const morning = {
   id: "morning",
   label: "Morning",
+  // Anchor hour — peak expression of this theme. The provider
+  // blends between the two closest anchors based on the fractional
+  // current hour, so 6:45 lands ≈95% morning / 5% night-carryover
+  // while 4:30 is mostly night with a whisper of dawn.
+  hour: 7.5,
   color: {
     // Background — golden-warm parchment, like 7am light on a
     // tiled kitchen counter.
@@ -100,6 +105,7 @@ const morning = {
 const day = {
   id: "day",
   label: "Day",
+  hour: 14,
   color: {
     cream:        "#F6F1E8",
     parchment:    "#EFE7DA",
@@ -161,6 +167,7 @@ const day = {
 const evening = {
   id: "evening",
   label: "Evening",
+  hour: 19,
   color: {
     cream:        "#F6E4D0",
     parchment:    "#ECCFB3",
@@ -217,23 +224,32 @@ const evening = {
   },
 };
 
-// --- NIGHT — cool dark (just dark, not warm-dark) + mint accents -----
+// --- NIGHT — cool sky, warm foreground (blue-light safe) ----------------
 
+// Two layers: the SKY is cool (deep blue-slate backdrop, teal +
+// cool-violet blobs, white moon + white stars) so the room reads
+// as "after dark"; the FOREGROUND is warm (amber translucent
+// glass, warm cream ink, lamp-cream borders). The warm glass +
+// warm text are the blue-light-reduction layer — long reading /
+// cooking sessions late at night don't torch the user's eyes
+// with cold white copy on cold dark paper, but the room still
+// feels like night, not like a dim-lit day theme.
 const night = {
   id: "night",
   label: "Night",
+  hour: 2,
   color: {
-    // Background — cool near-black slate, not cocoa. "Just dark."
-    cream:        "#1A1C22",
-    parchment:    "#121418",
-    paper:        "#23262E",
-    // Text — cool neutral white, ≥ 12:1 on slate so body copy is
-    // comfortable to read at any size.
-    ink:          "#EEEFF3",
-    inkMuted:     "#A9ADB6",
-    inkFaint:     "#777A84",
-    // Accents — mint/teal reads cooler and brighter against dark,
-    // burnt saturates up a touch so it holds against the slate.
+    // Background — cool deep slate, genuinely night, not cocoa.
+    cream:        "#141820",
+    parchment:    "#0C0F15",
+    paper:        "#1A1E26",
+    // Text — warm cream. Comfortable on cool slate, reduces the
+    // blue-light burden late at night. ≥ 9:1 contrast on the
+    // parchment for body copy.
+    ink:          "#F2E4C8",
+    inkMuted:     "#B6A180",
+    inkFaint:     "#8A7A60",
+    // Accents — mint reads cooler against dark, burnt stays warm.
     teal:         "#6FC5B4",
     aqua:         "#8FD4C4",
     burnt:        "#E37C3C",
@@ -244,48 +260,53 @@ const night = {
     burntTint:    "rgba(227,124,60,0.18)",
     mustardTint:  "rgba(227,180,78,0.20)",
     brownTint:    "rgba(200,166,127,0.16)",
-    // Glass — cool translucent slate. No warm cast. Border is
-    // neutral white so the pane catches moonlight, not lamplight.
-    glassFill:      "rgba(38,44,54,0.58)",
-    glassFillLite:  "rgba(38,44,54,0.38)",
-    glassFillHeavy: "rgba(38,44,54,0.72)",
-    glassBorder:    "rgba(255,255,255,0.22)",
-    hairline:       "rgba(238,239,243,0.12)",
+    // Glass — warm amber translucent, the "indoor lamp" layer
+    // sitting on top of the cool sky. Border is lamp-cream so
+    // each pane catches warm light along its edge while the
+    // backdrop behind it reads cool.
+    glassFill:      "rgba(70,50,28,0.62)",
+    glassFillLite:  "rgba(70,50,28,0.42)",
+    glassFillHeavy: "rgba(70,50,28,0.76)",
+    glassBorder:    "rgba(255,230,198,0.28)",
+    hairline:       "rgba(242,226,204,0.12)",
     ctaTop:    "#E17736",
     ctaBottom: "#B55620",
     ctaText:   "#FFF4E4",
   },
   shadow: {
-    // Neutral-white top inset instead of warm cream — moon above,
-    // not lamp.
+    // Warm cream top-inset — light comes from the lamp above the
+    // pane, not from a cold moon. Drop layers stay deep-dark
+    // because the room around the panel IS genuinely dark.
     glass: shadowStack({
       drop:         "0 24px 48px rgba(0,0,0,0.48)",
       drop2:        "0 6px 14px rgba(0,0,0,0.30)",
-      topInset:     "rgba(255,255,255,0.18)",
+      topInset:     "rgba(255,230,198,0.22)",
       bottomInset:  "rgba(0,0,0,0.28)",
     }),
     soft: "0 8px 20px rgba(0,0,0,0.30), 0 1px 2px rgba(0,0,0,0.20)",
     lift: shadowStack({
       drop:         "0 30px 60px rgba(0,0,0,0.55)",
       drop2:        "0 10px 20px rgba(0,0,0,0.32)",
-      topInset:     "rgba(255,255,255,0.22)",
+      topInset:     "rgba(255,230,198,0.26)",
       bottomInset:  "rgba(0,0,0,0.28)",
     }),
     cta:  "0 12px 26px rgba(181,86,32,0.50), 0 2px 6px rgba(181,86,32,0.34)",
     inputInset:
       "inset 0 1px 2px rgba(0,0,0,0.35)," +
-      "inset 0 -1px 0 rgba(255,255,255,0.10)," +
+      "inset 0 -1px 0 rgba(255,230,198,0.12)," +
       "0 2px 6px rgba(0,0,0,0.20)",
   },
   backdrop: {
-    // Cool slate gradient — genuinely dark, not warm-dark.
-    // One soft teal blob for life + a gentle cool-grey blob so
-    // the glass still has something to bend. Zero burnt/mustard.
-    base: "linear-gradient(180deg, #1A1C22 0%, #121418 100%)",
+    // Cool blue-slate sky — this is the LAYER BEHIND the glass,
+    // not the text surface. The teal + cool-violet blobs keep
+    // the sky feeling like a real night sky rather than a flat
+    // black. Third blob is a faint white wash so the moon has
+    // something to bloom into.
+    base: "linear-gradient(180deg, #141820 0%, #0C0F15 100%)",
     blobs: [
       { bg: "rgba(111,197,180,0.14)", top: "-12%", left: "-12%", size: 500 },
-      { bg: "rgba(140,160,200,0.10)", top: "55%",  left: "62%",  size: 440 },
-      { bg: "rgba(255,255,255,0.04)", top: "70%",  left: "-8%",  size: 320 },
+      { bg: "rgba(120,140,200,0.12)", top: "55%",  left: "62%",  size: 440 },
+      { bg: "rgba(255,255,255,0.05)", top: "70%",  left: "-8%",  size: 320 },
     ],
   },
 };
@@ -295,14 +316,56 @@ const night = {
 export const THEMES = { morning, day, evening, night };
 export const THEME_ORDER = ["morning", "day", "evening", "night"];
 
-// Hour ranges (24h) — keep them conservative so a user opening
-// the app at 5:30am feels "morning" and not still "night".
+// Hour-ordered list used by the continuous resolver. Night wraps
+// across midnight, so we list it twice (h=2 and h=26) to make the
+// "which two anchors bracket this hour?" lookup cheap.
+const ANCHORS = [
+  { id: "night",   hour: night.hour  - 24 }, // -22 (previous day's night)
+  { id: "morning", hour: morning.hour },     // 7.5
+  { id: "day",     hour: day.hour     },     // 14
+  { id: "evening", hour: evening.hour },     // 19
+  { id: "night",   hour: night.hour  + 24 }, // 26 (next day's night)
+];
+
+// Snap-to-name helper kept for back-compat with any caller that
+// still wants the discrete state ("morning"/"day"/etc). Internally
+// we now operate on fractional hours via resolveThemeAtHour.
 export function getTimeTheme(hour) {
-  const h = typeof hour === "number" ? hour : new Date().getHours();
+  const h = typeof hour === "number" ? hour : currentHour();
   if (h >= 5  && h < 10) return "morning";
   if (h >= 10 && h < 17) return "day";
   if (h >= 17 && h < 21) return "evening";
   return "night";
+}
+
+// Fractional wall-clock hour, e.g. 13.25 for 1:15pm. Caller can
+// pass an explicit Date or omit to get "now".
+export function currentHour(now) {
+  const d = now || new Date();
+  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
+}
+
+// Return the theme palette at a specific fractional hour as a
+// linear blend of the two surrounding anchors. 6:45am sits close
+// to morning (anchor 7.5) but still carries trace night, while
+// 4:30am is ~60% night / 40% morning — visibly "pre-dawn."
+export function resolveThemeAtHour(hour, blenderFn) {
+  const h = ((hour % 24) + 24) % 24;
+  // Find the anchor pair that brackets h. Because ANCHORS includes
+  // night at both -22 and 26, any hour 0..24 falls between two
+  // adjacent entries.
+  let prev = ANCHORS[0];
+  let next = ANCHORS[ANCHORS.length - 1];
+  for (let i = 0; i < ANCHORS.length - 1; i += 1) {
+    if (h >= ANCHORS[i].hour && h < ANCHORS[i + 1].hour) {
+      prev = ANCHORS[i];
+      next = ANCHORS[i + 1];
+      break;
+    }
+  }
+  const span = next.hour - prev.hour;
+  const t = span > 0 ? (h - prev.hour) / span : 0;
+  return blenderFn(THEMES[prev.id], THEMES[next.id], t);
 }
 
 // Derived helpers — glassPanel / ctaButton / ghostButton recipes

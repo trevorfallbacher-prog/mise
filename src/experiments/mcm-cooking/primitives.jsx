@@ -63,8 +63,8 @@ export function WarmBackdrop() {
         />
       ))}
 
-      {/* SUN — rests top-right during the day, sets down-right at
-          night (off-screen below the horizon). */}
+      {/* SUN — the big warm starburst in the top-right during the
+          day. Sets down-and-right as night rises. */}
       <motion.div
         initial={false}
         animate={{
@@ -75,9 +75,12 @@ export function WarmBackdrop() {
           opacity: isNight ? 0    : 1,
         }}
         transition={orbit}
-        style={{ position: "absolute", top: 20, right: 4 }}
+        style={{ position: "absolute", top: 40, right: -30 }}
       >
-        <Sun size={160} theme={theme} />
+        <Starburst
+          size={160}
+          color={withAlpha(theme.color.warmBrown, 0.10)}
+        />
       </motion.div>
 
       {/* MOON — rests top-right at night, pre-rise above-and-left
@@ -130,71 +133,6 @@ export function WarmBackdrop() {
         <TwinkleStar size={10} style={{ position: "absolute", top: 400, right: 40 }} />
       </motion.div>
     </div>
-  );
-}
-
-// --- Sun (MCM atomic-age starburst) -------------------------------------
-
-// A dedicated sun for the backdrop — closer to a true MCM
-// atomic-age starburst than the generic `Starburst` utility. 16
-// alternating long/short rays with rounded caps, a thin concentric
-// ring, and a filled central disk. Warmer tones at the tips fade
-// to a brighter core so it reads as "sun catching paper."
-export function Sun({ size = 160, theme, style }) {
-  const c = theme ? theme.color.warmBrown : "#7A4E2D";
-  const hot = theme ? theme.color.mustard : "#D4A637";
-  const cx = 50;
-
-  const longRays  = Array.from({ length: 8 });
-  const shortRays = Array.from({ length: 8 });
-
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 100 100"
-      style={style}
-      aria-hidden
-    >
-      {/* Long rays — cardinal + diagonal */}
-      {longRays.map((_, i) => {
-        const angle = (i / 8) * 360;
-        return (
-          <rect
-            key={`L${i}`}
-            x={cx - 1.1} y={2}
-            width={2.2} height={20}
-            rx={1.1}
-            fill={withAlpha(c, 0.26)}
-            transform={`rotate(${angle} ${cx} ${cx})`}
-          />
-        );
-      })}
-      {/* Short rays — offset 22.5° between long rays */}
-      {shortRays.map((_, i) => {
-        const angle = (i / 8) * 360 + 22.5;
-        return (
-          <rect
-            key={`S${i}`}
-            x={cx - 0.8} y={11}
-            width={1.6} height={11}
-            rx={0.8}
-            fill={withAlpha(c, 0.20)}
-            transform={`rotate(${angle} ${cx} ${cx})`}
-          />
-        );
-      })}
-      {/* Thin outer ring */}
-      <circle
-        cx={cx} cy={cx} r={19}
-        fill="none"
-        stroke={withAlpha(c, 0.30)}
-        strokeWidth={0.7}
-      />
-      {/* Central disk — mustard warm so it reads as sunlight */}
-      <circle cx={cx} cy={cx} r={13} fill={withAlpha(hot, 0.28)} />
-      <circle cx={cx} cy={cx} r={8}  fill={withAlpha(hot, 0.45)} />
-    </svg>
   );
 }
 

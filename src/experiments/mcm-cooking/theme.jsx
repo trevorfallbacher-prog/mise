@@ -1,64 +1,70 @@
 // Theme provider for the MCM cooking-app experiment.
 //
-// Wraps the showcase tree. Resolves the active theme either from
-// the current hour (auto) or a manual override for demo/testing.
-// Primitives consume `useTheme()` to read theme-derived colors,
-// shadows, and the composed glass/CTA/ghost recipes — nothing
-// hardcoded in screens.
+// The provider resolves the active palette by CONTINUOUSLY
+// interpolating between the four hour-anchored themes in
+// themes.js. A fractional hour (e.g. 6.75 for 6:45am) drives the
+// blend, so every minute of the day produces a slightly different
+// rendered theme — 6:45 doesn't look identical to 4:30.
 //
-// Smooth cross-fade between themes is handled in one place: we
-// paint `transition: background-color/color/border-color/box-shadow
-// 600ms ease` on the root wrapper, so when React re-renders
-// primitives with new inline styles after a theme swap, the
-// browser interpolates between the old and new computed values.
-// No per-element framer-motion animation needed.
+// Modes:
+//   - "auto"   → follow the wall clock, re-resolve every minute
+//   - "hour"   → override to a specific fractional hour (slider)
+//
+// Primitives consume `useTheme()` to read the fully-blended
+// { color, shadow, glassPanel, ctaButton, ghostButton, backdrop }
+// — none of the interpolation logic leaks into screens.
+//
+// Smooth cross-fades between successive blended values still
+// flow through the shared THEME_TRANSITION CSS rule. With
+// continuous blending the transition mostly smooths out the
+// minute-tick updates on auto mode; during slider drag the
+// per-frame re-renders happen faster than the transition and
+// the browser just keeps up.
 
 import {
   createContext, useContext, useEffect, useMemo, useState,
 } from "react";
 import {
-  THEMES, THEME_ORDER, getTimeTheme,
+  THEMES, THEME_ORDER, currentHour, resolveThemeAtHour,
   glassPanelFor, ctaButtonFor, ghostButtonFor,
 } from "./themes";
+import { blendThemes } from "./blend";
 
 const ThemeCtx = createContext(null);
 
-export function ThemeProvider({
-  children,
-  // One of "auto" | "morning" | "day" | "evening" | "night".
-  // Default "auto" follows the wall clock; a specific id pins
-  // the theme for the life of the provider (or until setThemeId
-  // is called from a child via useThemeControl).
-  initial = "auto",
-}) {
-  const [themeId, setThemeId] = useState(initial);
-  // When auto, re-resolve the active theme every five minutes so
-  // a long session naturally rolls morning → day → evening → night
-  // without a reload. 5min is coarse enough that it never fires
-  // mid-interaction but fine enough to catch a boundary crossing.
-  // We store the "now" timestamp in state so the interval forces
-  // a re-render + fresh getTimeTheme() call.
-  const [, setNow] = useState(() => Date.now());
+export function ThemeProvider({ children }) {
+  // override: null → auto (wall clock); number → pinned fractional hour
+  const [override, setOverride] = useState(null);
+  // Tick state used to force a re-resolve on auto mode. Value is
+  // irrelevant — setting it triggers the render that recomputes
+  // the hour from the fresh Date.
+  const [, setTick] = useState(0);
+
   useEffect(() => {
-    if (themeId !== "auto") return;
-    const id = setInterval(() => setNow(Date.now()), 5 * 60 * 1000);
+    if (override !== null) return;
+    // Re-resolve once a minute so the auto theme drifts with the
+    // clock. One minute is fine-grained enough for the blend to
+    // feel alive without wasting cycles.
+    const id = setInterval(() => setTick((t) => t + 1), 60 * 1000);
     return () => clearInterval(id);
-  }, [themeId]);
+  }, [override]);
 
-  const activeId = themeId === "auto" ? getTimeTheme() : themeId;
-  const theme = THEMES[activeId] || THEMES.day;
+  const hour = override == null ? currentHour() : override;
+  const theme = useMemo(
+    () => resolveThemeAtHour(hour, blendThemes),
+    [hour]
+  );
 
-  // Memoize derived recipes so primitive style objects stay stable
-  // between renders when the theme hasn't changed.
   const value = useMemo(() => ({
     theme,
-    activeId,
-    themeId,
-    setThemeId,
+    hour,
+    isAuto:     override == null,
+    setHour:    (h) => setOverride(h),
+    clearHour:  () => setOverride(null),
     glassPanel: glassPanelFor(theme),
     ctaButton:  ctaButtonFor(theme),
     ghostButton: ghostButtonFor(theme),
-  }), [theme, activeId, themeId]);
+  }), [theme, hour, override]);
 
   return (
     <ThemeCtx.Provider value={value}>
@@ -71,10 +77,6 @@ export function ThemeProvider({
 
 // --- Cross-fade wrapper -------------------------------------------------
 
-// Paints the background fill on a full-height root. Any descendant
-// element that declares `transition: <prop> 600ms` (see the shared
-// style object below) animates between themes automatically when
-// React re-renders with new inline values.
 function ThemeTransitionShell({ theme, children }) {
   return (
     <div
@@ -82,8 +84,7 @@ function ThemeTransitionShell({ theme, children }) {
         minHeight: "100vh",
         background: theme.backdrop.base,
         color: theme.color.ink,
-        transition:
-          "background 700ms ease, color 700ms ease",
+        transition: "background 700ms ease, color 700ms ease",
       }}
     >
       {children}
@@ -96,14 +97,16 @@ function ThemeTransitionShell({ theme, children }) {
 export function useTheme() {
   const ctx = useContext(ThemeCtx);
   if (!ctx) {
-    // Allow primitives to be used outside the provider (e.g. in
-    // isolated design tests) by falling back to the day theme.
+    // Fallback for isolated renders — resolve at the wall clock
+    // using the day theme as a safe anchor pair. Primitives still
+    // render something sensible even without a provider.
     const fallback = THEMES.day;
     return {
       theme: fallback,
-      activeId: "day",
-      themeId: "day",
-      setThemeId: () => {},
+      hour: currentHour(),
+      isAuto: true,
+      setHour: () => {},
+      clearHour: () => {},
       glassPanel: glassPanelFor(fallback),
       ctaButton:  ctaButtonFor(fallback),
       ghostButton: ghostButtonFor(fallback),
@@ -114,10 +117,11 @@ export function useTheme() {
 
 // --- Shared transition rule ---------------------------------------------
 
-// Every primitive that paints theme-dependent color props spreads
-// this into its inline style so the browser knows which props to
-// animate when React swaps the computed values. Keep in one place
-// so the transition duration/curve stays uniform.
+// Spread into every primitive that paints theme-dependent color
+// props. With continuous blending the rule mostly smooths between
+// auto-mode minute ticks; during slider scrub React re-renders
+// faster than the transition, so the browser interpolates each
+// successive value naturally.
 export const THEME_TRANSITION = {
   transition:
     "background 700ms ease," +
@@ -127,6 +131,6 @@ export const THEME_TRANSITION = {
     "box-shadow 700ms ease",
 };
 
-// --- Re-exports for ergonomics -----------------------------------------
+// --- Re-exports --------------------------------------------------------
 
-export { THEMES, THEME_ORDER, getTimeTheme };
+export { THEMES, THEME_ORDER, currentHour, resolveThemeAtHour };
