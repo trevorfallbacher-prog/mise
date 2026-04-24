@@ -1503,7 +1503,28 @@ function PantryCard({ item, onPick }) {
             {item.emoji}
           </div>
         )}
-        <StatusDot tone={warn ? "warn" : "ok"} size={warn ? 10 : 8} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* "New" chip for items added in the last 24 hours —
+              signals a fresh grocery run at a glance. Small DM
+              Mono pill tinted teal (the reserved "hello, this
+              is new" accent in the palette). Hidden on items
+              without a purchasedAt stamp (manual adds, demo
+              rows) so the signal stays meaningful. */}
+          {isRecent(item) && (
+            <span style={{
+              fontFamily: font.mono, fontSize: 8, fontWeight: 600,
+              letterSpacing: "0.10em", textTransform: "uppercase",
+              padding: "2px 6px",
+              borderRadius: 999,
+              background: withAlpha(theme.color.teal, 0.18),
+              color: theme.color.teal,
+              lineHeight: 1,
+            }}>
+              new
+            </span>
+          )}
+          <StatusDot tone={warn ? "warn" : "ok"} size={warn ? 10 : 8} />
+        </div>
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1581,6 +1602,19 @@ function formatDaysChip(days) {
   if (days < 0) return "gone";
   if (days === 0) return "today";
   return `${days}d`;
+}
+
+// True when the item was purchased in the last 24 hours — used
+// to flag rows with a small "NEW" chip on the card so recent
+// grocery runs are visible at a glance. Demo rows and manual
+// adds without a purchasedAt stamp return false (the chip
+// wouldn't be meaningful for them).
+function isRecent(item) {
+  const p = item?.purchasedAt;
+  if (!p) return false;
+  const d = p instanceof Date ? p : new Date(p);
+  if (Number.isNaN(d.getTime())) return false;
+  return (Date.now() - d.getTime()) < 24 * 3600 * 1000;
 }
 
 // Urgency-tiered color for the days chip. Thresholds match the
