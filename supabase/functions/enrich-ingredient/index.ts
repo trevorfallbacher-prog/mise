@@ -53,10 +53,17 @@ const JSON_HEADERS = { ...CORS_HEADERS, "Content-Type": "application/json" };
 
 // Haiku 4.5 — fast (~2-5s), cheap, plenty smart for structured JSON synthesis.
 const MODEL = "claude-haiku-4-5-20251001";
+// v4 — adds preferredUnit / measuredIn / count_weight_g so synthetic
+// canonicals carry their cook-display + pantry-display intent the same
+// way bundled ones do. Without these fields the client resolver falls
+// to the ladder-pick default, which on Metric is always "g"/"ml" — so
+// volume-natural items (pickles, relishes, sauces) showed in grams in
+// recipes regardless of how the user shopped them.
+//
 // v3 — nutrition.per is enum-constrained, density moved to per-unit
 // gram fields so the client-side resolver can build a proper unit
 // ladder. See buildPrompt() for the shape contract.
-const PROMPT_VERSION = "v3";
+const PROMPT_VERSION = "v4";
 
 // Slugify a free-text name into a stable per-user key. "Nori from the
 // Japanese store" → "nori_from_the_japanese_store". Collisions within
@@ -191,6 +198,56 @@ omitted when not applicable. Every other field is REQUIRED.
     "g_per_tbsp": number,                // OPTIONAL — e.g. 15 for oils, 20 for honey
     "g_per_cup": number                  // OPTIONAL — e.g. 120 for flour, 240 for milk
   },
+
+  // ── Display units ─────────────────────────────────────────────
+  // REQUIRED. Two parallel { us, metric } pairs that drive what unit
+  // the ingredient renders in across the app. Different surfaces, so
+  // they're authored separately:
+  //
+  //   preferredUnit  — recipes / cook mode. Pick the unit a cook
+  //                    actually uses while measuring during cooking.
+  //                    Butter recipes call for "tbsp"; giardiniera
+  //                    recipes call for "cup"; stocks call for "cup";
+  //                    spices call for "tsp"; whole produce calls for
+  //                    "count". For Metric, use the SI-equivalent of
+  //                    that intent — "g" for solids, "ml" for liquids
+  //                    and brined/jarred volume-natural items, "count"
+  //                    for whole-piece produce.
+  //
+  //   measuredIn     — pantry / shopping. The unit the package is
+  //                    SOLD in at the store. Butter is "oz" (sold
+  //                    by the pound); flour is "lb"; milk is "gallon"
+  //                    (US) or "ml" (Metric); a jar of pickles is
+  //                    "fl_oz" or "oz" net weight. When the cook
+  //                    unit and the buy unit are the same (rice =
+  //                    cup both ways), set both to the same value.
+  //
+  // The cook-mode resolver reads preferredUnit FIRST and never falls
+  // through to measuredIn — these axes are independent. Always emit
+  // BOTH us and metric for both fields. Use lowercase unit ids that
+  // match standard aliases (tsp, tbsp, cup, fl_oz, oz, lb, g, kg,
+  // ml, l, count, pack, jar, bottle, can, box, slice, clove).
+  "preferredUnit": {
+    "us": "tsp" | "tbsp" | "cup" | "fl_oz" | "oz" | "lb" | "count" | "slice" | "clove",
+    "metric": "g" | "kg" | "ml" | "l" | "count"
+  },
+  "measuredIn": {
+    "us": "tsp" | "tbsp" | "cup" | "fl_oz" | "oz" | "lb" | "count" | "pack" | "jar" | "bottle" | "can" | "box",
+    "metric": "g" | "kg" | "ml" | "l" | "count" | "pack" | "jar" | "bottle" | "can"
+  },
+
+  // ── Count weight ─────────────────────────────────────────────
+  // REQUIRED only when the ingredient is naturally counted as one
+  // piece — eggs, apples, lemons, cloves of garlic, slices of bacon,
+  // a chicken breast, a tortilla. Grams of ONE typical piece. Lets
+  // the resolver bridge between count and mass: "3 eggs" → 150g for
+  // a recipe scaled to grams, "200g chicken" → 1 breast for pantry
+  // pairing.
+  //
+  // OMIT THE FIELD entirely when the ingredient has no count axis
+  // (oils, stocks, flour, sauces — anything sold and used by volume
+  // or weight, never as discrete pieces).
+  "count_weight_g": number,              // OPTIONAL (REQUIRED iff countable)
 
   "package": {                           // OPTIONAL — typical grocery packaging
     "typicalSizes": ["16 oz", "1 lb bag", "1 gallon jug"],
@@ -616,6 +673,45 @@ Deno.serve(async (req) => {
       if (Object.keys(map).length === 0) {
         delete parsed[field];
       }
+    }
+  }
+
+  // ── preferredUnit / measuredIn shape check (v4) ──
+  // Both fields must declare BOTH systems with non-empty string values
+  // when present. A partial { us: "tbsp" } block (no metric) silently
+  // falls through to the ladder pick on the missing side, which on
+  // Metric is "g"/"ml" — the exact bug v4 was supposed to close.
+  // Drop the malformed field outright; syntheticFromInfo will derive
+  // a sensible default from the density block instead. Loose-typed
+  // string check: any unit token survives, alias normalization happens
+  // client-side before the resolver consumes it.
+  const isValidUnitPair = (block: unknown): boolean => {
+    if (!block || typeof block !== "object") return false;
+    const b = block as Record<string, unknown>;
+    return typeof b.us === "string" && b.us.trim().length > 0 &&
+           typeof b.metric === "string" && b.metric.trim().length > 0;
+  };
+  for (const field of ["preferredUnit", "measuredIn"] as const) {
+    if (parsed && typeof parsed === "object" && field in parsed) {
+      if (!isValidUnitPair(parsed[field])) {
+        console.warn(
+          `[enrich-ingredient] dropping malformed ${field} for ${slug}: ${JSON.stringify(parsed[field])}`,
+        );
+        delete parsed[field];
+      }
+    }
+  }
+  // count_weight_g — must be a positive finite number when present.
+  // Anything else (string, NaN, zero, negative) gets dropped so the
+  // resolver falls back to COUNT_WEIGHTS_G / CUT_WEIGHTS_G defaults
+  // instead of silently division-by-zeroing the count bridge.
+  if (parsed && typeof parsed === "object" && "count_weight_g" in parsed) {
+    const v = Number((parsed as Record<string, unknown>).count_weight_g);
+    if (!Number.isFinite(v) || v <= 0) {
+      console.warn(
+        `[enrich-ingredient] dropping malformed count_weight_g for ${slug}: ${JSON.stringify((parsed as Record<string, unknown>).count_weight_g)}`,
+      );
+      delete (parsed as Record<string, unknown>).count_weight_g;
     }
   }
 

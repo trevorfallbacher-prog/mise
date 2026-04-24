@@ -167,12 +167,25 @@ export const INGREDIENTS = [
     nutrition: { per: "count", kcal: 72, protein_g: 6, fat_g: 5, carb_g: 0.4, sodium_mg: 71 },
   },
   {
+    // Stick equivalence (US supermarket butter — "quarter-pound stick"):
+    //   1 stick = 8 tbsp = 4 oz = 113.4 g = 1/2 cup
+    // The ladder factors are anchored on those exact identities so
+    // cross-unit conversions inside the ladder stay integer-clean —
+    // e.g. 2 sticks → 1 cup (not 0.997 cups). `aliases` attaches the
+    // plural form at the ladder entry instead of in the global alias
+    // map, since "stick" as a unit is butter-specific — parmesan
+    // sticks, cinnamon sticks, and celery sticks carry different
+    // weights and must not collide.
     id: "butter", name: "Unsalted Butter", emoji: "🧈", category: "dairy",
     units: [
-      { id: "stick", label: "sticks", toBase: 113 },
-      { id: "tbsp",  label: "tbsp",   toBase: 14.2 },
-      { id: "cup",   label: "cups",   toBase: 227 },
+      { id: "stick", label: "sticks", toBase: 113.4, aliases: ["sticks"] },
+      { id: "tbsp",  label: "tbsp",   toBase: 14.175 },
+      { id: "tsp",   label: "tsp",    toBase: 4.725 },  // 1 tbsp / 3
+      { id: "cup",   label: "cups",   toBase: 226.8 },
       { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "lb",    label: "lb",     toBase: 453.592 },
+      { id: "block", label: "blocks", toBase: 453.592, aliases: ["blocks"] },
+      { id: "tub",   label: "tubs",   toBase: 454,     aliases: ["tubs"] },
       { id: "g",     label: "g",      toBase: 1 },
     ],
     defaultUnit: "stick",
@@ -1414,6 +1427,45 @@ export const INGREDIENTS = [
     measuredIn:    { us: "lb",  metric: "kg" },
   },
   {
+    // Baking leavener — always in tsp in recipes, bought in small
+    // canisters measured in oz on the label. Density 0.90 g/ml → 1 tsp
+    // ≈ 4.4 g. Ladder covers the whole conversion surface (tsp/tbsp/
+    // cup/oz/g/can) so the UnitPicker can offer any of them regardless
+    // of which axis preferredUnit / measuredIn pick as the default.
+    id: "baking_powder", name: "Baking Powder", emoji: "🥄", category: "pantry",
+    units: [
+      { id: "tsp",  label: "tsp",  toBase: 4.4 },
+      { id: "tbsp", label: "tbsp", toBase: 13.2 },
+      { id: "cup",  label: "cups", toBase: 211 },
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "can",  label: "cans", toBase: 227, aliases: ["cans", "canister", "canisters"] }, // 8oz Clabber Girl can
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "can",
+    preferredUnit: { us: "tsp", metric: "g" },
+    measuredIn:    { us: "oz",  metric: "g" },
+    nutrition: { per: "100g", kcal: 53, protein_g: 0.1, fat_g: 0, carb_g: 28, sodium_mg: 10600 },
+  },
+  {
+    // Baking leavener — tsp in recipes, boxes/oz on the shelf.
+    // Density 1.10 g/ml → 1 tsp ≈ 5.5 g. Same ladder-coverage rule
+    // as baking_powder — every idiomatic unit appears so nothing
+    // vanishes from the UnitPicker regardless of system default.
+    id: "baking_soda", name: "Baking Soda", emoji: "🥄", category: "pantry",
+    units: [
+      { id: "tsp",  label: "tsp",  toBase: 5.5 },
+      { id: "tbsp", label: "tbsp", toBase: 16.5 },
+      { id: "cup",  label: "cups", toBase: 264 },
+      { id: "oz",   label: "oz",   toBase: 28.35 },
+      { id: "box",  label: "boxes",toBase: 454, aliases: ["boxes"] }, // 1 lb Arm & Hammer
+      { id: "g",    label: "g",    toBase: 1 },
+    ],
+    defaultUnit: "box",
+    preferredUnit: { us: "tsp", metric: "g" },
+    measuredIn:    { us: "oz",  metric: "g" },
+    nutrition: { per: "100g", kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, sodium_mg: 27360 },
+  },
+  {
     id: "olive_oil", name: "Olive Oil", emoji: "🫒", category: "pantry",
     units: [
       { id: "tbsp",  label: "tbsp",  toBase: 15 },
@@ -1712,6 +1764,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",     toBase: 1 },
     ],
     defaultUnit: "tbsp",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "fl_oz", metric: "ml" },
   },
   {
     id: "dijon", name: "Dijon Mustard", emoji: "🟡", category: "pantry",
@@ -1721,6 +1775,9 @@ export const INGREDIENTS = [
       { id: "jar",  label: "jars", toBase: 200 },
     ],
     defaultUnit: "tsp",
+    // Volume-anchored ladder (no g entry), so metric uses ml — same-
+    // family universal converts tsp↔ml without needing density.
+    preferredUnit: { us: "tsp", metric: "ml" },
   },
   {
     id: "tomato_paste", name: "Tomato Paste", emoji: "🍅", category: "pantry",
@@ -1730,6 +1787,11 @@ export const INGREDIENTS = [
       { id: "oz",   label: "oz",   toBase: 28.35 },
     ],
     defaultUnit: "tbsp",
+    // tbsp on this ladder is mass-keyed (toBase=15g), and oz is in the
+    // ladder, so the cook/pantry pair stays inside the ladder — no
+    // family bridge needed.
+    preferredUnit: { us: "tbsp", metric: "g" },
+    measuredIn:    { us: "oz",   metric: "g" },
   },
   {
     id: "chicken_stock", name: "Chicken Stock", emoji: "🍲", category: "pantry",
@@ -1739,6 +1801,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",     toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",   metric: "ml" },
+    measuredIn:    { us: "quart", metric: "ml" },
   },
   {
     id: "beef_stock", name: "Beef Stock", emoji: "🍲", category: "pantry",
@@ -1748,6 +1812,8 @@ export const INGREDIENTS = [
       { id: "ml",    label: "ml",     toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",   metric: "ml" },
+    measuredIn:    { us: "quart", metric: "ml" },
   },
   {
     id: "red_wine", name: "Red Wine", emoji: "🍷", category: "pantry",
@@ -1757,6 +1823,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",    metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
   },
   {
     id: "white_wine", name: "White Wine / Sherry", emoji: "🍷", category: "pantry",
@@ -1766,6 +1834,8 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup",    metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
   },
   // Rice ───────────────────
   {
@@ -2062,6 +2132,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 2.0, // ~$8–10 for the 28oz rooster bottle
   },
   {
@@ -2077,6 +2149,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "jar",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "jar",  metric: "ml" },
     estCentsPerBase: 5.5, // ~$8–10 for a 6 oz jar of the decent stuff
   },
   {
@@ -2088,6 +2162,31 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",  metric: "ml" },
+    measuredIn:    { us: "fl_oz", metric: "ml" },
+  },
+  {
+    // Pickled vegetable mix (cauliflower, peppers, carrots, celery in
+    // brine). Recipe-side: scooped by spoon/cup as a relish or
+    // antipasto component, measured by volume. Pantry-side: jars
+    // are labeled in fl oz / oz net weight. Brine + veg mix is
+    // close to water density so the volume↔mass bridge is honest;
+    // declared explicitly so convertStrict can take the density-
+    // bridge path between cup (cook) and oz (pantry).
+    id: "giardiniera", name: "Giardiniera", emoji: "🥒", category: "pantry",
+    units: [
+      { id: "tbsp",   label: "tbsp",    toBase: 15 },
+      { id: "cup",    label: "cups",    toBase: 240 },
+      { id: "jar",    label: "jars",    toBase: 473 }, // 16 fl oz standard
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+      { id: "oz",     label: "oz",      toBase: 28.35 },
+      { id: "g",      label: "g",       toBase: 1 },
+      { id: "ml",     label: "ml",      toBase: 1 },
+    ],
+    defaultUnit: "jar",
+    density_g_per_ml: 1.0,  // brine-soaked vegetables ≈ water density
+    preferredUnit: { us: "cup", metric: "ml" },
+    measuredIn:    { us: "oz",  metric: "g"  },
   },
   {
     id: "tortillas", name: "Tortillas", emoji: "🌮", category: "pantry",
@@ -2096,6 +2195,8 @@ export const INGREDIENTS = [
       { id: "pack",  label: "packs",     toBase: 10 },
     ],
     defaultUnit: "pack",
+    preferredUnit: { us: "count", metric: "count" },
+    measuredIn:    { us: "pack",  metric: "pack"  },
   },
   // ── condiments batch 2: Asian staples ──────────────────────────────
   {
@@ -2107,6 +2208,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 1.0, // ~$6–10 for a 24oz Red Boat
   },
   {
@@ -2118,6 +2221,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 5.7 },
     ],
     defaultUnit: "tub",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "tub",  metric: "ml" },
     estCentsPerBase: 1.6, // ~$8–10 for the Hikari tub
   },
   {
@@ -2128,6 +2233,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 6 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
     estCentsPerBase: 0.7, // ~$4–5 LKK bottle
   },
   {
@@ -2139,6 +2246,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 1.8, // ~$5–8 depending on real-hon-mirin vs. aji-mirin
   },
   {
@@ -2149,6 +2258,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 6 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
     estCentsPerBase: 0.9, // ~$5 LKK Premium
   },
   // ── condiments batch 1: American staples ────────────────────────────
@@ -2162,6 +2273,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "jar",
+    preferredUnit: { us: "tbsp", metric: "ml" },
+    measuredIn:    { us: "jar",  metric: "ml" },
     estCentsPerBase: 0.8, // ~$6–8 for a 30oz jar
   },
   {
@@ -2173,6 +2286,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp",   metric: "ml" },
+    measuredIn:    { us: "fl_oz", metric: "ml" },
     estCentsPerBase: 0.6, // ~$3–4 for a 20oz Heinz
   },
   {
@@ -2183,6 +2298,8 @@ export const INGREDIENTS = [
       { id: "tsp",    label: "tsp",     toBase: 5 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "bottle", metric: "ml" },
     estCentsPerBase: 0.5, // ~$2–3 for a standard yellow mustard
   },
   {
@@ -2194,6 +2311,8 @@ export const INGREDIENTS = [
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tsp",    metric: "ml" },
+    measuredIn:    { us: "fl_oz",  metric: "ml" },
     estCentsPerBase: 2.5, // ~$4–5 for a 5oz bottle; varies wildly by brand
   },
   {
@@ -2385,6 +2504,12 @@ export const INGREDIENTS = [
           { id: "g",    label: "g",    toBase: 1 },
         ],
         defaultUnit: "jar",
+        // Recipes ALWAYS measure spices by spoon — Metric users want
+        // grams, US users want teaspoons. Pantry/shopping is the jar
+        // (US) or weight (metric). Both pairs stay inside this mass-
+        // anchored ladder so no density bridge is needed.
+        preferredUnit: { us: "tsp", metric: "g" },
+        measuredIn:    { us: "jar", metric: "g" },
         nutrition: SPICE_NUTRITION[id] ?? SPICE_DEFAULT_NUTRITION,
       };
     };
@@ -2694,7 +2819,25 @@ function syntheticFromInfo(slug, info) {
   // writes this unit.
   units.push({ id: "unit", label: "unit", toBase: 1 });
 
-  return {
+  // ── preferredUnit / measuredIn / count_weight_g ──
+  // The AI enrichment prompt (v4+) asks Claude to populate these
+  // alongside density. Carry them through to the synthetic canonical
+  // so the cook-display resolver picks them up the same way it does
+  // for bundled entries — without this, every synthetic falls through
+  // to the ladder pick, which on Metric is always "g" (the bug
+  // giardiniera surfaced).
+  //
+  // Validation: both halves of the {us, metric} pair must be non-empty
+  // strings. Anything else is ignored — the resolver's ladder/registry
+  // fallback covers that case. count_weight_g must be a positive
+  // finite number; otherwise omit (the resolver consults
+  // COUNT_WEIGHTS_G / CUT_WEIGHTS_G / row override as a chain).
+  const validUnitPair = (pair) =>
+    pair && typeof pair === "object" &&
+    typeof pair.us === "string" && pair.us.length > 0 &&
+    typeof pair.metric === "string" && pair.metric.length > 0;
+
+  const out = {
     id: slug,
     name,
     shortName: null,
@@ -2704,6 +2847,17 @@ function syntheticFromInfo(slug, info) {
     units,
     defaultUnit: gPerTsp != null ? "tsp" : "oz",
   };
+  if (validUnitPair(info?.preferredUnit)) {
+    out.preferredUnit = { us: info.preferredUnit.us, metric: info.preferredUnit.metric };
+  }
+  if (validUnitPair(info?.measuredIn)) {
+    out.measuredIn = { us: info.measuredIn.us, metric: info.measuredIn.metric };
+  }
+  const cwg = Number(info?.count_weight_g);
+  if (Number.isFinite(cwg) && cwg > 0) {
+    out.count_weight_g = cwg;
+  }
+  return out;
 }
 
 // Called by IngredientInfoProvider whenever ingredient_info's dbMap

@@ -63,6 +63,10 @@ function ok(value, path) {
 //      garlic). These are valid units but ladder-local; the
 //      registry alias map intentionally excludes them because they
 //      have no universal conversion factor.
+//   3. Per-entry aliases[] — ladder entries may carry an
+//      `aliases: ["stick", "sticks"]` list so plural / variant spellings
+//      resolve to the same entry without polluting the universal
+//      alias map. Checked against the raw-lowercased query last.
 function findLadderEntry(ingredient, unitId) {
   if (!ingredient?.units || unitId == null) return null;
   const raw = String(unitId).trim().toLowerCase();
@@ -72,6 +76,11 @@ function findLadderEntry(ingredient, unitId) {
     const idRaw = String(u.id).trim().toLowerCase();
     if (want && normalizeUnitId(idRaw) === want) return u;
     if (idRaw === raw) return u;
+    if (Array.isArray(u.aliases)) {
+      for (const a of u.aliases) {
+        if (String(a).trim().toLowerCase() === raw) return u;
+      }
+    }
   }
   return null;
 }

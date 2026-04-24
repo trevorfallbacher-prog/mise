@@ -154,7 +154,17 @@ export function applyPreferredUnit(amountString, ing, context = DISPLAY_CONTEXT.
   const preferredNorm = normalizeUnitId(preferred) || preferred;
   if (parsedNorm === preferredNorm) return amountString;
 
-  const canonical = ing?.ingredientId ? findIngredient(ing.ingredientId) : null;
+  // Resolve the canonical the SAME way getPreferredUnit did above —
+  // ingredientId first, then the normalized-name key. Without this
+  // second leg, a recipe row carrying { item: "butter", amount: "4 oz" }
+  // (no ingredientId) would resolve target="tbsp" via the resolver but
+  // then fall into convertUniversal, which can't bridge oz→tbsp (cross-
+  // family) and silently returns the original "4 oz". That's the exact
+  // "resolver picked a unit but the render used the raw recipe unit"
+  // inconsistency this function exists to close.
+  const canonical =
+    (ing?.ingredientId ? findIngredient(ing.ingredientId) : null) ||
+    (key ? findIngredient(key) : null);
   let res;
   if (canonical) {
     res = convert({ amount: parsed.amount, unit: parsedNorm }, preferredNorm, canonical);
