@@ -1302,8 +1302,19 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
                   position: "absolute",
                   inset: 0,
                   borderRadius: 999,
-                  background: theme.color.glassFillHeavy,
-                  border: `1px solid ${theme.color.glassBorder}`,
+                  // Active pill is tinted with the location's own
+                  // swatch hue rather than pure glassFillHeavy.
+                  // Fixes the "invisible active pill" problem at
+                  // night — both glassFillHeavy and the dock bg
+                  // were amber-translucent, so the active
+                  // indicator had zero contrast. Fridge active
+                  // now reads cool-blue-ish, Pantry warm-orange-
+                  // ish, Freezer icy-pale-ish regardless of
+                  // time-of-day, while staying subtle enough
+                  // (15% alpha + glassFillHeavy mix) that it
+                  // reads as "tint" not "Fill."
+                  background: `linear-gradient(${withAlpha(dotColor, 0.18)}, ${withAlpha(dotColor, 0.18)}), ${theme.color.glassFillHeavy}`,
+                  border: `1px solid ${withAlpha(dotColor, 0.35)}`,
                   boxShadow: `inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 8px rgba(30,30,30,0.10)`,
                   zIndex: 0,
                 }}
