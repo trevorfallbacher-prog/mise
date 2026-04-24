@@ -101,8 +101,13 @@ export function blendCssString(a, b, t) {
 // to the closer of the two so `theme.id === "night"` still works
 // as a boolean for discrete decisions (sun/moon swap, etc).
 export function blendThemes(a, b, t) {
-  if (t <= 0) return a;
-  if (t >= 1) return b;
+  // Short-circuit when both anchors are the same theme — the
+  // night plateau between its start (21h) and end (5h) anchors
+  // hits this path for every hour from dusk to dawn, so avoiding
+  // the property walk there matters.
+  if (a === b)   return a;
+  if (t <= 0)    return a;
+  if (t >= 1)    return b;
 
   const blendedColor  = {};
   const blendedShadow = {};

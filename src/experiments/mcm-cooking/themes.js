@@ -316,15 +316,23 @@ const night = {
 export const THEMES = { morning, day, evening, night };
 export const THEME_ORDER = ["morning", "day", "evening", "night"];
 
-// Hour-ordered list used by the continuous resolver. Night wraps
-// across midnight, so we list it twice (h=2 and h=26) to make the
-// "which two anchors bracket this hour?" lookup cheap.
+// Hour-ordered anchor list used by the continuous resolver. Night
+// gets a START anchor (21, when night fully sets in after dusk) and
+// an END anchor (5, when dawn blend begins) — both are the same
+// theme, so any hour between them blends night↔night and renders as
+// pure night. That prevents the ugly halfway muddy-olive you'd get
+// from naively blending evening's peach into night's slate across
+// an 8-hour span. Only dusk (19→21) and dawn (5→7.5) actually blend.
+// Wrap-around duplicates keep the bracket lookup simple for hours
+// 0–24 without modulo math in the hot path.
 const ANCHORS = [
-  { id: "night",   hour: night.hour  - 24 }, // -22 (previous day's night)
-  { id: "morning", hour: morning.hour },     // 7.5
-  { id: "day",     hour: day.hour     },     // 14
-  { id: "evening", hour: evening.hour },     // 19
-  { id: "night",   hour: night.hour  + 24 }, // 26 (next day's night)
+  { id: "night",   hour: -3  },   // wrap of 21 into previous day
+  { id: "night",   hour:  5  },   // night ends → dawn begins
+  { id: "morning", hour: morning.hour }, // 7.5
+  { id: "day",     hour: day.hour     }, // 14
+  { id: "evening", hour: evening.hour }, // 19
+  { id: "night",   hour: 21 },    // dusk ends → night begins
+  { id: "night",   hour: 29 },    // wrap of 5 into next day
 ];
 
 // Snap-to-name helper kept for back-compat with any caller that

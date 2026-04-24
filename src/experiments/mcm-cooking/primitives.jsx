@@ -17,22 +17,31 @@ import { useTheme, THEME_TRANSITION } from "./theme";
 
 // Warm parchment canvas with soft MCM color blobs drifting behind
 // the glass. Theme owns the base gradient + blob list, so the
-// backdrop naturally shifts morning→day→evening→night with no
-// screen-level variant knobs.
+// backdrop naturally shifts with the time-of-day blend.
 //
-// The sun and moon are BOTH rendered all the time and animate in /
-// out of frame as the active theme crosses the day↔night boundary:
-// the sun sets down-and-right while the crescent moon rises
-// in from up-and-left, crossing paths at the rest position in the
-// top-right. Scattered white stars fade in under the moon.
+// The sun and moon both trace an east→west arc across the top of
+// the frame, driven by the fractional hour rather than a discrete
+// isNight swap. Sun is visible from dawn (5h) to dusk (21h), peaking
+// at midday; the moon inherits the sky from dusk through dawn. At
+// the horizon each fades out; during the pure-day / pure-night
+// plateaus the celestial body sits near the peak of its arc.
+// Secondary sky decorations (teal daytime starburst and scattered
+// white stars) cross-fade by the same hour-based opacity curves.
 export function WarmBackdrop() {
-  const { theme } = useTheme();
-  const isNight = theme.id === "night";
+  const { theme, hour } = useTheme();
 
-  // 1.4s with a soft overshoot curve so the celestial swap feels
-  // deliberate, not jumpy. Framer-motion handles interruption when
-  // the theme slider is scrubbed rapidly.
-  const orbit = { duration: 1.4, ease: [0.22, 1, 0.36, 1] };
+  const sun  = sunArc(hour);
+  const moon = moonArc(hour);
+  const dayDecor   = daytimeOpacity(hour);
+  const nightDecor = nighttimeOpacity(hour);
+
+  // CSS transition on the celestial wrappers — lets the browser
+  // interpolate each new transform/opacity from the previous frame.
+  // Fast enough to feel responsive while slider-scrubbing, slow
+  // enough to smooth the 1-minute auto-mode ticks.
+  const celestialTransition =
+    "transform 800ms cubic-bezier(0.22, 1, 0.36, 1)," +
+    "opacity 800ms ease";
 
   return (
     <div
@@ -63,67 +72,60 @@ export function WarmBackdrop() {
         />
       ))}
 
-      {/* SUN — the big warm starburst in the top-right during the
-          day. Sets down-and-right as night rises. */}
-      <motion.div
-        initial={false}
-        animate={{
-          x:       isNight ? 80   : 0,
-          y:       isNight ? 320  : 0,
-          rotate:  isNight ? 40   : 0,
-          scale:   isNight ? 0.85 : 1,
-          opacity: isNight ? 0    : 1,
+      {/* SUN — big warm starburst arcing east→west across the day. */}
+      <div
+        style={{
+          position: "absolute",
+          top: 40, right: -30,
+          transform: `translate(${sun.x}px, ${sun.y}px) rotate(${sun.rotate}deg) scale(${sun.scale})`,
+          opacity: sun.opacity,
+          transition: celestialTransition,
         }}
-        transition={orbit}
-        style={{ position: "absolute", top: 40, right: -30 }}
       >
         <Starburst
           size={160}
           color={withAlpha(theme.color.warmBrown, 0.10)}
         />
-      </motion.div>
+      </div>
 
-      {/* MOON — rests top-right at night, pre-rise above-and-left
-          during the day. Rises diagonally to meet the sun's resting
-          spot as it sets. */}
-      <motion.div
-        initial={false}
-        animate={{
-          x:       isNight ? 0     : -80,
-          y:       isNight ? 0     : -280,
-          rotate:  isNight ? 0     : -24,
-          scale:   isNight ? 1     : 0.85,
-          opacity: isNight ? 1     : 0,
+      {/* MOON — crescent arcing east→west across the night. */}
+      <div
+        style={{
+          position: "absolute",
+          top: 28, right: 10,
+          transform: `translate(${moon.x}px, ${moon.y}px) rotate(${moon.rotate}deg) scale(${moon.scale})`,
+          opacity: moon.opacity,
+          transition: celestialTransition,
         }}
-        transition={orbit}
-        style={{ position: "absolute", top: 28, right: 10 }}
       >
         <CrescentMoon size={140} />
-      </motion.div>
+      </div>
 
-      {/* SECONDARY STARBURST — small teal corner decoration during
-          the day. Fades out at night so it doesn't fight with the
-          scattered stars. */}
-      <motion.div
-        initial={false}
-        animate={{ opacity: isNight ? 0 : 1, scale: isNight ? 0.8 : 1 }}
-        transition={orbit}
-        style={{ position: "absolute", bottom: 80, left: 16 }}
+      {/* SECONDARY STARBURST — small teal corner during the day. */}
+      <div
+        style={{
+          position: "absolute",
+          bottom: 80, left: 16,
+          opacity: dayDecor,
+          transform: `scale(${0.85 + dayDecor * 0.15})`,
+          transition: celestialTransition,
+        }}
       >
         <Starburst
           size={90}
           color={withAlpha(theme.color.teal, 0.14)}
         />
-      </motion.div>
+      </div>
 
-      {/* STARS — a scattered constellation that fades in under the
-          moon. Positions are intentionally off-grid so the sky
-          reads as painted, not tiled. */}
-      <motion.div
-        initial={false}
-        animate={{ opacity: isNight ? 1 : 0 }}
-        transition={{ duration: 1.0, delay: isNight ? 0.35 : 0 }}
-        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      {/* STARS — constellation visible through the night. */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          opacity: nightDecor,
+          transition: "opacity 800ms ease",
+        }}
       >
         <TwinkleStar size={20} style={{ position: "absolute", top: 120, left: 48 }} />
         <TwinkleStar size={14} style={{ position: "absolute", top: 260, left: 140 }} />
@@ -131,9 +133,70 @@ export function WarmBackdrop() {
         <TwinkleStar size={12} style={{ position: "absolute", bottom: 280, right: 60 }} />
         <TwinkleStar size={18} style={{ position: "absolute", bottom: 180, left: 72 }} />
         <TwinkleStar size={10} style={{ position: "absolute", top: 400, right: 40 }} />
-      </motion.div>
+      </div>
     </div>
   );
+}
+
+// --- Celestial arc math -------------------------------------------------
+
+// Map the fractional hour to a parabolic east→west arc. Sun is
+// visible from dawn (5h) through dusk (21h); moon covers the
+// wrap-around 21h → 5h. Both peak near the centerline of their
+// arc and fade out near the horizon.
+function sunArc(hour) {
+  if (hour < 5 || hour > 21) return BELOW_HORIZON_RIGHT;
+  const p = (hour - 5) / 16;  // 0 at dawn, 1 at dusk
+  return arcPosition(p);
+}
+
+function moonArc(hour) {
+  let p;
+  if (hour >= 21)      p = (hour - 21) / 8;   // 21 → 24: first quarter of arc
+  else if (hour <= 5)  p = (hour + 3) / 8;    // 0 → 5 : remaining arc
+  else return BELOW_HORIZON_LEFT;
+  return arcPosition(p);
+}
+
+// Shared arc shape — parabolic drop-and-rise across the horizontal
+// axis. x sweeps from -120 (east) to +120 (west). y dips to 0 at
+// the peak and reaches 260 at the horizons. Rotation drifts
+// slightly for organic character.
+function arcPosition(p) {
+  const x       = -120 + 240 * p;
+  const y       = 260  * (1 - Math.sin(Math.PI * p));
+  const rotate  = -14  + 28  * p;
+  const scale   = 0.88 + 0.12 * Math.sin(Math.PI * p);
+  // Opacity: sharp fade inside the first/last 8% of the arc, full
+  // visibility otherwise. Keeps the sun/moon crisp when they're in
+  // the sky and prevents a ghosty half-visible state at horizons.
+  let opacity = 1;
+  if      (p < 0.08) opacity = p / 0.08;
+  else if (p > 0.92) opacity = (1 - p) / 0.08;
+  return { x, y, rotate, scale, opacity };
+}
+
+const BELOW_HORIZON_RIGHT = { x: 120, y: 360, rotate: 40,  scale: 0.8, opacity: 0 };
+const BELOW_HORIZON_LEFT  = { x: -120, y: 360, rotate: -40, scale: 0.8, opacity: 0 };
+
+// Daytime decorations (teal corner starburst) are visible from 7h
+// to 19h, with 1-hour ramps at each edge. Mirror of nighttimeOpacity.
+function daytimeOpacity(hour) {
+  if (hour >= 7  && hour <= 19) return 1;
+  if (hour > 6  && hour < 7)    return hour - 6;
+  if (hour > 19 && hour < 20)   return 20 - hour;
+  return 0;
+}
+
+// Nighttime decorations (stars) are visible from 21h through 5h
+// with 30-min ramps. Full-on plateau matches the night-plateau
+// anchor pair in themes.js (21 → 5).
+function nighttimeOpacity(hour) {
+  if (hour >= 21.5)                return 1;
+  if (hour <= 4.5)                 return 1;
+  if (hour >= 21 && hour < 21.5)   return (hour - 21) / 0.5;
+  if (hour > 4.5 && hour < 5)      return (5 - hour) / 0.5;
+  return 0;
 }
 
 // --- Starburst (MCM / Googie motif) -------------------------------------
