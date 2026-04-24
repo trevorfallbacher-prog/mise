@@ -203,6 +203,12 @@ function toCard(raw) {
 
 export default function PantryScreen({
   items,
+  // When true, the pantry is still fetching from Supabase on cold
+  // mount. Shows a skeleton state instead of the empty-shelf copy
+  // so the user doesn't see "Empty shelf. Time for a grocery run."
+  // flash on a pantry they know has items — just a brief ghost grid
+  // while the initial query resolves.
+  loading = false,
   onOpenItem,
   onStartCooking,
   onOpenUnitPicker,
@@ -403,6 +409,10 @@ export default function PantryScreen({
           outline-offset: 2px;
           border-radius: inherit;
         }
+        @keyframes mcm-skeleton-pulse {
+          0%, 100% { opacity: 0.35; }
+          50%      { opacity: 0.65; }
+        }
       `}</style>
       <WarmBackdrop variant="pantry" />
 
@@ -557,7 +567,9 @@ export default function PantryScreen({
             // would collapse the newline to a space.
             whiteSpace: "pre-line",
           }}>
-            {pantrySubtitle(cards.length, goodCount, cardsByLocTile)}
+            {loading && cards.length === 0
+              ? "Unpacking the shelves…"
+              : pantrySubtitle(cards.length, goodCount, cardsByLocTile)}
           </p>
         </FadeIn>
 
@@ -718,13 +730,19 @@ export default function PantryScreen({
         {/* --- Body: TILE grid / drilled ITEM grid / SEARCH hits ------- */}
         <AnimatePresence mode="wait" initial={false}>
           <motion.div
-            key={query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
+            key={loading && cards.length === 0 ? "skeleton" : query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
           >
             {(() => {
+              // Show skeleton while Supabase's initial load is in
+              // flight and we have no cached items yet. Once a single
+              // row arrives the skeleton steps aside — realtime
+              // population feels continuous rather than strobing
+              // between ghost and real.
+              if (loading && cards.length === 0) return <TileGridSkeleton />;
               if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
               if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
               return (
@@ -740,7 +758,7 @@ export default function PantryScreen({
         </AnimatePresence>
         </LayoutGroup>
 
-        {((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
+        {!loading && ((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
           <EmptyState
             kind={query ? "no-matches" : "empty-tile"}
             query={query}
@@ -986,6 +1004,58 @@ function firstExpiring(cards) {
     if (cd < bd) best = c;
   }
   return best;
+}
+
+// Skeleton tile grid — shown while the initial pantry query is
+// in flight and nothing has loaded yet. Renders six ghost cards
+// with shimmering placeholder blocks where the icon / label /
+// count pill would go. Once a single real card lands the
+// skeleton unmounts via the AnimatePresence body crossfade, so
+// loading → real feels like a soft fade rather than a content
+// flash. Shimmer is a CSS keyframe applied via the global style
+// tag at the top of PantryScreen so each ghost block uses the
+// same animation timeline (they all pulse together rather than
+// stagger, which reads as "waiting" better than a wave of
+// independent animations).
+const SKELETON_COUNT = 6;
+function TileGridSkeleton() {
+  const { theme } = useTheme();
+  const block = (w, h) => ({
+    width: w, height: h,
+    borderRadius: 6,
+    background: withAlpha(theme.color.ink, 0.06),
+    animation: "mcm-skeleton-pulse 1.6s ease-in-out infinite",
+  });
+  return (
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+      gap: 14,
+      marginTop: 20,
+    }}>
+      {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
+        <GlassPanel
+          key={i}
+          padding={16}
+          style={{
+            display: "flex", flexDirection: "column",
+            gap: 10,
+            minHeight: 150,
+            opacity: 0.7,
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div style={{ ...block(44, 44), borderRadius: 8 }} />
+            <div style={block(48, 14)} />
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, justifyContent: "flex-end" }}>
+            <div style={block("70%", 18)} />
+            <div style={block("45%", 12)} />
+          </div>
+        </GlassPanel>
+      ))}
+    </div>
+  );
 }
 
 // Empty state — shown when a drilled tile has no items OR a
@@ -1716,28 +1786,29 @@ function PantryCard({ item, onPick }) {
             {item.emoji}
           </div>
         )}
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {/* "New" chip for items added in the last 24 hours —
-              signals a fresh grocery run at a glance. Small DM
-              Mono pill tinted teal (the reserved "hello, this
-              is new" accent in the palette). Hidden on items
-              without a purchasedAt stamp (manual adds, demo
-              rows) so the signal stays meaningful. */}
-          {isRecent(item) && (
-            <span style={{
-              fontFamily: font.mono, fontSize: 8, fontWeight: 600,
-              letterSpacing: "0.10em", textTransform: "uppercase",
-              padding: "2px 6px",
-              borderRadius: 999,
-              background: withAlpha(theme.color.teal, 0.18),
-              color: theme.color.teal,
-              lineHeight: 1,
-            }}>
-              new
-            </span>
-          )}
-          <StatusDot tone={warn ? "warn" : "ok"} size={warn ? 10 : 8} />
-        </div>
+        {/* Single-slot badge. Priority: warn > new > ok. A warn
+            item takes precedence because it's more actionable —
+            "expiring" beats "just added" for signalling, and
+            showing both at once made the status corner visually
+            busy. Items that are fresh AND recent get the NEW chip;
+            fresh-but-older items just get the small ok dot. */}
+        {warn ? (
+          <StatusDot tone="warn" size={10} />
+        ) : isRecent(item) ? (
+          <span style={{
+            fontFamily: font.mono, fontSize: 8, fontWeight: 600,
+            letterSpacing: "0.10em", textTransform: "uppercase",
+            padding: "2px 6px",
+            borderRadius: 999,
+            background: withAlpha(theme.color.teal, 0.18),
+            color: theme.color.teal,
+            lineHeight: 1,
+          }}>
+            new
+          </span>
+        ) : (
+          <StatusDot tone="ok" size={8} />
+        )}
       </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>

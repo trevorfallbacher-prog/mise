@@ -244,7 +244,7 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   // when family edits land — but we no longer raise toasts from them. Toasts
   // are now driven by the inbound notifications row (which the DB trigger
   // produces), so all surfaces stay in sync with one another.
-  const [pantry, setPantry]               = usePantry(user?.id, familyKey);
+  const [pantry, setPantry, pantryLoading] = usePantry(user?.id, familyKey);
   const [shoppingList, setShoppingList]   = useShoppingList(user?.id, familyKey);
 
   // Persistent inbox + ephemeral toast + browser notification, all wired off
@@ -624,6 +624,7 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
               <MCMThemeProvider>
                 <MCMPantryScreen
                   items={pantry}
+                  loading={pantryLoading}
                   onOpenItem={setMcmOpenItem}
                   hideDock
                 />
