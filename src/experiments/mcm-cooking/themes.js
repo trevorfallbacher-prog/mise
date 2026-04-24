@@ -313,26 +313,183 @@ const night = {
 
 // --- Registry + helpers -------------------------------------------------
 
-export const THEMES = { morning, day, evening, night };
+// --- DAWN — intense sunrise plateau between night and morning --------
+
+// Real sunrise is dark red / burnt amber before it fades to golden
+// cream. Dawn as its own anchor means the night→morning crossover
+// passes through saturated chroma (deep wine in the sky, warm
+// ember at the horizon) instead of linearly blending night's slate
+// to morning's cream through a muddy taupe midpoint. Dark ink sits
+// firmly on bright warm glass tiles — maximum contrast exactly
+// where the old mid-blend failed.
+const dawn = {
+  id: "dawn",
+  label: "Dawn",
+  hour: 6.25,
+  color: {
+    // Background — deep wine at the top, burnt ember at the horizon.
+    cream:        "#6B2F2D",
+    parchment:    "#8F3D28",
+    paper:        "#7B362B",
+    // Text — dark warm. Same ink mode as morning so dawn→morning
+    // blend doesn't cross and stays smooth chromatic.
+    ink:          "#1E0F06",
+    inkMuted:     "#5C3A28",
+    inkFaint:     "#7A5741",
+    // Accents — biased warm for sunrise character.
+    teal:         "#4F9A8F",
+    aqua:         "#7FB9A7",
+    burnt:        "#F0822C",
+    mustard:      "#F2C055",
+    warmBrown:    "#A06B3F",
+    tealTint:     "rgba(79,154,143,0.18)",
+    aquaTint:     "rgba(127,185,167,0.22)",
+    burntTint:    "rgba(240,130,44,0.20)",
+    mustardTint:  "rgba(242,192,85,0.22)",
+    brownTint:    "rgba(160,107,63,0.18)",
+    // Glass — bright warm cream. Deliberately high-opacity so
+    // tiles punch out of the dark red sky and dark ink has a
+    // bright surface to read on.
+    glassFill:      "rgba(255,235,200,0.74)",
+    glassFillLite:  "rgba(255,235,200,0.52)",
+    glassFillHeavy: "rgba(255,235,200,0.84)",
+    glassBorder:    "rgba(255,245,220,0.80)",
+    hairline:       "rgba(30,15,6,0.10)",
+    ctaTop:    "#C85A1F",
+    ctaBottom: "#A34711",
+    ctaText:   "#FFF8EE",
+  },
+  shadow: {
+    glass: shadowStack({
+      drop:         "0 24px 48px rgba(40,15,8,0.22)",
+      drop2:        "0 6px 14px rgba(40,15,8,0.12)",
+      topInset:     "rgba(255,245,220,0.85)",
+      bottomInset:  "rgba(40,15,8,0.08)",
+    }),
+    soft: "0 8px 20px rgba(40,15,8,0.10), 0 1px 2px rgba(40,15,8,0.06)",
+    lift: shadowStack({
+      drop:         "0 30px 60px rgba(40,15,8,0.28)",
+      drop2:        "0 10px 20px rgba(40,15,8,0.14)",
+      topInset:     "rgba(255,245,220,0.9)",
+      bottomInset:  "rgba(40,15,8,0.08)",
+    }),
+    cta:  "0 12px 26px rgba(168,73,17,0.44), 0 2px 6px rgba(168,73,17,0.30)",
+    inputInset:
+      "inset 0 1px 2px rgba(40,15,8,0.14)," +
+      "inset 0 -1px 0 rgba(255,245,220,0.6)," +
+      "0 2px 6px rgba(40,15,8,0.06)",
+  },
+  backdrop: {
+    base: "linear-gradient(180deg, #6B2F2D 0%, #8F3D28 100%)",
+    blobs: [
+      { bg: "rgba(218,88,42,0.28)",   top: "-12%", left: "-12%", size: 500 },
+      { bg: "rgba(244,167,82,0.24)",  top: "55%",  left: "62%",  size: 440 },
+      { bg: "rgba(128,42,38,0.22)",   top: "70%",  left: "-8%",  size: 320 },
+    ],
+  },
+};
+
+// --- DUSK — intense sunset plateau between evening and night ---------
+
+// Deep amber / rose sunset. Same structural role as dawn: prevents
+// evening→night from linearly blending peach to slate through
+// taupe mud. Dusk's bg is saturated dark-red-amber, ink stays dark
+// (same mode as evening), glass pops warm-cream. The 8pm tan-on-
+// tan dead zone happens because the old blend midpoint was a dull
+// mid-ochre; dusk replaces it with an intentionally hot sunset.
+const dusk = {
+  id: "dusk",
+  label: "Dusk",
+  hour: 20,
+  color: {
+    // Background — burnt amber at the top, deep rose at the horizon.
+    cream:        "#8B3B1E",
+    parchment:    "#6B2A25",
+    paper:        "#7D331F",
+    ink:          "#2B1A0E",
+    inkMuted:     "#6C4E36",
+    inkFaint:     "#946F52",
+    teal:         "#3D8278",
+    aqua:         "#76AD9A",
+    burnt:        "#F0822C",
+    mustard:      "#F2C055",
+    warmBrown:    "#A06B3F",
+    tealTint:     "rgba(61,130,120,0.18)",
+    aquaTint:     "rgba(118,173,154,0.22)",
+    burntTint:    "rgba(240,130,44,0.20)",
+    mustardTint:  "rgba(242,192,85,0.22)",
+    brownTint:    "rgba(160,107,63,0.18)",
+    glassFill:      "rgba(255,235,200,0.74)",
+    glassFillLite:  "rgba(255,235,200,0.52)",
+    glassFillHeavy: "rgba(255,235,200,0.84)",
+    glassBorder:    "rgba(255,245,220,0.80)",
+    hairline:       "rgba(43,26,14,0.12)",
+    ctaTop:    "#B8491A",
+    ctaBottom: "#91380D",
+    ctaText:   "#FFF4E4",
+  },
+  shadow: {
+    glass: shadowStack({
+      drop:         "0 24px 48px rgba(50,22,8,0.22)",
+      drop2:        "0 6px 14px rgba(50,22,8,0.12)",
+      topInset:     "rgba(255,240,215,0.85)",
+      bottomInset:  "rgba(50,22,8,0.08)",
+    }),
+    soft: "0 8px 20px rgba(50,22,8,0.10), 0 1px 2px rgba(50,22,8,0.06)",
+    lift: shadowStack({
+      drop:         "0 30px 60px rgba(50,22,8,0.28)",
+      drop2:        "0 10px 20px rgba(50,22,8,0.14)",
+      topInset:     "rgba(255,240,215,0.9)",
+      bottomInset:  "rgba(50,22,8,0.08)",
+    }),
+    cta:  "0 12px 26px rgba(145,56,13,0.50), 0 2px 6px rgba(145,56,13,0.36)",
+    inputInset:
+      "inset 0 1px 2px rgba(43,26,14,0.14)," +
+      "inset 0 -1px 0 rgba(255,240,215,0.6)," +
+      "0 2px 6px rgba(43,26,14,0.06)",
+  },
+  backdrop: {
+    base: "linear-gradient(180deg, #8B3B1E 0%, #6B2A25 100%)",
+    blobs: [
+      { bg: "rgba(236,118,42,0.26)",  top: "-12%", left: "-12%", size: 500 },
+      { bg: "rgba(244,167,82,0.22)",  top: "55%",  left: "62%",  size: 440 },
+      { bg: "rgba(128,42,38,0.22)",   top: "70%",  left: "-8%",  size: 320 },
+    ],
+  },
+};
+
+export const THEMES = { morning, day, evening, night, dawn, dusk };
+// Manual-selectable options (skipping the transient dawn/dusk —
+// they're resolvable via the hour slider, not destinations).
 export const THEME_ORDER = ["morning", "day", "evening", "night"];
 
-// Hour-ordered anchor list used by the continuous resolver. Night
-// gets a START anchor (21, when night fully sets in after dusk) and
-// an END anchor (5, when dawn blend begins) — both are the same
-// theme, so any hour between them blends night↔night and renders as
-// pure night. That prevents the ugly halfway muddy-olive you'd get
-// from naively blending evening's peach into night's slate across
-// an 8-hour span. Only dusk (19→21) and dawn (5→7.5) actually blend.
-// Wrap-around duplicates keep the bracket lookup simple for hours
-// 0–24 without modulo math in the hot path.
+// Hour-ordered anchor list used by the continuous resolver.
+//
+// Night has two explicit plateau anchors (21h "night starts" and
+// 5h "night ends"). Between them blendThemes hits the a===b
+// short-circuit and returns pure night for the entire 21→5 window.
+//
+// Dawn (6.25h) and dusk (20h) are NEW intermediate anchors that
+// turn the old muddy twilight crossovers into saturated sunrise /
+// sunset plateaus:
+//   night 5 → dawn 6.25    1.25h, crosses ink-mode (light→dark)
+//   dawn  6.25 → morning 7.5  1.25h, same ink-mode, smooth chromatic
+//   evening 19 → dusk 20    1h, same ink-mode, smooth chromatic
+//   dusk 20 → night 21    1h, crosses ink-mode (dark→light)
+//
+// The only cross-mode windows are 1h each and pass through dark-
+// wine / dark-amber midpoints instead of mid-grey taupe — colors
+// with enough chroma that either side of the ink snap reads well.
 const ANCHORS = [
-  { id: "night",   hour: -3  },   // wrap of 21 into previous day
-  { id: "night",   hour:  5  },   // night ends → dawn begins
+  { id: "night",   hour: -3    },   // wrap of 21 into previous day
+  { id: "night",   hour:  5    },   // night ends → dawn begins
+  { id: "dawn",    hour:  6.25 },   // peak sunrise
   { id: "morning", hour: morning.hour }, // 7.5
   { id: "day",     hour: day.hour     }, // 14
   { id: "evening", hour: evening.hour }, // 19
-  { id: "night",   hour: 21 },    // dusk ends → night begins
-  { id: "night",   hour: 29 },    // wrap of 5 into next day
+  { id: "dusk",    hour: 20   },    // peak sunset
+  { id: "night",   hour: 21   },    // dusk ends → night begins
+  { id: "night",   hour: 29   },    // wrap of 5 into next day
 ];
 
 // Snap-to-name helper kept for back-compat with any caller that
