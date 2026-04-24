@@ -27,6 +27,36 @@ import { useTheme, THEME_TRANSITION } from "./theme";
 // plateaus the celestial body sits near the peak of its arc.
 // Secondary sky decorations (teal daytime starburst and scattered
 // white stars) cross-fade by the same hour-based opacity curves.
+// Slow drift keyframes for the three backdrop blobs. Each blob
+// gets a different orbit period + path so the sky never lines up
+// the same way twice; at night this reads as gentle cosmic drift,
+// during the day it's imperceptible movement behind the glass.
+// Hoisted as a single <style> block so we're not re-parsing on
+// every re-render.
+const SKY_DRIFT_CSS = `
+@keyframes mcm-drift-0 {
+  0%   { transform: translate(0, 0); }
+  33%  { transform: translate(36px, -24px); }
+  66%  { transform: translate(-18px, 30px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes mcm-drift-1 {
+  0%   { transform: translate(0, 0); }
+  50%  { transform: translate(-44px, 28px); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes mcm-drift-2 {
+  0%   { transform: translate(0, 0); }
+  40%  { transform: translate(28px, 36px); }
+  80%  { transform: translate(-22px, -14px); }
+  100% { transform: translate(0, 0); }
+}
+`;
+// Seconds-long periods — slow enough that you never consciously
+// notice the motion, fast enough that coming back after a minute
+// the sky has visibly shifted.
+const DRIFT_DURATIONS = [96, 124, 152];
+
 export function WarmBackdrop() {
   const { theme, hour } = useTheme();
 
@@ -55,6 +85,7 @@ export function WarmBackdrop() {
         ...THEME_TRANSITION,
       }}
     >
+      <style>{SKY_DRIFT_CSS}</style>
       {theme.backdrop.blobs.map((b, i) => (
         <div
           key={i}
@@ -67,6 +98,7 @@ export function WarmBackdrop() {
             background: b.bg,
             borderRadius: "50%",
             filter: "blur(80px)",
+            animation: `mcm-drift-${i % 3} ${DRIFT_DURATIONS[i % 3]}s ease-in-out infinite`,
             ...THEME_TRANSITION,
           }}
         />

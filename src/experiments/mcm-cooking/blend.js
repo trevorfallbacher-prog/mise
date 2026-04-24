@@ -126,6 +126,37 @@ const INK_SNAP_KEYS = new Set([
   "hairline",
 ]);
 
+// Glass fills blend linearly through a muddy warm-taupe at the
+// cross-mode midpoint, which made cards dissolve into the equally
+// taupe backdrop at 8pm / 6am. Instead of snapping (jarring jump)
+// we bias the blended glass TOWARD a warm cream with higher alpha,
+// peaking at t=0.5. Reads as "morning light through the windows"
+// or "lamp cream on a cold counter" — a deliberate twilight tile
+// color rather than an accidentally grey one.
+const TWILIGHT_CREAM_RGBA = [255, 240, 210, 0.82];
+const GLASS_BIAS_KEYS = new Set([
+  "glassFill", "glassFillLite", "glassFillHeavy",
+]);
+// Max bias weight at the exact midpoint. 0.55 = cream dominates
+// by just over half; strong enough to pop cards off the taupe bg,
+// subtle enough that it doesn't read as a hard theme snap.
+const GLASS_BIAS_PEAK = 0.55;
+
+// Linear interpolate a color toward the twilight cream target.
+// Preserves the source alpha trajectory (blends toward a higher
+// target alpha too so the glass gets more opaque at the midpoint,
+// which is where bg↔glass contrast needs the most help).
+function biasTowardCream(colorStr, strength) {
+  const [r, g, b, a] = parseColor(colorStr);
+  const [cr, cg, cb, ca] = TWILIGHT_CREAM_RGBA;
+  return serializeColor([
+    r + (cr - r) * strength,
+    g + (cg - g) * strength,
+    b + (cb - b) * strength,
+    a + (ca - a) * strength,
+  ]);
+}
+
 // Blend two complete theme objects. Every token that consumers
 // read from `theme` interpolates; theme.id / theme.label snap
 // to the closer of the two so `theme.id === "night"` still works
@@ -140,9 +171,17 @@ export function blendThemes(a, b, t) {
   if (t >= 1)    return b;
 
   // Detect if the two anchors use opposite ink modes. When they
-  // do, ink-related fields snap instead of blend.
+  // do, ink-related fields snap instead of blend and glass fills
+  // pick up a cream bias so cards don't dissolve into a matching
+  // taupe backdrop at the midpoint.
   const crossingInkMode = isLightInk(a) !== isLightInk(b);
   const inkSide = t < 0.5 ? a : b;
+  // Triangle bias: 0 at t=0 and t=1, peaks at t=0.5. Only applies
+  // when we're actually crossing modes (pure-theme plateaus skip
+  // the whole path via the a===b short-circuit above).
+  const glassBias = crossingInkMode
+    ? GLASS_BIAS_PEAK * (1 - Math.abs(t - 0.5) * 2)
+    : 0;
 
   const blendedColor  = {};
   const blendedShadow = {};
@@ -151,7 +190,10 @@ export function blendThemes(a, b, t) {
     if (crossingInkMode && INK_SNAP_KEYS.has(k)) {
       blendedColor[k] = inkSide.color[k];
     } else {
-      blendedColor[k] = blendColor(a.color[k], b.color[k], t);
+      const linear = blendColor(a.color[k], b.color[k], t);
+      blendedColor[k] = (glassBias > 0 && GLASS_BIAS_KEYS.has(k))
+        ? biasTowardCream(linear, glassBias)
+        : linear;
     }
   }
   for (const k of Object.keys(a.shadow)) {
