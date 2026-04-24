@@ -978,10 +978,11 @@ export default function CookMode({
               title="End cook and drop this recipe"
               style={{
                 display:"inline-flex", alignItems:"center", gap:6,
-                background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
-                borderRadius:20, padding:"8px 14px",
-                fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
+                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
+                borderRadius:20, padding:"10px 18px",
+                fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, letterSpacing:"0.12em",
                 cursor:"pointer",
+                boxShadow:"0 0 20px rgba(220,38,38,0.4)",
               }}
             >
               ✕ EXIT
@@ -1485,10 +1486,11 @@ export default function CookMode({
               aria-label="Exit cook"
               style={{
                 display:"inline-flex", alignItems:"center", gap:6,
-                background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
-                borderRadius:20, padding:"8px 14px",
-                fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
+                background:"#dc2626", border:"1px solid #ef4444", color:"#fff",
+                borderRadius:20, padding:"10px 18px",
+                fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:700, letterSpacing:"0.12em",
                 cursor:"pointer",
+                boxShadow:"0 0 20px rgba(220,38,38,0.4)",
               }}
             >
               ✕ EXIT
