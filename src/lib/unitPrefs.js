@@ -18,6 +18,7 @@ import { findIngredient } from "../data/ingredients";
 
 const LS_KEY    = "mise.unitPrefs.v1";
 const LS_SEEDED = "mise.unitPrefs.seeded.v1";
+const LS_SYSTEM = "mise.unitPrefs.system.v1";   // "us" | "metric"
 
 // Small curated seed for first-time users. Not comprehensive — we
 // cover the ingredients most likely to come back in an awkward unit
@@ -110,13 +111,42 @@ function seedIfNeeded() {
   if (localStorage.getItem(LS_SEEDED)) return;
   const lang = (typeof navigator !== "undefined" && navigator.language) ? navigator.language : "en-US";
   const isUS = /^en-US$/i.test(lang);
+  const system = isUS ? "us" : "metric";
   const seed = isUS ? US_SEED : METRIC_SEED;
   const current = readMap();
-  // Only fill gaps — don't clobber any pref the user already set
-  // (shouldn't happen on a first run, but cheap insurance).
   const merged = { ...seed, ...current };
   writeMap(merged);
-  try { localStorage.setItem(LS_SEEDED, "1"); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(LS_SEEDED, "1");
+    localStorage.setItem(LS_SYSTEM, system);
+  } catch { /* ignore */ }
+}
+
+// Read the user's chosen measurement system. Falls back to the
+// locale-derived default when no explicit choice has been made
+// (first-time user on a UI that hasn't surfaced the toggle yet).
+export function getMeasurementSystem() {
+  if (typeof localStorage === "undefined") return "us";
+  const stored = localStorage.getItem(LS_SYSTEM);
+  if (stored === "us" || stored === "metric") return stored;
+  const lang = (typeof navigator !== "undefined" && navigator.language) ? navigator.language : "en-US";
+  return /^en-US$/i.test(lang) ? "us" : "metric";
+}
+
+// Switch the measurement system. Rewrites the preference map from the
+// chosen system's seed. Existing user picks are dropped when flipping
+// systems — the point of the toggle is "make everything metric now",
+// so keeping a stale "butter → tbsp" around would contradict the ask.
+// Callers can always re-pick per ingredient afterwards.
+export function setMeasurementSystem(system) {
+  if (system !== "us" && system !== "metric") return;
+  if (typeof localStorage === "undefined") return;
+  const seed = system === "us" ? US_SEED : METRIC_SEED;
+  writeMap({ ...seed });
+  try {
+    localStorage.setItem(LS_SYSTEM, system);
+    localStorage.setItem(LS_SEEDED, "1");
+  } catch { /* ignore */ }
 }
 
 export function prefKeyForIngredient(ing) {

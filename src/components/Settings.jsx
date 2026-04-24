@@ -3,6 +3,7 @@ import { signOut } from "../lib/useAuth";
 import { useWebPush } from "../lib/useWebPush";
 import { useNotificationPreferences } from "../lib/useNotificationPreferences";
 import { supabase } from "../lib/supabase";
+import { getMeasurementSystem, setMeasurementSystem } from "../lib/unitPrefs";
 
 // Panel header used at the top of each section in Settings.
 function SectionHeader({ label }) {
@@ -567,6 +568,8 @@ export default function Settings({
           </>
         )}
 
+        <MeasurementSystemSection />
+
         {/* Account footer */}
         <SectionHeader label="ACCOUNT" />
         <button
@@ -862,6 +865,44 @@ function NotificationPreferencesSection({ userId }) {
         <div style={{ fontFamily: "'DM Mono',monospace", fontSize: 10, color: "#555", letterSpacing: "0.1em", marginTop: 10 }}>
           TIMEZONE · {preferences.timezone || "UTC"}
         </div>
+      </div>
+    </>
+  );
+}
+
+// "Standard (US)" vs "Metric" toggle. Rewrites the unit-preferences
+// map from the chosen system's seed on flip — existing custom picks
+// are reset so the new system's defaults actually take effect. The
+// per-ingredient UnitPicker still lets the user override any single
+// ingredient after choosing a system.
+function MeasurementSystemSection() {
+  const [system, setSystem] = useState(() => getMeasurementSystem());
+  const pick = (next) => {
+    if (next === system) return;
+    setMeasurementSystem(next);
+    setSystem(next);
+  };
+  const optStyle = (active) => ({
+    flex: 1,
+    padding: "14px 10px",
+    background: active ? "#1a1508" : "#141414",
+    border: `1px solid ${active ? "#3a2f10" : "#2a2a2a"}`,
+    color: active ? "#f5c842" : "#bbb",
+    borderRadius: 10,
+    fontFamily: "'DM Mono',monospace", fontSize: 11, fontWeight: 600,
+    letterSpacing: "0.08em", cursor: "pointer", transition: "all 0.15s",
+  });
+  return (
+    <>
+      <SectionHeader label="MEASUREMENT SYSTEM" />
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <button type="button" onClick={() => pick("us")}     style={optStyle(system === "us")}>🇺🇸  STANDARD</button>
+        <button type="button" onClick={() => pick("metric")} style={optStyle(system === "metric")}>⚖️  METRIC</button>
+      </div>
+      <div style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 11, color: "#777", lineHeight: 1.5, marginBottom: 14 }}>
+        {system === "us"
+          ? "Amounts render in cups, tablespoons, ounces, and pounds. Tap any amount in a recipe to change just that one ingredient."
+          : "Amounts render in grams and millilitres. Tap any amount in a recipe to change just that one ingredient."}
       </div>
     </>
   );
