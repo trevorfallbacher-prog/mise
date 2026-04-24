@@ -567,6 +567,16 @@ export default function PantryScreen({
             is in view. */}
         <div ref={sentinelRef} style={{ height: 1 }} aria-hidden />
 
+        {/* LayoutGroup wraps the ENTIRE sticky+body region so
+            shared layoutIds work across the sticky drilled
+            header and the tile cards inside the scrolling body.
+            Without this, the tile icon → drilled icon morph
+            breaks when the drilled header is stickied — framer
+            would scope layoutId matching to the inner body's
+            AnimatePresence and miss the header that's now
+            siblings-above rather than inline. */}
+        <LayoutGroup>
+
         {/* --- Sticky search + location tabs --------------------------
             Wrapped in a position:sticky shell so the nav stays put
             when the user scrolls through a long tile. Pulls a
@@ -672,11 +682,31 @@ export default function PantryScreen({
             />
           )}
         </FadeIn>
+
+        {/* Drilled-tile header lives INSIDE the sticky bar so the
+            user keeps back/sort/count within reach at any scroll
+            depth inside a long tile. When not drilled, this is
+            null — sticky bar collapses back to just search + tabs. */}
+        {drilledTile && !query && (
+          <FadeIn>
+            <DrilledTileHeader
+              tile={drilledTile}
+              location={locationTab}
+              count={visible.length}
+              warnCount={warnCountByTile[`${locationTab}:${drilledTile.id}`] || 0}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+              onBack={() => setDrilledTile(null)}
+            />
+          </FadeIn>
+        )}
         </div>
 
         {/* --- Search summary (which locations did we find hits in?) --
-            Drilled-tile header now lives inside LayoutGroup below so
-            its icon can participate in a shared-element morph from
+            Drilled-tile header moved INTO the sticky bar above so
+            the back button + sort stay reachable during scroll.
+            Search summary stays separate (non-sticky) since searches
+            don't participate in the tile layout.
             the tapped tile card. Search summary stays up here since
             search doesn't participate in the tile layout. */}
         {query && (
@@ -685,53 +715,29 @@ export default function PantryScreen({
           </FadeIn>
         )}
 
-        {/* --- Body: TILE grid / drilled ITEM grid / SEARCH hits -------
-            LayoutGroup lets shared `layoutId` elements animate
-            across sibling mount/unmount boundaries — specifically,
-            the tile-icon slot on a TileCard morphs into the same
-            position as the drilled header's icon slot when the
-            user taps a tile. The outer AnimatePresence handles
-            the crossfade between modes; LayoutGroup tracks the
-            layoutIds across those mode swaps so framer can
-            animate a single element between positions. */}
-        <LayoutGroup>
-          {/* Drilled-tile header (richer than a back chip) */}
-          {drilledTile && !query && (
-            <FadeIn>
-              <DrilledTileHeader
-                tile={drilledTile}
-                location={locationTab}
-                count={visible.length}
-                warnCount={warnCountByTile[`${locationTab}:${drilledTile.id}`] || 0}
-                sortBy={sortBy}
-                onSortChange={setSortBy}
-                onBack={() => setDrilledTile(null)}
-              />
-            </FadeIn>
-          )}
-
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            >
-              {(() => {
-                if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
-                if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
-                return (
-                  <TileGrid
-                    location={activeLocation}
-                    cardsByTile={cardsByLocTile[locationTab] || {}}
-                    warnCountByTile={warnCountByTile}
-                    onPickTile={setDrilledTile}
-                  />
-                );
-              })()}
-            </motion.div>
-          </AnimatePresence>
+        {/* --- Body: TILE grid / drilled ITEM grid / SEARCH hits ------- */}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {(() => {
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              return (
+                <TileGrid
+                  location={activeLocation}
+                  cardsByTile={cardsByLocTile[locationTab] || {}}
+                  warnCountByTile={warnCountByTile}
+                  onPickTile={setDrilledTile}
+                />
+              );
+            })()}
+          </motion.div>
+        </AnimatePresence>
         </LayoutGroup>
 
         {((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
@@ -1083,7 +1089,12 @@ function LocationTabs({ locations, active, onSelect, totals }) {
             style={{
               position: "relative",
               flex: 1,
-              minWidth: 100,
+              // minWidth lowered from 100 → 76 so three segments
+              // fit inside a ~335px mobile viewport without
+              // horizontal scroll. Desktop still gets equal-
+              // flex segments via flex:1; phones just get
+              // slightly-tighter pills.
+              minWidth: 76,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1239,11 +1250,14 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
             // a sub-section of the same magazine. Slightly less
             // wide (wdth 104) and lighter (wght 580) than the
             // hero so the tile label reads as chapter-title, not
-            // masthead.
+            // masthead. Min lowered to 20px so long tile names
+            // ("Meat & Poultry", "Condiments & Sauces") still
+            // fit alongside the back button + icon + count
+            // column on ~375px phones without wrapping.
             fontFamily: font.display,
             fontWeight: 580,
             fontVariationSettings: "'wdth' 104, 'wght' 580, 'opsz' 32",
-            fontSize: "clamp(24px, 4vw, 32px)",
+            fontSize: "clamp(20px, 4.5vw, 32px)",
             lineHeight: 1.05, color: theme.color.ink,
             letterSpacing: "-0.015em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
