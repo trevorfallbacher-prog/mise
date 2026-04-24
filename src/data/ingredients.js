@@ -1388,11 +1388,11 @@ export const INGREDIENTS = [
   {
     id: "olive_oil", name: "Olive Oil", emoji: "🫒", category: "pantry",
     units: [
-      { id: "tbsp", label: "tbsp",  toBase: 15 },
-      { id: "cup",  label: "cups",  toBase: 240 },
-      { id: "tsp",  label: "tsp",   toBase: 5 },
-      { id: "oz",   label: "fl oz", toBase: 29.6 },
-      { id: "ml",   label: "ml",    toBase: 1 },
+      { id: "tbsp",  label: "tbsp",  toBase: 15 },
+      { id: "cup",   label: "cups",  toBase: 240 },
+      { id: "tsp",   label: "tsp",   toBase: 5 },
+      { id: "fl_oz", label: "fl oz", toBase: 29.57 },
+      { id: "ml",    label: "ml",    toBase: 1 },
     ],
     defaultUnit: "tbsp",
     // Per 100 ml (treated as 100g — olive oil density is ~0.92 g/ml,

@@ -256,12 +256,13 @@ function parseAmountLoose(str) {
   // preferred unit is apples-to-apples regardless of what the model
   // wrote ("cups" → "cup", "tablespoons" → "tbsp").
   const aliases = {
-    cups: "cup", tablespoons: "tbsp", tablespoon: "tbsp",
-    teaspoons: "tsp", teaspoon: "tsp",
+    cups: "cup", tablespoons: "tbsp", tablespoon: "tbsp", tbs: "tbsp", tbsps: "tbsp", tbls: "tbsp",
+    teaspoons: "tsp", teaspoon: "tsp", tsps: "tsp",
     ounces: "oz", ounce: "oz", pounds: "lb", pound: "lb",
     grams: "g", gram: "g", kilograms: "kg", kilogram: "kg",
     milliliters: "ml", millilitres: "ml",
     liters: "l", litres: "l",
+    floz: "fl_oz", fluid_ounce: "fl_oz", fluid_ounces: "fl_oz",
     sticks: "stick",
   };
   return { amount, unit: aliases[unit] || unit };
