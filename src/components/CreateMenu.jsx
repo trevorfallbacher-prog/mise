@@ -118,6 +118,30 @@ export default function CreateMenu({
     () => userRecipes.filter(r => r.source === "ai" && r.userId === userId),
     [userRecipes, userId],
   );
+  // Family-shared recipes authored by someone ELSE. Migration 0052's
+  // RLS only exposes other family members' user_recipes rows when
+  // their `shared` column is true, so this filter is tight by design:
+  // a family member's private draft never leaks into the viewer's
+  // picker. These are the rows the previous build was silently
+  // dropping — hence "I shared it but my other account can't see it
+  // as an option to cook."
+  const familyShared = useMemo(
+    () => userRecipes.filter(r => r.userId !== userId && r.shared && r.recipe),
+    [userRecipes, userId],
+  );
+  // userId → first name, used to tag each family row in the picker
+  // so the viewer knows whose recipe they're looking at (e.g.,
+  // "YOURS" vs "MARISSA"). Unknown authors fall through to a
+  // neutral "FAMILY" label.
+  const authorNameFor = useMemo(() => {
+    const map = new Map();
+    for (const f of family || []) {
+      if (f?.otherId && f?.other?.name) {
+        map.set(f.otherId, String(f.other.name).trim().split(/\s+/)[0]);
+      }
+    }
+    return (id) => map.get(id) || "FAMILY";
+  }, [family]);
 
   const matches = (r, q) => {
     if (!q) return true;
@@ -133,6 +157,10 @@ export default function CreateMenu({
     const q = query.trim().toLowerCase();
     return userAI.filter(ur => matches(ur.recipe, q));
   }, [userAI, query]);
+  const filteredFamilyShared = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return familyShared.filter(ur => matches(ur.recipe, q));
+  }, [familyShared, query]);
   const filteredBundled = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? RECIPES.filter(r => matches(r, q)) : RECIPES;
@@ -393,7 +421,7 @@ export default function CreateMenu({
 
   if (mode === "template") {
     const totalResults =
-      filteredMeals.length + filteredUserCustom.length + filteredUserAI.length + filteredBundled.length;
+      filteredMeals.length + filteredUserCustom.length + filteredUserAI.length + filteredFamilyShared.length + filteredBundled.length;
     return (
       <div style={OVERLAY_STYLE}>
         <div style={{ padding: "24px 20px 20px", display: "flex", alignItems: "center", gap: 10, borderBottom: "1px solid #1e1e1e" }}>
@@ -450,6 +478,23 @@ export default function CreateMenu({
                   recipe={ur.recipe}
                   tag="AI"
                   tagColor={TAG_AI}
+                  onClick={() => startCooking(ur.recipe)}
+                />
+              ))}
+            </RecipeSection>
+          )}
+          {/* FAMILY SHARED — recipes another family member flipped
+              shared=true on. The viewer can cook them the same way
+              as their own; author's first name rides as the row tag
+              ("MARISSA") so it's obvious whose recipe it is. */}
+          {filteredFamilyShared.length > 0 && (
+            <RecipeSection title="SHARED BY FAMILY" accent="#a3d977">
+              {filteredFamilyShared.map(ur => (
+                <RecipeRow
+                  key={ur.id}
+                  recipe={ur.recipe}
+                  tag={authorNameFor(ur.userId).toUpperCase()}
+                  tagColor="#a3d977"
                   onClick={() => startCooking(ur.recipe)}
                 />
               ))}
