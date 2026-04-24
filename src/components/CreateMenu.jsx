@@ -78,7 +78,7 @@ export default function CreateMenu({
     bundledRecipes: RECIPES,
   });
   const { schedule } = useScheduledMeals(userId, {
-    recipeResolver: (slug) => findRecipe(slug, findUserRecipe),
+    recipeResolver: (slug, ownerUserId) => findRecipe(slug, findUserRecipe, ownerUserId),
   });
   const { push: pushToast } = useToast();
   // Ingredient enrichment is provided once at App level; reading it

@@ -88,7 +88,7 @@ function RecipePickerModal({ userRecipes = [], leftovers = [], onPick, onClose }
     const bundledSlugs = new Set(RECIPES.map(r => r.slug));
     const userOnly = userRecipes
       .filter(r => r?.recipe && r.slug && !bundledSlugs.has(r.slug))
-      .map(r => ({ ...r.recipe, slug: r.slug, _source: r.source }));
+      .map(r => ({ ...r.recipe, slug: r.slug, _source: r.source, _userId: r.userId }));
     return [...RECIPES, ...userOnly];
   }, [userRecipes]);
   // Leftovers surface above the recipes list when the query is empty
@@ -199,7 +199,7 @@ function RecipePickerModal({ userRecipes = [], leftovers = [], onPick, onClose }
               const tag = r._source === "custom" ? "YOURS" : r._source === "ai" ? "AI" : null;
               return (
                 <button
-                  key={r.slug}
+                  key={r._userId ? `${r._userId}:${r.slug}` : r.slug}
                   onClick={() => onPick(r)}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
@@ -668,8 +668,9 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
     toISO:   windowEnd.toISOString(),
     familyKey,
     // Resolve bundled recipes first, fall through to the user library
-    // so custom recipes also get prep reminders queued.
-    recipeResolver: (slug) => findRecipe(slug, findUserRecipe),
+    // so custom recipes also get prep reminders queued. ownerUserId
+    // disambiguates slug collisions between family members (0139).
+    recipeResolver: (slug, ownerUserId) => findRecipe(slug, findUserRecipe, ownerUserId),
   });
 
   // Queued prep_notifications for the meals currently on the Plan
@@ -842,6 +843,11 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   const onSaveSchedule = async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
     await schedule({
       recipeSlug: recipeToSchedule.slug,
+      // Stamp the author's user_id on the scheduled_meals row so the
+      // cook-time resolver can pick the exact row out of a shared
+      // (self + family) slug pool — see migration 0139. Bundled
+      // recipes have no _userId and land as null, which is correct.
+      recipeUserId: recipeToSchedule._userId || null,
       scheduledFor,
       notificationSettings,
       note,
@@ -1021,7 +1027,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
                                 //      Pure pantry-item consumption plan.
                                 //      Title/emoji come from the pantry row.
                                 const meal = row;
-                                const recipe = meal.recipe_slug ? findRecipe(meal.recipe_slug, findUserRecipe) : null;
+                                const recipe = meal.recipe_slug ? findRecipe(meal.recipe_slug, findUserRecipe, meal.recipe_user_id) : null;
                                 const pantryEatRow = meal.from_pantry_row_id
                                   ? (pantry || []).find(p => p.id === meal.from_pantry_row_id)
                                   : null;
@@ -1171,7 +1177,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
       {openMeal && (
         <MealDetailDrawer
           meal={openMeal}
-          recipe={findRecipe(openMeal.recipe_slug, findUserRecipe)}
+          recipe={findRecipe(openMeal.recipe_slug, findUserRecipe, openMeal.recipe_user_id)}
           userId={userId}
           nameFor={nameFor}
           family={family}
@@ -1196,7 +1202,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
               // through to the normal cook-from-scratch path so the
               // user isn't stuck.
             }
-            const r = findRecipe(openMeal.recipe_slug, findUserRecipe);
+            const r = findRecipe(openMeal.recipe_slug, findUserRecipe, openMeal.recipe_user_id);
             setOpenMeal(null);
             if (!r) return;
             // If the scheduled meal carries a servings override

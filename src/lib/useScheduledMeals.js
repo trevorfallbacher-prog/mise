@@ -100,7 +100,7 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
   }, [userId]);
 
   const schedule = useCallback(
-    async ({ recipeSlug, scheduledFor, notificationSettings = {}, note = null, cookId, isRequest = false, servings, mealSlot, fromPantryRowId }) => {
+    async ({ recipeSlug, recipeUserId, scheduledFor, notificationSettings = {}, note = null, cookId, isRequest = false, servings, mealSlot, fromPantryRowId }) => {
       if (!userId) throw new Error("schedule called without a userId");
       // If caller didn't specify, default to self-cooking unless it's a request.
       const effectiveCookId = cookId !== undefined ? cookId : (isRequest ? null : userId);
@@ -112,15 +112,19 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
         note,
         cook_id: effectiveCookId,
         requested_by: isRequest ? userId : null,
-        // Conditional spreads so older DBs (pre-0069 / pre-0120) don't
-        // 400 on unknown columns — if the migration hasn't been
-        // applied, just don't include the field.
+        // Conditional spreads so older DBs (pre-0069 / pre-0120 / pre-
+        // 0139) don't 400 on unknown columns — if the migration hasn't
+        // been applied, just don't include the field.
         ...(servings != null ? { servings } : {}),
         ...(mealSlot ? { meal_slot: mealSlot } : {}),
         // When the slot references a specific leftover pantry row,
         // stamp it so the day-of UI can open the I-ate-this sheet
         // directly rather than CookMode. Migration 0120.
         ...(fromPantryRowId ? { from_pantry_row_id: fromPantryRowId } : {}),
+        // Disambiguates which family member's user_recipes row the
+        // slug refers to when family members share a slug. Migration
+        // 0139.
+        ...(recipeUserId ? { recipe_user_id: recipeUserId } : {}),
       };
       const { data, error: e } = await supabase
         .from("scheduled_meals")
@@ -140,7 +144,7 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
       const resolver = recipeResolverRef.current;
       const cookUserId = data.cook_id || data.user_id;
       if (resolver && cookUserId) {
-        const recipe = resolver(data.recipe_slug);
+        const recipe = resolver(data.recipe_slug, data.recipe_user_id);
         if (recipe) {
           syncPrepNotifications({ scheduledMeal: data, recipe, userId: cookUserId });
         }
@@ -165,7 +169,7 @@ export function useScheduledMeals(userId, { fromISO, toISO, familyKey, onRealtim
     const resolver = recipeResolverRef.current;
     const cookUserId = data.cook_id || data.user_id;
     if (resolver && cookUserId) {
-      const recipe = resolver(data.recipe_slug);
+      const recipe = resolver(data.recipe_slug, data.recipe_user_id);
       if (recipe) {
         syncPrepNotifications({ scheduledMeal: data, recipe, userId: cookUserId });
       }
