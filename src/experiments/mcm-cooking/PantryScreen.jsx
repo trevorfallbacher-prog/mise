@@ -1,0 +1,352 @@
+// Pantry screen — the entry point for the MCM cooking-app experiment.
+// Warm parchment backdrop, glass search + filter bar, 2-column grid
+// of glass item cards. Each card shows: emoji icon, name (serif),
+// quantity (mono), location pill, teal status dot.
+
+import { useMemo, useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import {
+  WarmBackdrop, GlassPanel, PrimaryButton,
+  StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
+} from "./primitives";
+import { color, radius, shadow, font } from "./tokens";
+
+const ITEMS = [
+  { id: 1, emoji: "🧈", name: "Kerrygold Butter",    qty: "1 stick",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 12 },
+  { id: 2, emoji: "🥚", name: "Pasture Eggs",         qty: "8 large",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 18 },
+  { id: 3, emoji: "🥛", name: "Whole Milk",           qty: "½ gallon",   location: "Dairy & Eggs",    cat: "dairy",   status: "warn",    days: 3 },
+  { id: 4, emoji: "🧀", name: "Gruyère",              qty: "6 oz",       location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 22 },
+  { id: 5, emoji: "🍋", name: "Meyer Lemons",         qty: "4 whole",    location: "Produce",         cat: "produce", status: "ok",      days: 9 },
+  { id: 6, emoji: "🧄", name: "Garlic",               qty: "1 head",     location: "Produce",         cat: "produce", status: "ok",      days: 30 },
+  { id: 7, emoji: "🥬", name: "Tuscan Kale",          qty: "1 bunch",    location: "Produce",         cat: "produce", status: "warn",    days: 2 },
+  { id: 8, emoji: "🍅", name: "San Marzano",          qty: "28 oz can",  location: "Pantry",          cat: "pantry",  status: "ok",      days: 180 },
+  { id: 9, emoji: "🍞", name: "Sourdough Loaf",       qty: "1 loaf",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 5 },
+  { id:10, emoji: "🫒", name: "Olive Oil",            qty: "500 ml",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 120 },
+  { id:11, emoji: "🐟", name: "Wild Salmon",          qty: "0.75 lb",    location: "Meat & Seafood",  cat: "meat",    status: "warn",    days: 1 },
+  { id:12, emoji: "🍗", name: "Chicken Thighs",       qty: "1.5 lb",     location: "Meat & Seafood",  cat: "meat",    status: "ok",      days: 3 },
+];
+
+const FILTERS = [
+  { id: "all",     label: "All"      },
+  { id: "dairy",   label: "Dairy"    },
+  { id: "produce", label: "Produce"  },
+  { id: "meat",    label: "Meat"     },
+  { id: "pantry",  label: "Pantry"   },
+];
+
+export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+
+  const visible = useMemo(() => ITEMS.filter((it) => {
+    if (filter !== "all" && it.cat !== filter) return false;
+    if (query && !it.name.toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  }), [filter, query]);
+
+  const goodCount = ITEMS.filter((i) => i.status === "ok").length;
+
+  return (
+    <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
+      <WarmBackdrop variant="pantry" />
+
+      <div style={{
+        position: "relative",
+        maxWidth: 480,
+        margin: "0 auto",
+        padding: "28px 20px 120px",
+      }}>
+        {/* --- Hero ----------------------------------------------------- */}
+        <FadeIn>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <Kicker>Tuesday · 4:12 PM</Kicker>
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              fontFamily: font.mono, fontSize: 11, color: color.teal,
+              letterSpacing: "0.12em", textTransform: "uppercase",
+            }}>
+              <StatusDot tone="ok" /> {goodCount} on hand
+            </div>
+          </div>
+
+          <SerifHeader size={52} style={{ marginTop: 4 }}>
+            The Pantry
+          </SerifHeader>
+          <p style={{
+            marginTop: 8, fontFamily: font.sans, fontSize: 15,
+            color: color.inkMuted, lineHeight: 1.45, maxWidth: 340,
+          }}>
+            Twelve good things on the shelf. Enough for dinner, breakfast,
+            and a quiet afternoon snack.
+          </p>
+        </FadeIn>
+
+        {/* --- Search + filters ---------------------------------------- */}
+        <FadeIn delay={0.06}>
+          <GlassPanel
+            padding={14}
+            style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}
+          >
+            <SearchGlyph />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search the pantry…"
+              style={{
+                flex: 1,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                fontFamily: font.sans,
+                fontSize: 15,
+                color: color.ink,
+              }}
+            />
+            {query && (
+              <button
+                onClick={() => setQuery("")}
+                aria-label="Clear search"
+                style={{
+                  border: "none", background: "transparent", cursor: "pointer",
+                  color: color.inkMuted, fontFamily: font.mono, fontSize: 12,
+                }}
+              >
+                CLEAR
+              </button>
+            )}
+          </GlassPanel>
+
+          <div style={{
+            display: "flex", gap: 8, marginTop: 14,
+            overflowX: "auto", paddingBottom: 4,
+          }}>
+            {FILTERS.map((f) => {
+              const active = filter === f.id;
+              return (
+                <motion.button
+                  key={f.id}
+                  onClick={() => setFilter(f.id)}
+                  whileTap={{ scale: 0.95 }}
+                  style={{
+                    flexShrink: 0,
+                    fontFamily: font.sans,
+                    fontSize: 13,
+                    fontWeight: 500,
+                    letterSpacing: "0.02em",
+                    padding: "8px 16px",
+                    borderRadius: radius.pill,
+                    border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.10)"}`,
+                    background: active
+                      ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
+                      : "rgba(255,255,255,0.65)",
+                    color: active ? "#FFF8EE" : color.ink,
+                    boxShadow: active ? "0 8px 18px rgba(47,143,131,0.30)" : "none",
+                    cursor: "pointer",
+                    backdropFilter: "blur(12px)",
+                    WebkitBackdropFilter: "blur(12px)",
+                  }}
+                >
+                  {f.label}
+                </motion.button>
+              );
+            })}
+          </div>
+        </FadeIn>
+
+        {/* --- Grid ----------------------------------------------------- */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 12,
+          marginTop: 20,
+        }}>
+          <AnimatePresence mode="popLayout">
+            {visible.map((it, i) => (
+              <motion.div
+                key={it.id}
+                layout
+                initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <PantryCard item={it} onPick={onOpenUnitPicker} />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+
+        {visible.length === 0 && (
+          <FadeIn>
+            <div style={{
+              marginTop: 40, textAlign: "center",
+              fontFamily: font.serif, fontStyle: "italic",
+              fontSize: 20, color: color.inkMuted,
+            }}>
+              Nothing matches that search.
+            </div>
+          </FadeIn>
+        )}
+
+        {/* --- Cook CTA ------------------------------------------------- */}
+        <FadeIn delay={0.12}>
+          <GlassPanel
+            tone="warm"
+            padding={18}
+            style={{
+              marginTop: 28,
+              display: "flex", alignItems: "center", gap: 14,
+              position: "relative", overflow: "hidden",
+            }}
+          >
+            <Starburst
+              size={140}
+              color="rgba(217,107,43,0.14)"
+              style={{ position: "absolute", top: -40, right: -40 }}
+            />
+            <div style={{ fontSize: 36, lineHeight: 1 }}>🍳</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Kicker tone={color.burnt}>Ready when you are</Kicker>
+              <div style={{
+                fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
+                fontSize: 20, color: color.ink, marginTop: 2, letterSpacing: "-0.01em",
+              }}>
+                Lemon-butter pasta
+              </div>
+              <div style={{
+                fontFamily: font.sans, fontSize: 12, color: color.inkMuted, marginTop: 2,
+              }}>
+                6 of 7 ingredients on hand · 18 min
+              </div>
+            </div>
+            <PrimaryButton onClick={onStartCooking} style={{ padding: "12px 18px", fontSize: 14 }}>
+              Cook
+            </PrimaryButton>
+          </GlassPanel>
+        </FadeIn>
+      </div>
+
+      <BottomTabBar />
+    </div>
+  );
+}
+
+// --- Sub-components ------------------------------------------------------
+
+function PantryCard({ item, onPick }) {
+  const warn = item.status === "warn";
+  return (
+    <GlassPanel
+      interactive
+      onClick={onPick}
+      padding={14}
+      style={{
+        display: "flex", flexDirection: "column",
+        gap: 10, minHeight: 148,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{
+          fontSize: 30, lineHeight: 1,
+          filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+        }}>
+          {item.emoji}
+        </div>
+        <StatusDot tone={warn ? "warn" : "ok"} />
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
+          fontSize: 17, lineHeight: 1.15, color: color.ink,
+          letterSpacing: "-0.01em",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {item.name}
+        </div>
+        <div style={{
+          fontFamily: font.mono, fontSize: 12, color: color.warmBrown,
+          marginTop: 4, letterSpacing: "0.03em",
+        }}>
+          {item.qty}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+        <span style={{
+          fontFamily: font.sans, fontSize: 10, fontWeight: 500,
+          color: color.teal, background: color.tealTint,
+          padding: "4px 8px", borderRadius: radius.pill,
+          letterSpacing: "0.04em",
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          maxWidth: "100%",
+        }}>
+          {item.location}
+        </span>
+        <span style={{
+          fontFamily: font.mono, fontSize: 10,
+          color: warn ? color.burnt : color.inkMuted,
+          whiteSpace: "nowrap",
+        }}>
+          {item.days}d
+        </span>
+      </div>
+    </GlassPanel>
+  );
+}
+
+function SearchGlyph() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden>
+      <circle cx="11" cy="11" r="7" fill="none" stroke={color.inkMuted} strokeWidth="1.6" />
+      <path d="M16.5 16.5 L21 21" stroke={color.inkMuted} strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function BottomTabBar() {
+  const tabs = [
+    { id: "pantry", label: "Pantry", glyph: "🥫", active: true  },
+    { id: "cook",   label: "Cook",   glyph: "🍳", active: false },
+    { id: "plan",   label: "Plan",   glyph: "📅", active: false },
+    { id: "you",    label: "You",    glyph: "🌿", active: false },
+  ];
+  return (
+    <div style={{
+      position: "fixed", bottom: 16, left: 0, right: 0,
+      display: "flex", justifyContent: "center",
+      pointerEvents: "none", zIndex: 5,
+    }}>
+      <div style={{
+        pointerEvents: "auto",
+        display: "flex", gap: 4,
+        padding: 6,
+        background: "rgba(255,255,255,0.72)",
+        backdropFilter: "blur(20px) saturate(150%)",
+        WebkitBackdropFilter: "blur(20px) saturate(150%)",
+        border: "1px solid rgba(255,255,255,0.6)",
+        borderRadius: 999,
+        boxShadow: shadow.glass,
+      }}>
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              fontFamily: font.sans, fontSize: 13, fontWeight: 500,
+              padding: "10px 16px", borderRadius: 999, border: "none",
+              background: t.active
+                ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
+                : "transparent",
+              color: t.active ? "#FFF8EE" : color.ink,
+              cursor: "pointer",
+              boxShadow: t.active ? "0 6px 14px rgba(47,143,131,0.30)" : "none",
+            }}
+          >
+            <span style={{ fontSize: 15 }}>{t.glyph}</span> {t.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
