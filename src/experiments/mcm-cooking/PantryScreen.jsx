@@ -36,11 +36,14 @@ const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
 
 // The three locations in top-to-bottom kitchen order. Each carries
 // the tile manifest + the classifier that maps items to tiles
-// within it. Order here is the order the tabs render in.
+// within it. Order here is the order the floating dock renders
+// segments in. Emoji icons removed — the dock uses solid color
+// swatch dots (LOCATION_DOT below) instead per the MCM direction:
+// dark blue = fridge, orange = pantry, icy blue = freezer.
 const LOCATIONS = [
-  { id: "fridge",  label: "Fridge",  emoji: "🧊", tiles: FRIDGE_TILES,  classify: fridgeTileFor  },
-  { id: "pantry",  label: "Pantry",  emoji: "🥫", tiles: PANTRY_TILES,  classify: pantryTileFor  },
-  { id: "freezer", label: "Freezer", emoji: "❄️", tiles: FREEZER_TILES, classify: freezerTileFor },
+  { id: "fridge",  label: "Fridge",  tiles: FRIDGE_TILES,  classify: fridgeTileFor  },
+  { id: "pantry",  label: "Pantry",  tiles: PANTRY_TILES,  classify: pantryTileFor  },
+  { id: "freezer", label: "Freezer", tiles: FREEZER_TILES, classify: freezerTileFor },
 ];
 
 // Fallback mapping for Showcase demo items (they don't carry the
@@ -451,7 +454,7 @@ export default function PantryScreen({
           .mcm-kbd-hint { display: none !important; }
         }
       `}</style>
-      <WarmBackdrop variant="pantry" />
+      <WarmBackdrop />
 
       {/* Dust motes — three tiny circular dots that drift across
           the viewport on independent arc keyframes. Placed
@@ -596,57 +599,24 @@ export default function PantryScreen({
           </SerifHeader>
         </FadeIn>
 
-        <FadeIn delay={0.14}>
-          {/* Magazine-masthead flourish — thin serif rule + small
-              diamond glyph between the header and the subtitle.
-              Subtle but intentional; reads as "this is a curated
-              surface, not a list of inventory rows." Kept at 50%
-              skyInkMuted alpha so it never fights the header for
-              attention. */}
-          <div
-            aria-hidden
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              marginTop: 12, maxWidth: 140,
-            }}
-          >
-            <span style={{
-              flex: 1, height: 1,
-              background: theme.color.skyInkMuted,
-              opacity: 0.4,
-            }} />
-            <span style={{
-              fontFamily: font.serif,
-              fontSize: 10,
-              color: theme.color.skyInkMuted,
-              opacity: 0.6,
-              lineHeight: 1,
+        {/* Loading-only subtitle. The diamond flourish + location-
+            breakdown subtitle that used to live here were both
+            redundant: the meta chip shows "N GOOD · M SOON" and
+            the floating location dock shows per-location totals,
+            so a hero paragraph repeating the same numbers was
+            pure duplication. The one remaining purpose was the
+            loading copy, which now renders as a single italic
+            line and disappears the moment items arrive. */}
+        {loading && cards.length === 0 && (
+          <FadeIn delay={0.14}>
+            <p style={{
+              marginTop: 10, fontFamily: font.serif, fontStyle: "italic",
+              fontSize: 15, color: theme.color.skyInkMuted, lineHeight: 1.45,
             }}>
-              ◆
-            </span>
-            <span style={{
-              flex: 1, height: 1,
-              background: theme.color.skyInkMuted,
-              opacity: 0.4,
-            }} />
-          </div>
-        </FadeIn>
-
-        <FadeIn delay={0.21}>
-          <p style={{
-            marginTop: 8, fontFamily: font.sans, fontSize: 15,
-            color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 420,
-            // `pre-line` turns the \n separator pantrySubtitle
-            // emits between the lead sentence and the by-location
-            // breakdown into an actual break; without it HTML
-            // would collapse the newline to a space.
-            whiteSpace: "pre-line",
-          }}>
-            {loading && cards.length === 0
-              ? "Unpacking the shelves…"
-              : pantrySubtitle(cards.length, goodCount, cardsByLocTile)}
-          </p>
-        </FadeIn>
+              Unpacking the shelves…
+            </p>
+          </FadeIn>
+        )}
 
         {/* Sentinel for the sticky bar's scroll-state detector.
             Sits right above the sticky bar; the IO in the effect
@@ -779,19 +749,10 @@ export default function PantryScreen({
               filters, so the visual shape of the row is preserved.
               Hidden while search is active — when a user types,
               the hierarchy gets bypassed and matching items show
-              across all locations. */}
-          {!query && (
-            <LocationTabs
-              locations={LOCATIONS}
-              active={locationTab}
-              onSelect={switchLocation}
-              totals={{
-                fridge:  sumLocationTiles(cardsByLocTile.fridge),
-                pantry:  sumLocationTiles(cardsByLocTile.pantry),
-                freezer: sumLocationTiles(cardsByLocTile.freezer),
-              }}
-            />
-          )}
+              across all locations. NOTE: the location switcher
+              itself moved to a FloatingLocationDock at the bottom
+              of the screen (see below), so this block is just the
+              search; tabs render elsewhere. */}
         </FadeIn>
 
         {/* Drilled-tile header lives INSIDE the sticky bar so the
@@ -931,37 +892,28 @@ export default function PantryScreen({
           onSelect={(id) => { if (id === "cook") onStartCooking && onStartCooking(); }}
         />
       )}
+
+      {/* Floating location dock — Fridge / Pantry / Freezer pill
+          anchored at the bottom of the viewport. Replaces the
+          top-of-screen tabs per the "put the pill at the bottom
+          floating" direction. Sits ABOVE any app-level nav bar
+          (bottom: 96px gives ~80px of space for a 64-72px nav dock
+          below it). Hidden while searching since search bypasses
+          the location axis anyway. */}
+      {!query && (
+        <FloatingLocationDock
+          locations={LOCATIONS}
+          active={locationTab}
+          onSelect={switchLocation}
+          totals={{
+            fridge:  sumLocationTiles(cardsByLocTile.fridge),
+            pantry:  sumLocationTiles(cardsByLocTile.pantry),
+            freezer: sumLocationTiles(cardsByLocTile.freezer),
+          }}
+        />
+      )}
     </div>
   );
-}
-
-// Pantry subtitle — short warm copy that scales with the count.
-// Hardcoded wording on Showcase ("Twelve good things") doesn't
-// survive once real data flows in; this helper keeps it honest.
-// Now also surfaces the by-location breakdown (N fridge · M
-// pantry · K freezer) when total > 0 so the user sees where the
-// gravity of their shelf is without tapping every tab.
-function pantrySubtitle(total, good, cardsByLocTile) {
-  if (total === 0) {
-    return "Empty shelf. Time for a grocery run.";
-  }
-  // Base sentence — "all fresh" variant when nothing's expiring.
-  const warnCount = total - good;
-  const base = warnCount === 0
-    ? (total === 1 ? "One good thing on the shelf." : `${total} good things on the shelf. Everything's fresh.`)
-    : `${total} on the shelf · ${warnCount} ${warnCount === 1 ? "needs" : "need"} using soon.`;
-
-  // By-location tail — sum all tiles per location. Skip when a
-  // location has zero items to keep the sentence readable.
-  const breakdown = (cardsByLocTile && Object.keys(cardsByLocTile).length > 0)
-    ? ["fridge", "pantry", "freezer"]
-        .map(loc => ({ loc, count: sumLocationTiles(cardsByLocTile[loc]) }))
-        .filter(x => x.count > 0)
-        .map(x => `${x.count} in the ${x.loc}`)
-        .join(" · ")
-    : "";
-
-  return breakdown ? `${base}\n${breakdown}.` : base;
 }
 
 // Sum all items across a location's tiles. `locBuckets` is
@@ -1220,40 +1172,53 @@ function EmptyState({ kind, query, tile }) {
   );
 }
 
-// Location tabs — segmented control for fridge / pantry / freezer.
-// Replaces a plain pill-row with a unified segmented element so
-// the active tab reads as "one of three modes" (which it is)
-// rather than "one pill out of three random pills." Uses a
-// framer-motion layoutId for the active indicator so it slides
-// between segments instead of snapping — reads as a physical
-// switch rather than a state flip. Each segment carries its own
-// item total so the user sees "where the weight of my pantry is"
-// before clicking.
-function LocationTabs({ locations, active, onSelect, totals }) {
+// Swatch colors for the floating location dock. User-specified
+// MCM palette: dark cool blue for the fridge (cold slate), MCM
+// orange for the pantry (warm burnt), icy pale blue for the
+// freezer. Kept out of the theme tokens because these are
+// semantic-fixed (fridge is ALWAYS cold-blue regardless of time-
+// of-day) rather than theme-variant.
+const LOCATION_DOT = {
+  fridge:  "#2F5A85", // dark cool blue
+  pantry:  "#D96B2B", // MCM burnt orange
+  freezer: "#A8D8EA", // icy pale blue
+};
+
+// Floating location dock — Fridge / Pantry / Freezer switcher
+// pinned to the bottom of the viewport instead of the old top-of-
+// page segmented control. Three pill segments, each with a solid
+// colored swatch dot (in place of the emoji icons it replaced)
+// plus the label and a count chip. Sliding active indicator via
+// framer-motion layoutId, identical to the previous segmented
+// control so the tap interaction is physically familiar.
+function FloatingLocationDock({ locations, active, onSelect, totals }) {
   const { theme } = useTheme();
-  // Hover state so inactive tabs show a subtle tint + pill preview
-  // on mouseover. Single state (not per-tab boolean) since at most
-  // one tab is hovered at a time. Null means no hover.
   const [hovered, setHovered] = useState(null);
   return (
     <div style={{
+      position: "fixed",
+      left: "50%",
+      // Sits above the app-level bottom nav. 96px leaves a ~16px
+      // visual gap above a ~80px dark nav bar; bump if the nav is
+      // taller on a given device.
+      bottom: 96,
+      transform: "translateX(-50%)",
+      zIndex: 20,
       display: "flex",
       gap: 4,
-      marginTop: 14,
-      padding: 4,
+      padding: 5,
       borderRadius: 999,
-      background: theme.color.glassFillLite,
-      border: `1px solid ${theme.color.hairline}`,
-      backdropFilter: "blur(16px) saturate(150%)",
-      WebkitBackdropFilter: "blur(16px) saturate(150%)",
-      boxShadow: theme.shadow.soft,
-      overflowX: "auto",
-      scrollbarWidth: "none",
+      background: withAlpha(theme.color.cream, 0.85),
+      border: `1px solid ${theme.color.glassBorder}`,
+      backdropFilter: "blur(18px) saturate(160%)",
+      WebkitBackdropFilter: "blur(18px) saturate(160%)",
+      boxShadow: "0 14px 34px rgba(30,20,8,0.18), 0 3px 10px rgba(30,20,8,0.10)",
       ...THEME_TRANSITION,
     }}>
       {locations.map((loc) => {
         const isActive = active === loc.id;
         const total = totals[loc.id] || 0;
+        const dotColor = LOCATION_DOT[loc.id] || theme.color.inkMuted;
         return (
           <button
             key={loc.id}
@@ -1263,25 +1228,14 @@ function LocationTabs({ locations, active, onSelect, totals }) {
             className="mcm-focusable"
             style={{
               position: "relative",
-              flex: 1,
-              // minWidth lowered from 100 → 76 so three segments
-              // fit inside a ~335px mobile viewport without
-              // horizontal scroll. Desktop still gets equal-
-              // flex segments via flex:1; phones just get
-              // slightly-tighter pills.
-              minWidth: 76,
+              minWidth: 96,
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              gap: 6,
-              padding: "8px 14px",
+              gap: 8,
+              padding: "10px 18px",
               borderRadius: 999,
               border: "none",
-              // Background: transparent when inactive and unhovered
-              // (the sliding active indicator handles the active
-               // look). On hover of an inactive tab, a ~4%-alpha ink
-              // wash previews the pill shape without competing with
-              // the real active highlight.
               background: !isActive && hovered === loc.id
                 ? withAlpha(theme.color.ink, 0.04)
                 : "transparent",
@@ -1289,25 +1243,14 @@ function LocationTabs({ locations, active, onSelect, totals }) {
               fontFamily: font.sans,
               fontSize: 13,
               fontWeight: 500,
-              // Color cascade: active → full ink, hovered inactive →
-              // two-thirds tint (between ink + inkMuted), rest →
-              // muted. The subtle mid-tint on hover reads as "this
-              // is tappable" without committing to the active look.
-              color: isActive
+              color: isActive || hovered === loc.id
                 ? theme.color.ink
-                : hovered === loc.id
-                  ? theme.color.ink
-                  : theme.color.inkMuted,
-              transition: "color 220ms ease",
+                : theme.color.inkMuted,
+              transition: "color 220ms ease, background 220ms ease",
               whiteSpace: "nowrap",
             }}
           >
             {isActive && (
-              // Sliding indicator — framer morphs this element's
-              // bounds when `active` changes, producing a smooth
-              // slide between segments. layoutId is stable so
-              // the SAME element is tracked across tab switches,
-              // not replaced.
               <motion.div
                 layoutId="location-tab-indicator"
                 style={{
@@ -1316,22 +1259,28 @@ function LocationTabs({ locations, active, onSelect, totals }) {
                   borderRadius: 999,
                   background: theme.color.glassFillHeavy,
                   border: `1px solid ${theme.color.glassBorder}`,
-                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 8px rgba(30,30,30,0.08)`,
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.6), 0 2px 8px rgba(30,30,30,0.10)`,
                   zIndex: 0,
                 }}
-                transition={{
-                  type: "spring",
-                  stiffness: 380,
-                  damping: 32,
-                }}
+                transition={{ type: "spring", stiffness: 380, damping: 32 }}
               />
             )}
-            <span style={{ position: "relative", zIndex: 1, display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 15, lineHeight: 1 }}>{loc.emoji}</span>
+            <span style={{ position: "relative", zIndex: 1, display: "inline-flex", alignItems: "center", gap: 8 }}>
+              {/* Colored swatch dot — replaces the old emoji icon.
+                  Fridge = dark cool blue, Pantry = MCM burnt orange,
+                  Freezer = icy pale blue. 10px circle with a subtle
+                  shadow so it reads as a physical chip rather than
+                  a flat fill. */}
+              <span style={{
+                display: "inline-block",
+                width: 10,
+                height: 10,
+                borderRadius: "50%",
+                background: dotColor,
+                boxShadow: `0 1px 2px rgba(30,20,8,0.25), inset 0 1px 0 rgba(255,255,255,0.30)`,
+                flexShrink: 0,
+              }} />
               <span>{loc.label}</span>
-              {/* Per-tab count chip — DM Mono so it reads as
-                  metadata. Hidden when total is 0 so empty-location
-                  tabs don't broadcast "0 here." */}
               {total > 0 && (
                 <span style={{
                   fontFamily: font.mono, fontSize: 10,
@@ -1343,7 +1292,6 @@ function LocationTabs({ locations, active, onSelect, totals }) {
                     : "transparent",
                   color: isActive ? theme.color.inkMuted : theme.color.inkFaint,
                   letterSpacing: "0.04em",
-                  marginLeft: 2,
                 }}>
                   {total}
                 </span>
