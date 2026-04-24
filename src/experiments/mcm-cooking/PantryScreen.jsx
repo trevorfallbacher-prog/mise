@@ -599,11 +599,8 @@ export default function PantryScreen({
             alignItems: "center",
             gap: 10,
           }}>
-            {onOpenReceipts && spendCents > 0 && (
-              <SpendChip cents={spendCents} onClick={onOpenReceipts} />
-            )}
             {onOpenReceipts && (
-              <ReceiptButton onClick={onOpenReceipts} />
+              <ReceiptButton spendCents={spendCents} onClick={onOpenReceipts} />
             )}
             {onGoToShopping && (
               <CartButton count={shoppingCount} onClick={onGoToShopping} />
@@ -1111,17 +1108,25 @@ const NAV_TABS = [
 // shopping list has items a small burnt count badge rides on
 // the upper-right corner of the icon.
 // Receipt button — 60×60 glass pill with the bundled
-// receipt.svg. Sits to the left of CartButton in the top-right
-// cluster. Same interaction style as CartButton (spring entry,
-// hover lift, tap scale, focus ring) so the cluster reads as
-// one toolbar rather than three disparate buttons.
-function ReceiptButton({ onClick }) {
+// receipt.svg. Same shape as CartButton; the cluster reads as
+// one toolbar. Optional `spendCents` shows up as a burnt
+// dollar-amount badge pinned to the upper-right corner — same
+// pattern as the cart's count badge, just $ instead of an
+// integer.
+function ReceiptButton({ spendCents = 0, onClick }) {
   const { theme } = useTheme();
+  const dollars = Math.round(spendCents / 100);
+  const formatted = dollars >= 1000
+    ? `$${(dollars / 1000).toFixed(1)}k`
+    : `$${dollars}`;
+  const label = spendCents > 0
+    ? `Receipt history · ${formatted} this month`
+    : "Receipt history";
   return (
     <motion.button
       onClick={onClick}
-      aria-label="Receipt history"
-      title="Receipt history"
+      aria-label={label}
+      title={label}
       className="mcm-focusable"
       whileHover={{ y: -2, scale: 1.04 }}
       whileTap={{ scale: 0.94 }}
@@ -1155,73 +1160,28 @@ function ReceiptButton({ onClick }) {
           filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
         }}
       />
-    </motion.button>
-  );
-}
-
-// Spend chip — current-month receipt spend in a compact pill
-// that sits to the left of the receipt + cart buttons. Tappable:
-// routes to the same onOpenReceipts handler as the receipt
-// button so a user looking at the dollar amount can drill into
-// what they spent in one tap. Formats cents → short dollars
-// (e.g. $127.50 → "$128" when rounded, $12.35 → "$12"). No
-// cents shown since the precision isn't useful in a hero chip.
-function SpendChip({ cents, onClick }) {
-  const { theme } = useTheme();
-  const dollars = Math.round(cents / 100);
-  const formatted = dollars >= 1000
-    ? `$${(dollars / 1000).toFixed(1)}k`
-    : `$${dollars}`;
-  return (
-    <motion.button
-      onClick={onClick}
-      aria-label={`Spent ${formatted} this month — tap to view receipts`}
-      title={`Spent ${formatted} this month`}
-      className="mcm-focusable"
-      whileHover={{ y: -1, scale: 1.02 }}
-      whileTap={{ scale: 0.96 }}
-      initial={{ opacity: 0, y: -4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ type: "spring", stiffness: 380, damping: 26 }}
-      style={{
-        display: "inline-flex",
-        flexDirection: "column",
-        alignItems: "flex-end",
-        justifyContent: "center",
-        padding: "8px 14px",
-        borderRadius: 999,
-        border: `1px solid ${theme.color.glassBorder}`,
-        background: theme.color.glassFillHeavy,
-        backdropFilter: "blur(14px) saturate(150%)",
-        WebkitBackdropFilter: "blur(14px) saturate(150%)",
-        boxShadow: theme.shadow.soft,
-        cursor: "pointer",
-        color: theme.color.ink,
-        ...THEME_TRANSITION,
-      }}
-    >
-      <span style={{
-        fontFamily: font.mono,
-        fontSize: 9,
-        fontWeight: 500,
-        letterSpacing: "0.12em",
-        textTransform: "uppercase",
-        color: theme.color.inkFaint,
-        lineHeight: 1,
-        marginBottom: 2,
-      }}>
-        This month
-      </span>
-      <span style={{
-        fontFamily: font.display,
-        fontSize: 20,
-        fontWeight: 580,
-        fontVariationSettings: "'wdth' 100, 'wght' 580, 'opsz' 22",
-        letterSpacing: "-0.02em",
-        lineHeight: 1,
-      }}>
-        {formatted}
-      </span>
+      {spendCents > 0 && (
+        <span style={{
+          position: "absolute",
+          top: -6, right: -8,
+          minWidth: 22, height: 22,
+          padding: "0 7px",
+          borderRadius: 999,
+          background: theme.color.burnt,
+          color: theme.color.ctaText,
+          fontFamily: font.mono,
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: "-0.02em",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 2px 6px rgba(168,73,17,0.35)",
+          border: `1px solid ${theme.color.glassBorder}`,
+        }}>
+          {formatted}
+        </span>
+      )}
     </motion.button>
   );
 }
