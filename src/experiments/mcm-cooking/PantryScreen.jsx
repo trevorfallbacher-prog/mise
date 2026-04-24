@@ -283,6 +283,23 @@ export default function PantryScreen({
     return () => io.disconnect();
   }, []);
 
+  // Scroll to the top on drill IN / OUT so the user isn't
+  // disoriented by landing mid-page after the body swap. Runs
+  // only when drilledTile transitions from null→set or set→null,
+  // not on every re-render (drilledTile.id comparison). Smooth
+  // behavior so it feels continuous; users with reduce-motion
+  // preferences get "auto" via the media query below.
+  const prevDrilledRef = useRef(null);
+  useEffect(() => {
+    const prev = prevDrilledRef.current;
+    const curr = drilledTile?.id || null;
+    if (prev !== curr) {
+      const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
+    }
+    prevDrilledRef.current = curr;
+  }, [drilledTile]);
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target?.tagName || "").toLowerCase();
@@ -539,7 +556,17 @@ export default function PantryScreen({
              once — a small moment that makes first-paint feel
              intentional. */}
         <FadeIn>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 8,
+            // Wrap + gap so on narrow phones (or long
+            // "N GOOD · M SOON" readouts) the meta chip moves
+            // below the kicker instead of overflowing sideways.
+            flexWrap: "wrap",
+            gap: 12,
+          }}>
             <Kicker tone={theme.color.skyInkMuted}>
               {formatClock(now)}
             </Kicker>
