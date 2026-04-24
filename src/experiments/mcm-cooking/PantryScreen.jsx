@@ -591,37 +591,45 @@ export default function PantryScreen({
                 readout ("N GOOD · M SOON") when anything's
                 expiring, single axis ("N GOOD") otherwise so the
                 warn slot doesn't spam when everything's fresh. */}
-            <div style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "4px 10px",
-              borderRadius: 999,
-              background: theme.color.glassFillHeavy,
-              border: `1px solid ${theme.color.glassBorder}`,
-              backdropFilter: "blur(16px) saturate(150%)",
-              WebkitBackdropFilter: "blur(16px) saturate(150%)",
-              fontFamily: font.mono,
-              fontSize: 10,
-              fontWeight: 500,
-              color: theme.color.ink,
-              letterSpacing: "0.10em",
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-              ...THEME_TRANSITION,
-            }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <StatusDot tone="ok" size={6} /> {goodCount} good
-              </span>
-              {warnCount > 0 && (
-                <>
-                  <span style={{ opacity: 0.35 }}>·</span>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: theme.color.burnt }}>
-                    <StatusDot tone="warn" size={6} /> {warnCount} soon
-                  </span>
-                </>
-              )}
-            </div>
+            {/* Meta chip — rendered only when the pantry has at
+                least one item. Empty pantries get no chip
+                ("0 GOOD" reads as an error state rather than a
+                stat). Cold-load also suppresses — the "Unpacking
+                the shelves…" subtitle below is the right signal
+                during loading. */}
+            {cards.length > 0 && (
+              <div style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "4px 10px",
+                borderRadius: 999,
+                background: theme.color.glassFillHeavy,
+                border: `1px solid ${theme.color.glassBorder}`,
+                backdropFilter: "blur(16px) saturate(150%)",
+                WebkitBackdropFilter: "blur(16px) saturate(150%)",
+                fontFamily: font.mono,
+                fontSize: 10,
+                fontWeight: 500,
+                color: theme.color.ink,
+                letterSpacing: "0.10em",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+                ...THEME_TRANSITION,
+              }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <StatusDot tone="ok" size={6} /> {goodCount} good
+                </span>
+                {warnCount > 0 && (
+                  <>
+                    <span style={{ opacity: 0.35 }}>·</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: theme.color.burnt }}>
+                      <StatusDot tone="warn" size={6} /> {warnCount} soon
+                    </span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </FadeIn>
 
@@ -659,14 +667,12 @@ export default function PantryScreen({
           </SerifHeader>
         </FadeIn>
 
-        {/* Loading-only subtitle. The diamond flourish + location-
-            breakdown subtitle that used to live here were both
-            redundant: the meta chip shows "N GOOD · M SOON" and
-            the floating location dock shows per-location totals,
-            so a hero paragraph repeating the same numbers was
-            pure duplication. The one remaining purpose was the
-            loading copy, which now renders as a single italic
-            line and disappears the moment items arrive. */}
+        {/* Conditional hero subtitle. Only renders during loading
+            ("Unpacking the shelves…") or on a genuinely empty
+            pantry ("Nothing on the shelves yet…"). In the normal
+            case (pantry has items, finished loading) the hero
+            stays clean — meta chip + title + search — and the
+            tile grid carries the information below. */}
         {loading && cards.length === 0 && (
           <FadeIn delay={0.14}>
             <p style={{
@@ -674,6 +680,18 @@ export default function PantryScreen({
               fontSize: 15, color: theme.color.skyInkMuted, lineHeight: 1.45,
             }}>
               Unpacking the shelves…
+            </p>
+          </FadeIn>
+        )}
+        {!loading && cards.length === 0 && (
+          <FadeIn delay={0.14}>
+            <p style={{
+              marginTop: 10, fontFamily: font.serif, fontStyle: "italic",
+              fontSize: 15, color: theme.color.skyInkMuted, lineHeight: 1.45,
+              maxWidth: 360,
+            }}>
+              Nothing on the shelves yet. Scan a grocery receipt
+              or add items manually to get started.
             </p>
           </FadeIn>
         )}
