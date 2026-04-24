@@ -24,33 +24,22 @@
 // pantry's 1.5-stick row by 28.4 g → 1.25 sticks remaining".
 
 import { toBase, CUT_WEIGHTS_G, COUNT_WEIGHTS_G, CANONICAL_ALIASES, INGREDIENT_DENSITY_G_PER_ML } from "../data/ingredients";
+import {
+  MASS_FACTORS_G as UNIVERSAL_MASS_G,
+  VOLUME_FACTORS_ML as UNIVERSAL_VOLUME_ML,
+  MASS_UNITS,
+  VOLUME_UNITS,
+  normalizeUnitId,
+  formatKitchenAmount,
+  universalLadderFor as universalLadderForFromRegistry,
+} from "./units";
 
-// Universal mass / volume conversion factors. These are PHYSICS, not
-// ingredient-specific — 1 lb is always 453.6 g whether we're weighing
-// flour or ribeye. Each canonical used to re-declare these same
-// numbers in its units[] array, which (a) duplicated data and (b)
-// created bugs when a canonical forgot to include a unit (heavy_cream
-// without gallon, garlic without oz, etc.). convertWithBridge now
-// falls back to these tables when the canonical's ladder can't resolve
-// a unit directly — same-family mass↔mass or volume↔volume conversions
-// "just work" regardless of what's declared on the canonical.
-//
-// Each value is toBase where the base is GRAMS (for mass) or
-// MILLILITRES (for volume). Volumes are water-based — for other
-// liquids (oil, honey) the density factor per canonical could refine
-// this; deferred until a user reports drift.
-const UNIVERSAL_MASS_G = {
-  mg: 0.001, g: 1, kg: 1000,
-  oz: 28.35, lb: 453.6,
-};
-const UNIVERSAL_VOLUME_ML = {
-  ml: 1, l: 1000,
-  tsp: 5, tbsp: 15, cup: 240,
-  fl_oz: 29.57, pint: 473, quart: 946,
-  half_gallon: 1893, gallon: 3785,
-};
-const MASS_UNITS   = new Set(Object.keys(UNIVERSAL_MASS_G));
-const VOLUME_UNITS = new Set(Object.keys(UNIVERSAL_VOLUME_ML));
+// Universal mass / volume tables are imported from src/lib/units.js —
+// that module owns the single source of truth. This file keeps them
+// under the old local names (UNIVERSAL_MASS_G / UNIVERSAL_VOLUME_ML)
+// so the downstream math below reads unchanged, but any update
+// should land in src/lib/units.js.
+export { MASS_UNITS, VOLUME_UNITS };
 
 // True when the two units span mass AND volume (i.e. one is mass,
 // the other is volume). This is the density-bridge case — different
@@ -64,21 +53,31 @@ function sameMassVolumeFamilies(a, b) {
 // Look up the ingredient's density (g/ml) from the central
 // INGREDIENT_DENSITY_G_PER_ML table, walking CANONICAL_ALIASES so a
 // legacy compound slug (ground_beef → beef) still finds the right
-// value. Defaults to 1.0 (water-equivalent) for ingredients without
-// an explicit entry — works for most water-adjacent liquids (broth,
-// stock, juice, most dairy) within ~10%. Dense syrups and flours
-// need explicit entries or they'd drift.
+// value. Returns NULL when no explicit density is declared — callers
+// must treat missing density as a hard stop and bail the conversion.
+//
+// Historical note: this helper used to default to 1.0 (water) when
+// the ingredient had no entry. That made the conversion succeed with
+// silently-wrong numbers on dense or light ingredients (flour would
+// resolve as 120 g/cup via ladder but 240 g/cup via the missing-
+// density bridge). The "deterministic engine" rewrite eliminates
+// water-standard silent fallbacks — no density, no cross-family
+// conversion.
 function resolveDensity(ingredient) {
-  if (!ingredient) return 0;
+  if (!ingredient) return null;
+  const direct = Number(ingredient.density_g_per_ml ?? ingredient.density);
+  if (Number.isFinite(direct) && direct > 0) return direct;
   const id = ingredient.id;
   if (INGREDIENT_DENSITY_G_PER_ML[id] != null) {
-    return Number(INGREDIENT_DENSITY_G_PER_ML[id]) || 0;
+    const v = Number(INGREDIENT_DENSITY_G_PER_ML[id]);
+    return Number.isFinite(v) && v > 0 ? v : null;
   }
   const alias = CANONICAL_ALIASES[id];
   if (alias?.base && INGREDIENT_DENSITY_G_PER_ML[alias.base] != null) {
-    return Number(INGREDIENT_DENSITY_G_PER_ML[alias.base]) || 0;
+    const v = Number(INGREDIENT_DENSITY_G_PER_ML[alias.base]);
+    return Number.isFinite(v) && v > 0 ? v : null;
   }
-  return 1.0;
+  return null;
 }
 
 // True when both units are in the same universal family (both mass or
@@ -375,23 +374,27 @@ export function convertWithBridge(qty, toUnit, ingredient, row) {
   // universal ladder can't do this because mass and volume are
   // different physical families. INGREDIENT_DENSITY_G_PER_ML holds
   // gram-per-ml values for common cooking ingredients (oils, flours,
-  // honey, salts, etc.); unknown ingredients default to 1.0 (water-
-  // equivalent), which is fine for most dairy / broth / juice calls.
+  // honey, salts, etc.); ingredients without an explicit entry FAIL
+  // this bridge instead of silently assuming water density (1.0).
+  // That's the deterministic-engine rule: no density, no cross-
+  // family conversion. Caller sees { ok:false, reason:"no-density" }.
   if (!countInvolved && sameMassVolumeFamilies(normFromUnit, normToUnit)) {
     const density = resolveDensity(ingredient);
-    if (density > 0) {
-      const ml = normFromUnit in UNIVERSAL_VOLUME_ML
-        ? Number(qty.amount) * UNIVERSAL_VOLUME_ML[normFromUnit]
-        : (Number(qty.amount) * UNIVERSAL_MASS_G[normFromUnit]) / density;
-      if (Number.isFinite(ml)) {
-        const value = normToUnit in UNIVERSAL_VOLUME_ML
-          ? ml / UNIVERSAL_VOLUME_ML[normToUnit]
-          : (ml * density) / UNIVERSAL_MASS_G[normToUnit];
-        if (Number.isFinite(value)) {
-          return { ok: true, value, bridged: true };
-        }
+    if (density == null) {
+      return { ok: false, reason: "no-density", value: NaN, bridged: false };
+    }
+    const ml = normFromUnit in UNIVERSAL_VOLUME_ML
+      ? Number(qty.amount) * UNIVERSAL_VOLUME_ML[normFromUnit]
+      : (Number(qty.amount) * UNIVERSAL_MASS_G[normFromUnit]) / density;
+    if (Number.isFinite(ml)) {
+      const value = normToUnit in UNIVERSAL_VOLUME_ML
+        ? ml / UNIVERSAL_VOLUME_ML[normToUnit]
+        : (ml * density) / UNIVERSAL_MASS_G[normToUnit];
+      if (Number.isFinite(value)) {
+        return { ok: true, value, bridged: true };
       }
     }
+    return { ok: false, reason: "bad-amount", value: NaN, bridged: false };
   }
 
   // Pure bridge: count ↔ mass where one side is NOT in the ladder.

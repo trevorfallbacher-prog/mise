@@ -1,6 +1,27 @@
 import { useEffect, useState } from "react";
 import { convert, convertWithBridge, convertUniversal, formatQty } from "./unitConvert";
 import { findIngredient } from "../data/ingredients";
+import { normalizeUnitId, preferredUnitForCanonical } from "./units";
+
+// ─── Preference system ───────────────────────────────────────────
+// Two-layer model:
+//
+//   1. SYSTEM — "us" or "metric". Global toggle in Settings. Drives
+//      the DEFAULT display unit for every canonical via that canonical's
+//      `preferredUnit[system]` metadata (src/data/ingredients.js).
+//
+//   2. OVERRIDES — per-ingredient picks the user made from the chip
+//      picker or unit-sheet. Stored as { ingredientId: unitId }.
+//      An override wins over the canonical's preferredUnit for that
+//      ingredient, for that user, across the app.
+//
+// Both live in localStorage. System is a single string, overrides
+// are a small JSON map. Flipping the system DOES NOT wipe overrides
+// anymore — the two layers stack. A metric user who picked "cup" for
+// flour keeps seeing cup for flour after flipping to metric again.
+// (Old behavior wiped everything; change rationale: the user asked
+// for a specific unit on a specific ingredient, that's intent, don't
+// contradict them just because they flipped the top-level toggle.)
 
 const CHANGE_EVENT = "mise:unitprefs-changed";
 function broadcast() {
@@ -29,78 +50,13 @@ export function useUnitPrefsVersion() {
   return v;
 }
 
-// Per-user display-unit preferences for recipe ingredients. Backed by
-// localStorage; persists across sessions and surfaces anywhere a
-// recipe ingredient amount is rendered.
-//
-// Key model: canonical id first ("butter", "flour"), falling back to
-// normalized item name ("buttermilk") for rows that the model didn't
-// tag with a canonical. Values are unit ids from either an ingredient's
-// units[] ladder or the universal mass/volume set.
-//
-// The shape is intentionally flat — {butter: "tbsp", flour: "cup", ...}
-// — so the whole map lives in a single localStorage string and the
-// React hook can subscribe with a single getter. No scaling explosion
-// to worry about: even a heavy cook hits maybe 200 unique canonicals
-// over a year, and unit strings are tiny.
+const LS_OVERRIDES = "mise.unitPrefs.v1";
+const LS_SYSTEM    = "mise.unitPrefs.system.v1";   // "us" | "metric"
 
-const LS_KEY    = "mise.unitPrefs.v1";
-const LS_SEEDED = "mise.unitPrefs.seeded.v1";
-const LS_SYSTEM = "mise.unitPrefs.system.v1";   // "us" | "metric"
-
-// Small curated seed for first-time users. Not comprehensive — we
-// cover the ingredients most likely to come back in an awkward unit
-// and let the user teach the rest via taps. Everything here is a
-// common case where the LLM's default choice reads as robotic vs
-// idiomatic for the locale.
-const US_SEED = {
-  butter:         "tbsp",
-  flour:          "cup",
-  sugar:          "cup",
-  brown_sugar:    "cup",
-  powdered_sugar: "cup",
-  rice:           "cup",
-  oats:           "cup",
-  cornmeal:       "cup",
-  milk:           "cup",
-  heavy_cream:    "cup",
-  buttermilk:     "cup",
-  yogurt:         "cup",
-  olive_oil:      "tbsp",
-  vegetable_oil:  "tbsp",
-  soy_sauce:      "tbsp",
-  honey:          "tbsp",
-  maple_syrup:    "tbsp",
-};
-
-// Metric seed — used for any non-US-English locale. Grams for
-// masses, millilitres for liquids. Baking ingredients especially
-// benefit from grams over volume (100g flour is always 100g; a
-// "cup" depends on how packed the flour is).
-const METRIC_SEED = {
-  butter:         "g",
-  flour:          "g",
-  sugar:          "g",
-  brown_sugar:    "g",
-  powdered_sugar: "g",
-  rice:           "g",
-  oats:           "g",
-  cornmeal:       "g",
-  milk:           "ml",
-  heavy_cream:    "ml",
-  buttermilk:     "ml",
-  yogurt:         "g",
-  olive_oil:      "ml",
-  vegetable_oil:  "ml",
-  soy_sauce:      "ml",
-  honey:          "g",
-  maple_syrup:    "ml",
-};
-
-function readMap() {
+function readOverrides() {
   if (typeof localStorage === "undefined") return {};
   try {
-    const raw = localStorage.getItem(LS_KEY);
+    const raw = localStorage.getItem(LS_OVERRIDES);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return (parsed && typeof parsed === "object") ? parsed : {};
@@ -109,10 +65,10 @@ function readMap() {
   }
 }
 
-function writeMap(map) {
+function writeOverrides(map) {
   if (typeof localStorage === "undefined") return;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(map));
+    localStorage.setItem(LS_OVERRIDES, JSON.stringify(map));
   } catch {
     // Quota exceeded or disabled — silent no-op; preference behavior
     // degrades to per-session only, which is still better than crash.
@@ -131,28 +87,10 @@ function normalizeItemKey(name) {
     .slice(0, 40) || null;
 }
 
-// Seed the preference map once per install based on navigator.language.
-// Subsequent loads skip this entirely. User picks always override the
-// seed — they're written straight into the same map.
-function seedIfNeeded() {
-  if (typeof localStorage === "undefined") return;
-  if (localStorage.getItem(LS_SEEDED)) return;
-  const lang = (typeof navigator !== "undefined" && navigator.language) ? navigator.language : "en-US";
-  const isUS = /^en-US$/i.test(lang);
-  const system = isUS ? "us" : "metric";
-  const seed = isUS ? US_SEED : METRIC_SEED;
-  const current = readMap();
-  const merged = { ...seed, ...current };
-  writeMap(merged);
-  try {
-    localStorage.setItem(LS_SEEDED, "1");
-    localStorage.setItem(LS_SYSTEM, system);
-  } catch { /* ignore */ }
-}
-
-// Read the user's chosen measurement system. Falls back to the
-// locale-derived default when no explicit choice has been made
-// (first-time user on a UI that hasn't surfaced the toggle yet).
+// Read the user's chosen measurement system. First checks explicit
+// storage; falls back to navigator.language on first load (en-US →
+// "us", anything else → "metric"). Never throws, always returns a
+// valid system string.
 export function getMeasurementSystem() {
   if (typeof localStorage === "undefined") return "us";
   const stored = localStorage.getItem(LS_SYSTEM);
@@ -161,81 +99,117 @@ export function getMeasurementSystem() {
   return /^en-US$/i.test(lang) ? "us" : "metric";
 }
 
-// Switch the measurement system. Rewrites the preference map from the
-// chosen system's seed. Existing user picks are dropped when flipping
-// systems — the point of the toggle is "make everything metric now",
-// so keeping a stale "butter → tbsp" around would contradict the ask.
-// Callers can always re-pick per ingredient afterwards.
+// Switch the measurement system. ONLY flips the system flag — does
+// NOT wipe user overrides. Broadcasts so every component re-renders.
 export function setMeasurementSystem(system) {
   if (system !== "us" && system !== "metric") return;
   if (typeof localStorage === "undefined") return;
-  const seed = system === "us" ? US_SEED : METRIC_SEED;
-  writeMap({ ...seed });
-  try {
-    localStorage.setItem(LS_SYSTEM, system);
-    localStorage.setItem(LS_SEEDED, "1");
-  } catch { /* ignore */ }
+  try { localStorage.setItem(LS_SYSTEM, system); } catch { /* ignore */ }
   broadcast();
 }
 
+// Identity key for a recipe ingredient. Canonical id when present
+// (the reliable case — "butter", "chicken"), normalized item name
+// as a fallback for pre-canonical recipe rows.
 export function prefKeyForIngredient(ing) {
   if (!ing) return null;
   if (ing.ingredientId) return ing.ingredientId;
   return normalizeItemKey(ing.item || ing.name);
 }
 
-export function getPreferredUnit(key) {
-  if (!key) return null;
-  seedIfNeeded();
-  const map = readMap();
-  return map[key] || null;
+// Return the unit the user should SEE for this ingredient, in THIS
+// order: (1) explicit override they set, (2) canonical's own
+// preferredUnit[system] hint, (3) null meaning "leave amount as-is."
+//
+// This is the function the display path calls. It's pure — no state
+// bump, no writes. Callers that want "display this amount as X" use
+// applyPreferredUnit below; callers that want "what's the current
+// display unit for this pref key?" use this.
+export function getPreferredUnit(ingredientIdOrKey, ing) {
+  if (!ingredientIdOrKey) return null;
+  // 1. User override. Wins over canonical metadata — explicit intent.
+  const overrides = readOverrides();
+  if (overrides[ingredientIdOrKey]) return overrides[ingredientIdOrKey];
+
+  // 2. Canonical-driven default for the current system. Read the
+  // canonical's `preferredUnit[system]` metadata and return it.
+  const system = getMeasurementSystem();
+  const canonical = ing?.ingredientId
+    ? findIngredient(ing.ingredientId)
+    : findIngredient(ingredientIdOrKey);
+  if (canonical) {
+    const pref = preferredUnitForCanonical(canonical, system);
+    if (pref) return pref;
+  }
+  return null;
 }
 
+// Persist a per-ingredient override. Written synchronously to
+// localStorage and broadcast so every mounted component that read
+// this key re-renders immediately. Calling with unit === current
+// value is a no-op (no extra broadcast, no churn).
 export function setPreferredUnit(key, unit) {
   if (!key || !unit) return;
-  const map = readMap();
-  if (map[key] === unit) return;
-  map[key] = unit;
-  writeMap(map);
+  const normalizedUnit = normalizeUnitId(unit) || unit;
+  const map = readOverrides();
+  if (map[key] === normalizedUnit) return;
+  map[key] = normalizedUnit;
+  writeOverrides(map);
   broadcast();
 }
 
-// Try to render an ingredient's amount string in the user's preferred
-// unit. Returns the original amount string unchanged if:
-//   • no preference stored for this canonical,
-//   • the current amount string can't be parsed,
-//   • the conversion fails (foreign unit family, no density, etc.).
+// Clear a per-ingredient override so the canonical's preferredUnit
+// takes over again. Useful when a "reset" action surfaces in the
+// unit picker ("use default for metric").
+export function clearPreferredUnit(key) {
+  if (!key) return;
+  const map = readOverrides();
+  if (!(key in map)) return;
+  delete map[key];
+  writeOverrides(map);
+  broadcast();
+}
+
+// Convert an amount string to the user's preferred display unit for
+// this ingredient. Returns the original string unchanged when:
+//   • no canonical metadata AND no override exists,
+//   • the amount string can't be parsed,
+//   • the preferred unit equals the parsed unit,
+//   • the conversion path fails (foreign family, no density bridge).
 //
-// Deliberately defensive — a broken conversion should never drop the
-// original amount on the floor. Callers only see a better string or
-// the same string.
+// Defensive by design — a broken conversion should never drop the
+// original amount on the floor. Callers see a better string or the
+// same string.
 export function applyPreferredUnit(amountString, ing) {
   if (!amountString || typeof amountString !== "string") return amountString;
   const key = prefKeyForIngredient(ing);
-  const preferred = getPreferredUnit(key);
+  const preferred = getPreferredUnit(key, ing);
   if (!preferred) return amountString;
 
   const parsed = parseAmountLoose(amountString);
   if (!parsed) return amountString;
-  if (parsed.unit === preferred) return amountString;
+  const parsedNorm = normalizeUnitId(parsed.unit) || parsed.unit;
+  const preferredNorm = normalizeUnitId(preferred) || preferred;
+  if (parsedNorm === preferredNorm) return amountString;
 
-  const ingredient = ing?.ingredientId ? findIngredient(ing.ingredientId) : null;
+  const canonical = ing?.ingredientId ? findIngredient(ing.ingredientId) : null;
   let res;
-  if (ingredient) {
-    res = convert(parsed, preferred, ingredient);
-    if (!res.ok) res = convertWithBridge(parsed, preferred, ingredient);
+  if (canonical) {
+    res = convert({ amount: parsed.amount, unit: parsedNorm }, preferredNorm, canonical);
+    if (!res.ok) res = convertWithBridge({ amount: parsed.amount, unit: parsedNorm }, preferredNorm, canonical);
   } else {
-    res = convertUniversal(parsed, preferred);
+    res = convertUniversal({ amount: parsed.amount, unit: parsedNorm }, preferredNorm);
   }
   if (!res.ok || !Number.isFinite(res.value) || res.value <= 0) return amountString;
 
-  const formattable = ingredient || { units: [{ id: preferred, label: preferred }] };
-  return formatQty({ amount: res.value, unit: preferred }, formattable);
+  const formattable = canonical || { units: [{ id: preferredNorm, label: preferredNorm }] };
+  return formatQty({ amount: res.value, unit: preferredNorm }, formattable);
 }
 
-// Lightweight parser mirrored from UnitPicker — pulls the leading
-// number (with optional unicode fraction) and the first unit token.
-// Returns { amount, unit } or null.
+// Lightweight parser — pulls a leading number (integer, decimal, or
+// unicode fraction) and the first unit token. Returns { amount, unit }
+// or null. Unit normalization happens downstream via normalizeUnitId
+// so callers always get raw-lowercase-alnum here.
 const UNICODE_FRACTION = {
   "¼": 0.25, "½": 0.5, "¾": 0.75,
   "⅓": 0.333, "⅔": 0.667,
@@ -244,7 +218,10 @@ const UNICODE_FRACTION = {
 function parseAmountLoose(str) {
   if (!str || typeof str !== "string") return null;
   const s = str.trim().toLowerCase();
-  const m = s.match(/^(\d+(?:\.\d+)?)?\s*([¼½¾⅓⅔⅛⅜⅝⅞])?\s*([a-z_]+)/);
+  // Capture: optional whole, optional fraction glyph, unit token
+  // (letters, digits, underscore — no spaces; "fl oz" is normalized
+  // by normalizeUnitId via the " → _" fallback).
+  const m = s.match(/^(\d+(?:\.\d+)?)?\s*([¼½¾⅓⅔⅛⅜⅝⅞])?\s*([a-z_0-9]+(?:\s+[a-z_0-9]+)?)/);
   if (!m) return null;
   const whole = m[1] ? Number(m[1]) : 0;
   const frac  = m[2] ? UNICODE_FRACTION[m[2]] || 0 : 0;
@@ -252,18 +229,5 @@ function parseAmountLoose(str) {
   if (!(amount > 0)) return null;
   const unit = m[3];
   if (!unit) return null;
-  // Normalize common plurals/aliases so the pref check against the
-  // preferred unit is apples-to-apples regardless of what the model
-  // wrote ("cups" → "cup", "tablespoons" → "tbsp").
-  const aliases = {
-    cups: "cup", tablespoons: "tbsp", tablespoon: "tbsp", tbs: "tbsp", tbsps: "tbsp", tbls: "tbsp",
-    teaspoons: "tsp", teaspoon: "tsp", tsps: "tsp",
-    ounces: "oz", ounce: "oz", pounds: "lb", pound: "lb",
-    grams: "g", gram: "g", kilograms: "kg", kilogram: "kg",
-    milliliters: "ml", millilitres: "ml",
-    liters: "l", litres: "l",
-    floz: "fl_oz", fluid_ounce: "fl_oz", fluid_ounces: "fl_oz",
-    sticks: "stick",
-  };
-  return { amount, unit: aliases[unit] || unit };
+  return { amount, unit };
 }

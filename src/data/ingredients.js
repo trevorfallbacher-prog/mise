@@ -176,6 +176,7 @@ export const INGREDIENTS = [
       { id: "g",     label: "g",      toBase: 1 },
     ],
     defaultUnit: "stick",
+    preferredUnit: { us: "tbsp", metric: "g" },
     estCentsPerBase: 1.5, // ~$6.80/lb
     nutrition: { per: "100g", kcal: 717, protein_g: 0.9, fat_g: 81, carb_g: 0.1, sodium_mg: 11 },
   },
@@ -193,6 +194,7 @@ export const INGREDIENTS = [
       { id: "ml",          label: "ml",           toBase: 1 },
     ],
     defaultUnit: "gallon",
+    preferredUnit: { us: "cup", metric: "ml" },
     estCentsPerBase: 0.12, // ~$4.50/gallon
   },
   {
@@ -206,6 +208,7 @@ export const INGREDIENTS = [
       { id: "cup",         label: "cups",         toBase: 240 },
     ],
     defaultUnit: "gallon",
+    preferredUnit: { us: "cup", metric: "ml" },
     estCentsPerBase: 0.12,
   },
   {
@@ -218,6 +221,7 @@ export const INGREDIENTS = [
       { id: "fl_oz",       label: "fl oz",        toBase: 29.57 },
     ],
     defaultUnit: "gallon",
+    preferredUnit: { us: "cup", metric: "ml" },
     estCentsPerBase: 0.12,
   },
   {
@@ -230,6 +234,7 @@ export const INGREDIENTS = [
       { id: "fl_oz", label: "fl oz",  toBase: 29.57 },
     ],
     defaultUnit: "quart",
+    preferredUnit: { us: "cup", metric: "ml" },
   },
   {
     id: "heavy_cream", name: "Heavy Cream", shortName: "Heavy",
@@ -247,6 +252,7 @@ export const INGREDIENTS = [
       { id: "l",           label: "l",            toBase: 1000 },
     ],
     defaultUnit: "pint",
+    preferredUnit: { us: "cup", metric: "ml" },
   },
   {
     id: "parmesan", name: "Parmesan", shortName: "Parmesan",
@@ -339,6 +345,7 @@ export const INGREDIENTS = [
       { id: "g",     label: "g",     toBase: 1 },
     ],
     defaultUnit: "oz",
+    preferredUnit: { us: "oz", metric: "g" },
     nutrition: { per: "100g", kcal: 342, protein_g: 6, fat_g: 34, carb_g: 4.1, sodium_mg: 321 },
   },
   {
@@ -465,6 +472,7 @@ export const INGREDIENTS = [
       { id: "g",     label: "g",       toBase: 1 },
     ],
     defaultUnit: "oz",
+    preferredUnit: { us: "cup", metric: "g" },
     nutrition: { per: "100g", kcal: 59, protein_g: 3.5, fat_g: 3.3, carb_g: 4.7, sodium_mg: 46 },
   },
   {
@@ -486,6 +494,7 @@ export const INGREDIENTS = [
       { id: "cup",  label: "cups", toBase: 230 },
     ],
     defaultUnit: "oz",
+    preferredUnit: { us: "tbsp", metric: "g" },
   },
   {
     id: "cottage_cheese", name: "Cottage Cheese", emoji: "🥛", category: "dairy",
@@ -507,6 +516,7 @@ export const INGREDIENTS = [
       { id: "tbsp",  label: "tbsp",   toBase: 15 },
     ],
     defaultUnit: "quart",
+    preferredUnit: { us: "cup", metric: "ml" },
   },
   {
     id: "oat_milk", name: "Oat Milk", shortName: "Oat",
@@ -557,6 +567,9 @@ export const INGREDIENTS = [
       { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
+    // Americans think "2 chicken breasts" but buy by weight.
+    // Europeans weigh and cook by gram. Each side keeps its idiom.
+    preferredUnit: { us: "count", metric: "g" },
   },
   {
     // Cut-based units feel more natural for recipes ("4 breasts") than weight.
@@ -719,6 +732,7 @@ export const INGREDIENTS = [
       { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
+    preferredUnit: { us: "lb", metric: "g" },
   },
   {
     // DEPRECATED — state ("ground") baked into canonical id. Kept
@@ -756,6 +770,7 @@ export const INGREDIENTS = [
       { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
+    preferredUnit: { us: "lb", metric: "g" },
   },
   {
     id: "pork_chop", name: "Pork Chops", shortName: "Chops",
@@ -883,6 +898,7 @@ export const INGREDIENTS = [
       { id: "kg",    label: "kg",     toBase: 1000 },
     ],
     defaultUnit: "lb",
+    preferredUnit: { us: "lb", metric: "g" },
   },
   {
     // DEPRECATED — see ground_beef. Aliased to { base: "turkey",
@@ -1254,6 +1270,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
     nutrition: { per: "100g", kcal: 364, protein_g: 10, fat_g: 1, carb_g: 76, fiber_g: 2.7, sodium_mg: 2 },
   },
   {
@@ -1266,6 +1283,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
     nutrition: { per: "100g", kcal: 361, protein_g: 12, fat_g: 1.7, carb_g: 72, fiber_g: 2.4, sodium_mg: 2 },
   },
   {
@@ -1278,6 +1296,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
   },
   {
     id: "pastry_flour", name: "Pastry Flour", shortName: "Pastry",
@@ -1289,6 +1308,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
   },
   {
     id: "cake_flour", name: "Cake Flour", shortName: "Cake",
@@ -1300,6 +1320,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
   },
   {
     id: "zero_zero_flour", name: "00 Flour", shortName: "00",
@@ -1311,6 +1332,7 @@ export const INGREDIENTS = [
       { id: "kg",   label: "kg",   toBase: 1000 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
   },
   {
     id: "semolina", name: "Semolina Flour", shortName: "Semolina",
@@ -1364,6 +1386,7 @@ export const INGREDIENTS = [
       { id: "lb",   label: "lb",   toBase: 453.6 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
   },
   {
     id: "masa_harina", name: "Masa Harina", shortName: "Masa",
@@ -1382,8 +1405,10 @@ export const INGREDIENTS = [
       { id: "tbsp", label: "tbsp", toBase: 12.5 },
       { id: "tsp",  label: "tsp",  toBase: 4.2 },
       { id: "lb",   label: "lb",   toBase: 453.6 },
+      { id: "g",    label: "g",    toBase: 1 },
     ],
     defaultUnit: "cup",
+    preferredUnit: { us: "cup", metric: "g" },
   },
   {
     id: "olive_oil", name: "Olive Oil", emoji: "🫒", category: "pantry",
@@ -1395,6 +1420,7 @@ export const INGREDIENTS = [
       { id: "ml",    label: "ml",    toBase: 1 },
     ],
     defaultUnit: "tbsp",
+    preferredUnit: { us: "tbsp", metric: "ml" },
     // Per 100 ml (treated as 100g — olive oil density is ~0.92 g/ml,
     // so real kcal/ml is slightly lower; the 8% gap is within the
     // "close enough for home-cook tracking" band we accept for liquid
@@ -1749,6 +1775,7 @@ export const INGREDIENTS = [
       { id: "g",   label: "g",    toBase: 1 },
     ],
     defaultUnit: "lb",
+    preferredUnit: { us: "cup", metric: "g" },
     // Per 100g uncooked — cooked rice is ~130 kcal/100g but recipes
     // universally call for the dry amount so that's our reference.
     nutrition: { per: "100g", kcal: 365, protein_g: 7.1, fat_g: 0.7, carb_g: 80, fiber_g: 1.3, sodium_mg: 5 },
@@ -1811,6 +1838,7 @@ export const INGREDIENTS = [
       { id: "g",         label: "g",          toBase: 1 },
     ],
     defaultUnit: "container",
+    preferredUnit: { us: "cup", metric: "g" },
     nutrition: { per: "100g", kcal: 379, protein_g: 13, fat_g: 7, carb_g: 68, fiber_g: 10, sodium_mg: 6 },
   },
   // Beans & legumes ───────────────────
@@ -1902,6 +1930,7 @@ export const INGREDIENTS = [
       { id: "g",    label: "g",    toBase: 1 },
     ],
     defaultUnit: "jar",
+    preferredUnit: { us: "tbsp", metric: "g" },
     nutrition: { per: "100g", kcal: 304, protein_g: 0.3, fat_g: 0, carb_g: 82, fiber_g: 0.2, sodium_mg: 4 },
   },
   {
@@ -1914,6 +1943,7 @@ export const INGREDIENTS = [
       { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp", metric: "ml" },
     nutrition: { per: "100g", kcal: 260, protein_g: 0, fat_g: 0.1, carb_g: 67, sodium_mg: 12 },
   },
   {
@@ -1932,8 +1962,10 @@ export const INGREDIENTS = [
       { id: "tbsp",   label: "tbsp",    toBase: 15 },
       { id: "tsp",    label: "tsp",     toBase: 5 },
       { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+      { id: "ml",     label: "ml",      toBase: 1 },
     ],
     defaultUnit: "bottle",
+    preferredUnit: { us: "tbsp", metric: "ml" },
     estCentsPerBase: 0.7, // ~$4 for a 15oz Kikkoman
   },
   {
