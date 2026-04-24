@@ -167,12 +167,24 @@ export const INGREDIENTS = [
     nutrition: { per: "count", kcal: 72, protein_g: 6, fat_g: 5, carb_g: 0.4, sodium_mg: 71 },
   },
   {
+    // Stick equivalence (US supermarket butter — "quarter-pound stick"):
+    //   1 stick = 8 tbsp = 4 oz = 113.4 g = 1/2 cup
+    // The ladder factors are anchored on those exact identities so
+    // cross-unit conversions inside the ladder stay integer-clean —
+    // e.g. 2 sticks → 1 cup (not 0.997 cups). `aliases` attaches the
+    // plural form at the ladder entry instead of in the global alias
+    // map, since "stick" as a unit is butter-specific — parmesan
+    // sticks, cinnamon sticks, and celery sticks carry different
+    // weights and must not collide.
     id: "butter", name: "Unsalted Butter", emoji: "🧈", category: "dairy",
     units: [
-      { id: "stick", label: "sticks", toBase: 113 },
-      { id: "tbsp",  label: "tbsp",   toBase: 14.2 },
-      { id: "cup",   label: "cups",   toBase: 227 },
+      { id: "stick", label: "sticks", toBase: 113.4, aliases: ["sticks"] },
+      { id: "tbsp",  label: "tbsp",   toBase: 14.175 },
+      { id: "cup",   label: "cups",   toBase: 226.8 },
       { id: "oz",    label: "oz",     toBase: 28.35 },
+      { id: "lb",    label: "lb",     toBase: 453.592 },
+      { id: "block", label: "blocks", toBase: 453.592, aliases: ["blocks"] },
+      { id: "tub",   label: "tubs",   toBase: 454,     aliases: ["tubs"] },
       { id: "g",     label: "g",      toBase: 1 },
     ],
     defaultUnit: "stick",
