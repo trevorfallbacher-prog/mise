@@ -11,7 +11,7 @@
 // into the card's render shape so the visual layer doesn't care
 // which source it got.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
@@ -234,6 +234,37 @@ export default function PantryScreen({
   // subtler than a browser default outline, stronger than
   // nothing.
   const [searchFocused, setSearchFocused] = useState(false);
+  // Ref to the search input so the "/" keyboard shortcut can
+  // focus it without the user having to click the field.
+  const searchInputRef = useRef(null);
+
+  // Global keyboard shortcuts for the pantry screen:
+  //   "/"   — focus the search input (the same shortcut Gmail,
+  //           GitHub, Slack, and every search-first surface
+  //           uses; users who try it find it working without
+  //           a hint).
+  //   Esc   — pop out one level of nav: close search first,
+  //           otherwise back out of a drilled tile.
+  // Ignored when the user is already typing in an input /
+  // textarea / contenteditable, so the "/" key in a field
+  // types a slash like it should.
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = (e.target?.tagName || "").toLowerCase();
+      const isTyping = tag === "input" || tag === "textarea" || e.target?.isContentEditable;
+      if (e.key === "/" && !isTyping) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (e.key === "Escape") {
+        if (query) { setQuery(""); searchInputRef.current?.blur(); return; }
+        if (drilledTile) { setDrilledTile(null); return; }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [query, drilledTile]);
 
   // Normalize once — everything downstream reads from `cards`.
   const cards = useMemo(
@@ -470,11 +501,12 @@ export default function PantryScreen({
           >
             <SearchGlyph />
             <input
+              ref={searchInputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
-              placeholder="Search the pantry…"
+              placeholder="Search the pantry…  ( press / )"
               style={{
                 flex: 1,
                 border: "none",
