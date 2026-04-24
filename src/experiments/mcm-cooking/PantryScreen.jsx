@@ -953,7 +953,14 @@ export default function PantryScreen({
           its entrance (slide up + fade) when search is cleared.
           Without this wrapper the dock just pops in/out. */}
       <AnimatePresence>
-        {!query && (
+        {/* Only show the location dock when MCMPantryScreen is
+            embedded in the real app (hideDock=true → the
+            internal BottomDock is suppressed, so the location
+            dock is the only floating pill at the bottom). In
+            Showcase mode the BottomDock is visible as the demo
+            app nav; adding FloatingLocationDock there would
+            stack two floating pills at the same bottom position. */}
+        {!query && hideDock && (
           <FloatingLocationDock
             locations={LOCATIONS}
             active={locationTab}
