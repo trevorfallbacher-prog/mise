@@ -1594,9 +1594,6 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
 function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortChange, onBack }) {
   const { theme } = useTheme();
   const iconUrl = tileIconFor(tile.id, location);
-  const countLabel = count === 0
-    ? "empty"
-    : `${count} ${count === 1 ? "item" : "items"}`;
   return (
     <div style={{
       marginTop: 20,
@@ -1688,46 +1685,55 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
           )}
         </motion.div>
         <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Label row — label left, optional warn pill right.
+              Mirrors the TileCard pattern now that the icon's
+              corner badge carries the stock count. No more
+              "12 ITEMS · 3 SOON" separate meta line below; that
+              was double-speak with the badge. */}
           <div style={{
-            // Truculenta display face — matches the hero "The
-            // Pantry" register so drilling feels like arriving at
-            // a sub-section of the same magazine. Slightly less
-            // wide (wdth 104) and lighter (wght 580) than the
-            // hero so the tile label reads as chapter-title, not
-            // masthead. Min lowered to 20px so long tile names
-            // ("Meat & Poultry", "Condiments & Sauces") still
-            // fit alongside the back button + icon + count
-            // column on ~375px phones without wrapping.
-            fontFamily: font.display,
-            fontWeight: 580,
-            fontVariationSettings: "'wdth' 104, 'wght' 580, 'opsz' 32",
-            fontSize: "clamp(20px, 4.5vw, 32px)",
-            lineHeight: 1.05, color: theme.color.ink,
-            letterSpacing: "-0.015em",
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            display: "flex", alignItems: "baseline",
+            justifyContent: "space-between", gap: 8,
           }}>
-            {tile.label}
-          </div>
-          {/* Count + warn breakdown — DM Mono so it reads as
-              metadata, not prose. Warn part tinted burnt when
-              anything in the tile is expiring soon, hidden
-              otherwise so the line stays quiet when there's
-              nothing to triage. */}
-          <div style={{
-            marginTop: 2, display: "flex", alignItems: "center", gap: 6,
-            fontFamily: font.mono, fontSize: 11,
-            letterSpacing: "0.06em",
-            color: theme.color.inkMuted,
-            textTransform: "uppercase",
-          }}>
-            <span>{countLabel}</span>
+            <div style={{
+              fontFamily: font.display,
+              fontWeight: 580,
+              fontVariationSettings: "'wdth' 104, 'wght' 580, 'opsz' 32",
+              fontSize: "clamp(20px, 4.5vw, 32px)",
+              lineHeight: 1.05, color: theme.color.ink,
+              letterSpacing: "-0.015em",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+              flex: 1, minWidth: 0,
+            }}>
+              {tile.label}
+            </div>
             {warnCount > 0 && (
-              <>
-                <span style={{ opacity: 0.4 }}>·</span>
-                <span style={{ color: theme.color.burnt, fontWeight: 600 }}>
-                  {warnCount} SOON
-                </span>
-              </>
+              <motion.div
+                title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
+                animate={{
+                  scale: [1, 1.06, 1],
+                  boxShadow: [
+                    "0 2px 6px rgba(168,73,17,0.35)",
+                    "0 2px 14px rgba(168,73,17,0.55)",
+                    "0 2px 6px rgba(168,73,17,0.35)",
+                  ],
+                }}
+                transition={{ duration: 2.4, ease: "easeInOut", repeat: Infinity }}
+                style={{
+                  minWidth: 22, height: 22,
+                  padding: "0 8px",
+                  borderRadius: 999,
+                  background: theme.color.burnt,
+                  color: theme.color.ctaText,
+                  fontFamily: font.mono, fontSize: 10, fontWeight: 600,
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  flexShrink: 0,
+                  border: `1px solid ${theme.color.glassBorder}`,
+                }}
+              >
+                {warnCount} soon
+              </motion.div>
             )}
           </div>
           {/* Tile blurb (when present) — inherited from the tile
