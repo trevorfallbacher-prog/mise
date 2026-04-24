@@ -70,13 +70,11 @@ export const shadow = {
     "inset 0 1px 0 rgba(255,255,255,0.55)",
   cta:   "0 12px 26px rgba(217,107,43,0.35), 0 2px 6px rgba(217,107,43,0.25)",
   // Search-field / input surface — reads "sunken" via a faint top
-  // inset and a gentle ambient drop so the field is distinctly
-  // "interactive" against neighboring panels. Paired with a
-  // slightly deeper warm fill (see GlassPanel tone="input").
+  // inset instead of the top highlight. Paired with a slightly
+  // warmer fill to separate it from the panels around it.
   inputInset:
-    "inset 0 1px 2px rgba(30,30,30,0.10)," +
-    "inset 0 -1px 0 rgba(255,255,255,0.6)," +
-    "0 2px 6px rgba(30,30,30,0.04)",
+    "inset 0 1px 2px rgba(30,30,30,0.08)," +
+    "0 1px 1px rgba(255,255,255,0.4)",
 };
 
 export const font = {

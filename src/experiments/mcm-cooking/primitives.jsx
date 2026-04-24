@@ -128,7 +128,7 @@ export function GlassPanel({
     neutral: color.glassFill,
     warm:    "rgba(255,247,232,0.70)",
     cool:    "rgba(232,244,242,0.70)",
-    input:   "rgba(248,242,228,0.85)",
+    input:   "rgba(246,241,232,0.78)",
   }[tone] || color.glassFill;
 
   const depthShadow = variant === "input" ? shadow.inputInset : shadow.glass;
@@ -306,19 +306,17 @@ export function GlassPill({
   const pad = size === "sm" ? "6px 12px" : "10px 16px";
   const fontSize = size === "sm" ? 12 : 13;
 
-  // Glass-lite: pills are more translucent than panels so the
-  // backdrop colors bloom through. Inactive gets a whisper of
-  // warmth + a soft inner highlight (no hard drop shadow — they
-  // sit ON the parchment, not above it). Active pill lifts with
-  // a larger teal halo and inner rim.
+  // Inactive pills get a slightly firmer border + a feather-light
+  // drop + an inner highlight so they read as real glass, not
+  // flat white. Active pills layer a bigger colored halo and an
+  // inner rim so the lift is unmistakable without bumping chroma.
   const inactiveBoxShadow =
-    "0 1px 1px rgba(30,30,30,0.04)," +
-    "inset 0 1px 0 rgba(255,255,255,0.6)," +
-    "inset 0 -1px 0 rgba(30,30,30,0.03)";
+    "0 1px 2px rgba(30,30,30,0.06)," +
+    "inset 0 1px 0 rgba(255,255,255,0.55)";
   const activeBoxShadow =
-    "0 10px 22px rgba(47,143,131,0.32)," +
-    "0 2px 5px rgba(47,143,131,0.20)," +
-    "inset 0 1px 0 rgba(255,255,255,0.30)";
+    "0 10px 22px rgba(47,143,131,0.34)," +
+    "0 2px 4px rgba(47,143,131,0.18)," +
+    "inset 0 1px 0 rgba(255,255,255,0.28)";
 
   return (
     <Tag
@@ -336,15 +334,15 @@ export function GlassPill({
         letterSpacing: "0.02em",
         padding: pad,
         borderRadius: radius.pill,
-        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.10)"}`,
+        border: `1px solid ${active ? color.teal : "rgba(30,30,30,0.14)"}`,
         background: active
           ? `linear-gradient(180deg, ${color.teal} 0%, #277A6F 100%)`
-          : "rgba(255,252,244,0.48)",
+          : "rgba(255,255,255,0.65)",
         color: active ? "#FFF8EE" : color.ink,
         boxShadow: active ? activeBoxShadow : inactiveBoxShadow,
         cursor: "pointer",
-        backdropFilter: "blur(14px) saturate(140%)",
-        WebkitBackdropFilter: "blur(14px) saturate(140%)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
         ...style,
       }}
     >
@@ -505,98 +503,6 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
           );
         })}
       </div>
-    </div>
-  );
-}
-
-// --- Status tint overlay ------------------------------------------------
-
-// Shared "temperature" washes for GlassPanels that represent an
-// item state — cards, rows, tiles. Good items get a whisper of
-// teal; warning items get a warm burnt wash. Both gradients land
-// on a translucent white midpoint so the panel's backdrop-filter
-// still has something to blur. Pass the returned object through
-// the `style` prop of a GlassPanel.
-export function statusTintOverlay(status) {
-  if (status === "warn") {
-    return {
-      background:
-        "linear-gradient(160deg, rgba(217,107,43,0.10) 0%, rgba(255,250,244,0.55) 55%)",
-    };
-  }
-  if (status === "ok") {
-    return {
-      background:
-        "linear-gradient(160deg, rgba(47,143,131,0.06) 0%, rgba(247,252,250,0.58) 55%)",
-    };
-  }
-  return null;
-}
-
-// --- Icon slot (prepares for branded MCM/Googie icon artwork) ----------
-
-// Fixed-size square slot used wherever we surface an item icon.
-// Today it renders the item's emoji as a placeholder; when brand
-// SVG/PNG artwork lands, `resolveIcon(iconKey).asset` starts
-// returning a URL and this component switches to <img> without
-// any caller needing to change. The glass backing + subtle inner
-// highlight means the slot already looks intentional instead of
-// like a missing-image gap.
-//
-// Import `resolveIcon` from `./icons` at the call site and pass
-// its result in; keeping the lookup external lets this primitive
-// stay agnostic to where the mapping lives.
-export function ItemIcon({
-  icon,                 // { asset, emoji } — from resolveIcon(key)
-  size = 56,
-  backing = true,
-  tone = "neutral",     // neutral | cool | warm (matches card temperature)
-  style,
-}) {
-  const backingBg = {
-    neutral: "rgba(255,252,244,0.55)",
-    cool:    "rgba(232,244,242,0.55)",
-    warm:    "rgba(255,243,228,0.60)",
-  }[tone] || "rgba(255,252,244,0.55)";
-
-  const containerStyle = {
-    width: size,
-    height: size,
-    flexShrink: 0,
-    borderRadius: radius.md,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    ...(backing && {
-      background: backingBg,
-      border: `1px solid rgba(255,255,255,0.6)`,
-      boxShadow:
-        "inset 0 1px 0 rgba(255,255,255,0.6)," +
-        "0 2px 6px rgba(30,30,30,0.05)",
-      backdropFilter: "blur(10px)",
-      WebkitBackdropFilter: "blur(10px)",
-    }),
-    ...style,
-  };
-
-  return (
-    <div style={containerStyle} aria-hidden>
-      {icon && icon.asset ? (
-        <img
-          src={icon.asset}
-          alt=""
-          style={{ width: "72%", height: "72%", objectFit: "contain" }}
-        />
-      ) : (
-        <span style={{
-          fontSize: Math.round(size * 0.52),
-          lineHeight: 1,
-          filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-        }}>
-          {icon?.emoji || "·"}
-        </span>
-      )}
     </div>
   );
 }

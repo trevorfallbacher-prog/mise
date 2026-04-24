@@ -9,26 +9,22 @@ import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
   GlassPill, TintedPill, BottomDock,
-  ItemIcon, statusTintOverlay,
 } from "./primitives";
-import { resolveIcon } from "./icons";
-import { color, font } from "./tokens";
+import { color, radius, font } from "./tokens";
 
-// iconKey resolves via `resolveIcon(key)` → { asset, emoji }. Once
-// branded SVGs land in public/mcm-icons, only icons.js changes.
 const ITEMS = [
-  { id: 1, iconKey: "butter",     name: "Kerrygold Butter",    qty: "1 stick",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 12 },
-  { id: 2, iconKey: "eggs",       name: "Pasture Eggs",         qty: "8 large",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 18 },
-  { id: 3, iconKey: "milk",       name: "Whole Milk",           qty: "½ gallon",   location: "Dairy & Eggs",    cat: "dairy",   status: "warn",    days: 3 },
-  { id: 4, iconKey: "cheese",     name: "Gruyère",              qty: "6 oz",       location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 22 },
-  { id: 5, iconKey: "lemon",      name: "Meyer Lemons",         qty: "4 whole",    location: "Produce",         cat: "produce", status: "ok",      days: 9 },
-  { id: 6, iconKey: "garlic",     name: "Garlic",               qty: "1 head",     location: "Produce",         cat: "produce", status: "ok",      days: 30 },
-  { id: 7, iconKey: "kale",       name: "Tuscan Kale",          qty: "1 bunch",    location: "Produce",         cat: "produce", status: "warn",    days: 2 },
-  { id: 8, iconKey: "tomato_can", name: "San Marzano",          qty: "28 oz can",  location: "Pantry",          cat: "pantry",  status: "ok",      days: 180 },
-  { id: 9, iconKey: "bread",      name: "Sourdough Loaf",       qty: "1 loaf",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 5 },
-  { id:10, iconKey: "olive_oil",  name: "Olive Oil",            qty: "500 ml",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 120 },
-  { id:11, iconKey: "salmon",     name: "Wild Salmon",          qty: "0.75 lb",    location: "Meat & Seafood",  cat: "meat",    status: "warn",    days: 1 },
-  { id:12, iconKey: "chicken",    name: "Chicken Thighs",       qty: "1.5 lb",     location: "Meat & Seafood",  cat: "meat",    status: "ok",      days: 3 },
+  { id: 1, emoji: "🧈", name: "Kerrygold Butter",    qty: "1 stick",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 12 },
+  { id: 2, emoji: "🥚", name: "Pasture Eggs",         qty: "8 large",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 18 },
+  { id: 3, emoji: "🥛", name: "Whole Milk",           qty: "½ gallon",   location: "Dairy & Eggs",    cat: "dairy",   status: "warn",    days: 3 },
+  { id: 4, emoji: "🧀", name: "Gruyère",              qty: "6 oz",       location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 22 },
+  { id: 5, emoji: "🍋", name: "Meyer Lemons",         qty: "4 whole",    location: "Produce",         cat: "produce", status: "ok",      days: 9 },
+  { id: 6, emoji: "🧄", name: "Garlic",               qty: "1 head",     location: "Produce",         cat: "produce", status: "ok",      days: 30 },
+  { id: 7, emoji: "🥬", name: "Tuscan Kale",          qty: "1 bunch",    location: "Produce",         cat: "produce", status: "warn",    days: 2 },
+  { id: 8, emoji: "🍅", name: "San Marzano",          qty: "28 oz can",  location: "Pantry",          cat: "pantry",  status: "ok",      days: 180 },
+  { id: 9, emoji: "🍞", name: "Sourdough Loaf",       qty: "1 loaf",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 5 },
+  { id:10, emoji: "🫒", name: "Olive Oil",            qty: "500 ml",     location: "Pantry",          cat: "pantry",  status: "ok",      days: 120 },
+  { id:11, emoji: "🐟", name: "Wild Salmon",          qty: "0.75 lb",    location: "Meat & Seafood",  cat: "meat",    status: "warn",    days: 1 },
+  { id:12, emoji: "🍗", name: "Chicken Thighs",       qty: "1.5 lb",     location: "Meat & Seafood",  cat: "meat",    status: "ok",      days: 3 },
 ];
 
 const FILTERS = [
@@ -75,12 +71,12 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             </TintedPill>
           </div>
 
-          <SerifHeader size={52} style={{ marginTop: 6 }}>
+          <SerifHeader size={52} style={{ marginTop: 4 }}>
             The Pantry
           </SerifHeader>
           <p style={{
-            marginTop: 16, fontFamily: font.sans, fontSize: 15,
-            color: color.inkMuted, lineHeight: 1.55, maxWidth: 340,
+            marginTop: 8, fontFamily: font.sans, fontSize: 15,
+            color: color.inkMuted, lineHeight: 1.45, maxWidth: 340,
           }}>
             Twelve good things on the shelf. Enough for dinner, breakfast,
             and a quiet afternoon snack.
@@ -191,11 +187,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
               color="rgba(217,107,43,0.14)"
               style={{ position: "absolute", top: -40, right: -40 }}
             />
-            <ItemIcon
-              icon={resolveIcon("pasta_dish")}
-              size={56}
-              tone="warm"
-            />
+            <div style={{ fontSize: 36, lineHeight: 1 }}>🍳</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Kicker tone={color.burnt}>Ready when you are</Kicker>
               <div style={{
@@ -237,12 +229,16 @@ const NAV_TABS = [
 
 function PantryCard({ item, onPick }) {
   const warn = item.status === "warn";
-  // Good / warn cards get a gentle temperature wash so they read
-  // as different states of the same glass material, not identical
-  // surfaces. Overlay is supplied by the primitives layer so the
-  // two tints stay symmetrical.
-  const statusOverlay = statusTintOverlay(warn ? "warn" : "ok");
-  const iconTone = warn ? "warm" : "cool";
+  // Warn cards pick up a gentle burnt-tinted overlay so "expires
+  // soon" is noticeable at the card level without being alarming.
+  // Glass recipe still comes from GlassPanel — we just layer a
+  // soft warm wash on top via background-image.
+  const warnOverlay = warn
+    ? {
+        background:
+          "linear-gradient(160deg, rgba(217,107,43,0.10) 0%, rgba(255,255,255,0.55) 55%)",
+      }
+    : null;
 
   return (
     <GlassPanel
@@ -252,15 +248,16 @@ function PantryCard({ item, onPick }) {
       style={{
         display: "flex", flexDirection: "column",
         gap: 10, minHeight: 148,
-        ...statusOverlay,
+        ...warnOverlay,
       }}
     >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <ItemIcon
-          icon={resolveIcon(item.iconKey)}
-          size={52}
-          tone={iconTone}
-        />
+        <div style={{
+          fontSize: 30, lineHeight: 1,
+          filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+        }}>
+          {item.emoji}
+        </div>
         <StatusDot tone={warn ? "warn" : "ok"} size={warn ? 10 : 8} />
       </div>
 
