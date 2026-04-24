@@ -228,6 +228,12 @@ export default function PantryScreen({
   // in the pantry row's native order so the user sees relevance,
   // not an arbitrary sort).
   const [sortBy, setSortBy] = useState("expiring");
+  // Tracks whether the search input has keyboard focus so the
+  // surrounding GlassPanel can show a focus ring. The panel's
+  // own border transitions to a warm teal accent when focused —
+  // subtler than a browser default outline, stronger than
+  // nothing.
+  const [searchFocused, setSearchFocused] = useState(false);
 
   // Normalize once — everything downstream reads from `cards`.
   const cards = useMemo(
@@ -446,12 +452,28 @@ export default function PantryScreen({
             tone="input"
             variant="input"
             padding={14}
-            style={{ marginTop: 20, display: "flex", alignItems: "center", gap: 12 }}
+            style={{
+              marginTop: 20,
+              display: "flex", alignItems: "center", gap: 12,
+              // Focus ring — border brightens to the theme's teal
+              // accent and a subtle halo shadow expands around the
+              // panel when the input takes focus. Transitions so
+              // focus/blur feels continuous, not a hard toggle.
+              border: searchFocused
+                ? `1px solid ${theme.color.teal}`
+                : undefined,
+              boxShadow: searchFocused
+                ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.soft}`
+                : undefined,
+              transition: "border-color 200ms ease, box-shadow 200ms ease",
+            }}
           >
             <SearchGlyph />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               placeholder="Search the pantry…"
               style={{
                 flex: 1,
@@ -1471,7 +1493,11 @@ function PantryCard({ item, onPick }) {
           />
         ) : (
           <div style={{
-            fontSize: 30, lineHeight: 1,
+            // Emoji at 34px to roughly match the 36×36 SVG visual
+            // weight above — Apple/Noto emoji glyphs render at
+            // ~95% of their font-size box, so 34 ≈ 36 rendered
+            // square. Keeps icon vs emoji items visually consistent.
+            fontSize: 34, lineHeight: 1,
             filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
           }}>
             {item.emoji}
