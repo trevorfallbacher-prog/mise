@@ -296,6 +296,21 @@ export default function PantryScreen({
         if (query) { setQuery(""); searchInputRef.current?.blur(); return; }
         if (drilledTile) { setDrilledTile(null); return; }
       }
+      // Number shortcuts 1/2/3 — jump between the three locations
+      // without lifting hands off the keyboard. Maps to the same
+      // LOCATIONS order rendered in the floating dock. Ignored
+      // while typing so digits still enter a search field. Also
+      // resets drilledTile so the user lands back at the tile
+      // grid of the picked location (same behavior as tapping a
+      // dock segment).
+      if (!isTyping && (e.key === "1" || e.key === "2" || e.key === "3")) {
+        const idx = Number(e.key) - 1;
+        const loc = LOCATIONS[idx];
+        if (loc) {
+          e.preventDefault();
+          switchLocation(loc.id);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
