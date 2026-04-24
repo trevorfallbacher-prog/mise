@@ -1891,6 +1891,24 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, showTileContext = false
 // tiles dim to ~45% so the populated ones pop, same visual
 // pattern the classic Kitchen uses.
 function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
+  // Sort populated tiles first, empty tiles last. Stable sort
+  // preserves the authoring order (from fridgeTiles.js etc.)
+  // within each group so, e.g., within the populated group
+  // Dairy still comes before Produce. Empty tiles sink but
+  // stay visible (dimmed) so the user can still see what
+  // shelves exist — matches the "browse ALL shelves" intent
+  // without forcing empty ones to dominate the top.
+  const sortedTiles = useMemo(() => {
+    return location.tiles
+      .map((tile, origIdx) => {
+        const count = (cardsByTile[tile.id] || []).length;
+        return { tile, origIdx, count, empty: count === 0 };
+      })
+      .sort((a, b) => {
+        if (a.empty !== b.empty) return a.empty ? 1 : -1;
+        return a.origIdx - b.origIdx;
+      });
+  }, [location, cardsByTile]);
   return (
     <div style={{
       display: "grid",
@@ -1905,10 +1923,8 @@ function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
       marginTop: 20,
     }}>
       <AnimatePresence mode="popLayout">
-        {location.tiles.map((tile, i) => {
-          const count = (cardsByTile[tile.id] || []).length;
+        {sortedTiles.map(({ tile, count, empty }, i) => {
           const warn = warnCountByTile[`${location.id}:${tile.id}`] || 0;
-          const empty = count === 0;
           return (
             <motion.div
               key={tile.id}
