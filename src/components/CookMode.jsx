@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { difficultyLabel, totalTimeMin } from "../data/recipes";
-import { findIngredient, unitLabel, compareQty, inferCanonicalFromName } from "../data/ingredients";
+import { findIngredient, unitLabel, compareQty, inferCanonicalFromName, getIngredientInfo, siblingsInHub, INGREDIENTS } from "../data/ingredients";
 import IngredientCard from "./IngredientCard";
 import CookComplete from "./CookComplete";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
@@ -550,6 +550,18 @@ export default function CookMode({
   // Mounts CookComplete; on finish we hand off to parent's onDone.
   const [completing, setCompleting] = useState(false);
 
+  // Two-state confirm for the cook-view EXIT button. MINIMIZE keeps
+  // the session alive (banner resumes); EXIT ends it — drops pending
+  // timer pushes, flips cook_sessions.status to 'abandoned'. Separate
+  // from CookComplete's "finish" path so accidentally backing out of
+  // a cook doesn't log it as cooked.
+  const [confirmExit, setConfirmExit] = useState(false);
+  const exitCook = async () => {
+    finalizedRef.current = true;
+    try { await telemetry.endCook({ status: "abandoned" }); } catch (_) { /* non-fatal */ }
+    onExit?.();
+  };
+
   // Nutrition rollup for the recipe — drives the calorie tile in the
   // meta row below. Pulls from the full resolver chain (pantry
   // override → brand_nutrition → ingredient_info → bundled canonical
@@ -744,6 +756,15 @@ export default function CookMode({
   // same hub (+500), same category (+100), plus token overlap. When
   // the user is typing we narrow to substring-matches on the pantry
   // row name so the list feels like a live search, not a rank.
+  //
+  // Returns { pantry, library } — pantry is the existing "rows the cook
+  // already owns" ranking; library surfaces bundled canonicals the cook
+  // can legitimately substitute even if they're not in the pantry
+  // (2% ↔ whole milk, carrot ↔ celery, chicken ↔ steak). Sources:
+  //   1. Author-curated substitutions on the canonical's info.
+  //   2. Same-hub siblings (milk_hub → 2%, whole, skim, oat).
+  // Library candidates that collide with a pantry canonical are pruned
+  // so the user sees one row per ingredient, not two.
   const rankSwapCandidates = (ing, query) => {
     const targetCanon = ing.ingredientId ? findIngredient(ing.ingredientId) : null;
     const targetCat  = targetCanon?.category || null;
@@ -754,14 +775,14 @@ export default function CookMode({
         .split(/\s+/).filter(Boolean),
     );
     const q = (query || "").trim().toLowerCase();
-    const seen = new Set();
-    const scored = [];
+    const pantrySeen = new Set();
+    const pantryScored = [];
     for (const p of pantry || []) {
       if (!p) continue;
       const canon = p.ingredientId ? findIngredient(p.ingredientId) : null;
       const key = canon?.id || (p.name || "").toLowerCase() || p.id;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (pantrySeen.has(key)) continue;
+      pantrySeen.add(key);
       if (q && !(p.name || "").toLowerCase().includes(q)) continue;
       let score = 0;
       if (canon?.id && targetSlug && canon.id === targetSlug) score += 1000;
@@ -774,14 +795,105 @@ export default function CookMode({
       let overlap = 0;
       for (const t of targetTokens) if (pTokens.has(t)) overlap++;
       score += overlap * 10;
-      scored.push({ row: p, score });
+      pantryScored.push({ row: p, score });
     }
-    scored.sort((a, b) => b.score - a.score);
-    return scored;
+    pantryScored.sort((a, b) => b.score - a.score);
+
+    // Library candidates — curated substitutions + hub siblings. Score
+    // scale mirrors pantry: hub sibling +500, curated entry +400 (below
+    // hub so same-hub alternates top the list even without author
+    // curation), category match +100, token overlap +10 each. No +1000
+    // tier — a library entry with the target's own canonical would be
+    // "swap X for X," which is nonsense; we filter those out below.
+    const librarySeen = new Set(pantrySeen); // don't re-surface pantry canonicals as library
+    if (targetSlug) librarySeen.add(targetSlug);
+    const libraryMap = new Map(); // canonId → { canonical, score, note }
+    const addLibraryCandidate = (canonical, baseScore, note = null) => {
+      if (!canonical?.id || librarySeen.has(canonical.id)) return;
+      if (q && !canonical.name.toLowerCase().includes(q)) return;
+      let score = baseScore;
+      if (canonical.category && targetCat && canonical.category === targetCat) score += 100;
+      const cTokens = new Set(
+        normalizeForMatch(canonical.name || "").split(/\s+/).filter(Boolean),
+      );
+      let overlap = 0;
+      for (const t of targetTokens) if (cTokens.has(t)) overlap++;
+      score += overlap * 10;
+      const prev = libraryMap.get(canonical.id);
+      if (!prev || prev.score < score) {
+        libraryMap.set(canonical.id, { canonical, score, note: note || prev?.note || null });
+      }
+    };
+
+    // 1. Curated substitutions from the ingredient's info. These are
+    //    author-vetted and carry a short note ("accept that the result
+    //    will be more assertive", etc.) — the best-quality signal.
+    if (targetCanon) {
+      const dbInfo = ingredientInfo?.getInfo ? ingredientInfo.getInfo(targetCanon.id) : null;
+      const info = getIngredientInfo(targetCanon, dbInfo);
+      for (const sub of info?.substitutions || []) {
+        if (!sub?.id) continue;
+        const subCanon = findIngredient(sub.id);
+        if (!subCanon) continue;
+        addLibraryCandidate(subCanon, 400, sub.note || null);
+      }
+    }
+    // 2. Same-hub siblings (milk variants, onion variants, etc.) —
+    //    automatic coverage for ladders like 2%/whole/skim even when
+    //    nobody authored a substitutions entry.
+    if (targetSlug) {
+      for (const sib of siblingsInHub(targetSlug)) {
+        addLibraryCandidate(sib, 500, null);
+      }
+    }
+    // 3. Free-text search over the full bundled registry when the cook
+    //    types a query. Without this, typing "celery" on a carrot
+    //    wouldn't surface celery unless an author had already curated
+    //    that link — which is exactly the "swap is extremely limited"
+    //    complaint. Low base score (50) keeps curated / hub matches
+    //    on top when both apply; same-category adds +100 so e.g.
+    //    searching "steak" from chicken surfaces sirloin above
+    //    off-category collisions. Only fires with a query to avoid
+    //    dumping 387 candidates into the picker on open.
+    if (q && q.length >= 2) {
+      for (const ing of INGREDIENTS) {
+        if (!ing?.name || !ing.name.toLowerCase().includes(q)) continue;
+        addLibraryCandidate(ing, 50, null);
+      }
+    }
+
+    const libraryScored = Array.from(libraryMap.values())
+      .sort((a, b) => b.score - a.score);
+
+    return { pantry: pantryScored, library: libraryScored };
   };
 
-  const applySwap = (idx, pantryItemId) => setOverride(idx, { pantryItemId });
-  const clearSwap = (idx) => clearOverride(idx, ["pantryItemId"]);
+  const applySwap = (idx, pantryItemId) => setOverride(idx, {
+    pantryItemId,
+    // A pantry swap clears any prior library swap on the same slot so
+    // the override shape stays single-valued. effectiveRecipe.js would
+    // otherwise see both set and have to pick a precedence.
+    swapCanonicalId: undefined,
+    swapCanonicalName: undefined,
+    swapCanonicalEmoji: undefined,
+  });
+  // Library swap — cook picked a canonical that isn't in pantry. We
+  // carry the display name + emoji on the override so the cook-surface
+  // renderer can show the ingredient without re-resolving the canonical
+  // every render. effectiveRecipe.js applies this by producing a
+  // swapped ingredient slot that has no pantryItemId — pairing stays
+  // "missing" against the pantry (correct: cook said "I'm using
+  // celery" but didn't stock any), while steps / ingredient lists
+  // reflect the substitution. See applyCookSessionToRecipe.
+  const applyLibrarySwap = (idx, canonical) => setOverride(idx, {
+    swapCanonicalId:    canonical.id,
+    swapCanonicalName:  canonical.name,
+    swapCanonicalEmoji: canonical.emoji,
+    pantryItemId: undefined,
+  });
+  const clearSwap = (idx) => clearOverride(idx, [
+    "pantryItemId", "swapCanonicalId", "swapCanonicalName", "swapCanonicalEmoji",
+  ]);
 
   const markDone = () => {
     setCompletedSteps(s => new Set([...s, activeStep]));
@@ -939,7 +1051,7 @@ export default function CookMode({
             // else ("to taste" salt, decorative herbs) just renders static.
             const tappable = !!ing.ingredientId;
             const swapOpen = swapOpenIdx === i;
-            const swapped  = !!session.overrides[i]?.pantryItemId;
+            const swapped  = !!(session.overrides[i]?.pantryItemId || session.overrides[i]?.swapCanonicalId);
             // SWAP available on every canonical-tagged row — user
             // might want to override the default pair on an IN KITCHEN
             // row (maybe they want to use a different pack that's
@@ -1039,10 +1151,23 @@ export default function CookMode({
                 )}
                 {swapOpen && (() => {
                   const q = swapSearch.trim();
-                  const ranked = rankSwapCandidates(ing, swapSearch);
-                  const shown = q
-                    ? ranked.slice(0, 8).map(r => r.row)
-                    : ranked.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                  const { pantry: rankedPantry, library: rankedLibrary } =
+                    rankSwapCandidates(ing, swapSearch);
+                  // Pantry: keep the legacy "top 3 > 0 without query"
+                  // pattern so the picker doesn't spam unrelated rows
+                  // when the user hasn't typed yet.
+                  const shownPantry = q
+                    ? rankedPantry.slice(0, 8).map(r => r.row)
+                    : rankedPantry.filter(r => r.score > 0).slice(0, 3).map(r => r.row);
+                  // Library: broader on open (top 6) because the whole
+                  // point is "what else could I reasonably use?" — the
+                  // curated substitutions + hub siblings stack stays
+                  // small per ingredient, so we can afford to show more
+                  // of it. Typing narrows via the in-function filter.
+                  const shownLibrary = q
+                    ? rankedLibrary.slice(0, 8)
+                    : rankedLibrary.slice(0, 6);
+                  const hasAny = shownPantry.length > 0 || shownLibrary.length > 0;
                   return (
                     <div style={{
                       marginTop:10, paddingTop:10,
@@ -1056,35 +1181,65 @@ export default function CookMode({
                         type="text"
                         value={swapSearch}
                         onChange={e => setSwapSearch(e.target.value)}
-                        placeholder="Search your pantry…"
+                        placeholder="Search pantry or library…"
                         style={cookSwapSearchInput}
                         autoFocus
                       />
-                      {!q && (
-                        <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.06em" }}>
-                          TOP 3 CLOSEST · TYPE TO SEARCH
-                        </div>
-                      )}
-                      {shown.length === 0 && (
+                      {!hasAny && (
                         <div style={{ fontFamily:"'DM Sans',sans-serif", fontSize:11, color:"#666", fontStyle:"italic" }}>
-                          {q ? "No pantry items match that search." : "No close matches in pantry — try typing to search."}
+                          {q ? "Nothing matches that search." : "No close matches — try typing to search."}
                         </div>
                       )}
-                      {shown.map(c => (
-                        <button
-                          key={c.id}
-                          onClick={() => { applySwap(i, c.id); openSwapPicker(null); }}
-                          style={cookSwapOptionBtn}
-                        >
-                          <span style={{ fontSize:16 }}>{c.emoji || "🥫"}</span>
-                          <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
-                            {c.name}
-                          </span>
-                          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888" }}>
-                            {c.amount}{c.unit ? ` ${c.unit}` : ""}
-                          </span>
-                        </button>
-                      ))}
+                      {shownPantry.length > 0 && (
+                        <>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#a3d977", letterSpacing:"0.08em", marginTop:2 }}>
+                            FROM YOUR PANTRY
+                          </div>
+                          {shownPantry.map(c => (
+                            <button
+                              key={`pantry-${c.id}`}
+                              onClick={() => { applySwap(i, c.id); openSwapPicker(null); }}
+                              style={cookSwapOptionBtn}
+                            >
+                              <span style={{ fontSize:16 }}>{c.emoji || "🥫"}</span>
+                              <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#f0ece4" }}>
+                                {c.name}
+                              </span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#888" }}>
+                                {c.amount}{c.unit ? ` ${c.unit}` : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </>
+                      )}
+                      {shownLibrary.length > 0 && (
+                        <>
+                          <div style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#d9b877", letterSpacing:"0.08em", marginTop:6 }}>
+                            OR TRY — NOT IN PANTRY
+                          </div>
+                          {shownLibrary.map(({ canonical, note }) => (
+                            <button
+                              key={`library-${canonical.id}`}
+                              onClick={() => { applyLibrarySwap(i, canonical); openSwapPicker(null); }}
+                              style={cookSwapOptionBtn}
+                              title={note || undefined}
+                            >
+                              <span style={{ fontSize:16, opacity:0.85 }}>{canonical.emoji || "🥫"}</span>
+                              <span style={{ flex:1, textAlign:"left", fontFamily:"'DM Sans',sans-serif", fontSize:13, color:"#e8dfc8" }}>
+                                {canonical.name}
+                                {note && (
+                                  <span style={{ display:"block", fontFamily:"'DM Sans',sans-serif", fontSize:10, color:"#777", fontStyle:"italic", marginTop:1, lineHeight:1.3 }}>
+                                    {note}
+                                  </span>
+                                )}
+                              </span>
+                              <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#666", letterSpacing:"0.06em" }}>
+                                LIBRARY
+                              </span>
+                            </button>
+                          ))}
+                        </>
+                      )}
                       {swapped && (
                         <button onClick={() => { clearSwap(i); openSwapPicker(null); }} style={cookSwapClearBtn}>
                           ↺ REVERT TO ORIGINAL ({ing.item})
@@ -1179,7 +1334,7 @@ export default function CookMode({
           message family / whatever, without ending the session.
           Session endures 2h; explicit end is still via DONE LOG IT. */}
       {onExit && (
-        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4 }}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginTop:4, gap:8 }}>
           <button
             onClick={onExit}
             title="Step out — timer keeps running"
@@ -1195,9 +1350,54 @@ export default function CookMode({
             <span style={{ fontSize:14, lineHeight:1 }}>↓</span>
             MINIMIZE
           </button>
-          <span style={{ fontFamily:"'DM Mono',monospace", fontSize:9, color:"#555", letterSpacing:"0.12em" }}>
-            TIMER KEEPS RUNNING
-          </span>
+          {/* EXIT — available at any point in the cook. First tap arms
+              a confirm so an accidental thumb can't drop a braise the
+              cook has been tending for 45 minutes. Second tap tears
+              down the cook_sessions row (status='abandoned') and
+              closes CookMode. Timer pushes for the session are purged
+              inside telemetry.endCook so stale notifications don't
+              fire after the cook is gone. */}
+          {confirmExit ? (
+            <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+              <button
+                onClick={() => setConfirmExit(false)}
+                style={{
+                  background:"#1a1a1a", border:"1px solid #2a2a2a", color:"#888",
+                  borderRadius:20, padding:"8px 12px",
+                  fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.12em",
+                  cursor:"pointer",
+                }}
+              >
+                KEEP COOKING
+              </button>
+              <button
+                onClick={exitCook}
+                style={{
+                  background:"#2a0a0a", border:"1px solid #5a1a1a", color:"#f87171",
+                  borderRadius:20, padding:"8px 12px",
+                  fontFamily:"'DM Mono',monospace", fontSize:10, fontWeight:600, letterSpacing:"0.12em",
+                  cursor:"pointer",
+                }}
+              >
+                END COOK
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirmExit(true)}
+              title="End cook and drop this recipe"
+              aria-label="Exit cook"
+              style={{
+                display:"inline-flex", alignItems:"center", gap:6,
+                background:"transparent", border:"1px solid #3a2a2a", color:"#a06060",
+                borderRadius:20, padding:"8px 12px",
+                fontFamily:"'DM Mono',monospace", fontSize:10, letterSpacing:"0.12em",
+                cursor:"pointer",
+              }}
+            >
+              ✕ EXIT
+            </button>
+          )}
         </div>
       )}
       <div style={{ height:3, background:"#222", borderRadius:2, marginTop:16, overflow:"hidden" }}>
