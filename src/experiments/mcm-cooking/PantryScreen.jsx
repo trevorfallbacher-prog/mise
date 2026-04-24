@@ -854,7 +854,7 @@ export default function PantryScreen({
               // population feels continuous rather than strobing
               // between ghost and real.
               if (loading && cards.length === 0) return <TileGridSkeleton />;
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} showTileContext />;
               if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
               return (
                 <TileGrid
@@ -1688,7 +1688,18 @@ function SearchSummary({ hits, query, onClear }) {
 // Item grid — the animated 2-to-N column grid used for BOTH the
 // drilled-tile view and the search-hits view. Factored out so the
 // card-layout code isn't duplicated across the two render branches.
-function ItemGrid({ items, onOpenItem, onOpenUnitPicker }) {
+function ItemGrid({ items, onOpenItem, onOpenUnitPicker, showTileContext = false }) {
+  // In search mode (showTileContext=true) each card renders a
+  // small tile-context chip ("FROM DAIRY & EGGS") so users who
+  // searched cross-location know where each hit lives. Resolve
+  // the tile's label from LOCATIONS once per item — cheap O(N)
+  // over 20 tiles so not worth memoizing.
+  const tileLabelFor = (item) => {
+    if (!showTileContext) return null;
+    const loc = LOCATIONS.find(l => l.id === item._location);
+    const tile = loc?.tiles.find(t => t.id === item._tileId);
+    return tile?.label || null;
+  };
   return (
     <div style={{
       display: "grid",
@@ -1710,6 +1721,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker }) {
           >
             <PantryCard
               item={it}
+              tileLabel={tileLabelFor(it)}
               onPick={() => {
                 if (onOpenItem && it._raw) onOpenItem(it._raw);
                 else if (onOpenUnitPicker) onOpenUnitPicker();
@@ -1920,7 +1932,7 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
   );
 }
 
-function PantryCard({ item, onPick }) {
+function PantryCard({ item, onPick, tileLabel = null }) {
   const { theme } = useTheme();
   const warn = item.status === "warn";
   // Warn cards pick up a gentle theme-derived burnt wash so
@@ -1951,6 +1963,22 @@ function PantryCard({ item, onPick }) {
         ...warnOverlay,
       }}
     >
+      {/* Tile-context chip — rendered only when ItemGrid is in
+          search mode (showTileContext=true). Tells the user which
+          tile this hit lives in so cross-location searches don't
+          lose the orientation of each result. Small DM Mono,
+          aligned with the card's metadata voice. */}
+      {tileLabel && (
+        <div style={{
+          fontFamily: font.mono, fontSize: 9,
+          letterSpacing: "0.10em", textTransform: "uppercase",
+          color: theme.color.inkFaint,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          marginTop: -2,
+        }}>
+          {tileLabel}
+        </div>
+      )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
         {iconUrl ? (
           <img
