@@ -283,22 +283,25 @@ export default function PantryScreen({
     return () => io.disconnect();
   }, []);
 
-  // Scroll to the top on drill IN / OUT so the user isn't
-  // disoriented by landing mid-page after the body swap. Runs
-  // only when drilledTile transitions from null→set or set→null,
-  // not on every re-render (drilledTile.id comparison). Smooth
-  // behavior so it feels continuous; users with reduce-motion
-  // preferences get "auto" via the media query below.
+  // Scroll to the top on drill IN / OUT and on search start/end
+  // so the user isn't disoriented by landing mid-page after the
+  // body swap. Runs only on transitions (prev → curr compare),
+  // not every re-render. Smooth behavior by default, respects
+  // `prefers-reduced-motion` via matchMedia.
   const prevDrilledRef = useRef(null);
+  const prevQueryActiveRef = useRef(false);
   useEffect(() => {
     const prev = prevDrilledRef.current;
     const curr = drilledTile?.id || null;
-    if (prev !== curr) {
+    const queryActive = query.length > 0;
+    const queryActiveChanged = prevQueryActiveRef.current !== queryActive;
+    if (prev !== curr || queryActiveChanged) {
       const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       window.scrollTo({ top: 0, behavior: reduced ? "auto" : "smooth" });
     }
     prevDrilledRef.current = curr;
-  }, [drilledTile]);
+    prevQueryActiveRef.current = queryActive;
+  }, [drilledTile, query]);
 
   useEffect(() => {
     const onKey = (e) => {
