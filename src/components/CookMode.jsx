@@ -12,6 +12,7 @@ import { useCookTelemetry } from "../lib/useCookTelemetry";
 import { applyCookSessionToRecipe, countActiveSwaps, recipeBrandUpgrades, recipeSwapSummary, relevantSwapsForStep, tokenizeSwappedInstruction } from "../lib/effectiveRecipe";
 import { playTimerChime, playStepCompleteChime, primeCookAudio } from "../lib/cookAudio";
 import { useWebPush } from "../lib/useWebPush";
+import UnitPicker from "./UnitPicker";
 
 // ── Animations ────────────────────────────────────────────────────────────────
 function BoilAnimation() {
@@ -396,6 +397,14 @@ export default function CookMode({
   const [completedSteps, setCompletedSteps] = useState(new Set());
   const [justAdded, setJustAdded] = useState(0);
   const [cardIng, setCardIng] = useState(null); // { ingredientId, fallbackName, fallbackEmoji }
+  // UnitPicker state — user-chosen unit overrides for ingredient
+  // amounts in the "FOR THIS STEP" list. Keyed by ingredientId so
+  // the override carries across every step that references the
+  // same canonical (pick tbsp for butter once, every step shows
+  // butter in tbsp). `unitPicker` holds the row currently open
+  // in the modal.
+  const [unitOverrides, setUnitOverrides] = useState({});
+  const [unitPicker, setUnitPicker] = useState(null);
   // Shared cook-time session state (src/lib/useCookSession.js). Owns
   // per-ingredient overrides (pantryItemId swaps, shopping promotions,
   // skip flags) and user-added extras. Passed as a prop to
@@ -1259,11 +1268,31 @@ export default function CookMode({
               {usesList.map((ing, i) => {
                 const swappedFrom = ing._swappedFrom?.item || null;
                 const isSkipped   = !!ing._skipped;
+                const overrideAmount = ing.ingredientId ? unitOverrides[ing.ingredientId] : null;
+                const displayAmount = overrideAmount || ing.amount || "—";
                 return (
                   <div key={i} style={{ display:"flex", gap:10, fontFamily:"'DM Sans',sans-serif", fontSize:14, color: isSkipped ? "#8a7a5a" : "#e8dfc8", lineHeight:1.5, opacity: isSkipped ? 0.7 : 1 }}>
-                    <span style={{ fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878", minWidth:68, flexShrink:0, textDecoration: isSkipped ? "line-through" : "none" }}>
-                      {ing.amount || "—"}
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => ing.ingredientId && !isSkipped && setUnitPicker({
+                        ingredientId: ing.ingredientId,
+                        itemName: ing.item,
+                        amountString: String(displayAmount),
+                      })}
+                      disabled={!ing.ingredientId || isSkipped}
+                      style={{
+                        fontFamily:"'DM Mono',monospace", fontSize:12, color:"#b8a878",
+                        minWidth:68, flexShrink:0, textAlign:"left",
+                        background:"transparent", border:"none", padding:0,
+                        cursor: ing.ingredientId && !isSkipped ? "pointer" : "default",
+                        textDecoration: isSkipped
+                          ? "line-through"
+                          : ing.ingredientId ? "underline dotted #b8a87855" : "none",
+                        textUnderlineOffset: 3,
+                      }}
+                    >
+                      {displayAmount}
+                    </button>
                     <span style={{ flex:1 }}>
                       <span style={{ textDecoration: isSkipped ? "line-through" : "none" }}>
                         {ing.item || ing.ingredientId || "ingredient"}
@@ -1458,6 +1487,21 @@ export default function CookMode({
           onFinish={() => {
             setCompleting(false);
             onDone?.();
+          }}
+        />
+      )}
+      {unitPicker && (
+        <UnitPicker
+          open={true}
+          onClose={() => setUnitPicker(null)}
+          amountString={unitPicker.amountString}
+          ingredientId={unitPicker.ingredientId}
+          itemName={unitPicker.itemName}
+          onPick={(newAmount) => {
+            setUnitOverrides(prev => ({
+              ...prev,
+              [unitPicker.ingredientId]: newAmount,
+            }));
           }}
         />
       )}

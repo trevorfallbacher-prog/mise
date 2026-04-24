@@ -21,6 +21,7 @@ import {
 } from "../lib/recipePairing";
 import { recipeNutrition, formatMacros } from "../lib/nutrition";
 import { useBrandNutrition } from "../lib/useBrandNutrition";
+import UnitPicker from "./UnitPicker";
 
 // Kick off a Claude-drafted recipe from the user's pantry. Three phases:
 //   setup   — meal prompt + star ingredients + timing/course + nuance chips,
@@ -3032,7 +3033,15 @@ export default function AIRecipe({
 //   amber (#f59e0b) — substitute or missing, no dietary conflict
 //   red   (#e8908a) — dietary conflict on the chosen pair/sub
 function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
-  const pairings = pairRecipeIngredients(ingredients, pantry || []);
+  // Per-row amount overrides from the UnitPicker. Keyed by index so
+  // they survive re-renders without polluting the recipe shape; the
+  // shopping-cart write below reads through these overrides.
+  const [amountOverrides, setAmountOverrides] = useState({});
+  const [pickerIdx, setPickerIdx] = useState(null);
+  const effectiveIngredients = ingredients.map((ing, i) =>
+    amountOverrides[i] != null ? { ...ing, amount: amountOverrides[i] } : ing,
+  );
+  const pairings = pairRecipeIngredients(effectiveIngredients, pantry || []);
   // Track per-row shopping adds locally so the button flips to
   // ✓ ON LIST after commit without waiting for the parent to
   // round-trip state back down.
@@ -3080,9 +3089,22 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
             padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4,
           }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878", minWidth: 60 }}>
+              <button
+                type="button"
+                onClick={() => setPickerIdx(i)}
+                title="Change unit"
+                style={{
+                  fontFamily: "'DM Mono',monospace", fontSize: 11, color: "#b8a878",
+                  minWidth: 60, textAlign: "left",
+                  background: "transparent", border: "none", padding: 0,
+                  cursor: ing.ingredientId ? "pointer" : "default",
+                  textDecoration: ing.ingredientId ? "underline dotted #b8a87855" : "none",
+                  textUnderlineOffset: 3,
+                }}
+                disabled={!ing.ingredientId}
+              >
                 {ing.amount || "—"}
-              </span>
+              </button>
               <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: 13, color: "#f0ece4" }}>
                 {ing.item}
               </span>
@@ -3133,6 +3155,22 @@ function IngredientsWithPairing({ ingredients, pantry, onShoppingAdd }) {
           </div>
         );
       })}
+      {pickerIdx != null && (() => {
+        const row = effectiveIngredients[pickerIdx];
+        if (!row) return null;
+        return (
+          <UnitPicker
+            open={true}
+            onClose={() => setPickerIdx(null)}
+            amountString={String(row.amount || "")}
+            ingredientId={row.ingredientId}
+            itemName={row.item}
+            onPick={(newAmount) => {
+              setAmountOverrides(prev => ({ ...prev, [pickerIdx]: newAmount }));
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }
