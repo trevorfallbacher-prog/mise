@@ -234,6 +234,21 @@ export default function PantryScreen({
   // subtler than a browser default outline, stronger than
   // nothing.
   const [searchFocused, setSearchFocused] = useState(false);
+  // Scroll-scrim state. True when the user has scrolled past
+  // the hero enough that the sticky nav bar needs a drop shadow
+  // to visually lift off the scroll body below — otherwise it
+  // feels welded to the content, or worse, looks like a render
+  // bug when the content scrolls "through" the bar without any
+  // separation cue.
+  const [scrolled, setScrolled] = useState(false);
+  // Sentinel ref — an empty div right above the sticky bar.
+  // IntersectionObserver watches it: when the sentinel is out
+  // of view, the user has scrolled past the hero and the bar
+  // should raise its shadow; when it's back in view, the bar
+  // resets to flat. IO is cheap and never runs handlers on
+  // animation frames, so this is scroll-lockstep but doesn't
+  // block the main thread.
+  const sentinelRef = useRef(null);
   // Ref to the search input so the "/" keyboard shortcut can
   // focus it without the user having to click the field.
   const searchInputRef = useRef(null);
@@ -248,6 +263,17 @@ export default function PantryScreen({
   // Ignored when the user is already typing in an input /
   // textarea / contenteditable, so the "/" key in a field
   // types a slash like it should.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      ([entry]) => setScrolled(!entry.isIntersecting),
+      { rootMargin: "-1px 0px 0px 0px", threshold: 0 }
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, []);
+
   useEffect(() => {
     const onKey = (e) => {
       const tag = (e.target?.tagName || "").toLowerCase();
@@ -487,6 +513,12 @@ export default function PantryScreen({
           </p>
         </FadeIn>
 
+        {/* Sentinel for the sticky bar's scroll-state detector.
+            Sits right above the sticky bar; the IO in the effect
+            above flips `scrolled` based on whether this element
+            is in view. */}
+        <div ref={sentinelRef} style={{ height: 1 }} aria-hidden />
+
         {/* --- Sticky search + location tabs --------------------------
             Wrapped in a position:sticky shell so the nav stays put
             when the user scrolls through a long tile. Pulls a
@@ -497,7 +529,10 @@ export default function PantryScreen({
             shared ItemCard overlay at App.jsx renders at a higher
             z). Top offset 0 — sticks flush to the viewport top.
             Backdrop-blur lets the underneath content peek through
-            the bar as it scrolls past, signaling "more above." */}
+            the bar as it scrolls past, signaling "more above."
+            Drop shadow fades in once `scrolled` flips so the bar
+            visibly lifts off the content below; resets when user
+            scrolls back up and the sentinel comes into view. */}
         <div style={{
           position: "sticky",
           top: 0,
@@ -510,6 +545,10 @@ export default function PantryScreen({
           backdropFilter: "blur(12px) saturate(140%)",
           WebkitBackdropFilter: "blur(12px) saturate(140%)",
           background: withAlpha(theme.color.cream, 0.35),
+          boxShadow: scrolled
+            ? "0 8px 20px rgba(30,20,8,0.12), 0 1px 0 rgba(30,20,8,0.06)"
+            : "0 0 0 rgba(30,20,8,0)",
+          transition: "box-shadow 200ms ease",
         }}>
         <FadeIn delay={0.06}>
           <GlassPanel
