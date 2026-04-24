@@ -18,11 +18,22 @@ import { useTheme, THEME_TRANSITION } from "./theme";
 // Warm parchment canvas with soft MCM color blobs drifting behind
 // the glass. Theme owns the base gradient + blob list, so the
 // backdrop naturally shifts morning→day→evening→night with no
-// screen-level variant knobs. Two decorative starbursts in the
-// corners for MCM flavor, colored from the theme's teal + brown.
+// screen-level variant knobs.
+//
+// The sun and moon are BOTH rendered all the time and animate in /
+// out of frame as the active theme crosses the day↔night boundary:
+// the sun sets down-and-right while the crescent moon rises
+// in from up-and-left, crossing paths at the rest position in the
+// top-right. Scattered white stars fade in under the moon.
 export function WarmBackdrop() {
   const { theme } = useTheme();
   const isNight = theme.id === "night";
+
+  // 1.4s with a soft overshoot curve so the celestial swap feels
+  // deliberate, not jumpy. Framer-motion handles interruption when
+  // the theme slider is scrubbed rapidly.
+  const orbit = { duration: 1.4, ease: [0.22, 1, 0.36, 1] };
+
   return (
     <div
       aria-hidden
@@ -52,51 +63,138 @@ export function WarmBackdrop() {
         />
       ))}
 
-      {isNight ? (
-        // Moon in the top-right where the sun-starburst sits by day,
-        // plus a scattering of white stars replacing the small tinted
-        // starburst. Same compositional weight, different sky.
-        <>
-          <Moon
-            size={140}
-            style={{ position: "absolute", top: 36, right: 16 }}
-          />
-          <Starburst
-            size={60}
-            color="rgba(255,255,255,0.24)"
-            style={{ position: "absolute", bottom: 80, left: 16 }}
-          />
-          <Starburst
-            size={22}
-            color="rgba(255,255,255,0.38)"
-            style={{ position: "absolute", top: 200, left: 48 }}
-          />
-          <Starburst
-            size={18}
-            color="rgba(255,255,255,0.32)"
-            style={{ position: "absolute", top: 260, right: 70 }}
-          />
-          <Starburst
-            size={16}
-            color="rgba(255,255,255,0.28)"
-            style={{ position: "absolute", bottom: 240, right: 120 }}
-          />
-        </>
-      ) : (
-        <>
-          <Starburst
-            size={160}
-            color={withAlpha(theme.color.warmBrown, 0.10)}
-            style={{ position: "absolute", top: 40, right: -30 }}
-          />
-          <Starburst
-            size={90}
-            color={withAlpha(theme.color.teal, 0.14)}
-            style={{ position: "absolute", bottom: 80, left: 16 }}
-          />
-        </>
-      )}
+      {/* SUN — rests top-right during the day, sets down-right at
+          night (off-screen below the horizon). */}
+      <motion.div
+        initial={false}
+        animate={{
+          x:       isNight ? 80   : 0,
+          y:       isNight ? 320  : 0,
+          rotate:  isNight ? 40   : 0,
+          scale:   isNight ? 0.85 : 1,
+          opacity: isNight ? 0    : 1,
+        }}
+        transition={orbit}
+        style={{ position: "absolute", top: 20, right: 4 }}
+      >
+        <Sun size={160} theme={theme} />
+      </motion.div>
+
+      {/* MOON — rests top-right at night, pre-rise above-and-left
+          during the day. Rises diagonally to meet the sun's resting
+          spot as it sets. */}
+      <motion.div
+        initial={false}
+        animate={{
+          x:       isNight ? 0     : -80,
+          y:       isNight ? 0     : -280,
+          rotate:  isNight ? 0     : -24,
+          scale:   isNight ? 1     : 0.85,
+          opacity: isNight ? 1     : 0,
+        }}
+        transition={orbit}
+        style={{ position: "absolute", top: 28, right: 10 }}
+      >
+        <CrescentMoon size={140} />
+      </motion.div>
+
+      {/* SECONDARY STARBURST — small teal corner decoration during
+          the day. Fades out at night so it doesn't fight with the
+          scattered stars. */}
+      <motion.div
+        initial={false}
+        animate={{ opacity: isNight ? 0 : 1, scale: isNight ? 0.8 : 1 }}
+        transition={orbit}
+        style={{ position: "absolute", bottom: 80, left: 16 }}
+      >
+        <Starburst
+          size={90}
+          color={withAlpha(theme.color.teal, 0.14)}
+        />
+      </motion.div>
+
+      {/* STARS — a scattered constellation that fades in under the
+          moon. Positions are intentionally off-grid so the sky
+          reads as painted, not tiled. */}
+      <motion.div
+        initial={false}
+        animate={{ opacity: isNight ? 1 : 0 }}
+        transition={{ duration: 1.0, delay: isNight ? 0.35 : 0 }}
+        style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+      >
+        <TwinkleStar size={20} style={{ position: "absolute", top: 120, left: 48 }} />
+        <TwinkleStar size={14} style={{ position: "absolute", top: 260, left: 140 }} />
+        <TwinkleStar size={16} style={{ position: "absolute", top: 200, right: 180 }} />
+        <TwinkleStar size={12} style={{ position: "absolute", bottom: 280, right: 60 }} />
+        <TwinkleStar size={18} style={{ position: "absolute", bottom: 180, left: 72 }} />
+        <TwinkleStar size={10} style={{ position: "absolute", top: 400, right: 40 }} />
+      </motion.div>
     </div>
+  );
+}
+
+// --- Sun (MCM atomic-age starburst) -------------------------------------
+
+// A dedicated sun for the backdrop — closer to a true MCM
+// atomic-age starburst than the generic `Starburst` utility. 16
+// alternating long/short rays with rounded caps, a thin concentric
+// ring, and a filled central disk. Warmer tones at the tips fade
+// to a brighter core so it reads as "sun catching paper."
+export function Sun({ size = 160, theme, style }) {
+  const c = theme ? theme.color.warmBrown : "#7A4E2D";
+  const hot = theme ? theme.color.mustard : "#D4A637";
+  const cx = 50;
+
+  const longRays  = Array.from({ length: 8 });
+  const shortRays = Array.from({ length: 8 });
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      style={style}
+      aria-hidden
+    >
+      {/* Long rays — cardinal + diagonal */}
+      {longRays.map((_, i) => {
+        const angle = (i / 8) * 360;
+        return (
+          <rect
+            key={`L${i}`}
+            x={cx - 1.1} y={2}
+            width={2.2} height={20}
+            rx={1.1}
+            fill={withAlpha(c, 0.26)}
+            transform={`rotate(${angle} ${cx} ${cx})`}
+          />
+        );
+      })}
+      {/* Short rays — offset 22.5° between long rays */}
+      {shortRays.map((_, i) => {
+        const angle = (i / 8) * 360 + 22.5;
+        return (
+          <rect
+            key={`S${i}`}
+            x={cx - 0.8} y={11}
+            width={1.6} height={11}
+            rx={0.8}
+            fill={withAlpha(c, 0.20)}
+            transform={`rotate(${angle} ${cx} ${cx})`}
+          />
+        );
+      })}
+      {/* Thin outer ring */}
+      <circle
+        cx={cx} cy={cx} r={19}
+        fill="none"
+        stroke={withAlpha(c, 0.30)}
+        strokeWidth={0.7}
+      />
+      {/* Central disk — mustard warm so it reads as sunlight */}
+      <circle cx={cx} cy={cx} r={13} fill={withAlpha(hot, 0.28)} />
+      <circle cx={cx} cy={cx} r={8}  fill={withAlpha(hot, 0.45)} />
+    </svg>
   );
 }
 
@@ -135,16 +233,16 @@ export function Starburst({ size = 96, color: c = "rgba(122,78,45,0.14)", style 
   );
 }
 
-// --- Moon (night decorative element) ------------------------------------
+// --- Crescent moon (MCM) ------------------------------------------------
 
-// Replaces the big warm starburst ("sun") when the active theme is
-// night. Soft cream disk with a faint outer glow and three subtle
-// crater dots — quiet, not cartoonish. Paired with scattered white
-// Starbursts (stars) in the same backdrop for atmosphere.
-export function Moon({ size = 120, style }) {
-  // Unique gradient id per instance so multiple moons wouldn't
-  // clobber each other (we only render one, but be tidy).
+// A classic mid-century crescent — full disk with a second disk
+// masked out to carve the bite, a soft outer glow to suggest
+// moonlight, and a tiny plus-star tucked into the concave curve.
+// All cream/off-white so the moon reads quiet against a cool-dark
+// sky (no warm cast).
+export function CrescentMoon({ size = 140, style }) {
   const gid = `moonGlow-${size}`;
+  const mid = `moonMask-${size}`;
   return (
     <svg
       width={size}
@@ -155,16 +253,72 @@ export function Moon({ size = 120, style }) {
     >
       <defs>
         <radialGradient id={gid} cx="50%" cy="50%" r="50%">
-          <stop offset="0%"   stopColor="rgba(255,250,232,0.35)" />
+          <stop offset="0%"   stopColor="rgba(255,250,232,0.30)" />
           <stop offset="55%"  stopColor="rgba(255,250,232,0.08)" />
-          <stop offset="100%" stopColor="rgba(255,250,232,0)" />
+          <stop offset="100%" stopColor="rgba(255,250,232,0)"    />
         </radialGradient>
+        {/* The mask: white shows, black hides. The second circle
+            bites a crescent out of the first. */}
+        <mask id={mid} maskUnits="userSpaceOnUse">
+          <rect width="100" height="100" fill="black" />
+          <circle cx="50" cy="50" r="26" fill="white" />
+          <circle cx="61" cy="44" r="22" fill="black" />
+        </mask>
       </defs>
-      <circle cx="50" cy="50" r="48" fill={`url(#${gid})`} />
-      <circle cx="50" cy="50" r="26" fill="rgba(245,242,230,0.90)" />
-      <circle cx="58" cy="44" r="2.5" fill="rgba(200,195,180,0.35)" />
-      <circle cx="42" cy="54" r="2"   fill="rgba(200,195,180,0.28)" />
-      <circle cx="54" cy="62" r="1.8" fill="rgba(200,195,180,0.25)" />
+      {/* Soft outer glow — a faint moonlit halo */}
+      <circle cx="50" cy="50" r="46" fill={`url(#${gid})`} />
+      {/* The crescent itself */}
+      <g mask={`url(#${mid})`}>
+        <circle cx="50" cy="50" r="26" fill="rgba(245,242,230,0.94)" />
+      </g>
+      {/* Subtle inner ring on the crescent face — atomic-age detail */}
+      <circle
+        cx="50" cy="50" r="20"
+        fill="none"
+        stroke="rgba(245,242,230,0.18)"
+        strokeWidth="0.6"
+        mask={`url(#${mid})`}
+      />
+      {/* Tiny MCM plus-star tucked in the concave curve */}
+      <g transform="translate(72 54)">
+        <path
+          d="M0 -5 L0 5 M-5 0 L5 0"
+          stroke="rgba(245,242,230,0.9)"
+          strokeWidth="1"
+          strokeLinecap="round"
+        />
+        <circle cx="0" cy="0" r="1.2" fill="rgba(245,242,230,0.95)" />
+      </g>
+    </svg>
+  );
+}
+
+// Back-compat alias — primitives/screens that imported `Moon`
+// continue working without a source change.
+export const Moon = CrescentMoon;
+
+// --- TwinkleStar --------------------------------------------------------
+
+// A small plus-shaped star with a center dot — the MCM motif
+// repeats across the night sky. Size-scaled so the same component
+// renders believable sky-stars from 8px up to ~20px.
+export function TwinkleStar({ size = 14, color: c = "rgba(255,255,255,0.85)", style }) {
+  const cx = 10;
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 20 20"
+      style={style}
+      aria-hidden
+    >
+      <path
+        d={`M${cx} 1 L${cx} 19 M1 ${cx} L19 ${cx}`}
+        stroke={c}
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
+      <circle cx={cx} cy={cx} r="1.6" fill={c} />
     </svg>
   );
 }
