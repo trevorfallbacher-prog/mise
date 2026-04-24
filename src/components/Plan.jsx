@@ -661,7 +661,7 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   // point at user_recipes rows (custom or AI recipes scheduled via
   // Quick Cook). Without this wired in, scheduled user recipes would
   // render as blank tiles on the calendar.
-  const { recipes: userRecipesList, findBySlug: findUserRecipe, saveRecipe: saveUserRecipe } = useUserRecipes(userId);
+  const { recipes: userRecipesList, findBySlug: findUserRecipe, saveRecipe: saveUserRecipe, setSharing: setRecipeSharing } = useUserRecipes(userId);
 
   const { meals, loading, schedule, cancel, claim, unclaim, updateMeal } = useScheduledMeals(userId, {
     fromISO: windowStart.toISOString(),
@@ -841,6 +841,29 @@ export default function Plan({ profile, userId, familyKey, nameFor, hasFamily, f
   };
 
   const onSaveSchedule = async ({ scheduledFor, notificationSettings, note, cookId, isRequest, servings }) => {
+    // Auto-share on schedule: if this is the author scheduling their
+    // own user_recipes row AND the meal is family-visible (request,
+    // or cook_id set to a family member), flip shared=true so the
+    // requestee actually sees the ingredients and steps. Without
+    // this, a "🙋 REQUEST pesto" ping lands on the family member's
+    // calendar but the MealDetailDrawer renders the locked-recipe
+    // fallback ("author hasn't shared this recipe yet") — they can't
+    // cook what they can't read. Fires before schedule() so the row
+    // is visible to family the moment the scheduled_meals write lands.
+    // Silent on bundled recipes (no _userId) and on family-authored
+    // picks (author isn't us; RLS would reject the update anyway).
+    const authorIsSelf = recipeToSchedule._userId && recipeToSchedule._userId === userId;
+    const familyVisible = isRequest || (cookId && cookId !== userId);
+    if (authorIsSelf && familyVisible && setRecipeSharing) {
+      const ownRow = userRecipesList.find(r =>
+        r.userId === userId && r.slug === recipeToSchedule.slug,
+      );
+      if (ownRow && !ownRow.shared) {
+        setRecipeSharing(ownRow.id, { shared: true }).catch(e =>
+          console.warn("[plan] auto-share on schedule failed:", e?.message || e),
+        );
+      }
+    }
     await schedule({
       recipeSlug: recipeToSchedule.slug,
       // Stamp the author's user_id on the scheduled_meals row so the
