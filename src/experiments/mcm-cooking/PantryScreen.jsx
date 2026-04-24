@@ -386,6 +386,24 @@ export default function PantryScreen({
       // its absolute-positioned shell, so backdrop blobs are still
       // contained; this just lets the content stack breathe.
     }}>
+      {/* Global focus ring for keyboard navigation. One CSS rule
+          covers every custom-styled button that opts in via
+          `className="mcm-focusable"` (SortSelector pills, the
+          drilled back button, location tabs). `:focus-visible`
+          means it only appears for keyboard focus, not mouse
+          clicks — so sighted users never see an outline they
+          don't need, but keyboard users always know where they
+          are. `currentColor` inherits the button's text color so
+          the ring tints correctly across theme variants without
+          a second token lookup. */}
+      <style>{`
+        .mcm-focusable { outline: none; }
+        .mcm-focusable:focus-visible {
+          outline: 2px solid currentColor;
+          outline-offset: 2px;
+          border-radius: inherit;
+        }
+      `}</style>
       <WarmBackdrop variant="pantry" />
 
       <div style={{
@@ -623,6 +641,7 @@ export default function PantryScreen({
               <button
                 onClick={() => setQuery("")}
                 aria-label="Clear search"
+                className="mcm-focusable"
                 style={{
                   border: "none", background: "transparent", cursor: "pointer",
                   color: theme.color.inkMuted, fontFamily: font.mono, fontSize: 12,
@@ -915,8 +934,17 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Kicker tone={theme.color.burnt}>{kicker}</Kicker>
           <div style={{
-            fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
-            fontSize: 20, color: theme.color.ink, marginTop: 2, letterSpacing: "-0.01em",
+            // Truculenta so the triage headline sits in the same
+            // typographic family as the hero + drilled header —
+            // the bottom CTA now reads as a continuation of the
+            // page, not a separate component. Slightly more bold
+            // (wght 560) than tile cards so the CTA's item name
+            // grabs focus among the surrounding meta.
+            fontFamily: font.display,
+            fontWeight: 560,
+            fontVariationSettings: "'wdth' 104, 'wght' 560, 'opsz' 20",
+            fontSize: 20, color: theme.color.ink, marginTop: 2,
+            letterSpacing: "-0.015em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             {body}
@@ -1051,6 +1079,7 @@ function LocationTabs({ locations, active, onSelect, totals }) {
           <button
             key={loc.id}
             onClick={() => onSelect(loc.id)}
+            className="mcm-focusable"
             style={{
               position: "relative",
               flex: 1,
@@ -1157,6 +1186,7 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
         <button
           onClick={onBack}
           aria-label={`Back to ${location} tiles`}
+          className="mcm-focusable"
           style={{
             width: 38, height: 38, flexShrink: 0,
             display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -1303,6 +1333,7 @@ function SortSelector({ sortBy, onSortChange }) {
           <button
             key={opt.id}
             onClick={() => onSortChange(opt.id)}
+            className="mcm-focusable"
             style={{
               fontFamily: font.mono, fontSize: 10,
               letterSpacing: "0.08em", textTransform: "uppercase",
@@ -1591,9 +1622,16 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
-          fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
-          fontSize: 20, lineHeight: 1.15, color: theme.color.ink,
-          letterSpacing: "-0.01em",
+          // Truculenta to match the drilled-header register — tile
+          // cards read as shelf headers, not book titles. Narrower
+          // than the drilled header (wdth 102 vs 104) and lighter
+          // (wght 540 vs 580) so it reads as a deck of cards rather
+          // than a stack of mastheads.
+          fontFamily: font.display,
+          fontWeight: 540,
+          fontVariationSettings: "'wdth' 102, 'wght' 540, 'opsz' 20",
+          fontSize: 20, lineHeight: 1.1, color: theme.color.ink,
+          letterSpacing: "-0.015em",
         }}>
           {tile.label}
         </div>
