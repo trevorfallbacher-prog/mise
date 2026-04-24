@@ -86,9 +86,19 @@ export const shadow = {
 };
 
 export const font = {
-  serif: "'Fraunces', 'Iowan Old Style', Georgia, serif",
-  sans:  "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
-  mono:  "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
+  // Editorial serif for body-italic uses — card names, empty-state
+  // lines, CTA copy. Fraunces is a soft, humanist serif with a
+  // proper italic that reads beautifully at sub-24px.
+  serif:   "'Fraunces', 'Iowan Old Style', Georgia, serif",
+  // MCM display face — Truculenta is a variable-axis sans built
+  // for condensed monumental headlines. Used for the hero ("The
+  // Pantry") and tile/drilled labels where the register wants to
+  // shout "mid-century magazine cover" rather than "soft book
+  // italic." Variable widths (75..125) + weights (300..900) mean
+  // callers dial in the expression per surface via `fontVariationSettings`.
+  display: "'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
+  sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+  mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
 };
 
 // Composed helpers so screens don't re-implement the glass recipe.

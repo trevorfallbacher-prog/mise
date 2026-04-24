@@ -460,9 +460,25 @@ export default function PantryScreen({
               // 52px on desktop. `clamp` overrides the `size` prop's
               // fontSize since style spreads after the size rule
               // inside SerifHeader.
+              //
+              // MCM swap: Truculenta is a variable-axis display face
+              // built for condensed monumental headlines — reads as
+              // a mid-century magazine cover rather than a book
+              // title. fontVariationSettings dials in a medium-wide
+              // (wdth 108) semibold (wght 620) at the large optical
+              // size (opsz 72) for the hero; override the inherited
+              // italic + 300 weight from SerifHeader since Truculenta
+              // has no true italic (synthesized skew reads bad at
+              // this size).
               marginTop: 4,
               color: theme.color.skyInk,
-              fontSize: "clamp(36px, 6vw, 52px)",
+              fontFamily: font.display,
+              fontStyle: "normal",
+              fontWeight: 620,
+              fontVariationSettings: "'wdth' 108, 'wght' 620, 'opsz' 72",
+              letterSpacing: "-0.02em",
+              fontSize: "clamp(40px, 7vw, 64px)",
+              lineHeight: 1.0,
             }}
           >
             The Pantry
@@ -1174,10 +1190,18 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
         </motion.div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{
-            fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
-            fontSize: "clamp(22px, 3.5vw, 28px)",
-            lineHeight: 1.1, color: theme.color.ink,
-            letterSpacing: "-0.01em",
+            // Truculenta display face — matches the hero "The
+            // Pantry" register so drilling feels like arriving at
+            // a sub-section of the same magazine. Slightly less
+            // wide (wdth 104) and lighter (wght 580) than the
+            // hero so the tile label reads as chapter-title, not
+            // masthead.
+            fontFamily: font.display,
+            fontWeight: 580,
+            fontVariationSettings: "'wdth' 104, 'wght' 580, 'opsz' 32",
+            fontSize: "clamp(24px, 4vw, 32px)",
+            lineHeight: 1.05, color: theme.color.ink,
+            letterSpacing: "-0.015em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             {tile.label}
