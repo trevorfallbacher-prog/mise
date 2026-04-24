@@ -18,6 +18,9 @@ import XpToastStack from "./components/XpToastStack";
 import CookMode from "./components/CookMode";
 import CookBanner from "./components/CookBanner";
 import MCMCookingShowcase from "./experiments/mcm-cooking/Showcase";
+import MCMPantryScreen from "./experiments/mcm-cooking/PantryScreen";
+import { ThemeProvider as MCMThemeProvider } from "./experiments/mcm-cooking/theme";
+import ItemCard from "./components/ItemCard";
 import { useActiveCookSession } from "./lib/useActiveCookSession";
 import { useUserRecipes } from "./lib/useUserRecipes";
 import { useWhatsNew } from "./lib/useWhatsNew";
@@ -263,6 +266,20 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   const [pantryView, setPantryView]       = useState("stock"); // "stock" | "shopping"
   const [settingsOpen, setSettingsOpen]   = useState(false);
   const [notifsOpen, setNotifsOpen]       = useState(false);
+  // --- MCM pantry state ---------------------------------------------
+  // `mcmOpenItem` — which pantry row is open in the shared ItemCard
+  // overlay, set when the user taps a card in MCM's grid. Null
+  // when nothing is open. Kept at App level so the overlay renders
+  // above the MCM screen instead of inside its motion wrapper
+  // (which would clip modals and duplicate portals).
+  const [mcmOpenItem, setMcmOpenItem]     = useState(null);
+  // `forceClassicPantry` — one-tap escape hatch back to the classic
+  // Kitchen render for the Pantry tab. Not wired to a UI yet; exists
+  // so we can flip it via devtools / localStorage if the MCM path
+  // breaks in the field without forcing a deploy. Default false so
+  // users get the new UI on their next open.
+  const [forceClassicPantry]              = useState(false);
+  const isAdmin = profile?.role === "admin";
   // Create menu overlay. Opened by the floating ➕ in the tab bar;
   // renders on top of whatever tab is currently active. Hosts every
   // creation flow: cooking (custom / AI / template recipe) AND
@@ -593,7 +610,26 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                 onDeepLinkConsumed={() => setDeepLink(null)}
               />
             )}
-            {tab === "pantry"   && (
+            {tab === "pantry" && pantryView === "stock" && !forceClassicPantry && (
+              // MCM Pantry — re-skinned stock view with real Supabase
+              // data. Wraps in MCMThemeProvider so the time-of-day
+              // palette (dawn/dusk/day/night anchors) resolves inside
+              // the screen without leaking to the rest of the dark
+              // UI. Tap on a card sets `mcmOpenItem`, which raises
+              // the shared ItemCard overlay further down — same edit
+              // flow the Kitchen stock view uses, just reached from a
+              // different visual. Escape hatch: `forceClassicPantry`
+              // flips the view back to the original Kitchen render
+              // if something here breaks (keeps users unblocked).
+              <MCMThemeProvider>
+                <MCMPantryScreen
+                  items={pantry}
+                  onOpenItem={setMcmOpenItem}
+                  hideDock
+                />
+              </MCMThemeProvider>
+            )}
+            {tab === "pantry" && (pantryView !== "stock" || forceClassicPantry) && (
               <Kitchen
                 userId={user.id}
                 pantry={pantry}
@@ -612,6 +648,48 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
           </motion.div>
         </AnimatePresence>
       </div>
+
+      {/* MCM Pantry edit overlay — shared ItemCard rendered above
+          the MCM grid when the user taps a card. Looks up the fresh
+          pantry row by id so realtime edits from the family flow
+          through without a close+reopen. Uses the same updatePantry-
+          style wrapper Kitchen uses internally so corrections go
+          through the standard pantry_items update path. Minimal
+          callbacks for now: onUpdate applies a shallow merge via
+          setPantry; onDelete removes the row outright. Tag-editing
+          and provenance drill-through are left for follow-up PRs
+          (they depend on Kitchen-level infra — LinkIngredient,
+          ReceiptView, etc.). Passing undefined for those callbacks
+          lets ItemCard hide the corresponding affordances. */}
+      {mcmOpenItem && (() => {
+        const fresh = pantry.find(p => p.id === mcmOpenItem.id);
+        if (!fresh) {
+          // Row was deleted (from this client or a family member).
+          // Close the overlay on next tick so we don't rip the
+          // modal out from under a mid-edit user; setTimeout = 0
+          // defers to avoid a setState-during-render warning.
+          setTimeout(() => setMcmOpenItem(null), 0);
+          return null;
+        }
+        return (
+          <ItemCard
+            key={fresh.id}
+            item={fresh}
+            pantry={pantry}
+            userId={user.id}
+            isAdmin={isAdmin}
+            familyIds={familyIds}
+            onUpdate={(patch) => setPantry(prev => prev.map(p => (
+              p.id === fresh.id ? { ...p, ...patch } : p
+            )))}
+            onDelete={() => {
+              setPantry(prev => prev.filter(p => p.id !== fresh.id));
+              setMcmOpenItem(null);
+            }}
+            onClose={() => setMcmOpenItem(null)}
+          />
+        );
+      })()}
 
       {settingsOpen && (
         <Settings

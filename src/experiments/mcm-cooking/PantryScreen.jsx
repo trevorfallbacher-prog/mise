@@ -2,6 +2,14 @@
 // Warm parchment backdrop, glass search + filter bar, 2-column grid
 // of glass item cards. Each card shows: emoji icon, name (serif),
 // quantity (mono), location pill, teal status dot.
+//
+// Accepts either a real pantry array (from App.jsx `usePantry`) or
+// falls back to the hardcoded DEMO_ITEMS when rendered standalone
+// (Showcase.jsx). `items` is detected by shape — real pantry rows
+// carry `.amount` / `.unit` / `.expiresAt`; demo rows pre-baked
+// `.qty` / `.days` / `.status`. The adapter below normalizes both
+// into the card's render shape so the visual layer doesn't care
+// which source it got.
 
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -14,7 +22,10 @@ import {
 import { useTheme, THEME_TRANSITION } from "./theme";
 import { font } from "./tokens";
 
-const ITEMS = [
+// Hardcoded demo items — only used when PantryScreen is rendered
+// standalone (Showcase.jsx) without an `items` prop. Kept so the
+// design-reference surface keeps working untouched.
+const DEMO_ITEMS = [
   { id: 1, emoji: "🧈", name: "Kerrygold Butter",    qty: "1 stick",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 12 },
   { id: 2, emoji: "🥚", name: "Pasture Eggs",         qty: "8 large",    location: "Dairy & Eggs",    cat: "dairy",   status: "ok",      days: 18 },
   { id: 3, emoji: "🥛", name: "Whole Milk",           qty: "½ gallon",   location: "Dairy & Eggs",    cat: "dairy",   status: "warn",    days: 3 },
@@ -37,18 +48,113 @@ const FILTERS = [
   { id: "pantry",  label: "Pantry"   },
 ];
 
-export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
+// Pretty label for the STORED IN pill — maps Kitchen's category
+// strings to the tile-ish names the MCM card pill expects. Real
+// items carry `category` as dairy/produce/meat/pantry/etc. (see
+// `usePantry.js` fromDb mapping). Demo items already have the
+// human-readable string baked into `location`, so that path
+// short-circuits.
+const CATEGORY_LABELS = {
+  dairy:     "Dairy & Eggs",
+  produce:   "Produce",
+  meat:      "Meat & Seafood",
+  pantry:    "Pantry",
+  freezer:   "Freezer",
+  drinks:    "Drinks",
+  condiments:"Condiments",
+  baking:    "Baking",
+};
+
+// Days between `date` and today, rounded. Negative → already
+// expired. Null input → null (no chip shown). Uses midnight-to-
+// midnight arithmetic so a card purchased today doesn't read
+// "23h left" — it reads "3d" like the user expects.
+function daysUntil(date) {
+  if (!date) return null;
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(d);
+  target.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
+// Format `amount + unit` into the same compact mono string the
+// MCM demo items use ("1 stick", "8 large", "½ gallon"). The
+// real pantry stores amount as a number; rendering 1.0 as "1"
+// and 0.5 as "½" matches the intent without an extra dependency.
+function formatQty(amount, unit) {
+  if (amount == null || Number.isNaN(amount)) return unit || "";
+  const round = (n) => Math.round(n * 100) / 100;
+  const a = round(amount);
+  // Common fractional sugar — keep ½/¼/¾ as glyphs for the
+  // recipe-book feel that matches the serif-italic name above.
+  const FRAC = { 0.5: "½", 0.25: "¼", 0.75: "¾", 0.33: "⅓", 0.67: "⅔" };
+  const frac = FRAC[a] || FRAC[round(a - Math.trunc(a))];
+  const whole = Math.trunc(a);
+  const display = frac
+    ? (whole ? `${whole}${frac}` : frac)
+    : a.toString();
+  return unit ? `${display} ${unit}` : display;
+}
+
+// Map a raw pantry row (from usePantry) OR a demo row into the
+// card shape the PantryCard renderer expects. Detects by whether
+// `.qty` is pre-baked (demo) vs. derived from `.amount` / `.unit`
+// (real). Keeps the downstream card component dumb — it sees
+// ONE shape regardless of source.
+function toCard(raw) {
+  if (raw == null) return null;
+  // Demo row — already in card shape. Pass through.
+  if (typeof raw.qty === "string" && typeof raw.cat === "string") {
+    return raw;
+  }
+  // Real pantry row — derive card fields.
+  const days = daysUntil(raw.expiresAt);
+  const status = days != null && days <= 3 ? "warn" : "ok";
+  const cat = raw.category || "pantry";
+  const location = CATEGORY_LABELS[cat] || (cat[0]?.toUpperCase() + cat.slice(1)) || "Pantry";
+  return {
+    id:       raw.id,
+    emoji:    raw.emoji || "🍽️",
+    name:     raw.name || "Untitled",
+    qty:      formatQty(raw.amount, raw.unit),
+    location,
+    cat,
+    status,
+    days,
+    // Keep the raw row around so onOpenItem can hand it back to
+    // the caller (App.jsx wants to open ItemCard with the full
+    // pantry row, not the trimmed card shape).
+    _raw: raw,
+  };
+}
+
+export default function PantryScreen({
+  items,
+  onOpenItem,
+  onStartCooking,
+  onOpenUnitPicker,
+  hideDock = false,
+}) {
   const { theme } = useTheme();
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
 
-  const visible = useMemo(() => ITEMS.filter((it) => {
+  // Normalize once — everything downstream reads from `cards`.
+  const cards = useMemo(
+    () => (items ?? DEMO_ITEMS).map(toCard).filter(Boolean),
+    [items]
+  );
+
+  const visible = useMemo(() => cards.filter((it) => {
     if (filter !== "all" && it.cat !== filter) return false;
     if (query && !it.name.toLowerCase().includes(query.toLowerCase())) return false;
     return true;
-  }), [filter, query]);
+  }), [cards, filter, query]);
 
-  const goodCount = ITEMS.filter((i) => i.status === "ok").length;
+  const goodCount = cards.filter((i) => i.status === "ok").length;
 
   return (
     <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
@@ -104,8 +210,7 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
             marginTop: 8, fontFamily: font.sans, fontSize: 15,
             color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 340,
           }}>
-            Twelve good things on the shelf. Enough for dinner, breakfast,
-            and a quiet afternoon snack.
+            {pantrySubtitle(cards.length, goodCount)}
           </p>
         </FadeIn>
 
@@ -179,7 +284,17 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
                 exit={{ opacity: 0, scale: 0.96 }}
                 transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
               >
-                <PantryCard item={it} onPick={onOpenUnitPicker} />
+                <PantryCard
+                  item={it}
+                  onPick={() => {
+                    // Prefer the real-items edit handler. Fall through to
+                    // the unit-picker demo when rendered standalone —
+                    // keeps Showcase.jsx's "tap a card to see the unit
+                    // modal" design demo working untouched.
+                    if (onOpenItem && it._raw) onOpenItem(it._raw);
+                    else if (onOpenUnitPicker) onOpenUnitPicker();
+                  }}
+                />
               </motion.div>
             ))}
           </AnimatePresence>
@@ -235,13 +350,31 @@ export default function PantryScreen({ onStartCooking, onOpenUnitPicker }) {
         </FadeIn>
       </div>
 
-      <BottomDock
-        tabs={NAV_TABS}
-        activeId="pantry"
-        onSelect={(id) => { if (id === "cook") onStartCooking && onStartCooking(); }}
-      />
+      {!hideDock && (
+        <BottomDock
+          tabs={NAV_TABS}
+          activeId="pantry"
+          onSelect={(id) => { if (id === "cook") onStartCooking && onStartCooking(); }}
+        />
+      )}
     </div>
   );
+}
+
+// Pantry subtitle — short warm copy that scales with the count.
+// Hardcoded wording on Showcase ("Twelve good things") doesn't
+// survive once real data flows in; this helper keeps it honest.
+function pantrySubtitle(total, good) {
+  if (total === 0) {
+    return "Empty shelf. Time for a grocery run.";
+  }
+  if (total === good) {
+    return total === 1
+      ? "One good thing on the shelf."
+      : `${total} good things on the shelf. Everything's fresh.`;
+  }
+  const warnCount = total - good;
+  return `${total} on the shelf · ${warnCount} ${warnCount === 1 ? "needs" : "need"} using soon.`;
 }
 
 const NAV_TABS = [
@@ -313,11 +446,23 @@ function PantryCard({ item, onPick }) {
           whiteSpace: "nowrap",
           fontWeight: warn ? 500 : 400,
         }}>
-          {item.days}d
+          {formatDaysChip(item.days)}
         </span>
       </div>
     </GlassPanel>
   );
+}
+
+// Compact chip for the days-to-expire corner. Demo items always
+// carry a number; real items whose `expiresAt` is null (shelf-
+// stable pantry goods like olive oil) get a `days = null` from
+// the adapter and render with an empty chip so the card doesn't
+// lie about a spoilage clock.
+function formatDaysChip(days) {
+  if (days == null) return "";
+  if (days < 0) return "gone";
+  if (days === 0) return "today";
+  return `${days}d`;
 }
 
 function SearchGlyph() {
