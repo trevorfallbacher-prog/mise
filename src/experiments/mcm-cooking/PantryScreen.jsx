@@ -413,8 +413,83 @@ export default function PantryScreen({
           0%, 100% { opacity: 0.35; }
           50%      { opacity: 0.65; }
         }
+        /* Dust-mote drift — three soft specks float slowly across
+           the pantry backdrop in different arcs. Adds a sense of
+           "this is a real room, air moves in it" without any of
+           the processing cost of a canvas/particle system. Each
+           mote uses a different keyframe + duration so they never
+           sync up and read as an animation loop. The motes are
+           parked at 12% opacity on warm tokens so they blend into
+           whatever time-of-day backdrop is underneath. */
+        @keyframes mcm-mote-0 {
+          0%   { transform: translate(0, 0);     opacity: 0; }
+          15%  { opacity: 1; }
+          50%  { transform: translate(30vw, -18vh); opacity: 1; }
+          85%  { opacity: 1; }
+          100% { transform: translate(60vw, 4vh);  opacity: 0; }
+        }
+        @keyframes mcm-mote-1 {
+          0%   { transform: translate(0, 0);     opacity: 0; }
+          20%  { opacity: 1; }
+          55%  { transform: translate(-22vw, 28vh); opacity: 1; }
+          90%  { opacity: 1; }
+          100% { transform: translate(-44vw, -6vh); opacity: 0; }
+        }
+        @keyframes mcm-mote-2 {
+          0%   { transform: translate(0, 0);     opacity: 0; }
+          25%  { opacity: 1; }
+          60%  { transform: translate(18vw, 32vh); opacity: 1; }
+          90%  { opacity: 1; }
+          100% { transform: translate(-10vw, 60vh); opacity: 0; }
+        }
+        /* Hide the keyboard shortcut hint on devices that can't
+           hover (touch phones/tablets) — a kbd glyph showing a
+           shortcut that user can't physically trigger is just
+           noise. Keyboard-attached tablets (iPads in a stand)
+           report hover:hover and keep the hint. */
+        @media (hover: none) {
+          .mcm-kbd-hint { display: none !important; }
+        }
       `}</style>
       <WarmBackdrop variant="pantry" />
+
+      {/* Dust motes — three tiny circular dots that drift across
+          the viewport on independent arc keyframes. Placed
+          ABOVE WarmBackdrop but below the content wrapper so
+          they float behind the glass cards. aria-hidden because
+          they're purely ambient; screen readers should ignore
+          them. Long durations (30–48s) so motion is subliminal,
+          not distracting. */}
+      <div aria-hidden style={{
+        position: "absolute", inset: 0,
+        pointerEvents: "none",
+        overflow: "hidden",
+        zIndex: 1,
+      }}>
+        <span style={{
+          position: "absolute", top: "18%", left: "8%",
+          width: 4, height: 4, borderRadius: "50%",
+          background: withAlpha(theme.color.skyInkMuted, 0.35),
+          filter: "blur(0.5px)",
+          animation: "mcm-mote-0 36s linear infinite",
+        }} />
+        <span style={{
+          position: "absolute", top: "42%", left: "72%",
+          width: 3, height: 3, borderRadius: "50%",
+          background: withAlpha(theme.color.skyInkMuted, 0.30),
+          filter: "blur(0.5px)",
+          animation: "mcm-mote-1 44s linear infinite",
+          animationDelay: "-12s",
+        }} />
+        <span style={{
+          position: "absolute", top: "65%", left: "30%",
+          width: 5, height: 5, borderRadius: "50%",
+          background: withAlpha(theme.color.skyInkMuted, 0.25),
+          filter: "blur(0.8px)",
+          animation: "mcm-mote-2 48s linear infinite",
+          animationDelay: "-24s",
+        }} />
+      </div>
 
       <div style={{
         // Content column. On phones (≤640 CSS px) this is the full
@@ -648,7 +723,7 @@ export default function PantryScreen({
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
-              placeholder="Search the pantry…  ( press / )"
+              placeholder="Search the pantry…"
               style={{
                 flex: 1,
                 border: "none",
@@ -659,6 +734,30 @@ export default function PantryScreen({
                 color: theme.color.ink,
               }}
             />
+            {/* Keyboard hint badge — shows the "/" shortcut in a kbd-
+                style pill at the right edge of the input. Fades out
+                when the input has focus OR has any text typed so it
+                doesn't compete with the search content. Hidden on
+                touch devices via the CSS rule below (@media hover:
+                none) — a kbd badge is useless on a phone. */}
+            {!searchFocused && !query && (
+              <kbd
+                aria-hidden="true"
+                className="mcm-kbd-hint"
+                style={{
+                  fontFamily: font.mono,
+                  fontSize: 11,
+                  padding: "3px 8px",
+                  borderRadius: 6,
+                  border: `1px solid ${theme.color.hairline}`,
+                  background: withAlpha(theme.color.ink, 0.04),
+                  color: theme.color.inkFaint,
+                  lineHeight: 1,
+                }}
+              >
+                /
+              </kbd>
+            )}
             {query && (
               <button
                 onClick={() => setQuery("")}
@@ -1132,6 +1231,10 @@ function EmptyState({ kind, query, tile }) {
 // before clicking.
 function LocationTabs({ locations, active, onSelect, totals }) {
   const { theme } = useTheme();
+  // Hover state so inactive tabs show a subtle tint + pill preview
+  // on mouseover. Single state (not per-tab boolean) since at most
+  // one tab is hovered at a time. Null means no hover.
+  const [hovered, setHovered] = useState(null);
   return (
     <div style={{
       display: "flex",
@@ -1155,6 +1258,8 @@ function LocationTabs({ locations, active, onSelect, totals }) {
           <button
             key={loc.id}
             onClick={() => onSelect(loc.id)}
+            onMouseEnter={() => setHovered(loc.id)}
+            onMouseLeave={() => setHovered(null)}
             className="mcm-focusable"
             style={{
               position: "relative",
@@ -1172,12 +1277,27 @@ function LocationTabs({ locations, active, onSelect, totals }) {
               padding: "8px 14px",
               borderRadius: 999,
               border: "none",
-              background: "transparent",
+              // Background: transparent when inactive and unhovered
+              // (the sliding active indicator handles the active
+               // look). On hover of an inactive tab, a ~4%-alpha ink
+              // wash previews the pill shape without competing with
+              // the real active highlight.
+              background: !isActive && hovered === loc.id
+                ? withAlpha(theme.color.ink, 0.04)
+                : "transparent",
               cursor: "pointer",
               fontFamily: font.sans,
               fontSize: 13,
               fontWeight: 500,
-              color: isActive ? theme.color.ink : theme.color.inkMuted,
+              // Color cascade: active → full ink, hovered inactive →
+              // two-thirds tint (between ink + inkMuted), rest →
+              // muted. The subtle mid-tint on hover reads as "this
+              // is tappable" without committing to the active look.
+              color: isActive
+                ? theme.color.ink
+                : hovered === loc.id
+                  ? theme.color.ink
+                  : theme.color.inkMuted,
               transition: "color 220ms ease",
               whiteSpace: "nowrap",
             }}
@@ -1464,7 +1584,15 @@ function SearchSummary({ hits, query, onClear }) {
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
       flexWrap: "wrap",
     }}>
-      <div style={{
+      <div
+        // aria-live="polite" announces the result count + location
+        // distribution to screen readers without interrupting the
+        // user's typing. Sighted users see the same readout but
+        // passively; assistive-tech users get a meaningful update
+        // instead of an opaque "something changed" moment.
+        aria-live="polite"
+        aria-atomic="true"
+        style={{
         fontFamily: font.mono, fontSize: 11,
         letterSpacing: "0.06em",
         color: theme.color.skyInkMuted,
