@@ -504,7 +504,13 @@ export default function PantryScreen({
         position: "relative",
         maxWidth: "min(960px, 100%)",
         margin: "0 auto",
-        padding: "28px 20px 120px",
+        // Bottom padding leaves runway so the scroll content
+        // never ends up UNDER the FloatingLocationDock (dock sits
+        // at bottom: 96, ~44px tall → reserves ~140px at the
+        // bottom; the app-level nav below the dock adds ~80px
+        // more). 180px total covers both without leaving a huge
+        // dead gap when the dock is hidden (search mode).
+        padding: "28px 20px 180px",
       }}>
         {/* --- Hero — text sits DIRECTLY on the backdrop (no glass
              surface behind it), so it uses theme.color.skyInk /
@@ -900,18 +906,24 @@ export default function PantryScreen({
           (bottom: 96px gives ~80px of space for a 64-72px nav dock
           below it). Hidden while searching since search bypasses
           the location axis anyway. */}
-      {!query && (
-        <FloatingLocationDock
-          locations={LOCATIONS}
-          active={locationTab}
-          onSelect={switchLocation}
-          totals={{
-            fridge:  sumLocationTiles(cardsByLocTile.fridge),
-            pantry:  sumLocationTiles(cardsByLocTile.pantry),
-            freezer: sumLocationTiles(cardsByLocTile.freezer),
-          }}
-        />
-      )}
+      {/* AnimatePresence so the dock runs its exit animation
+          (slide down + fade) when search activates, then runs
+          its entrance (slide up + fade) when search is cleared.
+          Without this wrapper the dock just pops in/out. */}
+      <AnimatePresence>
+        {!query && (
+          <FloatingLocationDock
+            locations={LOCATIONS}
+            active={locationTab}
+            onSelect={switchLocation}
+            totals={{
+              fridge:  sumLocationTiles(cardsByLocTile.fridge),
+              pantry:  sumLocationTiles(cardsByLocTile.pantry),
+              freezer: sumLocationTiles(cardsByLocTile.freezer),
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1195,7 +1207,19 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
   const { theme } = useTheme();
   const [hovered, setHovered] = useState(null);
   return (
-    <div style={{
+    <motion.div
+      role="tablist"
+      aria-label="Pantry location"
+      // Slide-up entrance. Pops in from below the viewport on
+      // mount and on every remount (e.g. when search is cleared
+      // and the dock comes back). Quick and springy so it feels
+      // like an affordance appearing, not a full screen
+      // transition.
+      initial={{ opacity: 0, y: 24 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 24 }}
+      transition={{ type: "spring", stiffness: 360, damping: 30 }}
+      style={{
       position: "fixed",
       left: "50%",
       // Sits above the app-level bottom nav. 96px leaves a ~16px
@@ -1208,7 +1232,13 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
       gap: 4,
       padding: 5,
       borderRadius: 999,
-      background: withAlpha(theme.color.cream, 0.85),
+      // Theme-aware surface: glassFillHeavy reads bright-cream
+      // on morning/day/evening/dawn/dusk and warm-amber at night,
+      // so the dock never looks like a stark white pill on a
+      // dark backdrop. The border uses the theme's glassBorder
+      // so the edge highlights match whatever time-of-day ink
+      // the rest of the UI is using.
+      background: theme.color.glassFillHeavy,
       border: `1px solid ${theme.color.glassBorder}`,
       backdropFilter: "blur(18px) saturate(160%)",
       WebkitBackdropFilter: "blur(18px) saturate(160%)",
@@ -1268,17 +1298,24 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
             <span style={{ position: "relative", zIndex: 1, display: "inline-flex", alignItems: "center", gap: 8 }}>
               {/* Colored swatch dot — replaces the old emoji icon.
                   Fridge = dark cool blue, Pantry = MCM burnt orange,
-                  Freezer = icy pale blue. 10px circle with a subtle
-                  shadow so it reads as a physical chip rather than
-                  a flat fill. */}
+                  Freezer = icy pale blue. Active dot gets a colored
+                  halo + bigger inner highlight so the selected
+                  segment reads as a "lit pilot light" next to the
+                  other two resting dots. Non-active dots stay
+                  compact and matte. 200ms transition so the
+                  swap between active/inactive looks mechanical
+                  rather than flipped. */}
               <span style={{
                 display: "inline-block",
-                width: 10,
-                height: 10,
+                width: 11,
+                height: 11,
                 borderRadius: "50%",
-                background: dotColor,
-                boxShadow: `0 1px 2px rgba(30,20,8,0.25), inset 0 1px 0 rgba(255,255,255,0.30)`,
+                background: `radial-gradient(circle at 30% 25%, ${withAlpha("#FFFFFF", isActive ? 0.55 : 0.28)} 0%, ${withAlpha("#FFFFFF", 0)} 55%), ${dotColor}`,
+                boxShadow: isActive
+                  ? `0 0 0 3px ${withAlpha(dotColor, 0.20)}, 0 1px 3px rgba(30,20,8,0.30)`
+                  : `0 1px 2px rgba(30,20,8,0.25), inset 0 1px 0 rgba(255,255,255,0.30)`,
                 flexShrink: 0,
+                transition: "box-shadow 200ms ease, background 200ms ease",
               }} />
               <span>{loc.label}</span>
               {total > 0 && (
@@ -1300,7 +1337,7 @@ function FloatingLocationDock({ locations, active, onSelect, totals }) {
           </button>
         );
       })}
-    </div>
+    </motion.div>
   );
 }
 
