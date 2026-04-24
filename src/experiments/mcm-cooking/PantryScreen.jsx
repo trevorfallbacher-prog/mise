@@ -404,7 +404,13 @@ export default function PantryScreen({
              surface behind it), so it uses theme.color.skyInk /
              skyInkMuted instead of the regular ink. Those tokens
              flip bright on dark-sky themes (dawn/dusk/night) so
-             the hero stays legible at every time of day. */}
+             the hero stays legible at every time of day.
+
+             Entrance is choreographed: meta row → header →
+             flourish → subtitle, staggered 70ms apart. Reads as
+             the pantry "setting up" rather than popping in all at
+             once — a small moment that makes first-paint feel
+             intentional. */}
         <FadeIn>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
             <Kicker tone={theme.color.skyInkMuted}>
@@ -451,7 +457,9 @@ export default function PantryScreen({
               )}
             </div>
           </div>
+        </FadeIn>
 
+        <FadeIn delay={0.07}>
           <SerifHeader
             size={52}
             style={{
@@ -483,6 +491,9 @@ export default function PantryScreen({
           >
             The Pantry
           </SerifHeader>
+        </FadeIn>
+
+        <FadeIn delay={0.14}>
           {/* Magazine-masthead flourish — thin serif rule + small
               diamond glyph between the header and the subtitle.
               Subtle but intentional; reads as "this is a curated
@@ -516,6 +527,9 @@ export default function PantryScreen({
               opacity: 0.4,
             }} />
           </div>
+        </FadeIn>
+
+        <FadeIn delay={0.21}>
           <p style={{
             marginTop: 8, fontFamily: font.sans, fontSize: 15,
             color: theme.color.skyInkMuted, lineHeight: 1.45, maxWidth: 420,
