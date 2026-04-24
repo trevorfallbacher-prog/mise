@@ -161,8 +161,14 @@ export default function PantryScreen({
       <WarmBackdrop variant="pantry" />
 
       <div style={{
+        // Content column. On phones (≤640 CSS px) this is the full
+        // viewport minus 40px of gutter — the original mobile
+        // prototype look. On desktop the column widens up to 960px
+        // so the hero + grid don't feel "phone-zoomed-in" in a
+        // laptop browser (the original 480px cap read as 2 huge
+        // cards on a 1200px window).
         position: "relative",
-        maxWidth: 480,
+        maxWidth: "min(960px, 100%)",
         margin: "0 auto",
         padding: "28px 20px 120px",
       }}>
@@ -203,7 +209,19 @@ export default function PantryScreen({
             </div>
           </div>
 
-          <SerifHeader size={52} style={{ marginTop: 4, color: theme.color.skyInk }}>
+          <SerifHeader
+            size={52}
+            style={{
+              // Fluid hero — shrinks on narrow viewports (clamped at
+              // 36px so it stays expressive on phones) and caps at
+              // 52px on desktop. `clamp` overrides the `size` prop's
+              // fontSize since style spreads after the size rule
+              // inside SerifHeader.
+              marginTop: 4,
+              color: theme.color.skyInk,
+              fontSize: "clamp(36px, 6vw, 52px)",
+            }}
+          >
             The Pantry
           </SerifHeader>
           <p style={{
@@ -269,8 +287,13 @@ export default function PantryScreen({
 
         {/* --- Grid ----------------------------------------------------- */}
         <div style={{
+          // Auto-fit grid — 2 columns on phones (each card ≥200px,
+          // two fit at 440+px of column width), 3 on tablets, 4 on
+          // desktop. `minmax(200px, 1fr)` means "at least 200px per
+          // card, grow to fill the row." This replaces the fixed
+          // "1fr 1fr" which forced 2 huge cards on any viewport.
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
           gap: 12,
           marginTop: 20,
         }}>
@@ -400,8 +423,12 @@ function PantryCard({ item, onPick }) {
       onClick={onPick}
       padding={14}
       style={{
+        // Slimmer cards (was 148) so 3–4 columns don't dominate
+        // the viewport at desktop widths; phones still show a
+        // comfortable-height tap target because minHeight is a
+        // floor, not a cap.
         display: "flex", flexDirection: "column",
-        gap: 10, minHeight: 148,
+        gap: 10, minHeight: 132,
         ...warnOverlay,
       }}
     >
