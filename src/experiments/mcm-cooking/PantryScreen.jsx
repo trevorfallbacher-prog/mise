@@ -690,8 +690,7 @@ export default function PantryScreen({
               fontSize: 15, color: theme.color.skyInkMuted, lineHeight: 1.45,
               maxWidth: 360,
             }}>
-              Nothing on the shelves yet. Scan a grocery receipt
-              or add items manually to get started.
+              Nothing on the shelves yet.
             </p>
           </FadeIn>
         )}
