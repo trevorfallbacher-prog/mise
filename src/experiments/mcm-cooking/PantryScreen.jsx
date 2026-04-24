@@ -492,26 +492,34 @@ export default function PantryScreen({
           </FadeIn>
         )}
 
-        {/* --- Body: either TILE grid, ITEM grid, or SEARCH hits ------- */}
-        {(() => {
-          // Search mode — flat item grid, cross-location.
-          if (query) {
-            return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
-          }
-          // Drilled tile mode — item grid filtered to that tile.
-          if (drilledTile) {
-            return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
-          }
-          // Default — tile grid for the active location.
-          return (
-            <TileGrid
-              location={activeLocation}
-              cardsByTile={cardsByLocTile[locationTab] || {}}
-              warnCountByTile={warnCountByTile}
-              onPickTile={setDrilledTile}
-            />
-          );
-        })()}
+        {/* --- Body: TILE grid / drilled ITEM grid / SEARCH hits -------
+            AnimatePresence at this level crossfades the three
+            modes so tapping a tile doesn't pop the grid off and
+            slam the items down — it's a smooth handoff. `mode="wait"`
+            holds the next subtree until the previous finishes
+            exiting so the two grids don't stack mid-transition. */}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={query ? "search" : drilledTile ? `drilled-${drilledTile.id}` : `tiles-${locationTab}`}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -4 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          >
+            {(() => {
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              return (
+                <TileGrid
+                  location={activeLocation}
+                  cardsByTile={cardsByLocTile[locationTab] || {}}
+                  warnCountByTile={warnCountByTile}
+                  onPickTile={setDrilledTile}
+                />
+              );
+            })()}
+          </motion.div>
+        </AnimatePresence>
 
         {((query && visible.length === 0) || (drilledTile && visible.length === 0)) && (
           <FadeIn>
@@ -896,6 +904,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker }) {
             initial={{ opacity: 0, scale: 0.96, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96 }}
+            whileTap={{ scale: 0.97 }}
             transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
           >
             <PantryCard
@@ -932,6 +941,7 @@ function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
         {location.tiles.map((tile, i) => {
           const count = (cardsByTile[tile.id] || []).length;
           const warn = warnCountByTile[`${location.id}:${tile.id}`] || 0;
+          const empty = count === 0;
           return (
             <motion.div
               key={tile.id}
@@ -939,6 +949,12 @@ function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
               initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.96 }}
+              // Press feedback — empty tiles skip the press
+              // animation since they're not interactive. Small
+              // 0.97 feels like a gentle tap rather than a heavy
+              // slam; pairs with the 0.22s body crossfade when
+              // the user commits by drilling in.
+              whileTap={empty ? undefined : { scale: 0.97 }}
               transition={{ duration: 0.32, delay: i * 0.02, ease: [0.22, 1, 0.36, 1] }}
             >
               <TileCard
@@ -1172,7 +1188,12 @@ function PantryCard({ item, onPick }) {
         </TintedPill>
         <span style={{
           fontFamily: font.mono, fontSize: 10,
-          color: warn ? theme.color.burnt : theme.color.inkMuted,
+          // Three-tier urgency color. Eye-scan tells the user
+          // which items deserve attention without reading the
+          // number: plenty of time (muted ink) / plan ahead
+          // (mustard) / use soon (burnt). Matches the classic
+          // "fuel gauge" pattern without needing a literal bar.
+          color: daysChipColor(item.days, theme),
           whiteSpace: "nowrap",
           fontWeight: warn ? 500 : 400,
         }}>
@@ -1193,6 +1214,19 @@ function formatDaysChip(days) {
   if (days < 0) return "gone";
   if (days === 0) return "today";
   return `${days}d`;
+}
+
+// Urgency-tiered color for the days chip. Thresholds match the
+// warn-card threshold (≤3) so the chip color and the card's
+// warn wash flip on the same row. Plan-ahead window is 4–7 days;
+// past that the chip fades back to the normal muted ink so
+// long-life items don't perpetually draw attention. Null days
+// (shelf-stable) use the muted default — no date, no urgency.
+function daysChipColor(days, theme) {
+  if (days == null) return theme.color.inkMuted;
+  if (days < 0 || days <= 3) return theme.color.burnt;     // warn
+  if (days <= 7) return theme.color.mustard;               // plan-ahead
+  return theme.color.inkMuted;                             // plenty
 }
 
 // Live clock — `now` state updates once a minute. Not every
