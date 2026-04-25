@@ -3357,8 +3357,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // get brand-specific hits ranked first, with canonical-wide
   // observations filling the remainder. Idle (returns []) until
   // a canonical is set, which matches the cascade gate above.
+  // Debounce the brand passed to usePopularPackages so we don't
+  // refetch the brand-specific tier on every keystroke. 300ms
+  // matches the threshold a user crosses when they pause between
+  // brand fragments. canonicalId switches are immediate (the
+  // typeahead already drove the user's intent).
+  const [debouncedBrand, setDebouncedBrand] = useState(brand);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedBrand(brand), 300);
+    return () => clearTimeout(t);
+  }, [brand]);
   const { rows: popularPackages } = usePopularPackages(
-    brand.trim() || null,
+    debouncedBrand.trim() || null,
     canonicalId || null,
     3,
   );
