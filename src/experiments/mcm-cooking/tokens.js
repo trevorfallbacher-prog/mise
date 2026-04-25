@@ -90,13 +90,15 @@ export const font = {
   // lines, CTA copy. Fraunces is a soft, humanist serif with a
   // proper italic that reads beautifully at sub-24px.
   serif:   "'Fraunces', 'Iowan Old Style', Georgia, serif",
-  // MCM display face — Truculenta is a variable-axis sans built
-  // for condensed monumental headlines. Used for the hero ("The
-  // Pantry") and tile/drilled labels where the register wants to
-  // shout "mid-century magazine cover" rather than "soft book
-  // italic." Variable widths (75..125) + weights (300..900) mean
-  // callers dial in the expression per surface via `fontVariationSettings`.
-  display: "'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
+  // MCM display face — Pale Martini, a custom hand-drawn
+  // mid-century display face self-hosted from
+  // public/fonts/PaleMartini.woff2 (loaded via @font-face in
+  // index.html). Used for the hero ("The Pantry") and tile /
+  // drilled labels where the register wants to shout
+  // "mid-century magazine cover" rather than "soft book
+  // italic." Truculenta + Futura ride the fallback stack so
+  // pre-load and old browsers degrade gracefully.
+  display: "'Pale Martini', 'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
   sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
   mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
 };

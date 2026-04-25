@@ -679,21 +679,18 @@ export default function PantryScreen({
               // fontSize since style spreads after the size rule
               // inside SerifHeader.
               //
-              // MCM swap: Truculenta is a variable-axis display face
-              // built for condensed monumental headlines — reads as
-              // a mid-century magazine cover rather than a book
-              // title. fontVariationSettings dials in a medium-wide
-              // (wdth 108) semibold (wght 620) at the large optical
-              // size (opsz 72) for the hero; override the inherited
-              // italic + 300 weight from SerifHeader since Truculenta
-              // has no true italic (synthesized skew reads bad at
-              // this size).
+              // Pale Martini display face — custom mid-century
+              // hand-drawn typeface self-hosted via @font-face.
+              // Single-weight static font (no variable axes) so
+              // we use a plain fontWeight rather than fontVariationSettings.
+              // SerifHeader's inherited italic + 300 weight gets
+              // overridden since the hero wants Pale Martini's
+              // own character at full strength.
               marginTop: 4,
               color: theme.color.skyInk,
               fontFamily: font.display,
               fontStyle: "normal",
-              fontWeight: 620,
-              fontVariationSettings: "'wdth' 108, 'wght' 620, 'opsz' 72",
+              fontWeight: 400,
               letterSpacing: "-0.02em",
               fontSize: "clamp(40px, 7vw, 64px)",
               lineHeight: 1.0,
@@ -1407,15 +1404,13 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <Kicker tone={theme.color.burnt}>{kicker}</Kicker>
           <div style={{
-            // Truculenta so the triage headline sits in the same
-            // typographic family as the hero + drilled header —
-            // the bottom CTA now reads as a continuation of the
-            // page, not a separate component. Slightly more bold
-            // (wght 560) than tile cards so the CTA's item name
-            // grabs focus among the surrounding meta.
+            // Pale Martini display face — sits in the same
+            // typographic family as the hero + drilled header
+            // so the bottom CTA reads as a continuation of the
+            // page, not a separate component. Single weight,
+            // no variable axes.
             fontFamily: font.display,
-            fontWeight: 560,
-            fontVariationSettings: "'wdth' 104, 'wght' 560, 'opsz' 20",
+            fontWeight: 400,
             fontSize: 20, color: theme.color.ink, marginTop: 2,
             letterSpacing: "-0.015em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
@@ -1943,8 +1938,7 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
           }}>
             <div style={{
               fontFamily: font.display,
-              fontWeight: 580,
-              fontVariationSettings: "'wdth' 104, 'wght' 580, 'opsz' 32",
+              fontWeight: 400,
               fontSize: "clamp(20px, 4.5vw, 32px)",
               lineHeight: 1.05, color: theme.color.ink,
               letterSpacing: "-0.015em",
@@ -2463,8 +2457,7 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
         }}>
           <div style={{
             fontFamily: font.display,
-            fontWeight: 560,
-            fontVariationSettings: "'wdth' 100, 'wght' 560, 'opsz' 22",
+            fontWeight: 400,
             fontSize: 22, lineHeight: 1.1, color: theme.color.ink,
             letterSpacing: "-0.015em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
