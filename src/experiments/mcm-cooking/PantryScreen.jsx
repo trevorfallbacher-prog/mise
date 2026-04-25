@@ -3892,6 +3892,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const tone = ready ? theme.color.teal : theme.color.mustard;
           const nextStep = steps.find(s => !s.done);
           const captionKey = ready ? "ready" : `${completed}-${nextStep?.id || "next"}`;
+          // Emotional avatars (frustrated → happy) ride to the
+          // left of the segments. 4 images, 5 thresholds: she
+          // stays "almost there" (Step3) while the user has
+          // 2 or 3 fields done, and graduates to Step4 only at
+          // the ready state. Step1 = nothing done; Step2 =
+          // one in. Files in /icons/AddItemProgression/.
+          const stateIndex = ready ? 3 : Math.min(completed, 2);
+          const stateSrc = [
+            "/icons/AddItemProgression/Step1.svg",
+            "/icons/AddItemProgression/Step2.svg",
+            "/icons/AddItemProgression/Step%203.svg",
+            "/icons/AddItemProgression/Step4.svg",
+          ][stateIndex];
           return (
             // Sticky to the top of the scrolling sheet so the
             // user keeps a fixed anchor while content reflows
@@ -3906,78 +3919,110 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               top: -22, // sheet's parent padding is 22; pin at the visual top
               zIndex: 4,
               margin: "-22px -22px 12px -22px",
-              padding: "22px 22px 12px",
+              padding: "16px 22px 12px",
               background: withAlpha(theme.color.glassFillHeavy, 0.92),
               backdropFilter: "blur(20px) saturate(150%)",
               WebkitBackdropFilter: "blur(20px) saturate(150%)",
               borderBottom: `1px solid ${theme.color.hairline}`,
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
             }}>
+              {/* Avatar — crossfades between emotional states as
+                  the user fills fields. AnimatePresence drives the
+                  swap so the change feels like she's reacting
+                  rather than the icon flickering. */}
               <div style={{
-                display: "flex", gap: 4, alignItems: "stretch",
-                marginBottom: 6,
+                width: 56, height: 56, flexShrink: 0,
+                position: "relative",
               }}>
-                {steps.map(s => (
-                  <motion.div
-                    key={s.id}
-                    animate={s.done
-                      ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
-                      : { scaleY: 1 }}
-                    transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                <AnimatePresence mode="wait">
+                  <motion.img
+                    key={stateIndex}
+                    src={stateSrc}
+                    alt=""
+                    aria-hidden
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.85 }}
+                    transition={{ type: "spring", stiffness: 360, damping: 24 }}
                     style={{
-                      flex: 1,
-                      height: 4,
-                      borderRadius: 2,
-                      transformOrigin: "center",
-                      background: s.done
-                        ? tone
-                        : withAlpha(theme.color.ink, 0.08),
-                      boxShadow: s.done
-                        ? `0 0 6px ${withAlpha(tone, 0.45)}`
-                        : "none",
-                      transition: "background 220ms ease, box-shadow 220ms ease",
+                      position: "absolute", inset: 0,
+                      width: "100%", height: "100%", objectFit: "contain",
+                      filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
                     }}
                   />
-                ))}
+                </AnimatePresence>
               </div>
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={captionKey}
-                  role="status"
-                  aria-live="polite"
-                  initial={{ opacity: 0, y: -2 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 2 }}
-                  transition={{ duration: 0.18 }}
-                  style={{
-                    fontFamily: font.mono, fontSize: 10,
-                    letterSpacing: "0.14em", textTransform: "uppercase",
-                    color: tone,
-                    fontWeight: 600,
-                    display: "inline-flex", alignItems: "center", gap: 6,
-                  }}
-                >
-                  {ready ? (
-                    <>
-                      <motion.span
-                        aria-hidden
-                        initial={{ scale: 0.4, rotate: -20, opacity: 0 }}
-                        animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                        transition={{ type: "spring", stiffness: 480, damping: 18 }}
-                        style={{ fontSize: 14, lineHeight: 1 }}
-                      >
-                        ✓
-                      </motion.span>
-                      Ready to save
-                    </>
-                  ) : (
-                    <>
-                      {completed} of {total} · add {nextStep ? nextStep.label : "more"} next
-                    </>
-                  )}
-                </motion.div>
-              </AnimatePresence>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{
+                  display: "flex", gap: 4, alignItems: "stretch",
+                  marginBottom: 6,
+                }}>
+                  {steps.map(s => (
+                    <motion.div
+                      key={s.id}
+                      animate={s.done
+                        ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
+                        : { scaleY: 1 }}
+                      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                      style={{
+                        flex: 1,
+                        height: 4,
+                        borderRadius: 2,
+                        transformOrigin: "center",
+                        background: s.done
+                          ? tone
+                          : withAlpha(theme.color.ink, 0.08),
+                        boxShadow: s.done
+                          ? `0 0 6px ${withAlpha(tone, 0.45)}`
+                          : "none",
+                        transition: "background 220ms ease, box-shadow 220ms ease",
+                      }}
+                    />
+                  ))}
+                </div>
+                <AnimatePresence mode="wait">
+                  <motion.div
+                    key={captionKey}
+                    role="status"
+                    aria-live="polite"
+                    initial={{ opacity: 0, y: -2 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 2 }}
+                    transition={{ duration: 0.18 }}
+                    style={{
+                      fontFamily: font.mono, fontSize: 10,
+                      letterSpacing: "0.14em", textTransform: "uppercase",
+                      color: tone,
+                      fontWeight: 600,
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                    }}
+                  >
+                    {ready ? (
+                      <>
+                        <motion.span
+                          aria-hidden
+                          initial={{ scale: 0.4, rotate: -20, opacity: 0 }}
+                          animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 480, damping: 18 }}
+                          style={{ fontSize: 14, lineHeight: 1 }}
+                        >
+                          ✓
+                        </motion.span>
+                        Ready to save
+                      </>
+                    ) : (
+                      <>
+                        {completed} of {total} · add {nextStep ? nextStep.label : "more"} next
+                      </>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
             </div>
           );
         })()}
