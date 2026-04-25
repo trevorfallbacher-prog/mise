@@ -3599,6 +3599,35 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     setTileId(id || null);
   }, [name, canonicalId, typeId, location, tileOverridden]);
 
+  // Validation — required fields the row needs to be useful
+  // downstream (recipe matching, freshness clock, fill gauge).
+  // canonicalId acceptance is broad: any non-null value passes,
+  // which covers all three sources — bundled INGREDIENTS,
+  // admin-approved DB canonicals (via useIngredientInfo's
+  // dbCanonicals), and user-typed slugs from the "+ Add
+  // canonical" escape hatch. Any of those means the user has
+  // committed to an identity worth saving.
+  const validationErrors = useMemo(() => {
+    const errors = [];
+    if (!name.trim()) errors.push({ field: "name", message: "name" });
+    if (!canonicalId) errors.push({ field: "canonical", message: "canonical (pick from suggestions)" });
+    const pkgN = Number(packageSize);
+    if (!Number.isFinite(pkgN) || pkgN <= 0) {
+      errors.push({ field: "packageSize", message: "package size" });
+    }
+    if (!unit.trim()) errors.push({ field: "unit", message: "unit" });
+    return errors;
+  }, [name, canonicalId, packageSize, unit]);
+  const errorFields = useMemo(() => {
+    const set = new Set();
+    for (const e of validationErrors) set.add(e.field);
+    return set;
+  }, [validationErrors]);
+  // First-attempt gate — banner + field highlights only show
+  // after the user has at least once tried to submit. Avoids
+  // splashing yellow over a freshly-opened, empty form.
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
+  const showErrors = attemptedSubmit && validationErrors.length > 0;
   const canSubmit = name.trim().length > 0;
 
   const handleScan = async (upc) => {
@@ -3702,6 +3731,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
 
   const handleSubmit = () => {
     if (!canSubmit) return;
+    // Block bad data entry — flag the missing-field state so the
+    // caution banner + per-field highlights surface, then bail.
+    if (validationErrors.length > 0) {
+      setAttemptedSubmit(true);
+      return;
+    }
     const cat = defaultCategoryForLocation(location);
     // Self-teaching write — when the user scanned a barcode and
     // landed in this sheet, whatever LOCATION they confirm here
@@ -3837,6 +3872,67 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             opens the full picker so the user can override.
             Sits inside the header row so it never collides
             with the form below. */}
+        {/* Progress strip — segments fill as the user completes
+            required fields. Mustard tone while in progress,
+            teal when all required fields are set ("ready to
+            save"). Replaces the prior post-submit caution
+            banner with a proactive guide. The required-fields
+            list is the validation source of truth: name +
+            canonical + package size + unit. */}
+        {(() => {
+          const steps = [
+            { id: "name",        label: "name",         done: !!name.trim() },
+            { id: "canonical",   label: "canonical",    done: !!canonicalId },
+            { id: "packageSize", label: "package size", done: !!packageSize && Number(packageSize) > 0 },
+            { id: "unit",        label: "unit",         done: !!unit.trim() },
+          ];
+          const completed = steps.filter(s => s.done).length;
+          const total = steps.length;
+          const ready = completed === total;
+          const tone = ready ? theme.color.teal : theme.color.mustard;
+          const nextStep = steps.find(s => !s.done);
+          return (
+            <div style={{ marginBottom: 12 }}>
+              <div style={{
+                display: "flex", gap: 4, alignItems: "stretch",
+                marginBottom: 6,
+              }}>
+                {steps.map(s => (
+                  <div
+                    key={s.id}
+                    style={{
+                      flex: 1,
+                      height: 4,
+                      borderRadius: 2,
+                      background: s.done
+                        ? tone
+                        : withAlpha(theme.color.ink, 0.08),
+                      boxShadow: s.done
+                        ? `0 0 6px ${withAlpha(tone, 0.45)}`
+                        : "none",
+                      transition: "background 220ms ease, box-shadow 220ms ease",
+                    }}
+                  />
+                ))}
+              </div>
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.14em", textTransform: "uppercase",
+                  color: tone,
+                  fontWeight: 600,
+                }}
+              >
+                {ready
+                  ? "Ready to save"
+                  : `${completed} of ${total} · add ${nextStep ? nextStep.label : "more"} next`}
+              </div>
+            </div>
+          );
+        })()}
+
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <Kicker tone={theme.color.inkFaint}>Add to kitchen</Kicker>
@@ -4122,17 +4218,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               fontSize: 32,
               lineHeight: 1,
               paddingRight: padRight,
-              // Focus ring — soft teal halo when the input has
-              // focus, matching the kitchen search bar's
-              // treatment so the two entry points read as the
-              // same primary control. Transitions so focus /
-              // blur feel continuous.
-              border: nameFocused
-                ? `1px solid ${theme.color.teal}`
-                : inputBase.border,
-              boxShadow: nameFocused
-                ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.inputInset}`
-                : inputBase.boxShadow,
+              // Validation halo wins when the field is flagged
+              // and the user has attempted submit; otherwise
+              // the focus halo (teal) takes over. Plain border
+              // when neither.
+              border: showErrors && (errorFields.has("name") || errorFields.has("canonical"))
+                ? `1px solid ${theme.color.mustard}`
+                : nameFocused
+                  ? `1px solid ${theme.color.teal}`
+                  : inputBase.border,
+              boxShadow: showErrors && (errorFields.has("name") || errorFields.has("canonical"))
+                ? `0 0 0 3px ${withAlpha(theme.color.mustard, 0.18)}, ${theme.shadow.inputInset}`
+                : nameFocused
+                  ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.inputInset}`
+                  : inputBase.boxShadow,
               transition: "border-color 200ms ease, box-shadow 200ms ease",
             }}
           />
@@ -4397,11 +4496,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         <FieldLabel theme={theme} style={{ marginTop: 14 }}>Package size</FieldLabel>
         <div style={{
           display: "flex", alignItems: "stretch", gap: 0,
-          border: `1px solid ${theme.color.hairline}`,
+          // Validation halo on the package-size bar covers
+          // both packageSize and unit since they share one
+          // visual unit. Mustard ring + tinted border when
+          // either is flagged after attempted submit.
+          border: showErrors && (errorFields.has("packageSize") || errorFields.has("unit"))
+            ? `1px solid ${theme.color.mustard}`
+            : `1px solid ${theme.color.hairline}`,
           background: theme.color.glassFillHeavy,
           borderRadius: 12,
-          boxShadow: theme.shadow.inputInset,
+          boxShadow: showErrors && (errorFields.has("packageSize") || errorFields.has("unit"))
+            ? `0 0 0 3px ${withAlpha(theme.color.mustard, 0.18)}, ${theme.shadow.inputInset}`
+            : theme.shadow.inputInset,
           overflow: "hidden",
+          transition: "border-color 200ms ease, box-shadow 200ms ease",
         }}>
           <input
             type="number"
