@@ -4107,9 +4107,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             }}
           />
           {showStatePill && (
-            <button
+            <motion.button
+              key="state-pill"
               type="button"
               className="mcm-focusable"
+              initial={{ opacity: 0, scale: 0.85, x: 6 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              transition={{ type: "spring", stiffness: 380, damping: 26 }}
               onClick={() => setPickerOpen("state")}
               aria-label={stateLabel ? `State: ${stateLabel}` : "Pick a state"}
               title={stateLabel ? `State · ${stateLabel}` : "Pick a state"}
@@ -4155,7 +4159,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 fontSize: 10, color: theme.color.inkFaint,
                 fontStyle: "normal", flexShrink: 0,
               }}>▾</span>
-            </button>
+            </motion.button>
           )}
           <button
             type="button"
