@@ -58,6 +58,32 @@ const LOCATIONS = [
   { id: "freezer", label: "Freezer", tiles: FREEZER_TILES, classify: freezerTileFor },
 ];
 
+// Fallback unit options for the package-size picker when no
+// canonical is pinned (or the canonical declares no `units`
+// array). Once a canonical is picked we switch to that
+// canonical's own units so butter shows sticks / tbsp / cup
+// instead of generic "count".
+const DEFAULT_UNIT_OPTIONS = [
+  { id: "count", label: "count" },
+  { id: "oz",    label: "oz" },
+  { id: "lb",    label: "lb" },
+  { id: "g",     label: "g" },
+  { id: "kg",    label: "kg" },
+  { id: "fl oz", label: "fl oz" },
+  { id: "ml",    label: "ml" },
+  { id: "L",     label: "L" },
+  { id: "cup",   label: "cup" },
+  { id: "tbsp",  label: "tbsp" },
+  { id: "tsp",   label: "tsp" },
+  { id: "pkg",   label: "pkg" },
+  { id: "can",   label: "can" },
+  { id: "jar",   label: "jar" },
+  { id: "bag",   label: "bag" },
+  { id: "box",   label: "box" },
+  { id: "loaf",  label: "loaf" },
+  { id: "stick", label: "stick" },
+];
+
 // Fallback mapping for Showcase demo items (they don't carry the
 // real location / tileId axes). Keeps the design-reference
 // surface useful — tapping into demo "dairy" lands in the Dairy
@@ -3069,7 +3095,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // has picked from the tile picker.
   const [tileId, setTileId] = useState(seed.tileId || null);
   const [tileOverridden, setTileOverridden] = useState(!!seed.tileId);
-  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile"
+  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit"
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
   // axis AND swaps the typed text for the canonical's display
@@ -3754,31 +3780,76 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           )}
         </div>
 
-        {/* Package size — the FULL container amount + unit. The
-            remaining slider below scales down from this number
-            so we can persist amount/max as the storage shape
-            without making the user think in two numbers. */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
-          <div>
-            <FieldLabel theme={theme}>Package size</FieldLabel>
-            <input
-              type="number"
-              inputMode="decimal"
-              value={packageSize}
-              onChange={(e) => setPackageSize(e.target.value)}
-              placeholder="16"
-              style={{ ...inputBase, fontFamily: font.itemSub, fontSize: 16 }}
-            />
-          </div>
-          <div>
-            <FieldLabel theme={theme}>Unit</FieldLabel>
-            <input
-              value={unit}
-              onChange={(e) => setUnit(e.target.value)}
-              placeholder="oz, lb, count…"
-              style={{ ...inputBase, fontFamily: font.itemSub, fontSize: 16 }}
-            />
-          </div>
+        {/* Package size — single bar with a typeable amount on
+            the left and a unit dropdown pinned right. Unit
+            options are derived from the active canonical's
+            `units` array (so "butter" gets stick / tbsp / cup /
+            oz / lb / block / tub / g), with a sane default
+            list as fallback when no canonical is set. The
+            dropdown is a chip → ModalSheet picker per the
+            CLAUDE.md "no <select> for axes" rule. */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Package size</FieldLabel>
+        <div style={{
+          display: "flex", alignItems: "stretch", gap: 0,
+          border: `1px solid ${theme.color.hairline}`,
+          background: theme.color.glassFillHeavy,
+          borderRadius: 12,
+          boxShadow: theme.shadow.inputInset,
+          overflow: "hidden",
+        }}>
+          <input
+            type="number"
+            inputMode="decimal"
+            value={packageSize}
+            onChange={(e) => setPackageSize(e.target.value)}
+            placeholder="16"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              border: "none",
+              background: "transparent",
+              color: theme.color.ink,
+              padding: "12px 14px",
+              fontFamily: font.itemSub,
+              fontSize: 16,
+              outline: "none",
+            }}
+          />
+          {(() => {
+            const ing = canonicalId ? findIngredient(canonicalId) : null;
+            const units = ing?.units && ing.units.length > 0
+              ? ing.units
+              : DEFAULT_UNIT_OPTIONS;
+            const active = units.find(u => u.id === unit) || null;
+            return (
+              <button
+                type="button"
+                className="mcm-focusable"
+                onClick={() => setPickerOpen("unit")}
+                aria-label={active ? `Unit: ${active.label}` : "Pick a unit"}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  border: "none",
+                  borderLeft: `1px solid ${theme.color.hairline}`,
+                  background: "transparent",
+                  color: unit ? theme.color.ink : theme.color.inkMuted,
+                  padding: "0 14px",
+                  fontFamily: font.itemSub,
+                  fontSize: 16,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  minWidth: 96,
+                  justifyContent: "space-between",
+                }}
+              >
+                <span>{active ? active.label : (unit || "unit")}</span>
+                <span aria-hidden style={{ fontSize: 11, color: theme.color.inkFaint }}>▾</span>
+              </button>
+            );
+          })()}
         </div>
 
         {/* Popular-package quick-picks — surfaced once a canonical
@@ -3788,7 +3859,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             highlights when its values match the current pair so
             the user sees what's currently selected. */}
         {canonicalId && popularPackages.length > 0 && (
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 10 }}>
             <div style={{
               fontFamily: font.mono, fontSize: 10,
               letterSpacing: "0.14em", textTransform: "uppercase",
@@ -4035,6 +4106,30 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           onClose={() => setPickerOpen(null)}
         />
       )}
+      {pickerOpen === "unit" && (() => {
+        const ing = canonicalId ? findIngredient(canonicalId) : null;
+        const units = ing?.units && ing.units.length > 0
+          ? ing.units
+          : DEFAULT_UNIT_OPTIONS;
+        return (
+          <MCMPickerSheet
+            kicker="Unit"
+            title={ing ? `Pick a unit for ${ing.name}` : "Pick a unit"}
+            accent={theme.color.teal}
+            options={units.map(u => ({
+              id: u.id,
+              label: u.label || u.id,
+              // Sub line shows the canonical's default if any —
+              // helps users see which unit is the "natural" one
+              // for that ingredient (e.g. butter → sticks).
+              sub: ing?.defaultUnit === u.id ? "default" : null,
+            }))}
+            value={unit}
+            onPick={(id) => { setUnit(id); setPickerOpen(null); }}
+            onClose={() => setPickerOpen(null)}
+          />
+        );
+      })()}
       {pickerOpen === "tile" && (() => {
         const loc = LOCATIONS.find(l => l.id === location);
         const tiles = loc?.tiles || [];
