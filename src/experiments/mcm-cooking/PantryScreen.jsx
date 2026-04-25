@@ -2654,25 +2654,28 @@ function PantryCard({ item, onPick, tileLabel = null }) {
           </div>
         )}
         <div style={{
-          // Beverly Drive Right (Typekit) — Adobe Fonts face
-          // that gives item names their own register, distinct
-          // from the tile-card display face (Pale Martini).
-          // Single weight 400, normal style — no italic.
-          // Fraunces italic stays as the fallback while the
-          // Adobe kit loads.
+          // Kinescope (Typekit) — Adobe Fonts face on item-card
+          // NAMES so items read in a different typographic
+          // register than tile cards (Pale Martini). Single
+          // weight 400, normal style. Sized at 24 — Kinescope
+          // is a script-style face and needs the pixel area to
+          // stay legible at a glance.
           fontFamily: font.itemName, fontStyle: "normal", fontWeight: 400,
-          fontSize: 22, lineHeight: 1.1, color: theme.color.ink,
+          fontSize: 24, lineHeight: 1.1, color: theme.color.ink,
           letterSpacing: "0",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {item.name}
         </div>
-        {/* Qty + brand row (existing CLAUDE.md "Butter ·
-            Kerrygold" pattern). */}
+        {/* Qty + brand subheader row — Beverly Drive Right
+            (font.itemSub) so the metadata reads as a paired
+            second beat below the Kinescope name in the same
+            display family but a distinctly different shape.
+            Existing CLAUDE.md "Butter · Kerrygold" pattern. */}
         <div style={{
           display: "flex", alignItems: "baseline", gap: 6,
-          fontFamily: font.mono, fontSize: 11,
-          letterSpacing: "0.02em",
+          fontFamily: font.itemSub, fontSize: 14,
+          letterSpacing: "0.01em",
           whiteSpace: "nowrap", overflow: "hidden",
         }}>
           <span style={{ color: theme.color.inkFaint, flexShrink: 0 }}>
