@@ -4271,7 +4271,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </div>
           )}
         </div>
-        </>)}
 
         {/* Expiration chip — null means shelf-stable (no clock).
             Picker offers quick presets (1 week, 2 weeks, 1 month,
@@ -4327,6 +4326,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </button>
           );
         })()}
+        </>)}
 
         {/* Location segmented row — matches FloatingLocationDock
             color treatment so users see the same swatch system
