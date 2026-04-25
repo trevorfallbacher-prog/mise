@@ -18,7 +18,7 @@ import XpToastStack from "./components/XpToastStack";
 import CookMode from "./components/CookMode";
 import CookBanner from "./components/CookBanner";
 import MCMCookingShowcase from "./experiments/mcm-cooking/Showcase";
-import MCMPantryScreen, { MCMAddDraftSheet } from "./experiments/mcm-cooking/PantryScreen";
+import MCMKitchenScreen, { MCMAddDraftSheet } from "./experiments/mcm-cooking/KitchenScreen";
 import { ThemeProvider as MCMThemeProvider } from "./experiments/mcm-cooking/theme";
 import ItemCard from "./components/ItemCard";
 import { useActiveCookSession } from "./lib/useActiveCookSession";
@@ -639,7 +639,7 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
               // flips the view back to the original Kitchen render
               // if something here breaks (keeps users unblocked).
               <MCMThemeProvider>
-                <MCMPantryScreen
+                <MCMKitchenScreen
                   items={pantry}
                   loading={pantryLoading}
                   onOpenItem={setMcmOpenItem}

@@ -181,6 +181,50 @@ searchable list of options. Inside the sheet:
   slugs live in `pantry_items.canonical_id` (migration 0039) with
   optional `ingredient_info` approval rows.
 
+## File-size discipline (added after the PantryScreen.jsx 5,300-line refactor)
+
+Files in `src/components/` and `src/experiments/**` should not exceed
+~1,500 lines. Treat that number as a hard tripwire, not a soft target.
+
+**Before adding any feature to a file approaching that limit:**
+1. Identify a logical component or helper group inside the file that
+   could live on its own (e.g., a self-contained sheet/modal, a card
+   renderer, a primitive used in 2+ places, the file's module-scope
+   helpers).
+2. Extract it into a sibling file. Keep the original file's exports
+   intact via re-export so callers don't break:
+   `export { Foo } from "./Foo";`
+3. Land the refactor as its OWN commit before the feature commit.
+   Commit message: `refactor(<scope>): extract <Component> from <File>`.
+4. Then add the new feature to whichever file it actually belongs to.
+
+**Default to a new file for new top-level components.**
+When introducing a new sheet, card type, modal pattern, or primitive,
+create a new sibling file rather than appending to an existing screen.
+The 30 seconds of import wiring saves the giant-file refactor later.
+
+**Closing-commit extraction.**
+When a session adds a substantial new top-level surface (a new sheet,
+a new card variant, a new picker pattern), the closing commit of that
+work should be an extraction if the parent file is at or past 1,000
+lines. Same cadence as committing tests or updating CLAUDE.md after a
+contract change.
+
+**Periodic audit.**
+Once per long session, run:
+
+    wc -l src/components/*.jsx src/experiments/**/*.jsx 2>/dev/null | sort -n | tail
+
+Anything over 1,500 lines is a refactor backlog item, not a "we'll
+get to it" — schedule the extraction before the next feature touches
+that file.
+
+**Why:** PantryScreen.jsx grew to 5,300 lines because every feature
+landed inline ("editing in place is faster"). Each commit looked
+reasonable; the cumulative drift was invisible until the file was
+unwieldy. The above rules trade a little per-feature friction for
+a lot less terminal-scale refactor pain.
+
 ## Self-teaching identity resolution — MINIMAL user data entry
 
 North star: **a scan should be enough.** If it isn't, we fall back to

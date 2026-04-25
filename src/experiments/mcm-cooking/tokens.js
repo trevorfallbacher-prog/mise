@@ -101,7 +101,7 @@ export const font = {
   display: "'Pale Martini', 'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
   // Item-card name face — Filmotype Honey (Adobe Fonts /
   // Typekit, kit cnf4qlv loaded via index.html). Used on
-  // PantryCard NAMES so items read in a different typographic
+  // KitchenCard NAMES so items read in a different typographic
   // register than tile cards. Single weight 300, normal style.
   // Fraunces italic rides as the fallback for pre-load and
   // Adobe-Fonts-blocked browsers.

@@ -12,7 +12,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import PantryScreen from "./PantryScreen";
+import KitchenScreen from "./KitchenScreen";
 import CookScreen from "./CookScreen";
 import UnitPickerModal from "./UnitPickerModal";
 import {
@@ -47,7 +47,7 @@ function ShowcaseInner() {
             exit={{    opacity: 0 }}
             transition={{ duration: 0.28 }}
           >
-            <PantryScreen
+            <KitchenScreen
               onStartCooking={() => setScreen("cook")}
               onOpenUnitPicker={openUnitPicker}
             />
