@@ -4771,6 +4771,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             type="button"
             className="mcm-focusable"
             onClick={onClose}
+            // Hover brightens the border + text without
+            // pulling the eye away from the primary submit.
+            // The inline handlers keep us off a global :hover
+            // CSS rule (we'd need a stylesheet for that).
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = withAlpha(theme.color.ink, 0.18);
+              e.currentTarget.style.color = theme.color.ink;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = theme.color.hairline;
+              e.currentTarget.style.color = theme.color.inkMuted;
+            }}
             style={{
               padding: "12px 18px",
               borderRadius: 999,
@@ -4779,6 +4791,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               color: theme.color.inkMuted,
               fontFamily: font.sans, fontSize: 14, fontWeight: 500,
               cursor: "pointer",
+              transition: "border-color 160ms ease, color 160ms ease",
             }}
           >
             Cancel
