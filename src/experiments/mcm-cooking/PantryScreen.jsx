@@ -29,7 +29,11 @@ import { font, radius } from "./tokens";
 import { FRIDGE_TILES,  tileIdForItem          as fridgeTileFor  } from "../../lib/fridgeTiles";
 import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../lib/pantryTiles";
 import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
-import { findIngredient, hubForIngredient, INGREDIENTS, inferCanonicalFromName } from "../../data/ingredients";
+import {
+  findIngredient, hubForIngredient, INGREDIENTS,
+  inferCanonicalFromName, dbCanonicalsSnapshot,
+} from "../../data/ingredients";
+import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { findFoodType, FOOD_TYPES, inferFoodTypeFromName } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
@@ -3084,7 +3088,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     const exact = [];
     const starts = [];
     const includes = [];
-    for (const ing of INGREDIENTS) {
+    for (const ing of allCanonicals) {
       const lc = (ing.name || "").toLowerCase();
       if (!lc) continue;
       if (lc === q) exact.push(ing);
@@ -3093,7 +3097,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       if (exact.length + starts.length + includes.length >= 32) break;
     }
     return [...exact, ...starts, ...includes].slice(0, 6);
-  }, [name]);
+  }, [name, allCanonicals]);
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -3110,6 +3114,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // brand entries (no OFF / no USDA hit) still resolves —
   // matches classic Kitchen's scanner behavior.
   const { rows: brandNutritionRows } = useBrandNutrition();
+  // Hook into the IngredientInfoProvider so the canonical
+  // typeahead and picker can see admin-approved + user-created
+  // DB canonicals alongside the 400 bundled ones. dbMap is the
+  // raw fetched table; dbCanonicalsSnapshot() reads the
+  // synthetic-canonical Map that registerCanonicalsFromDb
+  // populates from dbMap on every refresh, so we depend on the
+  // map identity to invalidate the merged search list.
+  const { dbMap } = useIngredientInfo();
+  const allCanonicals = useMemo(
+    () => [...INGREDIENTS, ...dbCanonicalsSnapshot()],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dbMap]
+  );
 
   // Live name-inference for the category chip — runs only when
   // the user hasn't manually overridden. When the canonical is
@@ -3966,7 +3983,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           kicker="Canonical"
           title="Which ingredient is this?"
           accent="#b8a878"
-          options={INGREDIENTS.map(ing => ({
+          options={allCanonicals.map(ing => ({
             id: ing.id,
             label: ing.name,
             emoji: ing.emoji,
