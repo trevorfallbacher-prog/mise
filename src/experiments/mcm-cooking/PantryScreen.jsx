@@ -3907,22 +3907,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const ready = completed === total;
           const nextStep = steps.find(s => !s.done);
           // Secret step 5 — when the form's required fields are
-          // ALL set AND the typed Brand actually matches a
-          // brand our system already knows about (either
-          // canonical-scoped observations from
-          // popular_package_sizes OR the broader
-          // brand_nutrition household registry), she falls in
-          // love. Step5.svg + red palette + floating hearts.
-          // Reward for going beyond the minimum AND landing on
-          // a real brand — typing "asdf" doesn't count.
+          // ALL set AND the typed Brand matches a row in the
+          // brand_nutrition registry (the system's source of
+          // truth for what's a real brand), she falls in love.
+          // Step5.svg + red palette + floating hearts. The
+          // reward is real-brand recognition, so observation
+          // tables (popular_package_sizes) are out — those are
+          // for size suggestions, not brand validation.
           const loveMode = (() => {
             if (!ready) return false;
             const b = brand.trim().toLowerCase();
             if (!b) return false;
-            if (brandSuggestions.some(x => x.toLowerCase() === b)) return true;
-            if (Array.isArray(brandNutritionRows) &&
-                brandNutritionRows.some(r => (r.brand || "").toLowerCase() === b)) return true;
-            return false;
+            return Array.isArray(brandNutritionRows)
+              && brandNutritionRows.some(r => (r.brand || "").toLowerCase() === b);
           })();
           // Avatar mapping — 4 emotional states for 4 thresholds
           // (0..3 done) plus the secret 5th. Humans count from 1,
