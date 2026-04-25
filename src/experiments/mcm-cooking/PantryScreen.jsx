@@ -271,6 +271,12 @@ export default function PantryScreen({
   // Resets when the user changes drilled tile, switches
   // location, or starts searching.
   const [categoryFilter, setCategoryFilter] = useState(null);
+  // Single source of truth for which item card has its swipe-
+  // to-remove drawer open. iOS pattern — only one card can be
+  // open at a time. When user swipes another card, the previous
+  // one auto-closes via the prop cascade in PantryCard. null
+  // means none open.
+  const [openSwipeId, setOpenSwipeId] = useState(null);
   // Tracks whether the search input has keyboard focus so the
   // surrounding GlassPanel can show a focus ring. The panel's
   // own border transitions to a warm teal accent when focused —
@@ -974,8 +980,8 @@ export default function PantryScreen({
               // population feels continuous rather than strobing
               // between ghost and real.
               if (loading && cards.length === 0) return <TileGridSkeleton />;
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} showTileContext />;
-              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} />;
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} showTileContext />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} />;
               // Whole-location empty state — when the active
               // location has zero items, skip the wall of dimmed
               // tiles and show a warm dedicated message instead.
@@ -2233,7 +2239,7 @@ function SearchSummary({ hits, query, onClear }) {
 // Item grid — the animated 2-to-N column grid used for BOTH the
 // drilled-tile view and the search-hits view. Factored out so the
 // card-layout code isn't duplicated across the two render branches.
-function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, showTileContext = false }) {
+function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, openSwipeId, setOpenSwipeId, showTileContext = false }) {
   // In search mode (showTileContext=true) each card renders a
   // small tile-context chip ("FROM DAIRY & EGGS") so users who
   // searched cross-location know where each hit lives. Resolve
@@ -2277,6 +2283,11 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, showTileC
                 else if (onOpenUnitPicker) onOpenUnitPicker();
               }}
               onRemove={onRemoveItem && it._raw ? () => onRemoveItem(it._raw) : null}
+              isSwipeOpen={openSwipeId === it.id}
+              onSwipeOpen={() => setOpenSwipeId && setOpenSwipeId(it.id)}
+              onSwipeClose={() => {
+                if (setOpenSwipeId && openSwipeId === it.id) setOpenSwipeId(null);
+              }}
             />
           </motion.div>
         ))}
@@ -2530,7 +2541,21 @@ const SWIPE_ACTION_WIDTH = 96;
 // threshold yet (matches iOS Mail / Things behavior).
 const SWIPE_OPEN_THRESHOLD = 36;
 
-function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
+function PantryCard({
+  item,
+  onPick,
+  tileLabel = null,
+  onRemove = null,
+  // External swipe coordination — when null these props no-op,
+  // and the card manages its own swipe state in isolation.
+  // When wired, the card REPORTS open/close via the callbacks
+  // and SUBSCRIBES to isSwipeOpen so it auto-closes when
+  // another card in the grid opens (one-card-open-at-a-time
+  // iOS pattern).
+  isSwipeOpen = false,
+  onSwipeOpen = null,
+  onSwipeClose = null,
+}) {
   const { theme } = useTheme();
   const warn = item.status === "warn";
   // Warn cards pick up a gentle theme-derived burnt wash so
@@ -2565,13 +2590,35 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
   // clamps to [0,1] across the range automatically.
   const actionOpacity = useTransform(swipeX, [-SWIPE_ACTION_WIDTH, 0], [1, 0]);
 
-  const animateSwipe = (toOpen) => {
+  const animateSwipe = (toOpen, { notify = true } = {}) => {
     setSwipeOpen(toOpen);
     swipeControls.start({
       x: toOpen ? -SWIPE_ACTION_WIDTH : 0,
       transition: { type: "spring", stiffness: 420, damping: 38 },
     });
+    // Notify parent so it can close other open cards on this
+    // card's open, or clear the state on this card's close.
+    // notify:false skips the callback when WE'RE the one being
+    // told to close by the parent (avoids a feedback loop).
+    if (notify) {
+      if (toOpen && onSwipeOpen) onSwipeOpen();
+      if (!toOpen && onSwipeClose) onSwipeClose();
+    }
   };
+
+  // External-close listener — when another card opens (parent
+  // sets a different openSwipeId), this prop flips to false
+  // and we animate ourselves closed without re-notifying the
+  // parent (already cleared from THEIR perspective).
+  useEffect(() => {
+    if (!isSwipeOpen && swipeOpen) {
+      animateSwipe(false, { notify: false });
+    }
+    // Inverse: parent reset after we closed ourselves — no-op.
+    // We don't auto-OPEN from the prop change because swipe
+    // open is always user-initiated (drag), never broadcast.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSwipeOpen]);
 
   const handleDragEnd = (_event, info) => {
     const offsetPastThreshold = info.offset.x < -SWIPE_OPEN_THRESHOLD;
