@@ -691,7 +691,7 @@ export default function PantryScreen({
               fontFamily: font.display,
               fontStyle: "normal",
               fontWeight: 400,
-              letterSpacing: "-0.02em",
+              letterSpacing: "0.02em",
               fontSize: "clamp(40px, 7vw, 64px)",
               lineHeight: 1.0,
             }}
@@ -1412,7 +1412,7 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
             fontFamily: font.display,
             fontWeight: 400,
             fontSize: 20, color: theme.color.ink, marginTop: 2,
-            letterSpacing: "-0.015em",
+            letterSpacing: "0.01em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
           }}>
             {body}
@@ -1941,7 +1941,7 @@ function DrilledTileHeader({ tile, location, count, warnCount, sortBy, onSortCha
               fontWeight: 400,
               fontSize: "clamp(20px, 4.5vw, 32px)",
               lineHeight: 1.05, color: theme.color.ink,
-              letterSpacing: "-0.015em",
+              letterSpacing: "0.015em",
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
               flex: 1, minWidth: 0,
             }}>
@@ -2459,7 +2459,7 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
             fontFamily: font.display,
             fontWeight: 400,
             fontSize: 22, lineHeight: 1.1, color: theme.color.ink,
-            letterSpacing: "-0.015em",
+            letterSpacing: "0.01em",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
             flex: 1, minWidth: 0,
           }}>
