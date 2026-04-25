@@ -723,13 +723,25 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     // dims). Avoids the prior "step 1 + 3 lit
                     // with a gap at 2" look that misled the eye.
                     const filled = i < completed;
+                    // Next-up segment — the first unfilled one
+                    // sitting just past the lit run. Gets a soft
+                    // accent tint + slow pulse so the user's eye
+                    // tracks "here's what to do next" without us
+                    // having to spell it out in copy. Suppressed
+                    // when the form is ready (no more steps) or
+                    // when this isn't the leading edge.
+                    const isNext = !filled && i === completed && !ready;
                     return (
                       <motion.div
                         key={s.id}
                         animate={filled
                           ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
-                          : { scaleY: 1 }}
-                        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                          : isNext
+                            ? { opacity: [0.55, 1, 0.55] }
+                            : { scaleY: 1 }}
+                        transition={isNext
+                          ? { duration: 1.6, ease: "easeInOut", repeat: Infinity }
+                          : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
                         style={{
                           flex: 1,
                           height: 4,
@@ -737,10 +749,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                           transformOrigin: "center",
                           background: filled
                             ? tone
-                            : withAlpha(theme.color.ink, 0.08),
+                            : isNext
+                              // Brighter than the dim unfilled
+                              // gray, dimmer than a fully-filled
+                              // segment — reads as "primed,
+                              // waiting for you" between the lit
+                              // run and the dormant tail.
+                              ? withAlpha(tone, 0.45)
+                              : withAlpha(theme.color.ink, 0.08),
                           boxShadow: filled
                             ? `0 0 6px ${withAlpha(tone, 0.45)}`
-                            : "none",
+                            : isNext
+                              ? `0 0 4px ${withAlpha(tone, 0.30)}`
+                              : "none",
                           transition: "background 220ms ease, box-shadow 220ms ease",
                         }}
                       />
