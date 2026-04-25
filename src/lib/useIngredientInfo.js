@@ -114,17 +114,23 @@ export function IngredientInfoProvider({ children }) {
   const [pendingMap, setPendingMap] = useState({});
   const [loading, setLoading] = useState(() => !initial);
 
-  // Mirror dbMap into the bundled registry's DB-canonicals map so
-  // pure lookup helpers (fuzzyMatchIngredient, findIngredient,
-  // inferCanonicalFromName) can see admin-approved user canonicals
-  // alongside the 400 JS bundled ones. Fires on initial load (from
-  // cache) AND on every refresh so a freshly approved canonical
-  // becomes searchable across the app without a page reload. The
-  // registry module handles cache invalidation of its alias-map
-  // internally.
+  // Mirror dbMap + pendingMap into the bundled registry's
+  // DB-canonicals map so pure lookup helpers (fuzzyMatchIngredient,
+  // findIngredient, inferCanonicalFromName) can see admin-approved
+  // canonicals AND user-pending ones alongside the 400 JS bundled
+  // ones. Without merging pendingMap, AI-synthesized slugs from
+  // MemoryBookCapture and the typeahead's "+ Add canonical" path
+  // would be stored on pantry_items but invisible to the typeahead
+  // — leaving the user's canonical chip an unsearchable shell.
+  // dbMap shadows pendingMap on slug collision so admin promotions
+  // immediately take effect.
   useEffect(() => {
-    registerCanonicalsFromDb(dbMap);
-  }, [dbMap]);
+    const flatPending = {};
+    for (const [slug, entry] of Object.entries(pendingMap || {})) {
+      flatPending[slug] = entry?.info || {};
+    }
+    registerCanonicalsFromDb({ ...flatPending, ...dbMap });
+  }, [dbMap, pendingMap]);
 
   const fetchPending = useCallback(async () => {
     const { data, error } = await supabase

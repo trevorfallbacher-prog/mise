@@ -23,6 +23,7 @@ import {
   statesForIngredient, defaultStateFor, STATE_LABELS,
   getIngredientInfo,
 } from "../../data/ingredients";
+import { detectBrand } from "../../data/knownBrands";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { usePopularPackages } from "../../lib/usePopularPackages";
 import { findFoodType, FOOD_TYPES, inferFoodTypeFromName } from "../../data/foodTypes";
@@ -33,6 +34,10 @@ import BarcodeScanner from "../../components/BarcodeScanner";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
 import { useBrandNutrition } from "../../lib/useBrandNutrition";
 import { tileIconFor } from "../../lib/canonicalIcons";
+import MemoryBookCapture from "./MemoryBookCapture";
+import { AddDraftProgressStrip } from "./AddDraftProgressStrip";
+import { ScanDataPanel } from "./ScanDataPanel";
+import { enrichIngredient } from "../../lib/enrichIngredient";
 
 // MCMAddDraftSheet — manual-add (and, in a follow-up commit,
 // scan-prefilled) entry surface. Mounted at App level when
@@ -131,9 +136,24 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // Scanner overlay state. When `scanning` is true, the
   // BarcodeScanner mounts full-screen over the sheet. Lookup
   // status surfaces in `scanStatus` so the user sees
-  // "Looking up…" → "Got it" / "Couldn't find that one."
+  // "Looking up…" → "Got it" — "miss" / "error" never reach the
+  // user as copy: they trigger the MemoryBookCapture flow instead.
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState(null); // null | "looking" | "found" | "miss" | "error"
+  // OFF categoryHints from the failing lookup, stashed so the
+  // MemoryBookCapture flow (and its categorize-product-photo edge
+  // call) can bias Haiku with whatever weak signal OFF DID give us
+  // even when the result didn't pair to a canonical.
+  const [scanCategoryHints, setScanCategoryHints] = useState(null);
+  // When true, the MemoryBookCapture sheet is mounted as a
+  // full-cover overlay above this sheet. Replaces every "scan
+  // failed" terminal — see feedback_scan_never_fails.md memory.
+  const [memoryBookOpen, setMemoryBookOpen] = useState(false);
+  // Latest scan's raw + computed payload — populated in handleScan,
+  // consumed by the ScanDataPanel below the form so the user can
+  // glance at nutrition / source / categoryHints / etc. without
+  // digging into devtools.
+  const [scanDebug, setScanDebug] = useState(null);
   // Terminal scan-status messages auto-dismiss after a few
   // seconds so they don't loiter while the user fills in the
   // form. "looking" stays until the lookup resolves; "found"
@@ -149,8 +169,16 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // Household-curated brand nutrition rows. Passed into
   // lookupBarcode so a UPC matched only by the family's saved
   // brand entries (no OFF / no USDA hit) still resolves —
-  // matches classic Kitchen's scanner behavior.
-  const { rows: brandNutritionRows } = useBrandNutrition();
+  // matches classic Kitchen's scanner behavior. The `loading`
+  // flag gates the "ask for more info" trigger: until the cache
+  // has hydrated we can't know whether a UPC truly missed every
+  // tier or whether we just queried before brand_nutrition rows
+  // arrived from Supabase.
+  const {
+    rows:    brandNutritionRows,
+    loading: brandNutritionLoading,
+    upsert:  upsertBrandNutrition,
+  } = useBrandNutrition();
   // Hook into the IngredientInfoProvider so the canonical
   // typeahead and picker can see admin-approved + user-created
   // DB canonicals alongside the 400 bundled ones. dbMap is the
@@ -158,7 +186,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // synthetic-canonical Map that registerCanonicalsFromDb
   // populates from dbMap on every refresh, so we depend on the
   // map identity to invalidate the merged search list.
-  const { dbMap, getInfo: getDbInfo } = useIngredientInfo();
+  const {
+    dbMap,
+    getInfo: getDbInfo,
+    loading: ingredientInfoLoading,
+    refreshPending,
+  } = useIngredientInfo();
   // dbMap identity is the invalidation signal — when the
   // provider refreshes (initial fetch / admin approval /
   // realtime update), dbMap swaps reference and the snapshot
@@ -272,11 +305,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // resolves to the cheese / cheddar canonical so the chip
   // can pre-select. Override flag locks the picked value
   // against further typing.
+  //
+  // dbMap is a dep so the inference re-runs when DB-tier
+  // canonicals finish loading (useIngredientInfo invalidates
+  // inferCanonicalFromName's alias-map cache via
+  // registerCanonicalsFromDb on every dbMap change). Without
+  // this, a scan that landed `name` BEFORE the DB hydrated
+  // would never pair its canonical even after the data arrived.
   useEffect(() => {
     if (canonicalOverridden) return;
     const id = inferCanonicalFromName(name);
     setCanonicalId(id || null);
-  }, [name, canonicalOverridden]);
+  }, [name, canonicalOverridden, dbMap]);
 
   // Auto-resolve the State axis to the canonical's natural
   // default (block for cheese, whole for meats, etc.) whenever
@@ -336,6 +376,37 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     const id = loc.classify(draft, { findIngredient, hubForIngredient });
     setTileId(id || null);
   }, [name, canonicalId, typeId, location, tileOverridden]);
+
+  // Cascading correction-write — whenever the resolver cascade
+  // settles a downstream axis (typeId, tileId, location) on a
+  // scanned UPC, persist it to barcode_identity_corrections so the
+  // next scan rehydrates the full identity, not just the canonical.
+  //
+  // Debounced 600ms so a quick chain of cascade renders (e.g.
+  // canonicalId → location → tileId all firing within one paint)
+  // collapses into a single write. Fires only when:
+  //   • A UPC was actually scanned (barcodeUpc is set)
+  //   • A canonical landed (cascade succeeded)
+  //   • Caller has a userId (write boundary)
+  // The handleScan path does the initial canonical-only write at
+  // scan time; this effect adds the downstream axes as they settle.
+  useEffect(() => {
+    if (!barcodeUpc || !canonicalId || !userId) return;
+    const t = setTimeout(() => {
+      rememberBarcodeCorrection({
+        userId,
+        isAdmin: !!isAdmin,
+        barcodeUpc,
+        canonicalId,
+        typeId:   typeId   || null,
+        tileId:   tileId   || null,
+        location: location || null,
+      }).catch(err =>
+        console.warn("[mcm-add] cascade correction-write failed:", err?.message || err),
+      );
+    }, 600);
+    return () => clearTimeout(t);
+  }, [barcodeUpc, canonicalId, typeId, tileId, location, userId, isAdmin]);
 
   // Validation — required fields the row needs to be useful
   // downstream (recipe matching, freshness clock, fill gauge).
@@ -412,62 +483,208 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       }
 
       // Type correction beats the live name-inference. Same
-      // cascade rule as tile.
+      // cascade rule as tile — lock the override so the typeId
+      // useEffect can't re-run inferFoodTypeFromName(name) on the
+      // next render and wipe the taught value.
       if (correction?.typeId && !typeOverridden) {
         setTypeId(correction.typeId);
+        setTypeOverridden(true);
       }
 
-      // OFF / USDA payload pre-fill (when found).
-      if (res?.found) {
-        if (!name.trim() && res.productName) setName(res.productName);
-        if (!brand.trim() && res.brand)      setBrand(res.brand);
-        const pkg = res.quantity ? parsePackageSize(res.quantity) : null;
-        if (!packageSize && pkg?.amount != null) setPackageSize(String(pkg.amount));
-        if (!unit        && pkg?.unit)           setUnit(pkg.unit);
-        setRemaining(1);
-        if (Array.isArray(res.categoryHints) && res.categoryHints.length > 0) {
-          const axes = tagHintsToAxes(res.categoryHints);
-          if (!typeOverridden && axes.typeId) setTypeId(axes.typeId);
-          if (!tileOverridden && axes.tileId) setTileId(axes.tileId);
+      // Stash any categoryHints OFF returned, even if the lookup
+      // didn't pair to a canonical — the memory-book fallback below
+      // uses them to bias Haiku's vision call so the AI starts with
+      // whatever weak taxonomy signal OFF gave us.
+      if (Array.isArray(res?.categoryHints) && res.categoryHints.length > 0) {
+        setScanCategoryHints(res.categoryHints);
+      }
+
+      // Best display name — productName when OFF gave us a clean
+      // one, falling back to genericName ("Greek yogurt") when
+      // productName is null or just brand/SKU noise. The edge
+      // fn comments call this out explicitly: generic_name is
+      // often a better fuzz-match target than product_name.
+      const displayName = (res?.productName && res.productName.trim())
+        || (res?.genericName && res.genericName.trim())
+        || "";
+      // Brand recovery — when OFF didn't surface a brand but the
+      // productName starts with one (e.g. "Kerrygold Pure Irish
+      // Butter"), pull it out via the curated knownBrands table.
+      // Same path the memory-book Haiku flow uses.
+      const detectedBrand = res?.brand
+        || (displayName ? detectBrand(displayName) : null)
+        || null;
+
+      // OFF / USDA payload pre-fill — apply whatever fields landed.
+      // No outer `if (res.found)` gate: OFF doesn't return partial
+      // payloads (it's all-or-nothing), but the per-field guards
+      // below mean a `found:false` with no fields is a no-op anyway.
+      if (!name.trim() && displayName)         setName(displayName);
+      if (!brand.trim() && detectedBrand)      setBrand(detectedBrand);
+      const pkg = res?.quantity ? parsePackageSize(res.quantity) : null;
+      if (!packageSize && pkg?.amount != null) setPackageSize(String(pkg.amount));
+      if (!unit        && pkg?.unit)           setUnit(pkg.unit);
+      if (res?.found) setRemaining(1);
+      if (Array.isArray(res?.categoryHints) && res.categoryHints.length > 0) {
+        const axes = tagHintsToAxes(res.categoryHints);
+        if (!typeOverridden && axes.typeId) {
+          setTypeId(axes.typeId);
+          // Lock so the name-watching inference effect can't re-run
+          // inferFoodTypeFromName(name) and wipe the OFF-derived
+          // typeId. Same race that hit canonicalId — without the
+          // lock, a one-render later setTypeId(null) lands.
+          setTypeOverridden(true);
+        }
+        if (!tileOverridden && axes.tileId) {
+          setTileId(axes.tileId);
+          // Lock for the parallel reason — the tile classifier
+          // useEffect depends on canonicalId / category and re-runs
+          // on every render those change, overwriting the OFF tile.
+          setTileOverridden(true);
         }
       }
 
-      // Resolve the winning canonical from the cascade —
-      // correction beats OFF — and apply it. This is what was
-      // missing before: a correction-only hit (OFF miss) that
-      // taught us the canonical wasn't being applied because
-      // the OFF early-return short-circuited everything below.
-      const resolvedCanonicalId = correction?.canonicalId || res?.canonicalId || null;
-      if (resolvedCanonicalId && !canonicalOverridden) {
-        setCanonicalId(resolvedCanonicalId);
+      // Canonical cascade — correction → cached canonicalId →
+      // inference from displayName → inference from genericName.
+      // Computed synchronously so we know whether a paired
+      // canonical landed without waiting on the React effect that
+      // re-runs inferCanonicalFromName when `name` changes.
+      const inferredFromDisplay = displayName
+        ? inferCanonicalFromName(displayName)
+        : null;
+      const inferredFromGeneric = (!inferredFromDisplay && res?.genericName)
+        ? inferCanonicalFromName(res.genericName)
+        : null;
+      const finalCanonicalId =
+        correction?.canonicalId
+        || res?.canonicalId
+        || inferredFromDisplay
+        || inferredFromGeneric
+        || null;
+      if (finalCanonicalId && !canonicalOverridden) {
+        setCanonicalId(finalCanonicalId);
+        // Lock the override so the name-watching inference effect
+        // can't wipe a correction-tier or AI-tier canonical that
+        // doesn't have an alias-map entry (synthetic user-tier slugs
+        // like "caramel_dip" aren't registered until ingredient_info
+        // catches up — without the lock the next render's
+        // inferCanonicalFromName(name) returns null and resets us
+        // back to no canonical). The lock releases automatically
+        // when the user types a name that diverges from the
+        // canonical's display name (see the input onChange).
+        setCanonicalOverridden(true);
+      }
+      // Stash the raw + computed payload so the ScanDataPanel
+      // below the form can render nutrition / source / etc.
+      setScanDebug({
+        upc,
+        res: res || null,
+        correction: correction || null,
+        finalCanonicalId,
+        displayName: displayName || null,
+        detectedBrand: detectedBrand || null,
+        at: new Date().toISOString(),
+      });
+
+      // brand_nutrition write — the moment we have canonical + brand
+      // + nutrition, persist the row so the next scan of this UPC
+      // (and every household / user who scans the same product) hits
+      // the cache and gets an instant pair without re-fetching OFF.
+      // Fire-and-forget per CLAUDE.md: a cache-write failure must
+      // never block the add flow.
+      //
+      // Skipped when we have a "cached" hit — that means the row
+      // already exists and we'd be re-upserting our own data.
+      if (
+        res?.nutrition
+        && finalCanonicalId
+        && (detectedBrand || res?.brand)
+        && !res?.cached
+        && typeof upsertBrandNutrition === "function"
+      ) {
+        upsertBrandNutrition({
+          canonicalId: finalCanonicalId,
+          brand:       detectedBrand || res.brand,
+          nutrition:   res.nutrition,
+          barcode:     upc,
+          source:      res.source   || "openfoodfacts",
+          sourceId:    res.sourceId || upc,
+          confidence:  80,
+        }).catch(err =>
+          console.warn("[mcm-add] brand_nutrition scan-write failed:", err?.message || err),
+        );
       }
 
-      // Canonical-fallback fill — when OFF gave us no
-      // productName / unit but we have a canonical anchor,
-      // borrow the canonical's display name + default unit so
-      // the row at least lands with a sane identity instead of
-      // an empty form. Critical for the OFF-miss / correction-
-      // hit case the user just hit ("scanner said it had it
-      // but didn't fill in any information").
-      if (resolvedCanonicalId) {
-        const ing = findIngredient(resolvedCanonicalId);
+      // barcode_identity_corrections write — teach the household /
+      // global memory the moment we resolve a canonical, even before
+      // the user submits. Without this, dismissing the form after a
+      // successful scan throws away the resolution; a re-scan would
+      // have to re-do the OFF lookup + name inference. Fire-and-forget.
+      if (finalCanonicalId && userId) {
+        rememberBarcodeCorrection({
+          userId,
+          isAdmin: !!isAdmin,
+          barcodeUpc:    upc,
+          canonicalId:   finalCanonicalId,
+          // categoryHints seed the global tag-map on the admin tier
+          // so similar UPCs resolve faster downstream.
+          categoryHints: Array.isArray(res?.categoryHints) ? res.categoryHints : null,
+        }).catch(err =>
+          console.warn("[mcm-add] barcode_correction scan-write failed:", err?.message || err),
+        );
+      }
+
+      // Canonical-fallback fill — when we found a canonical but
+      // OFF didn't supply a name / unit, borrow the canonical's
+      // display name + default unit so the row at least lands with
+      // a sane identity. Without this, a correction-only hit (OFF
+      // miss but family taught the UPC) would leave the form empty.
+      if (finalCanonicalId) {
+        const ing = findIngredient(finalCanonicalId);
         if (ing) {
-          if (!name.trim() && ing.name) setName(ing.name);
+          if (!name.trim() && !displayName && ing.name) setName(ing.name);
           if (!unit && ing.defaultUnit) setUnit(ing.defaultUnit);
         }
       }
 
-      // Final status — anything that landed counts as "found".
-      const anythingPopulated =
-        res?.found || correction || resolvedCanonicalId;
-      if (!anythingPopulated) {
-        setScanStatus("miss");
+      // Paired canonical is the success bar. Without one, the row
+      // can't pair to recipes, freshness windows, or nutrition —
+      // so we route the user into the photo flow to gather more
+      // info. NEVER framed as a failure ("couldn't find that one")
+      // — only ever as "tell us more." See feedback_scan_never_fails.md.
+      //
+      // Held off when EITHER cache is still hydrating:
+      //   • brand_nutrition (useBrandNutrition) feeds the cached
+      //     canonicalId fallback path inside lookupBarcode.
+      //   • ingredient_info (useIngredientInfo) registers DB-tier
+      //     canonicals into inferCanonicalFromName's alias map.
+      // A scan that fires before either has loaded can mis-flag a
+      // known UPC as needing more info — the second scan succeeds
+      // only because the caches finished loading in the gap.
+      if (!finalCanonicalId) {
+        if (brandNutritionLoading || ingredientInfoLoading) {
+          // Caches are still hydrating — leave the form populated
+          // with whatever did land and let the user pick a canonical
+          // manually from the typeahead. The setName→useEffect
+          // chain will retry inference once dbMap finishes loading
+          // (the alias-map cache invalidates when registerCanonicalsFromDb
+          // fires from useIngredientInfo's mount effect), so the
+          // canonical typically pairs without a second scan anyway.
+          setScanStatus("found");
+          return;
+        }
+        setScanStatus(null);
+        setMemoryBookOpen(true);
         return;
       }
       setScanStatus("found");
     } catch (e) {
       console.warn("[mcm-add] scan lookup failed:", e?.message || e);
-      setScanStatus("error");
+      // Lookup threw — treat the same as no canonical landing: ask
+      // for more info via the photo flow rather than surfacing the
+      // exception as user-facing copy.
+      setScanStatus(null);
+      setMemoryBookOpen(true);
     }
   };
 
@@ -603,6 +820,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           // header pinned visually while the form below pages.
           maxHeight: "90vh",
           overflowY: "auto",
+          // Keep the scrollbar slot reserved so content doesn't
+          // reflow horizontally when the inner scrollbar appears
+          // / disappears as form sections expand.
+          scrollbarGutter: "stable",
           margin: "0 12px 24px",
           padding: 22,
           borderRadius: 20,
@@ -622,286 +843,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             opens the full picker so the user can override.
             Sits inside the header row so it never collides
             with the form below. */}
-        {/* Progress strip — segments fill as the user completes
-            required fields. Mustard tone while in progress,
-            teal when all required fields are set ("ready to
-            save"). Replaces the prior post-submit caution
-            banner with a proactive guide. The required-fields
-            list is the validation source of truth: name +
-            canonical + package size + unit. */}
-        {(() => {
-          // 3 required steps — name dropped because the name IS
-          // the canonical. Every path that commits a canonical
-          // (typeahead pick, auto-resolve from typing, "+ Add
-          // canonical" escape hatch) also writes name, so
-          // checking canonicalId is the strict superset.
-          const steps = [
-            { id: "canonical",   label: "canonical",    done: !!canonicalId },
-            { id: "packageSize", label: "package size", done: !!packageSize && Number(packageSize) > 0 },
-            { id: "unit",        label: "unit",         done: !!unit.trim() },
-          ];
-          const completed = steps.filter(s => s.done).length;
-          const total = steps.length;
-          const ready = completed === total;
-          const nextStep = steps.find(s => !s.done);
-          // Secret step 5 — when the form's required fields are
-          // ALL set AND the typed Brand matches a row in the
-          // brand_nutrition registry (the system's source of
-          // truth for what's a real brand), she falls in love.
-          // Step5.svg + red palette + floating hearts. The
-          // reward is real-brand recognition, so observation
-          // tables (popular_package_sizes) are out — those are
-          // for size suggestions, not brand validation.
-          const loveMode = (() => {
-            if (!ready) return false;
-            const b = brand.trim().toLowerCase();
-            if (!b) return false;
-            return Array.isArray(brandNutritionRows)
-              && brandNutritionRows.some(r => (r.brand || "").toLowerCase() === b);
-          })();
-          // Avatar mapping — 4 emotional states for 4 thresholds
-          // (0..3 done) plus the secret 5th. Humans count from 1,
-          // so stateIndex 0..3 is step 1..4 in user-facing copy
-          // (and step 5 when loveMode flips on).
-          const stateIndex = Math.min(completed, 3);
-          const stateSrc = loveMode
-            ? "/icons/AddItemProgression/Step5.svg"
-            : [
-                "/icons/AddItemProgression/Step1.svg",
-                "/icons/AddItemProgression/Step2.svg",
-                "/icons/AddItemProgression/Step%203.svg",
-                "/icons/AddItemProgression/Step4.svg",
-              ][stateIndex];
-          // Per-state palette pulled from each avatar's
-          // background tint — meter fill + caption text shift
-          // to match her so the strip reads as one mood with
-          // her as the anchor. Step 4 (ready) keeps the theme
-          // teal; step 5 (love) goes red.
-          const stateColors = ["#4a8e92", "#eac289", "#79a49c", theme.color.teal];
-          const tone = loveMode ? "#ec6545" : stateColors[stateIndex];
-          const captionKey = loveMode ? "love" : ready ? "ready" : `step-${stateIndex}-${nextStep?.id || "next"}`;
-          return (
-            // Sticky to the top of the scrolling sheet so the
-            // user keeps a fixed anchor while content reflows
-            // below (typeahead opening, package bar appearing,
-            // pills springing in). Negative side-margins span
-            // the full panel width; padding compensates so
-            // content reads as a pinned header, not loose
-            // floating chrome. Backdrop blur + glass fill
-            // covers the form rows scrolling underneath.
-            <div style={{
-              position: "sticky",
-              top: -22, // sheet's parent padding is 22; pin at the visual top
-              zIndex: 4,
-              margin: "-22px -22px 12px -22px",
-              padding: "16px 22px 12px",
-              background: withAlpha(theme.color.glassFillHeavy, 0.92),
-              backdropFilter: "blur(20px) saturate(150%)",
-              WebkitBackdropFilter: "blur(20px) saturate(150%)",
-              borderBottom: `1px solid ${theme.color.hairline}`,
-              borderTopLeftRadius: 20,
-              borderTopRightRadius: 20,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-            }}>
-              {/* Progress segments + caption — sit on the LEFT
-                  so the user reads "I'm trying to get to her"
-                  with the avatar on the right as the goal. */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{
-                  display: "flex", gap: 4, alignItems: "stretch",
-                  marginBottom: 6,
-                }}>
-                  {steps.map((s, i) => {
-                    // Count-based fill — segment[i] is "on" when
-                    // i < completed, regardless of WHICH specific
-                    // step is done. Reads as a left-to-right
-                    // progress bar that resets cleanly on
-                    // backwards progression (clearing a field
-                    // drops the count, the rightmost lit segment
-                    // dims). Avoids the prior "step 1 + 3 lit
-                    // with a gap at 2" look that misled the eye.
-                    const filled = i < completed;
-                    // Next-up segment — the first unfilled one
-                    // sitting just past the lit run. Gets a soft
-                    // accent tint + slow pulse so the user's eye
-                    // tracks "here's what to do next" without us
-                    // having to spell it out in copy. Suppressed
-                    // when the form is ready (no more steps) or
-                    // when this isn't the leading edge.
-                    const isNext = !filled && i === completed && !ready;
-                    return (
-                      <motion.div
-                        key={s.id}
-                        animate={filled
-                          ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
-                          : isNext
-                            ? { opacity: [0.55, 1, 0.55] }
-                            : { scaleY: 1 }}
-                        transition={isNext
-                          ? { duration: 1.6, ease: "easeInOut", repeat: Infinity }
-                          : { duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-                        style={{
-                          flex: 1,
-                          height: 4,
-                          borderRadius: 2,
-                          transformOrigin: "center",
-                          background: filled
-                            ? tone
-                            : isNext
-                              // Brighter than the dim unfilled
-                              // gray, dimmer than a fully-filled
-                              // segment — reads as "primed,
-                              // waiting for you" between the lit
-                              // run and the dormant tail.
-                              ? withAlpha(tone, 0.45)
-                              : withAlpha(theme.color.ink, 0.08),
-                          boxShadow: filled
-                            ? `0 0 6px ${withAlpha(tone, 0.45)}`
-                            : isNext
-                              ? `0 0 4px ${withAlpha(tone, 0.30)}`
-                              : "none",
-                          transition: "background 220ms ease, box-shadow 220ms ease",
-                        }}
-                      />
-                    );
-                  })}
-                </div>
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={captionKey}
-                    role="status"
-                    aria-live="polite"
-                    initial={{ opacity: 0, y: -2 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 2 }}
-                    transition={{ duration: 0.18 }}
-                    style={{
-                      fontFamily: font.mono, fontSize: 10,
-                      letterSpacing: "0.14em", textTransform: "uppercase",
-                      color: tone,
-                      fontWeight: 600,
-                      display: "inline-flex", alignItems: "center", gap: 6,
-                    }}
-                  >
-                    {loveMode ? (
-                      <>
-                        <motion.span
-                          aria-hidden
-                          initial={{ scale: 0.4, rotate: -20, opacity: 0 }}
-                          animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                          transition={{ type: "spring", stiffness: 480, damping: 18 }}
-                          style={{ fontSize: 14, lineHeight: 1 }}
-                        >
-                          ♥
-                        </motion.span>
-                        She loves it · ready to save
-                      </>
-                    ) : ready ? (
-                      <>
-                        <motion.span
-                          aria-hidden
-                          initial={{ scale: 0.4, rotate: -20, opacity: 0 }}
-                          animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                          transition={{ type: "spring", stiffness: 480, damping: 18 }}
-                          style={{ fontSize: 14, lineHeight: 1 }}
-                        >
-                          ✓
-                        </motion.span>
-                        Ready to save
-                      </>
-                    ) : (
-                      <>
-                        Step {completed + 1} · add {nextStep ? nextStep.label : "more"} next
-                      </>
-                    )}
-                  </motion.div>
-                </AnimatePresence>
-              </div>
-
-              {/* Avatar — anchored on the RIGHT so she reads as
-                  the goal the user is filling fields toward.
-                  Always rendered now that there are 3 required
-                  steps (canonical / packageSize / unit) and 4
-                  emotional images: 0 done → Step1 (most
-                  frustrated, fresh form), 1 → Step2, 2 →
-                  Step3, 3 → Step4 (ready). Clean 1:1 with the
-                  completion count. */}
-              <div style={{
-                width: 64, height: 64, flexShrink: 0,
-                position: "relative",
-                // Hearts overflow above the strip on love mode;
-                // need overflow visible so they can float past
-                // the avatar's bbox.
-                overflow: "visible",
-              }}>
-                <AnimatePresence initial={false}>
-                  <motion.img
-                    key={stateSrc}
-                    src={stateSrc}
-                    alt=""
-                    aria-hidden
-                    // Halo cascade: blue at step 4 (ready),
-                    // unset at step 5 (love — the hearts and
-                    // red caption carry the celebration).
-                    // Class drives a filter:drop-shadow
-                    // keyframe so the glow hugs her figure
-                    // outline; inline filter takes over otherwise.
-                    className={ready && !loveMode ? "mise-avatar-ready" : undefined}
-                    initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
-                    animate={{ opacity: 1, scale: 1,    rotate: 0 }}
-                    exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
-                    transition={{ type: "spring", stiffness: 320, damping: 18 }}
-                    style={{
-                      position: "absolute", inset: 0,
-                      width: "100%", height: "100%", objectFit: "contain",
-                      filter: ready && !loveMode
-                        ? undefined
-                        : "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
-                    }}
-                  />
-                </AnimatePresence>
-                {/* Hearts overlay — emits five hearts at
-                    staggered delays so they cascade up past
-                    the avatar continuously while love mode
-                    holds. CSS keyframe handles the float +
-                    fade so we don't need a per-heart spring
-                    in framer-motion. Hearts loop infinitely;
-                    AnimatePresence handles the fade-in /
-                    fade-out of the wrapper itself when
-                    loveMode flips. */}
-                <AnimatePresence>
-                  {loveMode && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      style={{
-                        position: "absolute", inset: 0,
-                        pointerEvents: "none",
-                      }}
-                    >
-                      {[0, 1, 2, 3, 4].map(i => (
-                        <span
-                          key={i}
-                          aria-hidden
-                          className="mise-heart"
-                          style={{
-                            left: `${10 + i * 11}px`,
-                            bottom: 4,
-                            animationDelay: `${i * 0.36}s`,
-                            fontSize: 14 + (i % 2) * 2,
-                          }}
-                        >♥</span>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            </div>
-          );
-        })()}
+        <AddDraftProgressStrip
+          theme={theme}
+          canonicalId={canonicalId}
+          packageSize={packageSize}
+          unit={unit}
+          brand={brand}
+          brandNutritionRows={brandNutritionRows}
+        />
 
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -1088,30 +1037,78 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           )}
         </div>
 
-        {scanStatus && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              fontFamily: font.sans,
-              fontSize: 12,
-              letterSpacing: "0.02em",
-              color: scanStatus === "found"
+        {/* Scan-status banner — fixed-height row so the form
+            below doesn't shift when the message appears /
+            disappears. Empty state renders as a 0-opacity slot
+            of the same height so layout stays still. */}
+        {(() => {
+          // Bind-confidence-aware status. Pulls bindConfidence from
+          // scanDebug.memoryBook (AI photo path) or treats every other
+          // hit as "exact" (deterministic resolvers — correction,
+          // brand_nutrition cache, OFF, name inference).
+          //
+          //   exact    → teal "Got it · {name}" — confident bind, no nudge.
+          //   stripped → mustard "Found {canonical} · also {claims}" — system
+          //              recovered the bind by stripping flavor words; user
+          //              should glance at chips before committing.
+          //   guessed  → mustard "We're guessing this is {name} — tap the
+          //              name to refine" — softest cue, AI proposed a
+          //              fresh canonical the registry didn't know about.
+          const memBind  = scanDebug?.memoryBook?.bindConfidence || null;
+          const memClaims = scanDebug?.memoryBook?.claims || [];
+          const memName   = scanDebug?.memoryBook?.canonicalName || null;
+          const tone =
+            memBind === "stripped" || memBind === "guessed"
+              ? theme.color.mustard
+              : scanStatus === "found"
                 ? theme.color.teal
                 : scanStatus === "looking"
                   ? theme.color.inkMuted
-                  : theme.color.burnt,
-              marginTop: -8,
-              marginBottom: 14,
-              paddingLeft: 4,
-            }}
-          >
-            {scanStatus === "looking" && "Looking that one up…"}
-            {scanStatus === "found"   && "Got it — review the fields below."}
-            {scanStatus === "miss"    && "Couldn't find that barcode. Fill it in by hand."}
-            {scanStatus === "error"   && "Lookup hit a snag. Try again or fill it in by hand."}
-          </div>
-        )}
+                  : theme.color.burnt;
+          const message = (() => {
+            if (scanStatus === "looking") return "Looking that one up…";
+            if (scanStatus !== "found") return null;
+            if (memBind === "guessed") {
+              return memName
+                ? `We're guessing this is ${memName} — tap the name to refine`
+                : "We're guessing — tap the name to refine";
+            }
+            if (memBind === "stripped") {
+              return memClaims.length > 0
+                ? `Found ${memName || name.trim()} · also tagged ${memClaims.join(", ")}`
+                : `Found ${memName || name.trim()} — confirm or tap to swap`;
+            }
+            // exact (memory-book) or non-photo path
+            const display = memName || name.trim();
+            return display ? `Got it · ${display}` : "Got it — review the fields below.";
+          })();
+          return (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                minHeight: 18,
+                marginBottom: 6,
+                paddingLeft: 4,
+                display: "flex",
+                alignItems: "center",
+                fontFamily: font.sans,
+                fontSize: 12,
+                letterSpacing: "0.02em",
+                color: tone,
+                opacity: message ? 1 : 0,
+                transition: "opacity 200ms ease, color 200ms ease",
+              }}
+            >
+              {message}
+              {/* "miss" and "error" intentionally render nothing here.
+                  Both states route the user into MemoryBookCapture so
+                  a failed scan never reaches the user as a failure
+                  message. See feedback_scan_never_fails.md. */}
+            </div>
+          );
+        })()}
+
 
         {/* Name + canonical typeahead — as the user types we
             float a dropdown of matching canonical ingredients
@@ -1169,14 +1166,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const showStatePill = stateOpts.length > 0;
           const stateLabel = state ? (STATE_LABELS[state] || state) : null;
           const stateTone = "#c7a8d4";
-          // Reserve room for the scan icon (~64px wide minus
-          // overflow + gap), and additional space for the state
-          // pill when it's present (~110px max).
-          // padRight = scan-icon clearance (~64) + gap + state pill width.
-          // When the state has a label we pad for the typical pill width (~110);
-          // when the pill is empty ("+ state") we can pad less so cramped
-          // phone widths still leave room for typed names.
-          const padRight = !showStatePill ? 78 : (state ? 186 : 138);
+          // padRight is locked to a single value so the input
+          // doesn't reflow as the state pill appears / its label
+          // shortens / lengthens. Reserves max-room (scan icon +
+          // longest expected state label) — small phones lose a
+          // little typing width, but the form stops jittering on
+          // every keystroke / canonical-resolve.
+          const padRight = 186;
           return (
         <div style={{ position: "relative" }}>
           <input
@@ -1221,10 +1217,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               // trim-insensitive)" so light typos / backspacing
               // mid-name still keep the lock — only a real
               // divergence releases it.
+              //
+              // Synthetic-slug fallback: AI-minted user-tier slugs
+              // ("caramel_dip" from a memory-book scan) aren't in
+              // the bundled registry, so findIngredient returns null
+              // and lockedName would be "" — which would release the
+              // lock on ANY keystroke. Compare against the slug's
+              // own name (or the current `name` state) so the lock
+              // holds for synthetic canonicals too.
               if (canonicalOverridden && canonicalId) {
                 const ing = findIngredient(canonicalId);
-                const lockedName = (ing?.name || "").trim().toLowerCase();
-                if (next.trim().toLowerCase() !== lockedName) {
+                const lockedName = (ing?.name
+                  || (typeof name === "string" ? name : "")
+                ).trim().toLowerCase();
+                if (lockedName && next.trim().toLowerCase() !== lockedName) {
                   setCanonicalOverridden(false);
                   setTypeOverridden(false);
                   setTileOverridden(false);
@@ -1248,20 +1254,33 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               fontSize: 32,
               lineHeight: 1,
               paddingRight: padRight,
-              // Validation halo wins when the field is flagged
-              // and the user has attempted submit; otherwise
-              // the focus halo (teal) takes over. Plain border
-              // when neither.
-              border: showErrors && errorFields.has("canonical")
-                ? `1px solid ${theme.color.mustard}`
-                : nameFocused
-                  ? `1px solid ${theme.color.teal}`
-                  : inputBase.border,
-              boxShadow: showErrors && errorFields.has("canonical")
-                ? `0 0 0 3px ${withAlpha(theme.color.mustard, 0.18)}, ${theme.shadow.inputInset}`
-                : nameFocused
-                  ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.inputInset}`
-                  : inputBase.boxShadow,
+              // Halo cascade — first match wins:
+              //   1. validation error (mustard, after attempted submit)
+              //   2. focus (teal, while user is typing)
+              //   3. AI bind cue — mustard halo when bindConfidence is
+              //      "stripped" or "guessed" so the user's eye lands on
+              //      the field that needs a glance/refine.
+              //   4. plain border.
+              border:
+                showErrors && errorFields.has("canonical")
+                  ? `1px solid ${theme.color.mustard}`
+                  : nameFocused
+                    ? `1px solid ${theme.color.teal}`
+                    : (!canonicalOverridden
+                       && (scanDebug?.memoryBook?.bindConfidence === "stripped"
+                           || scanDebug?.memoryBook?.bindConfidence === "guessed"))
+                      ? `1px solid ${withAlpha(theme.color.mustard, 0.55)}`
+                      : inputBase.border,
+              boxShadow:
+                showErrors && errorFields.has("canonical")
+                  ? `0 0 0 3px ${withAlpha(theme.color.mustard, 0.18)}, ${theme.shadow.inputInset}`
+                  : nameFocused
+                    ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.inputInset}`
+                    : (!canonicalOverridden
+                       && (scanDebug?.memoryBook?.bindConfidence === "stripped"
+                           || scanDebug?.memoryBook?.bindConfidence === "guessed"))
+                      ? `0 0 0 3px ${withAlpha(theme.color.mustard, 0.10)}, ${theme.shadow.inputInset}`
+                      : inputBase.boxShadow,
               transition: "border-color 200ms ease, box-shadow 200ms ease",
             }}
           />
@@ -1516,15 +1535,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           );
         })()}
 
-        {/* Everything from Package size down to Brand is gated
-            behind a pinned canonical: without a canonical the
-            unit dropdown options are generic, popular-size
-            observations are empty, and brand suggestions have
-            no anchor — showing all that empty scaffolding lets
-            the form look busy before the user has done anything.
-            Once canonical lands, the cascade has real metadata
-            to populate every downstream section. */}
-        {canonicalId && (<>
+        {/* Package size, Expires, and Brand render unconditionally
+            so the form skeleton stays still — picking a canonical
+            no longer pops five sections in at once. Sections that
+            truly need canonical data (Popular sizes, Remaining
+            slider, brand suggestions) stay gated below. */}
         {/* Package size — single bar with a typeable amount on
             the left and a unit dropdown pinned right. Unit
             options are derived from the active canonical's
@@ -1832,7 +1847,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             placeholder="e.g. Kerrygold"
             style={inputBase}
           />
-          {brandFocused && !suppressBrandTypeahead && filteredBrandSuggestions.length > 0 && (
+          {canonicalId && brandFocused && !suppressBrandTypeahead && filteredBrandSuggestions.length > 0 && (
             <div
               role="listbox"
               aria-label="Brand suggestions"
@@ -1892,7 +1907,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </div>
           )}
         </div>
-        </>)}
+
+        {/* Scan data viewer — only renders after a scan has populated
+            scanDebug. Shows source, nutrition macros, identity fields,
+            tag arrays, and a collapsible raw payload so the user can
+            verify what we extracted from OFF / cache / correction. */}
+        <ScanDataPanel scanDebug={scanDebug} theme={theme} />
 
         {/* Location segmented row — matches FloatingLocationDock
             color treatment so users see the same swatch system
@@ -2054,6 +2074,127 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             onCancel={() => setScanning(false)}
           />
         </div>
+      )}
+
+      {/* Memory-book capture flow. Auto-opens whenever a UPC scan
+          terminates with no usable signal (no OFF data, no learned
+          correction, no resolver hit) — never a "scan failed"
+          message. The user is invited to document the product;
+          Haiku reads the photo, optional nutrition-panel photo
+          fills in the macros, and the result populates this sheet
+          via the merge inside onComplete. See
+          feedback_scan_never_fails.md. */}
+      {memoryBookOpen && (
+        <MemoryBookCapture
+          barcodeUpc={barcodeUpc}
+          offCategoryHints={scanCategoryHints}
+          onComplete={(row) => {
+            setMemoryBookOpen(false);
+            // Merge the AI-extracted axes into the form state.
+            // Pre-fill ONLY empty slots so any user edits made
+            // before opening the memory book aren't stomped.
+            if (row?.name && !name.trim())            setName(row.name);
+            if (row?.brand && !brand.trim())          setBrand(row.brand);
+            if (row?.canonicalId && !canonicalOverridden) {
+              setCanonicalId(row.canonicalId);
+              // Same lock pattern as handleScan — AI-synthesized slugs
+              // ("caramel_dip") aren't in the alias map yet, so the
+              // name→inference effect would otherwise re-render the
+              // canonical back to null. Lock holds until user diverges.
+              setCanonicalOverridden(true);
+            }
+            if (row?.typeId && !typeOverridden)       setTypeId(row.typeId);
+            if (row?.tileId && !tileOverridden) {
+              setTileId(row.tileId);
+              setTileOverridden(true);
+            }
+            if (row?.packageAmount && !packageSize) {
+              setPackageSize(String(row.packageAmount));
+            }
+            if (row?.packageUnit && !unit)            setUnit(row.packageUnit);
+            // Stash the AI's canonical decision metadata into
+            // scanDebug so the panel below shows the bind tier
+            // (exact / stripped / guessed) and the user can verify
+            // whether AI guessed or matched a registry entry.
+            setScanDebug(prev => ({
+              ...(prev || { upc: barcodeUpc }),
+              memoryBook: {
+                bindConfidence:    row?.bindConfidence    || "guessed",
+                canonicalDecision: row?.canonicalDecision || null,
+                canonicalScore:    row?.canonicalScore    ?? null,
+                canonicalName:     row?.canonicalName     || null,
+                claims:            Array.isArray(row?.claims) ? row.claims : [],
+                aiConfidence:      row?.confidence        || null,
+              },
+              finalCanonicalId: row?.canonicalId || prev?.finalCanonicalId || null,
+              at: new Date().toISOString(),
+            }));
+            // Land the scan-found banner — same affordance the
+            // happy-path scan uses so the user knows the form is
+            // ready to review.
+            setScanStatus("found");
+            // Teach barcode-correction memory so the next scan of
+            // this UPC pairs without re-running Haiku. Best-effort;
+            // failures here never block the user's flow.
+            if (row?.learnedCorrection?.barcodeUpc && row.learnedCorrection.canonicalId && userId) {
+              rememberBarcodeCorrection({
+                userId,
+                isAdmin: !!isAdmin,
+                ...row.learnedCorrection,
+              }).catch((err) =>
+                console.warn("[mcm-add] memory-book correction write failed:", err?.message || err),
+              );
+            }
+            // Pending-canonical seed — AI minted a fresh slug (caramel_dip
+            // wasn't in the registry). Without this write the slug lives
+            // on pantry_items but isn't searchable: typeahead's allCanonicals
+            // pool only contains bundled INGREDIENTS + dbCanonicalsSnapshot,
+            // and dbCanonicalsSnapshot pulls from registerCanonicalsFromDb
+            // (now seeded with dbMap + pendingMap together — see
+            // useIngredientInfo's effect). Firing enrichIngredient writes
+            // to pending_ingredient_info; refreshPending pulls it back into
+            // the local map; the alias map invalidates and the next type
+            // / search hit finds the synthetic. Fire-and-forget — failure
+            // here doesn't block the form.
+            if (
+              row?.bindConfidence === "guessed"
+              && row?.canonicalId
+              && row?.canonicalName
+            ) {
+              enrichIngredient({
+                source_name: row.canonicalName,
+              })
+                .then(() => refreshPending?.())
+                .catch(err =>
+                  console.warn("[mcm-add] pending canonical seed failed:", err?.message || err),
+                );
+            }
+            // brand_nutrition write — when the photo flow's nutrition-
+            // label scan landed, persist the (canonical, brand) row so
+            // future scans of this UPC hit the cache instead of re-running
+            // Haiku. Same fire-and-forget pattern as the OFF-success path
+            // in handleScan above.
+            if (
+              row?.nutrition
+              && row?.canonicalId
+              && row?.brand
+              && typeof upsertBrandNutrition === "function"
+            ) {
+              upsertBrandNutrition({
+                canonicalId: row.canonicalId,
+                brand:       row.brand,
+                nutrition:   row.nutrition,
+                barcode:     row.barcodeUpc || barcodeUpc || null,
+                source:      "memory_book",
+                sourceId:    row.barcodeUpc || barcodeUpc || null,
+                confidence:  60,
+              }).catch((err) =>
+                console.warn("[mcm-add] memory-book brand_nutrition write failed:", err?.message || err),
+              );
+            }
+          }}
+          onCancel={() => setMemoryBookOpen(false)}
+        />
       )}
 
       {pickerOpen === "category" && (
