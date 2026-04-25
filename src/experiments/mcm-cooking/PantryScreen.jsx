@@ -35,6 +35,7 @@ import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
+import { useBrandNutrition } from "../../lib/useBrandNutrition";
 import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 
 const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
@@ -3126,6 +3127,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // "Looking up…" → "Got it" / "Couldn't find that one."
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState(null); // null | "looking" | "found" | "miss" | "error"
+  // Household-curated brand nutrition rows. Passed into
+  // lookupBarcode so a UPC matched only by the family's saved
+  // brand entries (no OFF / no USDA hit) still resolves —
+  // matches classic Kitchen's scanner behavior.
+  const { rows: brandNutritionRows } = useBrandNutrition();
 
   const canSubmit = name.trim().length > 0;
 
@@ -3140,7 +3146,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // (family + global corrections beat raw OFF data), so its
       // values win when both surface a hint for the same axis.
       const [res, correction] = await Promise.all([
-        lookupBarcode(upc, { brandNutritionRows: [] }),
+        lookupBarcode(upc, { brandNutritionRows }),
         findBarcodeCorrection(upc).catch(err => {
           console.warn("[mcm-add] correction read failed:", err?.message || err);
           return null;
