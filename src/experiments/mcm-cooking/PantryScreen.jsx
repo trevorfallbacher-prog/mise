@@ -3482,6 +3482,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             {(() => {
               const t = typeId ? findFoodType(typeId) : null;
               const tone = theme.color.burnt;
+              // Reuse the tile-icon SVG fallback chain for the
+              // food type by walking through its defaultTileId
+              // (e.g. wweia_cheese.defaultTileId === "dairy" →
+              // /icons/tiles/dairy.svg). Falls back to the
+              // type's own emoji when no SVG exists.
+              const svg = t?.defaultTileId
+                ? tileIconFor(t.defaultTileId, t.defaultTileId === "frozen" ? "freezer" : null)
+                : null;
               return (
                 <button
                   type="button"
@@ -3492,8 +3500,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 6,
-                    padding: "6px 10px",
+                    justifyContent: "center",
+                    width: 40, height: 40,
+                    padding: 0,
                     borderRadius: 999,
                     border: t
                       ? `1px solid ${withAlpha(tone, 0.45)}`
@@ -3502,22 +3511,30 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                       ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
                       : "transparent",
                     color: t ? theme.color.ink : theme.color.inkMuted,
-                    fontFamily: font.detail,
-                    fontStyle: "italic",
-                    fontWeight: 400,
-                    fontSize: 13,
                     cursor: "pointer",
-                    whiteSpace: "nowrap",
+                    flexShrink: 0,
                     transition: "background 200ms ease, border-color 200ms ease",
                   }}
                 >
                   {t ? (
-                    <>
-                      <span style={{ fontSize: 14, lineHeight: 1, fontStyle: "normal" }}>{t.emoji}</span>
-                      <span>{t.label}</span>
-                    </>
+                    svg ? (
+                      <img
+                        src={svg}
+                        alt=""
+                        aria-hidden
+                        style={{
+                          width: 26, height: 26, objectFit: "contain",
+                          filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.18))",
+                        }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 20, lineHeight: 1 }}>{t.emoji}</span>
+                    )
                   ) : (
-                    <span>+ category</span>
+                    <span style={{
+                      fontFamily: font.detail, fontStyle: "italic",
+                      fontSize: 13,
+                    }}>+</span>
                   )}
                 </button>
               );
@@ -3526,6 +3543,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               const loc = LOCATIONS.find(l => l.id === location);
               const tile = loc && tileId ? loc.tiles.find(x => x.id === tileId) : null;
               const tone = "#7eb8d4"; // blue — reserved STORED IN color
+              // tileIconFor handles the location-prefixed lookup
+              // for distinct misc-per-location icons.
+              const svg = tile ? tileIconFor(tile.id, location) : null;
               return (
                 <button
                   type="button"
@@ -3536,8 +3556,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 6,
-                    padding: "6px 10px",
+                    justifyContent: "center",
+                    width: 40, height: 40,
+                    padding: 0,
                     borderRadius: 999,
                     border: tile
                       ? `1px solid ${withAlpha(tone, 0.45)}`
@@ -3546,22 +3567,30 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                       ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
                       : "transparent",
                     color: tile ? theme.color.ink : theme.color.inkMuted,
-                    fontFamily: font.detail,
-                    fontStyle: "italic",
-                    fontWeight: 400,
-                    fontSize: 13,
                     cursor: "pointer",
-                    whiteSpace: "nowrap",
+                    flexShrink: 0,
                     transition: "background 200ms ease, border-color 200ms ease",
                   }}
                 >
                   {tile ? (
-                    <>
-                      <span style={{ fontSize: 14, lineHeight: 1, fontStyle: "normal" }}>{tile.emoji}</span>
-                      <span>{tile.label}</span>
-                    </>
+                    svg ? (
+                      <img
+                        src={svg}
+                        alt=""
+                        aria-hidden
+                        style={{
+                          width: 26, height: 26, objectFit: "contain",
+                          filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.18))",
+                        }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 20, lineHeight: 1 }}>{tile.emoji}</span>
+                    )
                   ) : (
-                    <span>+ shelf</span>
+                    <span style={{
+                      fontFamily: font.detail, fontStyle: "italic",
+                      fontSize: 13,
+                    }}>+</span>
                   )}
                 </button>
               );
