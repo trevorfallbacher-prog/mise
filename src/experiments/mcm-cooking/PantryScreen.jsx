@@ -3122,9 +3122,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // populates from dbMap on every refresh, so we depend on the
   // map identity to invalidate the merged search list.
   const { dbMap } = useIngredientInfo();
+  // dbMap identity is the invalidation signal — when the
+  // provider refreshes (initial fetch / admin approval /
+  // realtime update), dbMap swaps reference and the snapshot
+  // re-runs against the freshly-registered Map.
   const allCanonicals = useMemo(
     () => [...INGREDIENTS, ...dbCanonicalsSnapshot()],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [dbMap]
   );
 
