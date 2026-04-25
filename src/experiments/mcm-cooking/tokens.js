@@ -112,6 +112,14 @@ export const font = {
   itemSub: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
   sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
   mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
+  // Instrument Serif (Adobe Fonts / Typekit, kit cnf4qlv loaded
+  // via index.html). Used for "boring details" — secondary
+  // data lines, field labels, summary copy. Default usage is
+  // italic 400 (set fontStyle: "italic" at the callsite). Reads
+  // as quiet editorial in contrast with Pale Martini (loud
+  // display) and Filmotype Honey (cursive name face). Fraunces
+  // italic rides as the fallback for pre-load.
+  detail:  "'instrument-serif', 'Fraunces', 'Iowan Old Style', Georgia, serif",
 };
 
 // Composed helpers so screens don't re-implement the glass recipe.

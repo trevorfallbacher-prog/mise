@@ -30,7 +30,8 @@ import { FRIDGE_TILES,  tileIdForItem          as fridgeTileFor  } from "../../l
 import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../lib/pantryTiles";
 import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
 import { findIngredient, hubForIngredient } from "../../data/ingredients";
-import { findFoodType } from "../../data/foodTypes";
+import { findFoodType, FOOD_TYPES, inferFoodTypeFromName } from "../../data/foodTypes";
+import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
@@ -3047,6 +3048,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // jar of mustard moved over from another household).
   const [remaining,   setRemaining]   = useState(1);
   const [location, setLocation] = useState(seed.location || "fridge");
+  // Food category (CLAUDE.md "CATEGORIES" axis). Resolved
+  // from name inference when no manual pick has been made;
+  // the override flag locks the value once the user has tapped
+  // a different option in the picker so further name typing
+  // doesn't clobber their choice.
+  const [typeId, setTypeId] = useState(seed.typeId || null);
+  const [typeOverridden, setTypeOverridden] = useState(!!seed.typeId);
+  const [pickerOpen, setPickerOpen] = useState(null); // null | "category"
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -3063,6 +3072,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // brand entries (no OFF / no USDA hit) still resolves —
   // matches classic Kitchen's scanner behavior.
   const { rows: brandNutritionRows } = useBrandNutrition();
+
+  // Live name-inference for the category chip — runs only when
+  // the user hasn't manually overridden. Cheap (FOOD_TYPES is
+  // small and matched by alias substring) so we don't memoize.
+  useEffect(() => {
+    if (typeOverridden) return;
+    const inferred = inferFoodTypeFromName(name);
+    setTypeId(inferred?.id || null);
+  }, [name, typeOverridden]);
 
   const canSubmit = name.trim().length > 0;
 
@@ -3108,6 +3126,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // Fresh scan = brand-new package. Snap the slider back to
       // sealed/full so the user starts from the natural state.
       setRemaining(1);
+      // Seed the category from OFF tag hints if the user hasn't
+      // already overridden. tagHintsToAxes maps the OFF
+      // category vocabulary into our internal typeId.
+      if (!typeOverridden && Array.isArray(res.categoryHints) && res.categoryHints.length > 0) {
+        const axes = tagHintsToAxes(res.categoryHints);
+        if (axes.typeId) setTypeId(axes.typeId);
+      }
       setScanStatus("found");
     } catch (e) {
       console.warn("[mcm-add] scan lookup failed:", e?.message || e);
@@ -3157,6 +3182,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       max:    maxN,
       unit: unit.trim() || null,
       category: cat,
+      typeId: typeId || null,
       location,
       // Tile defaults to "misc" — user can re-classify after
       // the row lands. Saves a multi-step picker in the add
@@ -3410,6 +3436,56 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           style={inputBase}
         />
 
+        {/* Category chip (CLAUDE.md "CATEGORIES" axis, color
+            family: orange / theme.color.burnt). Auto-resolved
+            from the name as the user types and from OFF tag
+            hints after a successful scan. Tap opens the picker
+            so the user can override when our inference is off.
+            The override flag inside the component locks the
+            value once they've picked, so further name typing
+            doesn't clobber the choice. */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Category</FieldLabel>
+        {(() => {
+          const t = typeId ? findFoodType(typeId) : null;
+          const tone = theme.color.burnt;
+          return (
+            <button
+              type="button"
+              className="mcm-focusable"
+              onClick={() => setPickerOpen("category")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 14px",
+                borderRadius: 999,
+                border: t
+                  ? `1px solid ${withAlpha(tone, 0.45)}`
+                  : `1px dashed ${theme.color.hairline}`,
+                background: t
+                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                  : "transparent",
+                color: t ? theme.color.ink : theme.color.inkMuted,
+                fontFamily: font.detail,
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 16,
+                cursor: "pointer",
+                transition: "background 200ms ease, border-color 200ms ease",
+              }}
+            >
+              {t ? (
+                <>
+                  <span style={{ fontSize: 18, lineHeight: 1, fontStyle: "normal" }}>{t.emoji}</span>
+                  <span>{t.label}</span>
+                </>
+              ) : (
+                <span>+ pick a category</span>
+              )}
+            </button>
+          );
+        })()}
+
         {/* Location segmented row — matches FloatingLocationDock
             color treatment so users see the same swatch system
             here as on the dock. */}
@@ -3515,6 +3591,187 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           />
         </div>
       )}
+
+      {pickerOpen === "category" && (
+        <MCMPickerSheet
+          kicker="Category"
+          title="What category does this fit?"
+          accent={theme.color.burnt}
+          options={FOOD_TYPES.map(t => ({
+            id: t.id, label: t.label, emoji: t.emoji, sub: t.blurb,
+          }))}
+          value={typeId}
+          onPick={(id) => {
+            setTypeId(id);
+            setTypeOverridden(true);
+            setPickerOpen(null);
+          }}
+          onClose={() => setPickerOpen(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// MCMPickerSheet — chip → modal-sheet picker per the CLAUDE.md
+// item-reference visual pattern. Bottom-anchored sheet, kicker
+// + title, searchable list, tap-to-select with active-row tint
+// in the axis accent color. Used by the AddDraftSheet's category
+// chip; reused by upcoming Stored In + State pickers.
+function MCMPickerSheet({ kicker, title, options = [], value, onPick, onClose, accent }) {
+  const { theme } = useTheme();
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(o =>
+      (o.label || "").toLowerCase().includes(q)
+      || (o.sub || "").toLowerCase().includes(q)
+    );
+  }, [options, query]);
+
+  // Esc closes — same keyboard pattern as the AddDraftSheet
+  // itself.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 70,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        background: "rgba(20,12,4,0.55)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose && onClose(); }}
+    >
+      <motion.div
+        initial={{ y: 32, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 360, damping: 32 }}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          maxHeight: "78vh",
+          margin: "0 12px 24px",
+          padding: "20px 18px 14px",
+          borderRadius: 20,
+          background: theme.color.glassFillHeavy,
+          border: `1px solid ${theme.color.glassBorder}`,
+          backdropFilter: "blur(24px) saturate(160%)",
+          WebkitBackdropFilter: "blur(24px) saturate(160%)",
+          boxShadow: "0 24px 60px rgba(20,12,4,0.40), 0 4px 16px rgba(20,12,4,0.20)",
+          display: "flex", flexDirection: "column",
+          ...THEME_TRANSITION,
+        }}
+      >
+        <div style={{
+          fontFamily: font.mono, fontSize: 11,
+          letterSpacing: "0.16em", textTransform: "uppercase",
+          color: accent || theme.color.inkMuted,
+          fontWeight: 600,
+        }}>
+          {kicker}
+        </div>
+        <div style={{
+          fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
+          fontSize: 22, color: theme.color.ink,
+          marginTop: 4, marginBottom: 14, letterSpacing: "-0.01em",
+        }}>
+          {title}
+        </div>
+        {options.length > 8 && (
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter…"
+            style={{
+              width: "100%",
+              border: `1px solid ${theme.color.hairline}`,
+              background: theme.color.glassFillHeavy,
+              color: theme.color.ink,
+              borderRadius: 10,
+              padding: "10px 12px",
+              fontFamily: font.sans, fontSize: 14,
+              outline: "none",
+              boxShadow: theme.shadow.inputInset,
+              marginBottom: 10,
+            }}
+          />
+        )}
+        <div style={{ overflowY: "auto", margin: "0 -4px" }}>
+          {filtered.map(o => {
+            const active = o.id === value;
+            return (
+              <button
+                key={o.id}
+                type="button"
+                className="mcm-focusable"
+                onClick={() => onPick && onPick(o.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 12,
+                  width: "100%",
+                  padding: "10px 12px",
+                  margin: "2px 0",
+                  borderRadius: 12,
+                  border: active
+                    ? `1px solid ${withAlpha(accent || theme.color.ink, 0.45)}`
+                    : "1px solid transparent",
+                  background: active
+                    ? `linear-gradient(${withAlpha(accent || theme.color.ink, 0.16)}, ${withAlpha(accent || theme.color.ink, 0.16)}), transparent`
+                    : "transparent",
+                  cursor: "pointer", textAlign: "left",
+                  color: theme.color.ink,
+                  transition: "background 160ms ease, border-color 160ms ease",
+                }}
+              >
+                {o.emoji && (
+                  <span style={{ fontSize: 22, lineHeight: 1, flexShrink: 0 }}>{o.emoji}</span>
+                )}
+                <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+                  <span style={{
+                    fontFamily: font.sans, fontSize: 15, fontWeight: 500,
+                    color: theme.color.ink,
+                  }}>
+                    {o.label}
+                  </span>
+                  {o.sub && (
+                    <span style={{
+                      fontFamily: font.detail, fontStyle: "italic", fontWeight: 400,
+                      fontSize: 13, color: theme.color.inkMuted, marginTop: 1,
+                    }}>
+                      {o.sub}
+                    </span>
+                  )}
+                </span>
+                {active && (
+                  <span style={{ color: accent || theme.color.ink, fontSize: 16 }}>✓</span>
+                )}
+              </button>
+            );
+          })}
+          {filtered.length === 0 && (
+            <div style={{
+              padding: "16px 12px",
+              fontFamily: font.sans, fontSize: 13,
+              color: theme.color.inkMuted, textAlign: "center",
+            }}>
+              Nothing matches "{query}".
+            </div>
+          )}
+        </div>
+      </motion.div>
     </div>
   );
 }
