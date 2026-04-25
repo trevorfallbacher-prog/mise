@@ -4299,13 +4299,70 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           );
         })()}
 
-        {/* Brand — typeahead surfaces the household's previously-
-            seen brands for the active canonical (sourced from
-            popular_package_sizes, ranked by observation count).
-            "Marketside" surfaces first for watermelon if the
-            household has bought a Marketside watermelon before.
-            Free-text still works — the input is the source of
-            truth, suggestions just shortcut the common cases. */}
+        {/* Expiration chip — null means shelf-stable (no clock).
+            Picker offers quick presets (1 week, 2 weeks, 1 month,
+            etc.) plus a custom-date escape hatch. PantryCard's
+            days-chip + spoilage aura kick in once a date is set. */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Expires</FieldLabel>
+        {(() => {
+          const now = new Date();
+          const days = expiresAt ? Math.round((expiresAt - now) / 86400000) : null;
+          const tone = "#c7a8d4"; // soft purple — semantically distinct from the
+                                   // 6 reserved axis colors so this chip doesn't
+                                   // collide with one of them visually.
+          const has = expiresAt instanceof Date;
+          const label = !has
+            ? "Doesn't expire"
+            : days <= 0 ? "Today"
+            : days === 1 ? "Tomorrow"
+            : days < 14 ? `In ${days} days`
+            : days < 30 ? `In ${Math.round(days / 7)} weeks`
+            : days < 365 ? `In ~${Math.round(days / 30)} months`
+            : `In ~${Math.round(days / 365)} years`;
+          return (
+            <button
+              type="button"
+              className="mcm-focusable"
+              onClick={() => setPickerOpen("expires")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 14px",
+                borderRadius: 999,
+                border: has
+                  ? `1px solid ${withAlpha(tone, 0.45)}`
+                  : `1px dashed ${theme.color.hairline}`,
+                background: has
+                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                  : "transparent",
+                color: has ? theme.color.ink : theme.color.inkMuted,
+                fontFamily: font.detail,
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 16,
+                cursor: "pointer",
+                transition: "background 200ms ease, border-color 200ms ease",
+              }}
+            >
+              <span>{label}</span>
+              <span aria-hidden style={{
+                fontSize: 11, color: theme.color.inkFaint,
+                fontStyle: "normal",
+              }}>▾</span>
+            </button>
+          );
+        })()}
+
+        {/* Brand — last identifying axis. Per the user's stated
+            progression, brand isn't how you find the canonical;
+            it's the final lookup once everything else is set
+            (canonical → state → package → fullness → expires →
+            brand) so the brand-nutrition / popular-package
+            observations can stamp the row with the most-precise
+            metadata available. The typeahead surfaces brands the
+            household has previously logged against this canonical;
+            free-text still works for one-offs. */}
         <FieldLabel theme={theme} style={{ marginTop: 14 }}>Brand <span style={{ opacity: 0.5 }}>(optional)</span></FieldLabel>
         <div style={{ position: "relative" }}>
           <input
@@ -4376,61 +4433,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </div>
           )}
         </div>
-
-        {/* Expiration chip — null means shelf-stable (no clock).
-            Picker offers quick presets (1 week, 2 weeks, 1 month,
-            etc.) plus a custom-date escape hatch. PantryCard's
-            days-chip + spoilage aura kick in once a date is set. */}
-        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Expires</FieldLabel>
-        {(() => {
-          const now = new Date();
-          const days = expiresAt ? Math.round((expiresAt - now) / 86400000) : null;
-          const tone = "#c7a8d4"; // soft purple — semantically distinct from the
-                                   // 6 reserved axis colors so this chip doesn't
-                                   // collide with one of them visually.
-          const has = expiresAt instanceof Date;
-          const label = !has
-            ? "Doesn't expire"
-            : days <= 0 ? "Today"
-            : days === 1 ? "Tomorrow"
-            : days < 14 ? `In ${days} days`
-            : days < 30 ? `In ${Math.round(days / 7)} weeks`
-            : days < 365 ? `In ~${Math.round(days / 30)} months`
-            : `In ~${Math.round(days / 365)} years`;
-          return (
-            <button
-              type="button"
-              className="mcm-focusable"
-              onClick={() => setPickerOpen("expires")}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "10px 14px",
-                borderRadius: 999,
-                border: has
-                  ? `1px solid ${withAlpha(tone, 0.45)}`
-                  : `1px dashed ${theme.color.hairline}`,
-                background: has
-                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                  : "transparent",
-                color: has ? theme.color.ink : theme.color.inkMuted,
-                fontFamily: font.detail,
-                fontStyle: "italic",
-                fontWeight: 400,
-                fontSize: 16,
-                cursor: "pointer",
-                transition: "background 200ms ease, border-color 200ms ease",
-              }}
-            >
-              <span>{label}</span>
-              <span aria-hidden style={{
-                fontSize: 11, color: theme.color.inkFaint,
-                fontStyle: "normal",
-              }}>▾</span>
-            </button>
-          );
-        })()}
         </>)}
 
         {/* Location segmented row — matches FloatingLocationDock
