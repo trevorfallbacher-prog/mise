@@ -2654,9 +2654,15 @@ function PantryCard({ item, onPick, tileLabel = null }) {
           </div>
         )}
         <div style={{
-          fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
+          // Kinescope (Typekit) — Adobe Fonts face that gives
+          // item names their own register, distinct from the
+          // tile-card display face (Pale Martini). Single
+          // weight 400, normal style — no italic. Fraunces
+          // italic stays as the fallback while Kinescope
+          // loads.
+          fontFamily: font.itemName, fontStyle: "normal", fontWeight: 400,
           fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
-          letterSpacing: "-0.01em",
+          letterSpacing: "0",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {item.name}
