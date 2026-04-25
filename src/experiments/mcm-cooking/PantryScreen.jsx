@@ -33,6 +33,7 @@ import {
   findIngredient, hubForIngredient, INGREDIENTS,
   inferCanonicalFromName, dbCanonicalsSnapshot,
   statesForIngredient, defaultStateFor, STATE_LABELS,
+  getIngredientInfo,
 } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { usePopularPackages } from "../../lib/usePopularPackages";
@@ -191,24 +192,30 @@ function classifyItem(raw) {
 // need a best-guess when the row doesn't carry an explicit
 // location. Matches the reserved-word defaults in CLAUDE.md.
 // Looks up the canonical's freshness window for the given
-// location, distinguishing sealed vs. opened state. Sealed reads
-// storage.shelfLife[loc] (or the flat shelfLifeDays anchor for
-// older canonicals). Opened reads storage.shelfLifeOpened[loc],
-// returning null when the canonical hasn't shipped opened-life
-// data yet — callers should preserve the existing sealed expiry
-// in that case rather than guessing.
-function shelfLifeFor(canonicalId, location, { opened = false } = {}) {
+// location, distinguishing sealed vs. opened state. The data
+// lives in INGREDIENT_INFO (a separate map from the bundled
+// INGREDIENTS array), so we go through getIngredientInfo()
+// which merges the JS map, subcategory fallback, and any
+// dbOverride from useIngredientInfo. Without this indirection
+// findIngredient(id).storage is undefined for every bundled
+// canonical and the auto-expiration silently dies.
+//
+// Pass an optional dbOverride (from useIngredientInfo's
+// getInfo) so DB-approved enrichment overrides bundled.
+function shelfLifeFor(canonicalId, location, { opened = false, dbOverride = null } = {}) {
   if (!canonicalId) return null;
   const ing = findIngredient(canonicalId);
-  if (!ing?.storage) return null;
+  const info = getIngredientInfo(ing, dbOverride);
+  const storage = info?.storage;
+  if (!storage) return null;
   if (opened) {
-    const op = ing.storage.shelfLifeOpened;
+    const op = storage.shelfLifeOpened;
     const days = op?.[location];
     return Number.isFinite(days) ? days : null;
   }
-  const sealed = ing.storage.shelfLife?.[location];
+  const sealed = storage.shelfLife?.[location];
   if (Number.isFinite(sealed)) return sealed;
-  const flat = ing.storage.shelfLifeDays;
+  const flat = storage.shelfLifeDays;
   return Number.isFinite(flat) ? flat : null;
 }
 
@@ -3408,7 +3415,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // synthetic-canonical Map that registerCanonicalsFromDb
   // populates from dbMap on every refresh, so we depend on the
   // map identity to invalidate the merged search list.
-  const { dbMap } = useIngredientInfo();
+  const { dbMap, getInfo: getDbInfo } = useIngredientInfo();
   // dbMap identity is the invalidation signal — when the
   // provider refreshes (initial fetch / admin approval /
   // realtime update), dbMap swaps reference and the snapshot
@@ -3470,14 +3477,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   const autoDays = useMemo(() => {
     if (!canonicalId) return null;
     const opened = remaining < 0.999;
-    const days = shelfLifeFor(canonicalId, location, { opened });
+    const dbOverride = getDbInfo(canonicalId);
+    const days = shelfLifeFor(canonicalId, location, { opened, dbOverride });
     if (Number.isFinite(days)) return days;
-    // Opened with no opened-data → fall through to sealed
-    // window so the user still gets a clock. Better than null
-    // when we have something to offer.
-    if (opened) return shelfLifeFor(canonicalId, location, { opened: false });
+    if (opened) return shelfLifeFor(canonicalId, location, { opened: false, dbOverride });
     return null;
-  }, [canonicalId, location, remaining]);
+  }, [canonicalId, location, remaining, getDbInfo]);
 
   const filteredBrandSuggestions = useMemo(() => {
     const q = brand.trim().toLowerCase();
