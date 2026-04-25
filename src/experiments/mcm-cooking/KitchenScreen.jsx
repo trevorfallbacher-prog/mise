@@ -14,29 +14,33 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
 import {
-  WarmBackdrop, GlassPanel, PrimaryButton,
-  StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
-  GlassPill, BottomDock, BackChip,
+  WarmBackdrop, GlassPanel,
+  StatusDot, Kicker, SerifHeader, FadeIn,
+  BottomDock,
   withAlpha,
 } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
-import { font, radius } from "./tokens";
+import { font } from "./tokens";
 
 // Tile system — re-using the exact same classifier the classic
 // Kitchen tile view uses, so an item that lives under "Dairy & Eggs"
 // in the old UI lives in the SAME tile here. Location axis (fridge
 // / pantry / freezer) sits above the tile axis per CLAUDE.md.
-import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 import {
   LOCATIONS, NAV_TABS,
   toCard,
-  sumLocationTiles, firstExpiring, sortItems,
+  sumLocationTiles, firstExpiring, sortItems, isRecent,
 } from "./helpers";
 import { ReceiptButton, CartButton } from "./HeroToolbar";
-import { FloatingLocationDock, LOCATION_DOT } from "./FloatingLocationDock";
+import { FloatingLocationDock } from "./FloatingLocationDock";
 import { TileGrid } from "./TileGrid";
 import { ItemGrid } from "./ItemGrid";
 import { DrilledTileHeader } from "./DrilledTileHeader";
+import { TriageCTA, FreshCTA, ShowcaseDemoCTA } from "./BottomCTA";
+import { TileGridSkeleton } from "./TileGridSkeleton";
+import { EmptyState, LocationEmptyState } from "./EmptyStates";
+import { SearchSummary, SearchGlyph } from "./SearchSummary";
+import { useNow, formatClock } from "./useNow";
 
 // Hardcoded demo items — only used when KitchenScreen is rendered
 // standalone (Showcase.jsx) without an `items` prop. Kept so the
@@ -258,11 +262,20 @@ export default function KitchenScreen({
 
   // Search bypasses the tile hierarchy — show matching items
   // from anywhere so the user doesn't have to remember which
-  // tile their grocery-run brand ended up in.
+  // tile their grocery-run brand ended up in. Matches against
+  // name, brand, food-type label, and broad category label so a
+  // user typing "kerrygold", "cheese", or "dairy" all surface
+  // useful hits — not just exact name substrings.
   const searchHits = useMemo(() => {
     if (!query) return null;
     const q = query.toLowerCase();
-    return cards.filter(it => it.name.toLowerCase().includes(q));
+    return cards.filter(it => {
+      if (it.name && it.name.toLowerCase().includes(q)) return true;
+      if (it.brand && it.brand.toLowerCase().includes(q)) return true;
+      if (it.typeLabel && it.typeLabel.toLowerCase().includes(q)) return true;
+      if (it.location && it.location.toLowerCase().includes(q)) return true;
+      return false;
+    });
   }, [cards, query]);
 
   const goodCount = cards.filter((i) => i.status === "ok").length;
@@ -327,6 +340,34 @@ export default function KitchenScreen({
     for (const loc of Object.keys(cardsByLocTile)) {
       for (const tileId of Object.keys(cardsByLocTile[loc])) {
         const n = cardsByLocTile[loc][tileId].filter(c => c.status === "warn").length;
+        if (n > 0) map[`${loc}:${tileId}`] = n;
+      }
+    }
+    return map;
+  }, [cardsByLocTile]);
+
+  // Distinct brands across the whole pantry — surfaced as
+  // suggestions when the user taps "+ ADD BRAND" on a card whose
+  // brand is unset. Computed once over `cards` so a 200-row
+  // pantry doesn't re-walk on every keystroke inside the picker.
+  const brandSuggestions = useMemo(() => {
+    const set = new Set();
+    for (const c of cards) {
+      if (c.brand) set.add(c.brand);
+    }
+    return [...set];
+  }, [cards]);
+
+  // Per-tile recently-added count — how many items landed in this
+  // tile in the last 24h (isRecent threshold). Surfaces a small
+  // teal "+N new" hint on the tile card so a fresh grocery run is
+  // visible at the browse layer without having to drill in. Same
+  // key shape as warnCountByTile.
+  const newCountByTile = useMemo(() => {
+    const map = {};
+    for (const loc of Object.keys(cardsByLocTile)) {
+      for (const tileId of Object.keys(cardsByLocTile[loc])) {
+        const n = cardsByLocTile[loc][tileId].filter(isRecent).length;
         if (n > 0) map[`${loc}:${tileId}`] = n;
       }
     }
@@ -411,6 +452,10 @@ export default function KitchenScreen({
            iPhone mini viewport. */
         @media (max-width: 420px) {
           .mcm-tile-blurb { display: none !important; }
+          /* Hide the desktop "esc" hint on narrow phones — there's
+             no physical keyboard there, so the chip is just visual
+             noise crowding the search bar's right edge. */
+          .mcm-kbd-hint { display: none !important; }
         }
       `}</style>
       <WarmBackdrop />
@@ -676,12 +721,38 @@ export default function KitchenScreen({
               <button
                 onClick={() => setQuery("")}
                 aria-label="Clear search"
+                title="Clear search (Esc)"
                 className="mcm-focusable"
                 style={{
                   border: "none", background: "transparent", cursor: "pointer",
                   color: theme.color.inkMuted, fontFamily: font.mono, fontSize: 12,
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  padding: 0,
                 }}
               >
+                {/* Tiny kbd-style cap for the Esc shortcut. Hidden
+                    on narrow phones (no physical keyboard) via a
+                    media-query class so it doesn't crowd the row;
+                    desktop users get the shortcut surfaced inline
+                    next to the click affordance. */}
+                <span
+                  className="mcm-kbd-hint"
+                  aria-hidden
+                  style={{
+                    fontFamily: font.mono, fontSize: 9,
+                    fontWeight: 500,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    padding: "1px 5px",
+                    borderRadius: 4,
+                    border: `1px solid ${theme.color.hairline}`,
+                    background: theme.color.glassFillLite,
+                    color: theme.color.inkFaint,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  esc
+                </span>
                 CLEAR
               </button>
             )}
@@ -833,8 +904,8 @@ export default function KitchenScreen({
               // population feels continuous rather than strobing
               // between ghost and real.
               if (loading && cards.length === 0) return <TileGridSkeleton />;
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} showTileContext />;
-              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} />;
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} brandSuggestions={brandSuggestions} showTileContext />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} brandSuggestions={brandSuggestions} />;
               // Whole-location empty state — when the active
               // location has zero items, skip the wall of dimmed
               // tiles and show a warm dedicated message instead.
@@ -849,6 +920,7 @@ export default function KitchenScreen({
                   location={activeLocation}
                   cardsByTile={cardsByLocTile[locationTab] || {}}
                   warnCountByTile={warnCountByTile}
+                  newCountByTile={newCountByTile}
                   onPickTile={setDrilledTile}
                 />
               );
@@ -878,41 +950,7 @@ export default function KitchenScreen({
             Neither CTA shows while drilled or searching — the
             active flow already has its own focus. */}
         {!drilledTile && !query && onStartCooking && !onOpenItem && (
-          <FadeIn delay={0.12}>
-            <GlassPanel
-              tone="warm"
-              padding={18}
-              style={{
-                marginTop: 28,
-                display: "flex", alignItems: "center", gap: 14,
-                position: "relative", overflow: "hidden",
-              }}
-            >
-              <Starburst
-                size={140}
-                color="rgba(217,107,43,0.14)"
-                style={{ position: "absolute", top: -40, right: -40 }}
-              />
-              <div style={{ fontSize: 36, lineHeight: 1 }}>🍳</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Kicker tone={theme.color.burnt}>Ready when you are</Kicker>
-                <div style={{
-                  fontFamily: font.serif, fontStyle: "italic", fontWeight: 300,
-                  fontSize: 20, color: theme.color.ink, marginTop: 2, letterSpacing: "-0.01em",
-                }}>
-                  Lemon-butter pasta
-                </div>
-                <div style={{
-                  fontFamily: font.sans, fontSize: 12, color: theme.color.inkMuted, marginTop: 2,
-                }}>
-                  6 of 7 ingredients on hand · 18 min
-                </div>
-              </div>
-              <PrimaryButton onClick={onStartCooking} style={{ padding: "12px 18px", fontSize: 14 }}>
-                Cook
-              </PrimaryButton>
-            </GlassPanel>
-          </FadeIn>
+          <ShowcaseDemoCTA onStartCooking={onStartCooking} />
         )}
 
         {!drilledTile && !query && onOpenItem && warnCount > 0 && (
@@ -920,6 +958,21 @@ export default function KitchenScreen({
             warnCount={warnCount}
             firstExpiring={firstExpiring(cards)}
             onOpenItem={onOpenItem}
+          />
+        )}
+
+        {/* Positive CTA — shows in real mode when the pantry is
+            healthy (no warn items, but stocked). Gives the user a
+            forward path into the cook/plan flow instead of an
+            empty surface below the tile grid. Only renders when
+            `onStartCooking` is wired (App.jsx → setTab("plan"));
+            falls silent in Showcase mode (onOpenItem null) or
+            when there's nothing on the shelves. */}
+        {!drilledTile && !query && onOpenItem && warnCount === 0 && cards.length > 0 && onStartCooking && (
+          <FreshCTA
+            cards={cards}
+            cardsByLocTile={cardsByLocTile}
+            onStartCooking={onStartCooking}
           />
         )}
       </div>
@@ -968,427 +1021,6 @@ export default function KitchenScreen({
   );
 }
 
-// --- Sub-components ------------------------------------------------------
-
-// Triage CTA — the real-mode replacement for the design-demo
-// "Cook · Lemon-butter pasta" card. Only renders in real-items
-// mode (when onOpenItem is wired) AND only when there are warn
-// items to triage. Copy pivots with count: singular / plural /
-// "all gone today" flavor. Tap opens the single most-urgent
-// item's editor via the same shared overlay the tile cards use.
-// When count > 1, the button's label doubles as "see all" and
-// we pre-select the FIRST-expiring row — user can close and
-// re-open from the pantry to reach the next one, rather than
-// the CTA itself becoming a list.
-function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
-  const { theme } = useTheme();
-  if (!firstExpiring) return null;
-  const days = firstExpiring.days;
-  const daysCopy = days == null
-    ? "now"
-    : days < 0
-      ? "already past"
-      : days === 0
-        ? "today"
-        : `in ${days} day${days === 1 ? "" : "s"}`;
-  const kicker = warnCount === 1 ? "One to use soon" : `${warnCount} to use soon`;
-  const body = firstExpiring.name;
-  const sub = `Expires ${daysCopy}${firstExpiring.brand ? ` · ${firstExpiring.brand}` : ""}`;
-  return (
-    <FadeIn delay={0.12}>
-      <GlassPanel
-        tone="warm"
-        padding={18}
-        style={{
-          marginTop: 28,
-          display: "flex", alignItems: "center", gap: 14,
-          position: "relative", overflow: "hidden",
-        }}
-      >
-        {/* Left accent rule — a 4px wide burnt strip running the
-            full height of the card. Same magazine pull-quote
-            cue that says "this side bar has something urgent to
-            tell you." Positioned absolute so it hugs the card
-            edge regardless of padding; rounds with the panel's
-            corner via inherit so it doesn't stick out past the
-            rounded-rect shape. */}
-        <span
-          aria-hidden
-          style={{
-            position: "absolute",
-            left: 0, top: 0, bottom: 0,
-            width: 4,
-            background: theme.color.burnt,
-            borderTopLeftRadius: "inherit",
-            borderBottomLeftRadius: "inherit",
-          }}
-        />
-        <Starburst
-          size={140}
-          color="rgba(217,107,43,0.14)"
-          style={{ position: "absolute", top: -40, right: -40 }}
-        />
-        {/* Icon slot — prefers the expiring item's own icon /
-            emoji (bread loaf for sourdough, chicken for chicken,
-            etc.) so the card reads as "THIS is the thing" rather
-            than a generic hourglass. Falls back to ⏳ only when
-            nothing's resolvable. Marked marginLeft:4 so it
-            doesn't sit on the burnt accent rule. */}
-        {(() => {
-          const raw = firstExpiring?._raw || null;
-          const iconUrl = canonicalImageUrlFor(raw?.canonicalId || null, null);
-          const emoji = firstExpiring?.emoji || "⏳";
-          if (iconUrl) {
-            return (
-              <img
-                src={iconUrl}
-                alt=""
-                aria-hidden
-                style={{
-                  width: 44, height: 44, objectFit: "contain",
-                  marginLeft: 4,
-                  filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-                }}
-              />
-            );
-          }
-          return (
-            <div style={{
-              // 42px so the emoji fallback matches the 44×44 img
-              // render visual weight (emoji glyph boxes cap at
-              // ~95% of fontSize).
-              fontSize: 42, lineHeight: 1, marginLeft: 4,
-              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-            }}>{emoji}</div>
-          );
-        })()}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Kicker tone={theme.color.burnt}>{kicker}</Kicker>
-          <div style={{
-            // Pale Martini display face — sits in the same
-            // typographic family as the hero + drilled header
-            // so the bottom CTA reads as a continuation of the
-            // page, not a separate component. Single weight,
-            // no variable axes.
-            fontFamily: font.display,
-            fontWeight: 400,
-            fontSize: 20, color: theme.color.ink, marginTop: 2,
-            letterSpacing: "0.02em",
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
-            {body}
-          </div>
-          <div style={{
-            fontFamily: font.sans, fontSize: 12, color: theme.color.inkMuted, marginTop: 2,
-            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          }}>
-            {sub}
-          </div>
-        </div>
-        <PrimaryButton
-          onClick={() => onOpenItem(firstExpiring._raw)}
-          style={{ padding: "12px 18px", fontSize: 14 }}
-        >
-          Open
-        </PrimaryButton>
-      </GlassPanel>
-    </FadeIn>
-  );
-}
-
-// Skeleton tile grid — shown while the initial pantry query is
-// in flight and nothing has loaded yet. Renders six ghost cards
-// with shimmering placeholder blocks where the icon / label /
-// count pill would go. Once a single real card lands the
-// skeleton unmounts via the AnimatePresence body crossfade, so
-// loading → real feels like a soft fade rather than a content
-// flash. Shimmer is a CSS keyframe applied via the global style
-// tag at the top of KitchenScreen so each ghost block uses the
-// same animation timeline (they all pulse together rather than
-// stagger, which reads as "waiting" better than a wave of
-// independent animations).
-const SKELETON_COUNT = 6;
-function TileGridSkeleton() {
-  const { theme } = useTheme();
-  const block = (w, h) => ({
-    width: w, height: h,
-    borderRadius: 6,
-    background: withAlpha(theme.color.ink, 0.06),
-    animation: "mcm-skeleton-pulse 1.6s ease-in-out infinite",
-  });
-  return (
-    <div style={{
-      display: "grid",
-      // Matches TileGrid's auto-fit columns and gap so the
-      // skeleton → real transition doesn't reflow widths.
-      gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-      gap: 12,
-      marginTop: 20,
-    }}>
-      {Array.from({ length: SKELETON_COUNT }).map((_, i) => (
-        <GlassPanel
-          key={i}
-          padding={14}
-          style={{
-            // Mirror the new horizontal TileCard layout so the
-            // skeleton looks like the real thing is about to
-            // land there — icon left, text column right.
-            display: "flex", flexDirection: "row", alignItems: "center", gap: 14,
-            minHeight: 96,
-            opacity: 0.7,
-          }}
-        >
-          <div style={{ ...block(56, 56), borderRadius: 10, flexShrink: 0 }} />
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-              <div style={{ ...block("60%", 16) }} />
-              <div style={{ ...block(32, 12) }} />
-            </div>
-            <div style={block("80%", 11)} />
-          </div>
-        </GlassPanel>
-      ))}
-    </div>
-  );
-}
-
-// Empty state — shown when a drilled tile has no items OR a
-// search returns zero hits. Uses a small Starburst ornament
-// behind the copy (same motif the WarmBackdrop uses, just
-// smaller and centered) so the "nothing here" moment still
-// feels like part of the design system rather than a bare
-// error screen. Copy is warmer than plain "Nothing matches"
-// — pantries are a personal space, and empty states are a
-// good chance to sound human.
-
-// Whole-location empty state — shown when the active location
-// (Fridge / Pantry / Freezer) has zero items in any tile. Skips
-// the visual noise of a grayed-out tile wall and gives the user
-// a clear "this whole shelf is bare" moment with the location's
-// own swatch color tying the message to the dock segment they're
-// on.
-function LocationEmptyState({ location }) {
-  const { theme } = useTheme();
-  const dotColor = LOCATION_DOT[location.id] || theme.color.inkMuted;
-  const copy = {
-    fridge:  "Your fridge is empty. Time for a grocery run.",
-    pantry:  "The pantry shelves are bare.",
-    freezer: "Nothing in the freezer yet.",
-  }[location.id] || "Nothing on these shelves yet.";
-  return (
-    <FadeIn>
-      <div style={{
-        position: "relative",
-        marginTop: 48,
-        padding: "60px 20px",
-        textAlign: "center",
-        overflow: "hidden",
-      }}>
-        <Starburst
-          size={220}
-          color={withAlpha(dotColor, 0.18)}
-          style={{
-            position: "absolute",
-            top: "50%", left: "50%",
-            transform: "translate(-50%, -50%)",
-            pointerEvents: "none",
-            zIndex: 0,
-          }}
-        />
-        <div style={{ position: "relative", zIndex: 1 }}>
-          {/* Big colored dot — same swatch color as the active
-              dock segment, so the empty-state visually ties to
-              "yes, this is the location you picked." */}
-          <div style={{
-            display: "inline-block",
-            width: 16, height: 16,
-            borderRadius: "50%",
-            background: dotColor,
-            boxShadow: `0 0 0 6px ${withAlpha(dotColor, 0.18)}, 0 2px 4px rgba(30,20,8,0.20)`,
-            marginBottom: 18,
-          }} />
-          <div style={{
-            fontFamily: font.serif, fontStyle: "italic",
-            fontSize: 22, lineHeight: 1.2,
-            color: theme.color.ink,
-            letterSpacing: "-0.01em",
-          }}>
-            {copy}
-          </div>
-        </div>
-      </div>
-    </FadeIn>
-  );
-}
-
-function EmptyState({ kind, query, tile }) {
-  const { theme } = useTheme();
-  const title = kind === "no-matches"
-    ? `Nothing called "${query}"`
-    : tile
-      ? `${tile.label} is bare`
-      : "This tile is empty";
-  const body = kind === "no-matches"
-    ? "Try a different name, or tap a location tab to browse the shelves."
-    : "Scan a grocery receipt or add items manually to stock this shelf.";
-  return (
-    <FadeIn>
-      <div style={{
-        position: "relative",
-        marginTop: 48,
-        padding: "48px 20px",
-        textAlign: "center",
-        overflow: "hidden",
-      }}>
-        <Starburst
-          size={200}
-          color={withAlpha(theme.color.warmBrown, 0.08)}
-          style={{
-            position: "absolute",
-            top: "50%", left: "50%",
-            transform: "translate(-50%, -50%)",
-            pointerEvents: "none",
-            zIndex: 0,
-          }}
-        />
-        <div style={{ position: "relative", zIndex: 1 }}>
-          <div style={{
-            fontFamily: font.serif, fontStyle: "italic",
-            fontSize: 22, lineHeight: 1.2,
-            color: theme.color.ink,
-            letterSpacing: "-0.01em",
-          }}>
-            {title}
-          </div>
-          <div style={{
-            marginTop: 8,
-            fontFamily: font.sans, fontSize: 13,
-            color: theme.color.inkMuted,
-            lineHeight: 1.5,
-            maxWidth: 300,
-            margin: "8px auto 0",
-          }}>
-            {body}
-          </div>
-        </div>
-      </div>
-    </FadeIn>
-  );
-}
-
-// Search summary — shown above the flat search-hits grid. Tells
-// the user how many hits and which locations they span, so a
-// query that returns matches across multiple tabs (e.g. butter
-// in both fridge and freezer) surfaces that distribution without
-// making them count rows by hand.
-function SearchSummary({ hits, query, onClear }) {
-  const { theme } = useTheme();
-  const total = hits.length;
-  // Per-location counts — "butter" search finds 1 in fridge + 1
-  // in freezer, this line says "Found 2 · 1 fridge · 1 freezer".
-  const byLoc = { fridge: 0, pantry: 0, freezer: 0 };
-  for (const h of hits) {
-    if (byLoc[h._location] != null) byLoc[h._location] += 1;
-  }
-  const parts = ["fridge", "pantry", "freezer"]
-    .filter(loc => byLoc[loc] > 0)
-    .map(loc => `${byLoc[loc]} ${loc}`);
-
-  return (
-    <div style={{
-      marginTop: 20,
-      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
-      flexWrap: "wrap",
-    }}>
-      <div
-        // aria-live="polite" announces the result count + location
-        // distribution to screen readers without interrupting the
-        // user's typing. Sighted users see the same readout but
-        // passively; assistive-tech users get a meaningful update
-        // instead of an opaque "something changed" moment.
-        aria-live="polite"
-        aria-atomic="true"
-        style={{
-        fontFamily: font.mono, fontSize: 11,
-        letterSpacing: "0.06em",
-        color: theme.color.skyInkMuted,
-        textTransform: "uppercase",
-      }}>
-        {total === 0 ? (
-          <>No matches for "{query}"</>
-        ) : (
-          <>
-            Found {total}
-            {parts.length > 0 && <span style={{ opacity: 0.6 }}> · {parts.join(" · ")}</span>}
-          </>
-        )}
-      </div>
-      <button
-        onClick={onClear}
-        style={{
-          fontFamily: font.mono, fontSize: 10,
-          letterSpacing: "0.08em", textTransform: "uppercase",
-          padding: "4px 10px",
-          borderRadius: 999,
-          border: `1px solid ${theme.color.hairline}`,
-          background: theme.color.glassFillLite,
-          color: theme.color.inkMuted,
-          cursor: "pointer",
-          ...THEME_TRANSITION,
-        }}
-      >
-        Clear search
-      </button>
-    </div>
-  );
-}
-
-
-// Live clock — `now` state updates once a minute. Not every
-// second: the kicker only renders "TUESDAY · 4:12 PM" precision
-// so a second-tick would re-render the whole screen for nothing.
-// Scheduled at each minute BOUNDARY (not every 60s from mount)
-// so when the minute rolls the display flips immediately rather
-// than drifting up to 59s behind the wall clock.
-function useNow() {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    let alive = true;
-    const schedule = () => {
-      const msUntilNextMinute = 60000 - (Date.now() % 60000);
-      return setTimeout(() => {
-        if (!alive) return;
-        setNow(new Date());
-        timer = schedule();
-      }, msUntilNextMinute);
-    };
-    let timer = schedule();
-    return () => { alive = false; clearTimeout(timer); };
-  }, []);
-  return now;
-}
-
-// "TUESDAY · 4:12 PM" — uppercase day + 12-hour local time.
-// Kicker component already uppercases via letter-spacing /
-// fontFeatureSettings but we send it uppercase to avoid a
-// rendering pop when the style hasn't loaded yet.
-function formatClock(now) {
-  const day = now.toLocaleDateString(undefined, { weekday: "long" }).toUpperCase();
-  const time = now.toLocaleTimeString(undefined, {
-    hour: "numeric", minute: "2-digit", hour12: true,
-  }).toUpperCase();
-  return `${day} · ${time}`;
-}
-
-function SearchGlyph() {
-  const { theme } = useTheme();
-  return (
-    <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden>
-      <circle cx="11" cy="11" r="7" fill="none" stroke={theme.color.inkMuted} strokeWidth="1.6" />
-      <path d="M16.5 16.5 L21 21" stroke={theme.color.inkMuted} strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
-}
 
 // MCMAddDraftSheet lives in its own file but App.jsx imports it
 // alongside the default export, so re-export here for back-compat.
