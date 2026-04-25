@@ -3905,13 +3905,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const completed = steps.filter(s => s.done).length;
           const total = steps.length;
           const ready = completed === total;
-          const tone = ready ? theme.color.teal : theme.color.mustard;
           const nextStep = steps.find(s => !s.done);
-          const captionKey = ready ? "ready" : `${completed}-${nextStep?.id || "next"}`;
-          // Avatar always renders — 4 emotional states map
-          // cleanly to 4 thresholds (0..3 done): 0=Step1
-          // (most frustrated, form just opened), 1=Step2,
-          // 2=Step3 (almost there), 3=Step4 (ready).
+          // Avatar mapping — 4 emotional states for 4 thresholds
+          // (0..3 done). Humans count from 1, so what we render
+          // as stateIndex 0..3 is step 1..4 in user-facing copy.
           const stateIndex = Math.min(completed, 3);
           const stateSrc = [
             "/icons/AddItemProgression/Step1.svg",
@@ -3919,6 +3916,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             "/icons/AddItemProgression/Step%203.svg",
             "/icons/AddItemProgression/Step4.svg",
           ][stateIndex];
+          // Per-state palette pulled from each avatar's
+          // background tint — meter fill + caption text shift
+          // to match her so the strip reads as one mood with
+          // her as the anchor. Step 4 (ready) keeps the prior
+          // theme teal which already worked.
+          const stateColors = ["#4a8e92", "#eac289", "#79a49c", theme.color.teal];
+          const tone = stateColors[stateIndex];
+          const captionKey = ready ? "ready" : `step-${stateIndex}-${nextStep?.id || "next"}`;
           return (
             // Sticky to the top of the scrolling sheet so the
             // user keeps a fixed anchor while content reflows
@@ -4018,7 +4023,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                       </>
                     ) : (
                       <>
-                        {completed} of {total} · add {nextStep ? nextStep.label : "more"} next
+                        Step {completed + 1} · add {nextStep ? nextStep.label : "more"} next
                       </>
                     )}
                   </motion.div>
