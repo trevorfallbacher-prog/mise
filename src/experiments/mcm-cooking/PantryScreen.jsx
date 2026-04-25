@@ -3284,11 +3284,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // canonical changes.
   const [state, setState] = useState(seed.state || null);
   const [stateOverridden, setStateOverridden] = useState(!!seed.state);
-  // Expiration — null means shelf-stable (no clock). When set,
-  // PantryCard's days-to-expire chip + spoilage aura kick in.
-  // Stored as a Date (or null) to match the rest of the app's
-  // expiresAt convention.
-  const [expiresAt, setExpiresAt] = useState(seed.expiresAt instanceof Date ? seed.expiresAt : null);
+  // Expiration — three states:
+  //   "auto" sentinel — system computes the freshness window
+  //     from the canonical's storage.shelfLife at submit time,
+  //     anchored to "now" (the moment the item enters the
+  //     kitchen). Default for new adds.
+  //   null — explicit shelf-stable (no clock).
+  //   Date — explicit user-picked date.
+  // On submit, "auto" resolves to a Date or null based on what
+  // the canonical's metadata can offer.
+  const [expiresAt, setExpiresAt] = useState(
+    seed.expiresAt instanceof Date ? seed.expiresAt
+    : seed.expiresAt === null ? null
+    : "auto"
+  );
   const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit" | "expires" | "state"
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
@@ -3366,6 +3375,27 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   }, [canonicalId, canonicalBrandObservations]);
   const [brandFocused, setBrandFocused] = useState(false);
   const [suppressBrandTypeahead, setSuppressBrandTypeahead] = useState(false);
+  // Auto-expiry preview — looks up the canonical's storage
+  // shelfLife and indexes by the user's picked location. Returns
+  // days (number) or null when the canonical has no data for
+  // that location (e.g. fresh produce in the freezer when the
+  // canonical doesn't ship a freezer entry). Used both to
+  // render "Auto · in ~N days" on the pill AND to materialize
+  // the actual Date on submit.
+  const autoDays = useMemo(() => {
+    if (!canonicalId) return null;
+    const ing = findIngredient(canonicalId);
+    const sl = ing?.storage?.shelfLife;
+    if (!sl) {
+      // Older canonicals only ship the flat shelfLifeDays
+      // anchor — use that when the per-location map is missing.
+      const flat = ing?.storage?.shelfLifeDays;
+      return Number.isFinite(flat) ? flat : null;
+    }
+    const days = sl[location];
+    return Number.isFinite(days) ? days : null;
+  }, [canonicalId, location]);
+
   const filteredBrandSuggestions = useMemo(() => {
     const q = brand.trim().toLowerCase();
     const list = q
@@ -3583,7 +3613,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // setPantry path lets the existing classify logic fill
       // the gap if so.
       tileId: tileId || null,
-      expiresAt: expiresAt instanceof Date ? expiresAt : null,
+      expiresAt: (() => {
+        if (expiresAt instanceof Date) return expiresAt;
+        if (expiresAt === null) return null;
+        // "auto" — materialize from the canonical's freshness
+        // window relative to now. If we have no days the row
+        // lands shelf-stable, which matches "we don't know".
+        if (expiresAt === "auto" && Number.isFinite(autoDays) && autoDays > 0) {
+          const d = new Date();
+          d.setDate(d.getDate() + autoDays);
+          d.setHours(23, 59, 0, 0);
+          return d;
+        }
+        return null;
+      })(),
       // Carry the scanned UPC (when present) so future scans
       // of the same barcode pick up corrections via
       // findBarcodeCorrection.
@@ -4382,26 +4425,41 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           );
         })()}
 
-        {/* Expiration chip — null means shelf-stable (no clock).
-            Picker offers quick presets (1 week, 2 weeks, 1 month,
-            etc.) plus a custom-date escape hatch. PantryCard's
-            days-chip + spoilage aura kick in once a date is set. */}
+        {/* Expiration chip — three states:
+            • "auto" — system computes from the canonical's
+              storage.shelfLife at submit. Default for new adds.
+              Pill shows a preview ("Auto · ~14 days") when the
+              canonical exposes a shelf-life window.
+            • null — explicit shelf-stable, no clock.
+            • Date — explicit user pick.
+            PantryCard's days-chip + spoilage aura kick in once
+            a date materializes. */}
         <FieldLabel theme={theme} style={{ marginTop: 14 }}>Expires</FieldLabel>
         {(() => {
-          const now = new Date();
-          const days = expiresAt ? Math.round((expiresAt - now) / 86400000) : null;
-          const tone = "#c7a8d4"; // soft purple — semantically distinct from the
-                                   // 6 reserved axis colors so this chip doesn't
-                                   // collide with one of them visually.
-          const has = expiresAt instanceof Date;
-          const label = !has
-            ? "Doesn't expire"
-            : days <= 0 ? "Today"
-            : days === 1 ? "Tomorrow"
-            : days < 14 ? `In ${days} days`
-            : days < 30 ? `In ${Math.round(days / 7)} weeks`
-            : days < 365 ? `In ~${Math.round(days / 30)} months`
-            : `In ~${Math.round(days / 365)} years`;
+          const tone = "#c7a8d4"; // soft purple — semantically distinct
+          const isAuto = expiresAt === "auto";
+          const isDate = expiresAt instanceof Date;
+          const isShelfStable = expiresAt === null;
+          let label;
+          if (isAuto) {
+            label = autoDays
+              ? `Auto · in ~${autoDays} day${autoDays === 1 ? "" : "s"}`
+              : "Auto";
+          } else if (isShelfStable) {
+            label = "Doesn't expire";
+          } else if (isDate) {
+            const now = new Date();
+            const days = Math.round((expiresAt - now) / 86400000);
+            label = days <= 0 ? "Today"
+              : days === 1 ? "Tomorrow"
+              : days < 14 ? `In ${days} days`
+              : days < 30 ? `In ${Math.round(days / 7)} weeks`
+              : days < 365 ? `In ~${Math.round(days / 30)} months`
+              : `In ~${Math.round(days / 365)} years`;
+          }
+          // Treat any non-null value (auto OR explicit date) as
+          // "set" for visual state — both carry an active clock.
+          const active = isAuto || isDate;
           return (
             <button
               type="button"
@@ -4413,13 +4471,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 gap: 8,
                 padding: "10px 14px",
                 borderRadius: 999,
-                border: has
+                border: active
                   ? `1px solid ${withAlpha(tone, 0.45)}`
                   : `1px dashed ${theme.color.hairline}`,
-                background: has
+                background: active
                   ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
                   : "transparent",
-                color: has ? theme.color.ink : theme.color.inkMuted,
+                color: active ? theme.color.ink : theme.color.inkMuted,
                 fontFamily: font.detail,
                 fontStyle: "italic",
                 fontWeight: 400,
@@ -4687,19 +4745,23 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         );
       })()}
       {pickerOpen === "expires" && (() => {
-        // Quick presets keyed by relative-day offset. The
-        // "shelf-stable" option clears the date entirely so
-        // PantryCard hides the days-chip + spoilage aura.
+        // Auto leads — system-derived expiry from the canonical's
+        // shelf-life data. Auto's sub-line previews the
+        // estimate when the canonical exposes one.
+        const autoSub = autoDays
+          ? `~${autoDays} day${autoDays === 1 ? "" : "s"} from today`
+          : "Smart guess from the canonical";
         const presets = [
-          { id: "none",    label: "Doesn't expire", sub: "Shelf-stable", days: null },
-          { id: "today",   label: "Today",          sub: "Use it now",   days: 0 },
-          { id: "3d",      label: "3 days",         sub: "Fresh produce, leftovers", days: 3 },
-          { id: "1w",      label: "1 week",         sub: "Most fridge items", days: 7 },
-          { id: "2w",      label: "2 weeks",        sub: "Cured meats, hard cheese", days: 14 },
-          { id: "1m",      label: "1 month",        sub: "Dairy with seal",   days: 30 },
-          { id: "3m",      label: "3 months",       sub: "Pantry / freezer",  days: 90 },
-          { id: "6m",      label: "6 months",       sub: "Long-life pantry",  days: 180 },
-          { id: "1y",      label: "1 year",         sub: "Canned, dry goods", days: 365 },
+          { id: "auto",    label: "Auto",           sub: autoSub,                      kind: "auto" },
+          { id: "none",    label: "Doesn't expire", sub: "Shelf-stable",               kind: "none" },
+          { id: "today",   label: "Today",          sub: "Use it now",                 days: 0 },
+          { id: "3d",      label: "3 days",         sub: "Fresh produce, leftovers",   days: 3 },
+          { id: "1w",      label: "1 week",         sub: "Most fridge items",          days: 7 },
+          { id: "2w",      label: "2 weeks",        sub: "Cured meats, hard cheese",   days: 14 },
+          { id: "1m",      label: "1 month",        sub: "Dairy with seal",            days: 30 },
+          { id: "3m",      label: "3 months",       sub: "Pantry / freezer",           days: 90 },
+          { id: "6m",      label: "6 months",       sub: "Long-life pantry",           days: 180 },
+          { id: "1y",      label: "1 year",         sub: "Canned, dry goods",          days: 365 },
         ];
         return (
           <MCMPickerSheet
@@ -4709,11 +4771,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             options={presets.map(p => ({
               id: p.id, label: p.label, sub: p.sub,
             }))}
-            value={null}
+            value={
+              expiresAt === "auto" ? "auto"
+              : expiresAt === null ? "none"
+              : null
+            }
             onPick={(id) => {
               const p = presets.find(x => x.id === id);
               if (!p) return;
-              if (p.days == null) {
+              if (p.kind === "auto") {
+                setExpiresAt("auto");
+              } else if (p.kind === "none") {
                 setExpiresAt(null);
               } else {
                 const d = new Date();
