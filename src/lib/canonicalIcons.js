@@ -87,6 +87,7 @@ const BUNDLED_TILE_SLUGS = new Set([
   "bread_baked",
   "canned_jarred",
   "baking",
+  "spices_dried_herbs"
 ]);
 
 export function tileIconFor(tileId, location) {
