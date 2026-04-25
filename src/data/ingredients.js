@@ -1,5 +1,75 @@
 // Canonical ingredient registry.
 //
+// ╭──────────────────────────────────────────────────────────────────────╮
+// │ NAMING NOTE — IMPORTANT FOR FUTURE READERS                          │
+// │                                                                      │
+// │ "Ingredient" and "Canonical" mean the SAME THING in this codebase.   │
+// │ The terms are interchangeable; we use both for historical reasons.   │
+// │                                                                      │
+// │   • Older code (this file, findIngredient, INGREDIENTS,              │
+// │     statesForIngredient, defaultStateFor) uses "ingredient".         │
+// │   • Newer code (per CLAUDE.md identity hierarchy, migration 0039+)   │
+// │     uses "canonical" / "canonicalId" — the same id string,           │
+// │     surfaced via inferCanonicalFromName, resolveCanonicalIdentity,   │
+// │     pantry_items.canonical_id, etc.                                  │
+// │                                                                      │
+// │ Both refer to entries in the INGREDIENTS array below, keyed by `id`. │
+// │ When you see `findIngredient(canonicalId)` it's literally fetching   │
+// │ the same registry entry the new code calls a "canonical".            │
+// │                                                                      │
+// │ NEW CODE: prefer "canonical" phrasing. Don't add new "ingredient"-   │
+// │ named exports. The 80+ existing callsites are kept for compat; mass- │
+// │ renaming would be a large diff for low payoff.                       │
+// ╰──────────────────────────────────────────────────────────────────────╯
+//
+// ╭──────────────────────────────────────────────────────────────────────╮
+// │ TWO-MAP ARCHITECTURE — ALSO IMPORTANT                                │
+// │                                                                      │
+// │ This file ships TWO separate maps because they serve two different   │
+// │ load profiles:                                                       │
+// │                                                                      │
+// │ 1. INGREDIENTS (exported, on-deck)                                   │
+// │    Tight identity + structural data: id, name, emoji, parentId,      │
+// │    units, defaultUnit, density_g_per_ml, preferredUnit, measuredIn,  │
+// │    estCentsPerBase, nutrition. ~400 entries.                         │
+// │                                                                      │
+// │    MUST be available synchronously at module load — unit math,       │
+// │    recipe matching, classification, and pricing run on every render. │
+// │    Lean on purpose so ALL ~400 canonicals load without dragging      │
+// │    rich prose along.                                                 │
+// │                                                                      │
+// │ 2. INGREDIENT_INFO (module-private, JS map)                          │
+// │    Editorial / contextual / storage prose: description,              │
+// │    flavorProfile, prepTips, recipes, winePairings, culturalNotes,    │
+// │    storage (incl. shelfLife / shelfLifeOpened), substitutions,       │
+// │    pairs, allergens, diet, origin, sourcing, seasonality.            │
+// │                                                                      │
+// │    Mirrors the schema of the Supabase `ingredient_info` table        │
+// │    (which IS the production source of truth — admin-curated, AI-     │
+// │    enriched, lazily fetched at app boot via useIngredientInfo).      │
+// │    INGREDIENT_INFO acts as an OFFLINE FALLBACK so pre-DB-fetch       │
+// │    flows + onboarding seeding still have something to read.          │
+// │                                                                      │
+// │ HOW TO READ STORAGE / SUBSTITUTIONS / DESCRIPTION:                   │
+// │   ALWAYS go through getIngredientInfo(ingredient, dbOverride):       │
+// │     const info = getIngredientInfo(findIngredient(id), getDbInfo(id))│
+// │     info.storage?.shelfLife?.fridge   ← correct                      │
+// │                                                                      │
+// │   NEVER read .storage / .description / .substitutions directly off   │
+// │   findIngredient(id) — those fields don't live there. The bundled    │
+// │   INGREDIENTS entries don't carry storage/prose; they're in          │
+// │   INGREDIENT_INFO. You'll silently get undefined and the feature     │
+// │   will look broken (this bit us once already, see commit a725138).   │
+// │                                                                      │
+// │ HOW TO READ NUTRITION / UNITS / CATEGORY:                            │
+// │   findIngredient(id) directly — those fields ARE on INGREDIENTS.     │
+// │                                                                      │
+// │ HOW TO ADD STORAGE DATA TO A CANONICAL:                              │
+// │   Edit INGREDIENT_INFO[id].storage in this file (offline fallback)   │
+// │   AND/OR upsert a row into the Supabase ingredient_info table        │
+// │   (production source of truth). Admin Panel handles the latter.      │
+// ╰──────────────────────────────────────────────────────────────────────╯
+//
 // Every pantry item and every recipe ingredient that needs pantry tracking
 // points at an `id` in this list. That gives us:
 //   - one source of truth for name + emoji + category
@@ -2964,6 +3034,17 @@ export function resolveSlug(id) {
  * Loses the cut/state axis info carried by the alias — callers that
  * need those hints must use resolveSlug(id) instead.
  *
+ * NAMING: "ingredient" === "canonical" in this codebase. The arg is
+ * a canonicalId (from pantry_items.canonical_id, scan results,
+ * inferCanonicalFromName, etc.). See file-header doc.
+ *
+ * RETURNS structural identity ONLY (id, name, emoji, units, nutrition,
+ * parentId, etc.). For storage / shelfLife / description /
+ * substitutions / prepTips, route through getIngredientInfo(ing,
+ * dbOverride) — those fields live on INGREDIENT_INFO, not on the
+ * registry entry. Reading `.storage` directly off this return value
+ * gives undefined.
+ *
  * Kept for compatibility with every site that just wants "what's
  * this slug's ingredient object?" — the overwhelmingly common case.
  */
@@ -3617,6 +3698,17 @@ const SUBCATEGORY_INFO = {
   },
 };
 
+// ╭──────────────────────────────────────────────────────────────────────╮
+// │ INGREDIENT_INFO — JS-side mirror of the Supabase ingredient_info     │
+// │ table. Editorial / storage / substitutions / etc. prose. Used as the │
+// │ OFFLINE FALLBACK when the DB row hasn't loaded yet.                  │
+// │                                                                      │
+// │ DO NOT read off this directly from feature code — go through         │
+// │ getIngredientInfo(ingredient, dbOverride) below so DB-approved data  │
+// │ from useIngredientInfo() wins. See file-header doc for the full      │
+// │ rationale on why this is split from INGREDIENTS.                     │
+// ╰──────────────────────────────────────────────────────────────────────╯
+//
 // Rich per-ingredient info. Anything on the ingredient overrides the
 // subcategory fallback in `getIngredientInfo` below.
 const INGREDIENT_INFO = {
