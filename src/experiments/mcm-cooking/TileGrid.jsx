@@ -16,7 +16,7 @@ import { tileIconFor } from "../../lib/canonicalIcons";
 // icon/emoji + label + blurb + an item count + warn dot. Empty
 // tiles dim to ~45% so the populated ones pop, same visual
 // pattern the classic Kitchen uses.
-export function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
+export function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile, newCountByTile = {} }) {
   // Sort populated tiles first, empty tiles last. Stable sort
   // preserves the authoring order (from fridgeTiles.js etc.)
   // within each group so, e.g., within the populated group
@@ -51,6 +51,7 @@ export function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile })
       <AnimatePresence mode="popLayout">
         {sortedTiles.map(({ tile, count, empty }, i) => {
           const warn = warnCountByTile[`${location.id}:${tile.id}`] || 0;
+          const fresh = newCountByTile[`${location.id}:${tile.id}`] || 0;
           return (
             <motion.div
               key={tile.id}
@@ -76,6 +77,7 @@ export function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile })
                 location={location.id}
                 count={count}
                 warnCount={warn}
+                newCount={fresh}
                 onPick={() => onPickTile(tile)}
               />
             </motion.div>
@@ -95,7 +97,7 @@ export function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile })
 // it wins over the emoji fallback — so the user can upload a
 // custom tile icon and it renders instantly without any code
 // change here.
-export function TileCard({ tile, location, count, warnCount, onPick }) {
+export function TileCard({ tile, location, count, warnCount, newCount = 0, onPick }) {
   const { theme } = useTheme();
   const empty = count === 0;
   const iconUrl = tileIconFor(tile.id, location);
@@ -197,6 +199,32 @@ export function TileCard({ tile, location, count, warnCount, onPick }) {
           }}>
             {tile.label}
           </div>
+          {/* Fresh-arrival pill — small teal "+N new" badge that
+              renders when this tile contains items added in the
+              last 24h (isRecent). Sits to the left of the warn
+              pill so the urgent burnt-orange "soon" still reads
+              as the dominant status when both are present.
+              Hidden when newCount = 0. */}
+          {newCount > 0 && (
+            <div
+              title={`${newCount} item${newCount === 1 ? "" : "s"} added recently`}
+              style={{
+                minWidth: 22, height: 22,
+                padding: "0 8px",
+                borderRadius: 999,
+                background: withAlpha(theme.color.teal, 0.14),
+                color: theme.color.teal,
+                fontFamily: font.mono, fontSize: 10, fontWeight: 600,
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+                flexShrink: 0,
+                border: `1px solid ${withAlpha(theme.color.teal, 0.35)}`,
+              }}
+            >
+              +{newCount} new
+            </div>
+          )}
           {warnCount > 0 && (
             <motion.div
               title={`${warnCount} item${warnCount === 1 ? "" : "s"} expiring soon`}
