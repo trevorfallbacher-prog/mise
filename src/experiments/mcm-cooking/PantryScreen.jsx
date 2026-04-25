@@ -3147,6 +3147,38 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     canonicalId || null,
     3,
   );
+  // Brand observations for the canonical-wide tier — same RPC,
+  // null brand so we get every observation regardless of who
+  // bought it. We dedupe + rank by count so the typeahead can
+  // surface "Marketside" first when the household has bought a
+  // watermelon under that brand before. Idle until the
+  // canonical is pinned.
+  const { rows: canonicalBrandObservations } = usePopularPackages(
+    null,
+    canonicalId || null,
+    20,
+  );
+  const brandSuggestions = useMemo(() => {
+    if (!canonicalId) return [];
+    const counts = new Map();
+    for (const r of canonicalBrandObservations) {
+      const b = (r.brand || "").trim();
+      if (!b) continue;
+      counts.set(b, (counts.get(b) || 0) + (r.n || 1));
+    }
+    return Array.from(counts.entries())
+      .sort(([, a], [, b]) => b - a)
+      .map(([brand]) => brand);
+  }, [canonicalId, canonicalBrandObservations]);
+  const [brandFocused, setBrandFocused] = useState(false);
+  const [suppressBrandTypeahead, setSuppressBrandTypeahead] = useState(false);
+  const filteredBrandSuggestions = useMemo(() => {
+    const q = brand.trim().toLowerCase();
+    const list = q
+      ? brandSuggestions.filter(b => b.toLowerCase().includes(q))
+      : brandSuggestions;
+    return list.slice(0, 6);
+  }, [brand, brandSuggestions]);
   const nameSuggestions = useMemo(() => {
     const q = name.trim().toLowerCase();
     if (q.length < 2) return [];
@@ -3974,14 +4006,83 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           );
         })()}
 
-        {/* Brand */}
+        {/* Brand — typeahead surfaces the household's previously-
+            seen brands for the active canonical (sourced from
+            popular_package_sizes, ranked by observation count).
+            "Marketside" surfaces first for watermelon if the
+            household has bought a Marketside watermelon before.
+            Free-text still works — the input is the source of
+            truth, suggestions just shortcut the common cases. */}
         <FieldLabel theme={theme} style={{ marginTop: 14 }}>Brand <span style={{ opacity: 0.5 }}>(optional)</span></FieldLabel>
-        <input
-          value={brand}
-          onChange={(e) => setBrand(e.target.value)}
-          placeholder="e.g. Kerrygold"
-          style={inputBase}
-        />
+        <div style={{ position: "relative" }}>
+          <input
+            value={brand}
+            onChange={(e) => { setBrand(e.target.value); setSuppressBrandTypeahead(false); }}
+            onFocus={() => setBrandFocused(true)}
+            onBlur={() => { setTimeout(() => setBrandFocused(false), 120); }}
+            placeholder="e.g. Kerrygold"
+            style={inputBase}
+          />
+          {brandFocused && !suppressBrandTypeahead && filteredBrandSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              aria-label="Brand suggestions"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                left: 0, right: 0,
+                zIndex: 5,
+                padding: 6,
+                borderRadius: 14,
+                background: theme.color.glassFillHeavy,
+                border: `1px solid ${theme.color.glassBorder}`,
+                backdropFilter: "blur(20px) saturate(150%)",
+                WebkitBackdropFilter: "blur(20px) saturate(150%)",
+                boxShadow: "0 18px 36px rgba(20,12,4,0.28), 0 4px 12px rgba(20,12,4,0.16)",
+                ...THEME_TRANSITION,
+              }}
+            >
+              {filteredBrandSuggestions.map(b => {
+                const active = b.toLowerCase() === brand.trim().toLowerCase();
+                return (
+                  <button
+                    key={b}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    className="mcm-focusable"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setBrand(b);
+                      setSuppressBrandTypeahead(true);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      width: "100%",
+                      padding: "8px 10px",
+                      margin: "1px 0",
+                      borderRadius: 10,
+                      border: "1px solid transparent",
+                      background: active
+                        ? `linear-gradient(${withAlpha(theme.color.teal, 0.16)}, ${withAlpha(theme.color.teal, 0.16)}), transparent`
+                        : "transparent",
+                      cursor: "pointer", textAlign: "left",
+                      color: theme.color.ink,
+                      transition: "background 140ms ease",
+                    }}
+                    onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = withAlpha(theme.color.ink, 0.05); }}
+                    onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <span style={{ fontFamily: font.sans, fontSize: 14, fontWeight: 500, flex: 1 }}>
+                      {b}
+                    </span>
+                    {active && <span style={{ color: theme.color.teal, fontSize: 14 }}>✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Location segmented row — matches FloatingLocationDock
             color treatment so users see the same swatch system
