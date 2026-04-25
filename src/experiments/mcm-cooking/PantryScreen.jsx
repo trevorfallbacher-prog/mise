@@ -31,6 +31,9 @@ import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../l
 import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
 import { findIngredient, hubForIngredient } from "../../data/ingredients";
 import { findFoodType } from "../../data/foodTypes";
+import { lookupBarcode } from "../../lib/lookupBarcode";
+import { parsePackageSize } from "../../lib/canonicalResolver";
+import BarcodeScanner from "../../components/BarcodeScanner";
 import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 
 const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
@@ -3113,8 +3116,44 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }
   const [amount, setAmount] = useState(seed.amount != null ? String(seed.amount) : "");
   const [unit,   setUnit]   = useState(seed.unit   || "");
   const [location, setLocation] = useState(seed.location || "fridge");
+  // Barcode lookup retains the UPC string when the user
+  // scanned (vs typed manually) so the submit row carries it
+  // — future scans of the same UPC pick up corrections via
+  // findBarcodeCorrection. Null on manual entry.
+  const [barcodeUpc, setBarcodeUpc] = useState(seed.barcodeUpc || null);
+  // Scanner overlay state. When `scanning` is true, the
+  // BarcodeScanner mounts full-screen over the sheet. Lookup
+  // status surfaces in `scanStatus` so the user sees
+  // "Looking up…" → "Got it" / "Couldn't find that one."
+  const [scanning, setScanning] = useState(false);
+  const [scanStatus, setScanStatus] = useState(null); // null | "looking" | "found" | "miss" | "error"
 
   const canSubmit = name.trim().length > 0;
+
+  const handleScan = async (upc) => {
+    setBarcodeUpc(upc);
+    setScanning(false);
+    setScanStatus("looking");
+    try {
+      const res = await lookupBarcode(upc, { brandNutritionRows: [] });
+      if (!res || !res.found) {
+        setScanStatus("miss");
+        return;
+      }
+      // Pre-fill fields. Don't overwrite user-typed name/brand
+      // if they exist — scanning into a partially-filled form
+      // shouldn't clobber what the user already entered.
+      if (!name.trim() && res.productName) setName(res.productName);
+      if (!brand.trim() && res.brand)      setBrand(res.brand);
+      const pkg = res.quantity ? parsePackageSize(res.quantity) : null;
+      if (!amount && pkg?.amount != null) setAmount(String(pkg.amount));
+      if (!unit   && pkg?.unit)           setUnit(pkg.unit);
+      setScanStatus("found");
+    } catch (e) {
+      console.warn("[mcm-add] scan lookup failed:", e?.message || e);
+      setScanStatus("error");
+    }
+  };
 
   // Esc closes — same keyboard pattern PantryScreen uses for
   // its sticky surfaces.
@@ -3141,6 +3180,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }
       // No expiration set on manual add by default (user can
       // edit after). Days-chip will be empty.
       expiresAt: null,
+      // Carry the scanned UPC (when present) so future scans
+      // of the same barcode pick up corrections via
+      // findBarcodeCorrection.
+      barcodeUpc: barcodeUpc || null,
     });
   };
 
@@ -3212,6 +3255,63 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }
         }}>
           What's new on the shelf?
         </div>
+
+        {/* Scan CTA — top of the form so it reads as the
+            preferred path. Successful scans pre-fill name /
+            brand / amount / unit; user still confirms via the
+            primary submit at the bottom. Status message renders
+            below the button so the user sees lookup progress
+            without the form jumping around. */}
+        <button
+          type="button"
+          className="mcm-focusable"
+          onClick={() => { setScanStatus(null); setScanning(true); }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 8,
+            width: "100%",
+            padding: "12px 16px",
+            borderRadius: 14,
+            border: `1px solid ${withAlpha(theme.color.teal, 0.45)}`,
+            background: `linear-gradient(${withAlpha(theme.color.teal, 0.16)}, ${withAlpha(theme.color.teal, 0.16)}), ${theme.color.glassFillHeavy}`,
+            color: theme.color.ink,
+            fontFamily: font.sans,
+            fontSize: 14,
+            fontWeight: 600,
+            letterSpacing: "0.02em",
+            cursor: "pointer",
+            marginBottom: 14,
+          }}
+        >
+          <span aria-hidden style={{ fontSize: 16 }}>📷</span>
+          Scan a barcode
+        </button>
+        {scanStatus && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              fontFamily: font.sans,
+              fontSize: 12,
+              letterSpacing: "0.02em",
+              color: scanStatus === "found"
+                ? theme.color.teal
+                : scanStatus === "looking"
+                  ? theme.color.inkMuted
+                  : theme.color.burnt,
+              marginTop: -8,
+              marginBottom: 14,
+              paddingLeft: 4,
+            }}
+          >
+            {scanStatus === "looking" && "Looking that one up…"}
+            {scanStatus === "found"   && "Got it — fields filled below."}
+            {scanStatus === "miss"    && "Couldn't find that barcode. Fill it in by hand."}
+            {scanStatus === "error"   && "Lookup hit a snag. Try again or fill it in by hand."}
+          </div>
+        )}
 
         {/* Name */}
         <FieldLabel theme={theme}>Name</FieldLabel>
@@ -3346,6 +3446,28 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }
           </PrimaryButton>
         </div>
       </motion.div>
+
+      {/* Barcode scanner overlay — mounts full-screen above the
+          sheet when the user taps "Scan a barcode". Owns its own
+          camera stream; tearing down on close is the scanner's
+          responsibility. handleScan also flips `scanning` off so
+          the overlay unmounts cleanly after a successful read. */}
+      {scanning && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 60,
+            background: "#000",
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <BarcodeScanner
+            onDetected={handleScan}
+            onCancel={() => setScanning(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }
