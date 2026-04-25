@@ -2689,20 +2689,16 @@ function PantryCard({
             alt=""
             aria-hidden
             style={{
-              width: 26, height: 26, objectFit: "contain",
-              // Drop shadow keeps the icon distinct against the
-              // burnt action background; without it a dark icon
-              // on dark-orange can mush together visually.
+              // Fill the action drawer's full vertical extent
+              // with minimal padding — icon carries the affordance
+              // without a redundant text label.
+              height: "calc(100% - 8px)",
+              width: "auto",
+              maxWidth: "100%",
+              objectFit: "contain",
               filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.30))",
             }}
           />
-          <span style={{
-            fontFamily: font.mono, fontSize: 10,
-            letterSpacing: "0.10em", textTransform: "uppercase",
-            fontWeight: 600,
-          }}>
-            Remove
-          </span>
         </motion.button>
       )}
     <motion.div
