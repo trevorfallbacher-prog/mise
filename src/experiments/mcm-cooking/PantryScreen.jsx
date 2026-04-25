@@ -3286,10 +3286,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             ...inputBase,
             // Filmotype Honey matches item-card name face so
             // the user sees a typographic preview of how the
-            // row will read on the shelf.
+            // row will read on the shelf. Honey reads small for
+            // its em-box, so we run it ~2x the body size with
+            // tight line-height — same rule applied to the
+            // shelf row (PantryCard) below.
             fontFamily: font.itemName,
             fontWeight: 300,
-            fontSize: 18,
+            fontSize: 32,
+            lineHeight: 1,
           }}
         />
 
