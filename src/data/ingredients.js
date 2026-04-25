@@ -3629,6 +3629,13 @@ const INGREDIENT_INFO = {
       location: "fridge",
       shelfLifeDays: 90,
       shelfLife: { fridge: 90, freezer: 365, pantry: null },
+      // Opened (post-seal-broken) freshness window. Butter holds
+      // up well in the fridge after opening — 30 days is a
+      // conservative consumer-safety estimate; food-science
+      // sources cite up to 60 days for plain unsalted. PantryCard
+      // re-anchors expiresAt off "now" the moment the user
+      // drags the fill gauge below 100%.
+      shelfLifeOpened: { fridge: 30, freezer: 365, pantry: null },
       tips: "Wrap tightly — butter absorbs fridge odors. Freezes beautifully for up to a year in its original wrap plus a zip-top bag.",
       spoilageSigns: "Yellow waxy surface, off smell, rancid-nut aroma. Mold along an exposed edge — trim an inch off or toss.",
       freezable: true,

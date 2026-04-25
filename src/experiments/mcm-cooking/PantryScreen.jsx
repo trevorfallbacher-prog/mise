@@ -190,6 +190,28 @@ function classifyItem(raw) {
 // helper elsewhere, but for the purposes of the tile grid we only
 // need a best-guess when the row doesn't carry an explicit
 // location. Matches the reserved-word defaults in CLAUDE.md.
+// Looks up the canonical's freshness window for the given
+// location, distinguishing sealed vs. opened state. Sealed reads
+// storage.shelfLife[loc] (or the flat shelfLifeDays anchor for
+// older canonicals). Opened reads storage.shelfLifeOpened[loc],
+// returning null when the canonical hasn't shipped opened-life
+// data yet — callers should preserve the existing sealed expiry
+// in that case rather than guessing.
+function shelfLifeFor(canonicalId, location, { opened = false } = {}) {
+  if (!canonicalId) return null;
+  const ing = findIngredient(canonicalId);
+  if (!ing?.storage) return null;
+  if (opened) {
+    const op = ing.storage.shelfLifeOpened;
+    const days = op?.[location];
+    return Number.isFinite(days) ? days : null;
+  }
+  const sealed = ing.storage.shelfLife?.[location];
+  if (Number.isFinite(sealed)) return sealed;
+  const flat = ing.storage.shelfLifeDays;
+  return Number.isFinite(flat) ? flat : null;
+}
+
 function defaultLocationForCategory(category) {
   if (!category) return "pantry";
   const c = String(category).toLowerCase();
@@ -3111,7 +3133,34 @@ function PantryCard({
                     type="range"
                     min="0" max={max} step={step}
                     value={amt}
-                    onChange={(e) => onUpdate({ amount: Number(e.target.value) })}
+                    onChange={(e) => {
+                      const newAmount = Number(e.target.value);
+                      const wasSealed = amt >= max - 0.0001;
+                      const isOpening = wasSealed && newAmount < max;
+                      const patch = { amount: newAmount };
+                      // First open — re-anchor the freshness clock
+                      // off "now" against the canonical's
+                      // opened-shelf-life window. Only fires when
+                      // the canonical actually ships opened data;
+                      // without it, the original sealed expiry
+                      // stays in place (which is honest — we
+                      // don't know how fast it spoils once
+                      // opened, so we don't fake a date).
+                      if (isOpening) {
+                        const days = shelfLifeFor(
+                          item.canonicalId,
+                          item._location || item._raw?.location,
+                          { opened: true }
+                        );
+                        if (Number.isFinite(days) && days > 0) {
+                          const d = new Date();
+                          d.setDate(d.getDate() + days);
+                          d.setHours(23, 59, 0, 0);
+                          patch.expiresAt = d;
+                        }
+                      }
+                      onUpdate(patch);
+                    }}
                     aria-label={`Estimate ${item.name} remaining`}
                     style={{
                       flex: 1,
@@ -3413,26 +3462,22 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   }, [canonicalId, canonicalBrandObservations]);
   const [brandFocused, setBrandFocused] = useState(false);
   const [suppressBrandTypeahead, setSuppressBrandTypeahead] = useState(false);
-  // Auto-expiry preview — looks up the canonical's storage
-  // shelfLife and indexes by the user's picked location. Returns
-  // days (number) or null when the canonical has no data for
-  // that location (e.g. fresh produce in the freezer when the
-  // canonical doesn't ship a freezer entry). Used both to
-  // render "Auto · in ~N days" on the pill AND to materialize
-  // the actual Date on submit.
+  // Auto-expiry preview — looks up the canonical's freshness
+  // window. Indexes by location AND by sealed-vs-opened state:
+  // when the user adds an item that's already partly open
+  // (remaining < 1), we use the opened window so the clock
+  // matches reality. Pill preview reflects the same value.
   const autoDays = useMemo(() => {
     if (!canonicalId) return null;
-    const ing = findIngredient(canonicalId);
-    const sl = ing?.storage?.shelfLife;
-    if (!sl) {
-      // Older canonicals only ship the flat shelfLifeDays
-      // anchor — use that when the per-location map is missing.
-      const flat = ing?.storage?.shelfLifeDays;
-      return Number.isFinite(flat) ? flat : null;
-    }
-    const days = sl[location];
-    return Number.isFinite(days) ? days : null;
-  }, [canonicalId, location]);
+    const opened = remaining < 0.999;
+    const days = shelfLifeFor(canonicalId, location, { opened });
+    if (Number.isFinite(days)) return days;
+    // Opened with no opened-data → fall through to sealed
+    // window so the user still gets a clock. Better than null
+    // when we have something to offer.
+    if (opened) return shelfLifeFor(canonicalId, location, { opened: false });
+    return null;
+  }, [canonicalId, location, remaining]);
 
   const filteredBrandSuggestions = useMemo(() => {
     const q = brand.trim().toLowerCase();
