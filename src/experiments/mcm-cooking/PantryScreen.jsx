@@ -3082,22 +3082,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // continued focus.
   const [nameFocused, setNameFocused]           = useState(false);
   const [suppressTypeahead, setSuppressTypeahead] = useState(false);
-  const nameSuggestions = useMemo(() => {
-    const q = name.trim().toLowerCase();
-    if (q.length < 2) return [];
-    const exact = [];
-    const starts = [];
-    const includes = [];
-    for (const ing of allCanonicals) {
-      const lc = (ing.name || "").toLowerCase();
-      if (!lc) continue;
-      if (lc === q) exact.push(ing);
-      else if (lc.startsWith(q)) starts.push(ing);
-      else if (lc.includes(q))   includes.push(ing);
-      if (exact.length + starts.length + includes.length >= 32) break;
-    }
-    return [...exact, ...starts, ...includes].slice(0, 6);
-  }, [name, allCanonicals]);
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -3130,6 +3114,22 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     () => [...INGREDIENTS, ...dbCanonicalsSnapshot()],
     [dbMap]
   );
+  const nameSuggestions = useMemo(() => {
+    const q = name.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const exact = [];
+    const starts = [];
+    const includes = [];
+    for (const ing of allCanonicals) {
+      const lc = (ing.name || "").toLowerCase();
+      if (!lc) continue;
+      if (lc === q) exact.push(ing);
+      else if (lc.startsWith(q)) starts.push(ing);
+      else if (lc.includes(q))   includes.push(ing);
+      if (exact.length + starts.length + includes.length >= 32) break;
+    }
+    return [...exact, ...starts, ...includes].slice(0, 6);
+  }, [name, allCanonicals]);
 
   // Live name-inference for the category chip — runs only when
   // the user hasn't manually overridden. When the canonical is
