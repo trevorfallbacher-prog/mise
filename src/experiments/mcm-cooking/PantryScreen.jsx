@@ -3636,6 +3636,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const showErrors = attemptedSubmit && validationErrors.length > 0;
   const canSubmit = name.trim().length > 0;
+  // The form's "ready" state (all required fields satisfied) —
+  // derived once at component scope so both the progress strip
+  // IIFE and the scan-button render below can react to it
+  // without recomputing.
+  const formReady = validationErrors.length === 0;
 
   const handleScan = async (upc) => {
     setBarcodeUpc(upc);
@@ -4473,15 +4478,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               src="/icons/upc_scanner.svg"
               alt=""
               aria-hidden
-              className="mise-scan-halo"
+              // Halo only while the form's still in progress —
+              // once the human "wins" (all required fields set),
+              // the scanner backs off: class drops, a grey
+              // desaturate filter takes over, and a softer
+              // opacity fade signals it lost to the human.
+              className={formReady ? undefined : "mise-scan-halo"}
               style={{
                 width: "100%", height: "100%", objectFit: "contain",
                 display: "block",
-                // Animated drop-shadow halo from the
-                // .mise-scan-halo class — flags scanning as the
-                // preferred / premium add path. Filter is set on
-                // the keyframes; nothing inline here so we don't
-                // override the animation.
+                filter: formReady
+                  ? "grayscale(1) brightness(0.85)"
+                  : undefined,
+                opacity: formReady ? 0.5 : 1,
+                transition: "filter 600ms ease, opacity 600ms ease",
               }}
             />
           </button>
