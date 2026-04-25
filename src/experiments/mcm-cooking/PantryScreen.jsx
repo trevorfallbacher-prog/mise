@@ -3566,7 +3566,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               }}
             />
           </button>
-          {nameFocused && !suppressTypeahead && nameSuggestions.length > 0 && (
+          {nameFocused && !suppressTypeahead && (nameSuggestions.length > 0 || name.trim().length >= 2) && (
             <div
               role="listbox"
               aria-label="Canonical suggestions"
@@ -3646,6 +3646,63 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   )}
                 </button>
               ))}
+              {/* No-results escape hatch — when the typed name
+                  doesn't match any bundled canonical, surface a
+                  "+ Add canonical" row that creates a new
+                  user-scoped canonical from the typed text.
+                  Slug-cases the input so the underlying
+                  pantry_items.canonical_id stays URL-safe; the
+                  CLAUDE.md self-teaching cascade picks it up
+                  the same as a bundled slug. */}
+              {nameSuggestions.length === 0 && name.trim().length >= 2 && (
+                <button
+                  type="button"
+                  role="option"
+                  className="mcm-focusable"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const slug = name.trim().toLowerCase()
+                      .replace(/[^a-z0-9]+/g, "_")
+                      .replace(/^_+|_+$/g, "");
+                    if (!slug) return;
+                    setCanonicalId(slug);
+                    setCanonicalOverridden(true);
+                    setTypeOverridden(false);
+                    setTileOverridden(false);
+                    setSuppressTypeahead(true);
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    width: "100%",
+                    padding: "10px 10px",
+                    margin: "1px 0",
+                    borderRadius: 10,
+                    border: `1px dashed ${withAlpha("#b8a878", 0.45)}`,
+                    background: "transparent",
+                    cursor: "pointer", textAlign: "left",
+                    color: theme.color.ink,
+                    transition: "background 140ms ease",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = withAlpha("#b8a878", 0.10); }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{
+                    fontSize: 18, lineHeight: 1, flexShrink: 0,
+                    color: "#b8a878",
+                  }}>+</span>
+                  <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+                    <span style={{ fontFamily: font.sans, fontSize: 14, fontWeight: 500 }}>
+                      Add "{name.trim()}" as a new canonical
+                    </span>
+                    <span style={{
+                      fontFamily: font.detail, fontStyle: "italic", fontWeight: 400,
+                      fontSize: 12, color: theme.color.inkMuted, marginTop: 1,
+                    }}>
+                      Saved to your kitchen — admin can promote later.
+                    </span>
+                  </span>
+                </button>
+              )}
             </div>
           )}
         </div>
