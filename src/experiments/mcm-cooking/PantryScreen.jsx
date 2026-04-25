@@ -34,6 +34,7 @@ import { findFoodType } from "../../data/foodTypes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
+import { rememberBarcodeCorrection } from "../../lib/barcodeCorrections";
 import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 
 const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
@@ -3104,7 +3105,7 @@ function SearchGlyph() {
 // Seed: { mode: "blank" } today; { mode: "scan", name, brand,
 // amount, unit, ... } once scan is wired in commit 2.
 // ─────────────────────────────────────────────────────────────
-export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }) {
+export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, onClose, onSubmit }) {
   const { theme } = useTheme();
   // Form state — seeded from `seed` so the same component
   // works for empty (manual) and pre-filled (scan) entry. The
@@ -3166,6 +3167,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }
   const handleSubmit = () => {
     if (!canSubmit) return;
     const cat = defaultCategoryForLocation(location);
+    // Self-teaching write — when the user scanned a barcode and
+    // landed in this sheet, whatever LOCATION they confirm here
+    // becomes the household-scoped (or global, for admins) answer
+    // for that UPC. Next scan of the same product picks the
+    // location up via findBarcodeCorrection without asking again.
+    // Fire-and-forget per CLAUDE.md: a correction-write failure
+    // must never block the add flow.
+    if (barcodeUpc && userId) {
+      rememberBarcodeCorrection({
+        userId,
+        isAdmin: !!isAdmin,
+        barcodeUpc,
+        location,
+      }).catch(err => console.warn("[mcm-add] correction write failed:", err?.message || err));
+    }
     onSubmit && onSubmit({
       name: name.trim(),
       brand: brand.trim() || null,

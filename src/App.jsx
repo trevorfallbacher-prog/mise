@@ -764,6 +764,8 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
         <MCMThemeProvider>
           <MCMAddDraftSheet
             seed={mcmAddDraft}
+            userId={user.id}
+            isAdmin={isAdmin}
             onClose={() => setMcmAddDraft(null)}
             onSubmit={(row) => {
               setPantry(prev => [...prev, {
