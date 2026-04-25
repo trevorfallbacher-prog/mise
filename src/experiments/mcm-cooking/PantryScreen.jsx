@@ -230,6 +230,13 @@ function toCard(raw) {
     emoji:    raw.emoji || "🍽️",
     name:     raw.name || "Untitled",
     qty:      formatQty(raw.amount, raw.unit),
+    // Raw amount + max for the fill gauge — mirrors classic
+    // Kitchen's pct() helper. Cards use these to render the
+    // sealed/opened bar; `qty` keeps the human-friendly
+    // formatted string for the subheader row.
+    amount:   raw.amount != null ? Number(raw.amount) : null,
+    max:      raw.max    != null ? Number(raw.max)    : null,
+    unit:     raw.unit   || null,
     brand:    raw.brand || null,
     location,
     cat,
@@ -2951,6 +2958,46 @@ function PantryCard({
             </span>
           </div>
         )}
+
+        {/* Fill gauge — sealed/opened indicator. Only renders
+            when the row carries a declared package size (max > 0)
+            so we don't fabricate progress against an undefined
+            container. Bar tints teal when sealed (amount == max)
+            and burnt when opened (amount < max), matching the
+            AddDraftSheet's slider color treatment so the same
+            visual cue carries across surfaces. */}
+        {(() => {
+          const max = Number(item.max);
+          const amt = Number(item.amount);
+          if (!(max > 0) || !Number.isFinite(amt)) return null;
+          const pct = Math.max(0, Math.min(100, (amt / max) * 100));
+          const sealed = amt >= max - 0.0001;
+          const fill = sealed ? theme.color.teal : theme.color.burnt;
+          return (
+            <div
+              aria-label={sealed
+                ? `Sealed · ${item.qty}`
+                : `Opened · ${pct.toFixed(0)}% remaining`}
+              title={sealed
+                ? `Sealed · ${item.qty}`
+                : `Opened · ${pct.toFixed(0)}% remaining`}
+              style={{
+                height: 4,
+                borderRadius: 2,
+                background: withAlpha(theme.color.ink, 0.06),
+                overflow: "hidden",
+                marginTop: 4,
+              }}
+            >
+              <div style={{
+                height: "100%", width: `${pct}%`,
+                background: fill,
+                boxShadow: `0 0 6px ${withAlpha(fill, 0.45)}`,
+                transition: "width 600ms cubic-bezier(0.22, 1, 0.36, 1), background 200ms ease",
+              }} />
+            </div>
+          );
+        })()}
       </div>
     </GlassPanel>
     </motion.div>
