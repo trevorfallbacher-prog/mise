@@ -3490,7 +3490,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             marginBottom: 14,
           }}
         >
-          <span aria-hidden style={{ fontSize: 16 }}>📷</span>
+          <img
+            src="/icons/scan.svg"
+            alt=""
+            aria-hidden
+            style={{
+              width: 18, height: 18, objectFit: "contain",
+              filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
+            }}
+          />
           Scan a barcode
         </button>
         {scanStatus && (
