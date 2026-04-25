@@ -237,6 +237,11 @@ function toCard(raw) {
     amount:   raw.amount != null ? Number(raw.amount) : null,
     max:      raw.max    != null ? Number(raw.max)    : null,
     unit:     raw.unit   || null,
+    // Canonical id flows through so PantryCard can read the
+    // canonical's nutrition data via useIngredientInfo / the
+    // bundled INGREDIENTS registry. Lets the card surface
+    // calories without re-running classification.
+    canonicalId: raw.canonicalId || null,
     brand:    raw.brand || null,
     location,
     cat,
@@ -2585,6 +2590,18 @@ function PantryCard({
   onSwipeClose = null,
 }) {
   const { theme } = useTheme();
+  // Canonical nutrition lookup — DB-approved info wins, bundled
+  // canonical metadata fills the gap. Returns the kcal anchor
+  // (per 100g / per count / etc.) so the card can surface a
+  // single quick calorie chip without rolling out the full
+  // breakdown panel here.
+  const { getInfo } = useIngredientInfo();
+  const nutrition = (() => {
+    if (!item?.canonicalId) return null;
+    const dbInfo = getInfo(item.canonicalId);
+    const bundled = findIngredient(item.canonicalId);
+    return dbInfo?.nutrition || bundled?.nutrition || null;
+  })();
   const warn = item.status === "warn";
   // Warn cards pick up a gentle theme-derived burnt wash so
   // "expires soon" is noticeable at the card level without being
@@ -2933,7 +2950,7 @@ function PantryCard({
             Renders only when at least one of the two has content,
             so cards without a category and without a date fall
             back to a tighter two-line layout. */}
-        {(item.typeLabel || item.days != null) && (
+        {(item.typeLabel || item.days != null || nutrition?.kcal != null) && (
           <div style={{
             display: "flex", alignItems: "center",
             justifyContent: "space-between", gap: 6,
@@ -2948,14 +2965,31 @@ function PantryCard({
                 {item.typeLabel}
               </TintedPill>
             ) : <span />}
-            <span style={{
-              fontFamily: font.mono, fontSize: 10,
-              color: daysChipColor(item.days, theme),
-              whiteSpace: "nowrap",
-              fontWeight: warn ? 500 : 400,
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              flexShrink: 0,
             }}>
-              {formatDaysChip(item.days)}
-            </span>
+              {nutrition?.kcal != null && (
+                <span style={{
+                  fontFamily: font.mono, fontSize: 10,
+                  color: theme.color.inkFaint,
+                  letterSpacing: "0.04em",
+                  whiteSpace: "nowrap",
+                }}
+                title={`${Math.round(nutrition.kcal)} kcal per ${nutrition.per || "100g"}`}
+                >
+                  {Math.round(nutrition.kcal)} kcal
+                </span>
+              )}
+              <span style={{
+                fontFamily: font.mono, fontSize: 10,
+                color: daysChipColor(item.days, theme),
+                whiteSpace: "nowrap",
+                fontWeight: warn ? 500 : 400,
+              }}>
+                {formatDaysChip(item.days)}
+              </span>
+            </div>
           </div>
         )}
 
