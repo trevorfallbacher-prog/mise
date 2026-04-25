@@ -1,6 +1,48 @@
 // Canonical ingredient registry.
 //
 // ╭──────────────────────────────────────────────────────────────────────╮
+// │ WHAT IS A CANONICAL? — THE CONCEPTUAL DEFINITION                    │
+// │                                                                      │
+// │ A canonical is what you'd buy at the store, expressed as the         │
+// │ RAWEST VERSION OF ITSELF. Branding, marketing claims, packaging      │
+// │ adjectives — all stripped. It's what a common person would call      │
+// │ the thing if they had to point at it on a shelf.                     │
+// │                                                                      │
+// │ Examples:                                                            │
+// │   • "tortilla" is a canonical. It doesn't matter if the bag says     │
+// │     "Mission Burrito Size Flour Tortillas" or "Tía Rosa Yellow Corn  │
+// │     Tortillas"; the canonical underneath both is "tortilla". The     │
+// │     CUT axis (corn vs. flour) and STATE / SIZE may differ — those    │
+// │     are separate axes per CLAUDE.md identity hierarchy — but the     │
+// │     canonical itself is the common name.                             │
+// │   • "tortilla_chips" is a canonical. "Scoops" the brand is NOT.      │
+// │     Scoops is just a Frito-Lay shape. The system needs to know       │
+// │     Scoops and "Tostitos Bite Size" both reduce to tortilla_chips    │
+// │     so the recipe maker can pair "salsa needs a vehicle" with        │
+// │     either bag without getting confused.                             │
+// │   • "soda" / "cola" are canonicals. "Pepsi" and "Coke" are brands.   │
+// │     Same canonical, different brand axis — so the recipe maker       │
+// │     calling for "cola" doesn't fight a Pepsi-only pantry.            │
+// │                                                                      │
+// │ Why the abstraction exists:                                          │
+// │   The canonical is the LAYER OF COMMON LANGUAGE every part of the   │
+// │   app — pantry, recipes, shopping list, AI suggestions — speaks to  │
+// │   each other in. Without it the recipe maker would have to know     │
+// │   every possible brand/variant the user might have on hand.         │
+// │   With it, recipes reference a canonical id ("tortilla", "soda")   │
+// │   and the pantry resolves which specific brand/cut/state row        │
+// │   satisfies the recipe.                                              │
+// │                                                                      │
+// │ Authority:                                                           │
+// │   The canonical name is up for user interpretation — what does the  │
+// │   common person call this thing? When a household disagrees, admin  │
+// │   curation steps in to pick the prevailing name. New canonicals     │
+// │   start as user-created slugs (pantry_items.canonical_id, migration │
+// │   0039) and graduate into the bundled INGREDIENTS registry below    │
+// │   once they earn a slot.                                             │
+// ╰──────────────────────────────────────────────────────────────────────╯
+//
+// ╭──────────────────────────────────────────────────────────────────────╮
 // │ NAMING NOTE — IMPORTANT FOR FUTURE READERS                          │
 // │                                                                      │
 // │ "Ingredient" and "Canonical" mean the SAME THING in this codebase.   │
