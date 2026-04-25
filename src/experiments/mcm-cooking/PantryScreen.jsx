@@ -2933,14 +2933,12 @@ function PantryCard({
           </div>
         )}
         <div style={{
-          // Beverly Drive Right (Typekit) — Adobe Fonts face
-          // on item-card NAMES so items read in a different
-          // typographic register than tile cards (Pale
-          // Martini). Single weight 400, normal style. Same
-          // family as the subheader below, just sized larger
-          // — the subheader echoes the name's voice at a
-          // softer scale.
-          fontFamily: font.itemName, fontStyle: "normal", fontWeight: 400,
+          // Filmotype Honey (Typekit) — Adobe Fonts face on
+          // item-card NAMES so items read in a different
+          // typographic register than tile cards (Pale Martini)
+          // and the row's own subheader (Beverly Drive Right).
+          // Single weight 300, normal style.
+          fontFamily: font.itemName, fontStyle: "normal", fontWeight: 300,
           fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
           letterSpacing: "0",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
@@ -3338,10 +3336,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           placeholder="e.g. Sourdough Loaf"
           style={{
             ...inputBase,
-            // Beverly Drive Right matches item-card name face
-            // so the user sees a typographic preview of how the
+            // Filmotype Honey matches item-card name face so
+            // the user sees a typographic preview of how the
             // row will read on the shelf.
             fontFamily: font.itemName,
+            fontWeight: 300,
             fontSize: 18,
           }}
         />

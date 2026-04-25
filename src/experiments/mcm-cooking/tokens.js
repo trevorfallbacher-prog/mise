@@ -99,16 +99,16 @@ export const font = {
   // italic." Truculenta + Futura ride the fallback stack so
   // pre-load and old browsers degrade gracefully.
   display: "'Pale Martini', 'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
-  // Item-card name face — Beverly Drive Right (Adobe Fonts /
+  // Item-card name face — Filmotype Honey (Adobe Fonts /
   // Typekit, kit cnf4qlv loaded via index.html). Used on
   // PantryCard NAMES so items read in a different typographic
-  // register than tile cards. Fraunces italic rides as the
-  // fallback for pre-load and Adobe-Fonts-blocked browsers.
-  itemName: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
-  // Item-card SUBHEADER face — same Beverly Drive Right at a
-  // smaller size. Token kept distinct from itemName so future
-  // splits (e.g. swap subheader to a different family) don't
-  // require touching every callsite.
+  // register than tile cards. Single weight 300, normal style.
+  // Fraunces italic rides as the fallback for pre-load and
+  // Adobe-Fonts-blocked browsers.
+  itemName: "'filmotype-honey', 'Fraunces', 'Iowan Old Style', Georgia, serif",
+  // Item-card SUBHEADER face — Beverly Drive Right at a smaller
+  // size. Token kept distinct from itemName so the header /
+  // subheader pairing reads as two voices in the same row.
   itemSub: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
   sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
   mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
