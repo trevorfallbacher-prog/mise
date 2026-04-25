@@ -2279,7 +2279,7 @@ function SearchSummary({ hits, query, onClear }) {
 // Item grid — the animated 2-to-N column grid used for BOTH the
 // drilled-tile view and the search-hits view. Factored out so the
 // card-layout code isn't duplicated across the two render branches.
-function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, openSwipeId, setOpenSwipeId, showTileContext = false }) {
+function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, onUpdateItem, openSwipeId, setOpenSwipeId, showTileContext = false }) {
   // In search mode (showTileContext=true) each card renders a
   // small tile-context chip ("FROM DAIRY & EGGS") so users who
   // searched cross-location know where each hit lives. Resolve
@@ -2323,6 +2323,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, openSwipe
                 else if (onOpenUnitPicker) onOpenUnitPicker();
               }}
               onRemove={onRemoveItem && it._raw ? () => onRemoveItem(it._raw) : null}
+              onUpdate={onUpdateItem && it._raw ? (patch) => onUpdateItem(it._raw, patch) : null}
               isSwipeOpen={openSwipeId === it.id}
               onSwipeOpen={() => setOpenSwipeId && setOpenSwipeId(it.id)}
               onSwipeClose={() => {
@@ -2586,6 +2587,10 @@ function PantryCard({
   onPick,
   tileLabel = null,
   onRemove = null,
+  // Inline update — called with a partial patch when the user
+  // adjusts the row in place. Currently wired to the tappable
+  // fill gauge; when null the gauge is read-only.
+  onUpdate = null,
   // External swipe coordination — when null these props no-op,
   // and the card manages its own swipe state in isolation.
   // When wired, the card REPORTS open/close via the callbacks
@@ -2635,6 +2640,13 @@ function PantryCard({
   const swipeControls = useAnimation();
   const [swipeOpen, setSwipeOpen] = useState(false);
   const swipeEnabled = typeof onRemove === "function";
+  // Inline fill-gauge editing — toggled by tapping the gauge
+  // bar. Reveals a small slider underneath that drags the row's
+  // amount between 0 and max. Live updates fire through onUpdate
+  // so the user sees the bar redraw as they slide. Disabled
+  // when onUpdate isn't wired (Showcase mode).
+  const [fillEditing, setFillEditing] = useState(false);
+  const updateEnabled = typeof onUpdate === "function";
   // Action-button opacity tied to swipe progress. swipeX 0 →
   // action opacity 0 (button invisible behind a closed card so
   // it doesn't bleed through GlassPanel's translucent fill);
@@ -3009,13 +3021,11 @@ function PantryCard({
           </div>
         )}
 
-        {/* Fill gauge — sealed/opened indicator. Only renders
-            when the row carries a declared package size (max > 0)
-            so we don't fabricate progress against an undefined
-            container. Bar tints teal when sealed (amount == max)
-            and burnt when opened (amount < max), matching the
-            AddDraftSheet's slider color treatment so the same
-            visual cue carries across surfaces. */}
+        {/* Fill gauge — sealed/opened indicator. Tap to expand
+            an inline slider that drags the row's amount between
+            0 and max. Tap again (or the ✕) to dismiss. Bar
+            tints teal when sealed and burnt when opened to
+            match the AddDraftSheet's slider color treatment. */}
         {(() => {
           const max = Number(item.max);
           const amt = Number(item.amount);
@@ -3023,29 +3033,102 @@ function PantryCard({
           const pct = Math.max(0, Math.min(100, (amt / max) * 100));
           const sealed = amt >= max - 0.0001;
           const fill = sealed ? theme.color.teal : theme.color.burnt;
+          const label = sealed
+            ? `Sealed · ${item.qty}`
+            : `Opened · ${pct.toFixed(0)}% remaining`;
+          // Slider step — 0.1 for small packages so half-units
+          // are reachable, 1 for medium, max/100 for big counts.
+          const step = max <= 10 ? 0.1 : max <= 100 ? 1 : max / 100;
+          const fmt = (n) => Number.isInteger(n) ? String(n) : Number(n).toFixed(1);
           return (
-            <div
-              aria-label={sealed
-                ? `Sealed · ${item.qty}`
-                : `Opened · ${pct.toFixed(0)}% remaining`}
-              title={sealed
-                ? `Sealed · ${item.qty}`
-                : `Opened · ${pct.toFixed(0)}% remaining`}
-              style={{
-                height: 4,
-                borderRadius: 2,
-                background: withAlpha(theme.color.ink, 0.06),
-                overflow: "hidden",
-                marginTop: 4,
-              }}
-            >
-              <div style={{
-                height: "100%", width: `${pct}%`,
-                background: fill,
-                boxShadow: `0 0 6px ${withAlpha(fill, 0.45)}`,
-                transition: "width 600ms cubic-bezier(0.22, 1, 0.36, 1), background 200ms ease",
-              }} />
-            </div>
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  if (!updateEnabled) return;
+                  e.stopPropagation();
+                  setFillEditing(prev => !prev);
+                }}
+                aria-label={`Adjust ${item.name} amount — currently ${label}`}
+                title={updateEnabled ? "Tap to adjust how much is left" : label}
+                disabled={!updateEnabled}
+                style={{
+                  width: "100%",
+                  padding: 0,
+                  marginTop: 4,
+                  background: "transparent",
+                  border: "none",
+                  cursor: updateEnabled ? "pointer" : "default",
+                }}
+              >
+                <div
+                  style={{
+                    height: 4,
+                    borderRadius: 2,
+                    background: withAlpha(theme.color.ink, 0.06),
+                    overflow: "hidden",
+                  }}
+                >
+                  <div style={{
+                    height: "100%", width: `${pct}%`,
+                    background: fill,
+                    boxShadow: `0 0 6px ${withAlpha(fill, 0.45)}`,
+                    transition: "width 600ms cubic-bezier(0.22, 1, 0.36, 1), background 200ms ease",
+                  }} />
+                </div>
+              </button>
+              {updateEnabled && fillEditing && (
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginTop: 8,
+                    padding: "8px 10px",
+                    background: withAlpha(theme.color.ink, 0.04),
+                    borderRadius: 10,
+                    border: `1px solid ${theme.color.hairline}`,
+                  }}
+                >
+                  <input
+                    type="range"
+                    min="0" max={max} step={step}
+                    value={amt}
+                    onChange={(e) => onUpdate({ amount: Number(e.target.value) })}
+                    aria-label={`Estimate ${item.name} remaining`}
+                    style={{
+                      flex: 1,
+                      accentColor: fill,
+                    }}
+                  />
+                  <span style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    color: theme.color.inkMuted,
+                    minWidth: 64, textAlign: "right",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {fmt(amt)} / {fmt(max)} {item.unit || ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setFillEditing(false); }}
+                    aria-label="Close slider"
+                    style={{
+                      width: 22, height: 22,
+                      background: "transparent",
+                      border: `1px solid ${theme.color.hairline}`,
+                      color: theme.color.inkMuted,
+                      borderRadius: 999,
+                      fontFamily: font.mono, fontSize: 10,
+                      cursor: "pointer", flexShrink: 0,
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </>
           );
         })()}
       </div>
