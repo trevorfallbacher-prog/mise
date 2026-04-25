@@ -665,6 +665,13 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                     // realtime to other members.
                     setPantry(prev => prev.filter(p => p.id !== item.id));
                   }}
+                  onUpdateItem={(item, patch) => {
+                    // Inline-edit hook for the shelf row's fill gauge
+                    // (and any future inline editors). Patches the
+                    // matching row in-place; useSyncedList's diff
+                    // detects the field-level change and persists.
+                    setPantry(prev => prev.map(p => p.id === item.id ? { ...p, ...patch } : p));
+                  }}
                   hideDock
                 />
               </MCMThemeProvider>

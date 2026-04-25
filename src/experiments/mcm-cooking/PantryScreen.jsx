@@ -292,6 +292,12 @@ export default function PantryScreen({
   // action. App.jsx wires this to setPantry filter; Showcase
   // leaves it undefined (no remove action shown).
   onRemoveItem,
+  // Inline-update handler — called from PantryCard when the
+  // user adjusts a row in place (currently the tappable fill
+  // gauge; future inline editors land here too). Receives
+  // (rawRow, partialPatch) and the parent merges. Showcase
+  // leaves undefined so the gauge stays read-only there.
+  onUpdateItem,
   // Manual / scan add — called when the "+" button is tapped.
   // App.jsx wires this to mount the MCMAddDraftSheet overlay.
   // Showcase leaves undefined.
@@ -1033,8 +1039,8 @@ export default function PantryScreen({
               // population feels continuous rather than strobing
               // between ghost and real.
               if (loading && cards.length === 0) return <TileGridSkeleton />;
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} showTileContext />;
-              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} />;
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} showTileContext />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} />;
               // Whole-location empty state — when the active
               // location has zero items, skip the wall of dimmed
               // tiles and show a warm dedicated message instead.
@@ -3584,70 +3590,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             animate={{ opacity: 1, x: 0, scale: 1 }}
             transition={{ type: "spring", stiffness: 380, damping: 28 }}
             style={{
-              display: "flex", flexDirection: "column", alignItems: "flex-end",
+              display: "flex", flexDirection: "row", alignItems: "center",
               gap: 6, flexShrink: 0, marginTop: 2,
             }}
           >
-            {(() => {
-              const t = typeId ? findFoodType(typeId) : null;
-              const tone = theme.color.burnt;
-              // Reuse the tile-icon SVG fallback chain for the
-              // food type by walking through its defaultTileId
-              // (e.g. wweia_cheese.defaultTileId === "dairy" →
-              // /icons/tiles/dairy.svg). Falls back to the
-              // type's own emoji when no SVG exists.
-              const svg = t?.defaultTileId
-                ? tileIconFor(t.defaultTileId, t.defaultTileId === "frozen" ? "freezer" : null)
-                : null;
-              return (
-                <button
-                  type="button"
-                  className="mcm-focusable"
-                  onClick={() => setPickerOpen("category")}
-                  aria-label={t ? `Category: ${t.label}` : "Pick a category"}
-                  title={t ? `Category · ${t.label}` : "Pick a category"}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 40, height: 40,
-                    padding: 0,
-                    borderRadius: 999,
-                    border: t
-                      ? `1px solid ${withAlpha(tone, 0.45)}`
-                      : `1px dashed ${theme.color.hairline}`,
-                    background: t
-                      ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                      : "transparent",
-                    color: t ? theme.color.ink : theme.color.inkMuted,
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    transition: "background 200ms ease, border-color 200ms ease",
-                  }}
-                >
-                  {t ? (
-                    svg ? (
-                      <img
-                        src={svg}
-                        alt=""
-                        aria-hidden
-                        style={{
-                          width: 26, height: 26, objectFit: "contain",
-                          filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.18))",
-                        }}
-                      />
-                    ) : (
-                      <span style={{ fontSize: 20, lineHeight: 1 }}>{t.emoji}</span>
-                    )
-                  ) : (
-                    <span style={{
-                      fontFamily: font.detail, fontStyle: "italic",
-                      fontSize: 13,
-                    }}>+</span>
-                  )}
-                </button>
-              );
-            })()}
+            {/* Category pill is intentionally omitted right now —
+                FOOD_TYPES (wweia_cheese, wweia_yogurt, etc.) don't
+                have their own SVG icon set yet. Without a per-type
+                visual, the chip would have to fall back to emoji
+                while Stored In renders a real SVG, and that mixed
+                hero rail reads as inconsistent. The cascade still
+                resolves and writes typeId behind the scenes;
+                reinstate this block once category SVGs are in. */}
             {(() => {
               const loc = LOCATIONS.find(l => l.id === location);
               const tile = loc && tileId ? loc.tiles.find(x => x.id === tileId) : null;
