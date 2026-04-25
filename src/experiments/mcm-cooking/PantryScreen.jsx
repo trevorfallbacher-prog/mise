@@ -3062,6 +3062,31 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   const [canonicalId, setCanonicalId] = useState(seed.canonicalId || null);
   const [canonicalOverridden, setCanonicalOverridden] = useState(!!seed.canonicalId);
   const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical"
+  // Typeahead — suggestions floated under the Name input as
+  // the user types. Tapping a suggestion locks the canonical
+  // axis AND swaps the typed text for the canonical's display
+  // name in one move (so "cheddar" → canonical: cheese, name:
+  // "Cheese"). suppressUntilBlur lets us hide suggestions
+  // immediately after a pick without fighting the input's
+  // continued focus.
+  const [nameFocused, setNameFocused]           = useState(false);
+  const [suppressTypeahead, setSuppressTypeahead] = useState(false);
+  const nameSuggestions = useMemo(() => {
+    const q = name.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const exact = [];
+    const starts = [];
+    const includes = [];
+    for (const ing of INGREDIENTS) {
+      const lc = (ing.name || "").toLowerCase();
+      if (!lc) continue;
+      if (lc === q) exact.push(ing);
+      else if (lc.startsWith(q)) starts.push(ing);
+      else if (lc.includes(q))   includes.push(ing);
+      if (exact.length + starts.length + includes.length >= 32) break;
+    }
+    return [...exact, ...starts, ...includes].slice(0, 6);
+  }, [name]);
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -3346,27 +3371,115 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           </div>
         )}
 
-        {/* Name */}
+        {/* Name + canonical typeahead — as the user types we
+            float a dropdown of matching canonical ingredients
+            below the input. Picking a row swaps the text for
+            the canonical's display name AND locks the
+            canonicalId axis in one tap (same self-teaching
+            cascade as classic Kitchen, just folded into the
+            primary entry control). */}
         <FieldLabel theme={theme}>Name</FieldLabel>
-        <input
-          autoFocus
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Sourdough Loaf"
-          style={{
-            ...inputBase,
-            // Filmotype Honey matches item-card name face so
-            // the user sees a typographic preview of how the
-            // row will read on the shelf. Honey reads small for
-            // its em-box, so we run it ~2x the body size with
-            // tight line-height — same rule applied to the
-            // shelf row (PantryCard) below.
-            fontFamily: font.itemName,
-            fontWeight: 300,
-            fontSize: 32,
-            lineHeight: 1,
-          }}
-        />
+        <div style={{ position: "relative" }}>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => { setName(e.target.value); setSuppressTypeahead(false); }}
+            onFocus={() => setNameFocused(true)}
+            onBlur={() => {
+              // Defer the close so a click on a suggestion
+              // row lands before this blur unmounts it. 120ms
+              // tracks the suggestion list's animation budget.
+              setTimeout(() => setNameFocused(false), 120);
+            }}
+            placeholder="e.g. Sourdough Loaf"
+            style={{
+              ...inputBase,
+              // Filmotype Honey matches item-card name face so
+              // the user sees a typographic preview of how the
+              // row will read on the shelf. Honey reads small for
+              // its em-box, so we run it ~2x the body size with
+              // tight line-height — same rule applied to the
+              // shelf row (PantryCard) below.
+              fontFamily: font.itemName,
+              fontWeight: 300,
+              fontSize: 32,
+              lineHeight: 1,
+            }}
+          />
+          {nameFocused && !suppressTypeahead && nameSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              aria-label="Canonical suggestions"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                left: 0, right: 0,
+                zIndex: 5,
+                padding: 6,
+                borderRadius: 14,
+                background: theme.color.glassFillHeavy,
+                border: `1px solid ${theme.color.glassBorder}`,
+                backdropFilter: "blur(20px) saturate(150%)",
+                WebkitBackdropFilter: "blur(20px) saturate(150%)",
+                boxShadow: "0 18px 36px rgba(20,12,4,0.28), 0 4px 12px rgba(20,12,4,0.16)",
+                ...THEME_TRANSITION,
+              }}
+            >
+              {nameSuggestions.map(ing => (
+                <button
+                  key={ing.id}
+                  type="button"
+                  role="option"
+                  aria-selected={ing.id === canonicalId}
+                  className="mcm-focusable"
+                  // onMouseDown fires before onBlur on the input,
+                  // so the pick lands without a click being lost.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setName(ing.name);
+                    setCanonicalId(ing.id);
+                    setCanonicalOverridden(true);
+                    setSuppressTypeahead(true);
+                  }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12,
+                    width: "100%",
+                    padding: "8px 10px",
+                    margin: "1px 0",
+                    borderRadius: 10,
+                    border: "1px solid transparent",
+                    background: ing.id === canonicalId
+                      ? `linear-gradient(${withAlpha("#b8a878", 0.18)}, ${withAlpha("#b8a878", 0.18)}), transparent`
+                      : "transparent",
+                    cursor: "pointer", textAlign: "left",
+                    color: theme.color.ink,
+                    transition: "background 140ms ease",
+                  }}
+                  onMouseEnter={(e) => { if (ing.id !== canonicalId) e.currentTarget.style.background = withAlpha(theme.color.ink, 0.05); }}
+                  onMouseLeave={(e) => { if (ing.id !== canonicalId) e.currentTarget.style.background = "transparent"; }}
+                >
+                  {ing.emoji && <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{ing.emoji}</span>}
+                  <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+                    <span style={{ fontFamily: font.sans, fontSize: 14, fontWeight: 500 }}>
+                      {ing.name}
+                    </span>
+                    {ing.category && (
+                      <span style={{
+                        fontFamily: font.detail, fontStyle: "italic", fontWeight: 400,
+                        fontSize: 12, color: theme.color.inkMuted, marginTop: 1,
+                      }}>
+                        {ing.category}
+                      </span>
+                    )}
+                  </span>
+                  {ing.id === canonicalId && (
+                    <span style={{ color: "#b8a878", fontSize: 14 }}>✓</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
         {/* Package size — the FULL container amount + unit. The
             remaining slider below scales down from this number
