@@ -3891,6 +3891,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const ready = completed === total;
           const tone = ready ? theme.color.teal : theme.color.mustard;
           const nextStep = steps.find(s => !s.done);
+          const captionKey = ready ? "ready" : `${completed}-${nextStep?.id || "next"}`;
           return (
             <div style={{ marginBottom: 12 }}>
               <div style={{
@@ -3898,12 +3899,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 marginBottom: 6,
               }}>
                 {steps.map(s => (
-                  <div
+                  <motion.div
                     key={s.id}
+                    // Filled segments spring up briefly when the
+                    // step transitions to done. Provides a small
+                    // moment of "tick — that's another one" so the
+                    // user feels rewarded for each completed field.
+                    animate={s.done
+                      ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
+                      : { scaleY: 1 }}
+                    transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
                     style={{
                       flex: 1,
                       height: 4,
                       borderRadius: 2,
+                      transformOrigin: "center",
                       background: s.done
                         ? tone
                         : withAlpha(theme.color.ink, 0.08),
@@ -3915,20 +3925,43 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   />
                 ))}
               </div>
-              <div
-                role="status"
-                aria-live="polite"
-                style={{
-                  fontFamily: font.mono, fontSize: 10,
-                  letterSpacing: "0.14em", textTransform: "uppercase",
-                  color: tone,
-                  fontWeight: 600,
-                }}
-              >
-                {ready
-                  ? "Ready to save"
-                  : `${completed} of ${total} · add ${nextStep ? nextStep.label : "more"} next`}
-              </div>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={captionKey}
+                  role="status"
+                  aria-live="polite"
+                  initial={{ opacity: 0, y: -2 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 2 }}
+                  transition={{ duration: 0.18 }}
+                  style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    letterSpacing: "0.14em", textTransform: "uppercase",
+                    color: tone,
+                    fontWeight: 600,
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  {ready ? (
+                    <>
+                      <motion.span
+                        aria-hidden
+                        initial={{ scale: 0.4, rotate: -20, opacity: 0 }}
+                        animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                        transition={{ type: "spring", stiffness: 480, damping: 18 }}
+                        style={{ fontSize: 14, lineHeight: 1 }}
+                      >
+                        ✓
+                      </motion.span>
+                      Ready to save
+                    </>
+                  ) : (
+                    <>
+                      {completed} of {total} · add {nextStep ? nextStep.label : "more"} next
+                    </>
+                  )}
+                </motion.div>
+              </AnimatePresence>
             </div>
           );
         })()}
@@ -4946,6 +4979,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           <PrimaryButton
             onClick={handleSubmit}
             disabled={!canSubmit}
+            // Teal halo breathes around the submit when the
+            // form is fully validated. Reads as "yes, you can
+            // press this now" — matches the strip's Ready
+            // green-state so the two visual cues sync.
+            className={validationErrors.length === 0 ? "mise-submit-ready" : undefined}
             style={{
               padding: "12px 22px",
               fontSize: 14,

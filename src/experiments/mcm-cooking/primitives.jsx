@@ -406,12 +406,13 @@ export function GlassPanel({
 
 // --- Buttons ------------------------------------------------------------
 
-export function PrimaryButton({ children, onClick, style, disabled }) {
+export function PrimaryButton({ children, onClick, style, disabled, className }) {
   const { ctaButton } = useTheme();
   return (
     <motion.button
       onClick={onClick}
       disabled={disabled}
+      className={className}
       whileHover={!disabled && { scale: 1.02 }}
       whileTap={!disabled && { scale: 0.97 }}
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}

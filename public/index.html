@@ -94,6 +94,19 @@
       }
       .mise-scan-halo { animation: miseScanHalo 4s ease-in-out infinite; }
 
+      /* Submit-ready halo — applied to the AddDraftSheet's
+         primary submit button when the form's required-fields
+         progress hits Ready. Teal-tinted breath that reads
+         "yes, you can press this now." 3.6s cycle to feel
+         celebratory without thrashing. */
+      @keyframes miseSubmitReady {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(47,143,131,0.35),
+                               0 0 18px 0 rgba(47,143,131,0.20); }
+        50%      { box-shadow: 0 0 0 4px rgba(47,143,131,0.00),
+                               0 0 30px 4px rgba(47,143,131,0.40); }
+      }
+      .mise-submit-ready { animation: miseSubmitReady 3.6s ease-in-out infinite; }
+
       /* Fade-in-up — a universal mount animation for mount-once rows
          in lists (scan-draft rows, pantry tiles, picker options). Used
          by the `.mise-fade-in` utility class with a CSS var for
