@@ -5155,17 +5155,35 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           </button>
           <PrimaryButton
             onClick={handleSubmit}
-            disabled={!canSubmit}
             // Teal halo breathes around the submit when the
             // form is fully validated. Reads as "yes, you can
             // press this now" — matches the strip's Ready
             // green-state so the two visual cues sync.
-            className={validationErrors.length === 0 ? "mise-submit-ready" : undefined}
+            className={formReady ? "mise-submit-ready" : undefined}
             style={{
               padding: "12px 22px",
               fontSize: 14,
-              opacity: canSubmit ? 1 : 0.45,
-              cursor: canSubmit ? "pointer" : "not-allowed",
+              transition: "background 320ms ease, border-color 320ms ease, color 320ms ease, box-shadow 320ms ease, opacity 320ms ease",
+              ...(formReady
+                ? { opacity: 1, cursor: "pointer" }
+                : {
+                    // Skeletal until the form's ready — strips
+                    // the burnt CTA gradient, white border, and
+                    // drop-shadow so the button reads as
+                    // "not pressable yet" instead of the typical
+                    // tap-me orange. The moment formReady flips
+                    // true, the underlying ctaButton styling
+                    // snaps back in (320ms crossfade). Click
+                    // still fires handleSubmit — which surfaces
+                    // the per-field halos so the user sees what
+                    // they're missing.
+                    background: "transparent",
+                    border: `1px dashed ${withAlpha(theme.color.ink, 0.18)}`,
+                    color: theme.color.inkFaint,
+                    boxShadow: "none",
+                    opacity: 1,
+                    cursor: "default",
+                  }),
             }}
           >
             {canonicalId && findIngredient(canonicalId)?.name
