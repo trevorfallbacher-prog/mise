@@ -3299,19 +3299,75 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           ...THEME_TRANSITION,
         }}
       >
-        {/* Header — kicker + title */}
-        <Kicker tone={theme.color.inkFaint}>Add to pantry</Kicker>
-        <div style={{
-          fontFamily: font.display,
-          fontSize: 28,
-          fontWeight: 400,
-          letterSpacing: "0.025em",
-          color: theme.color.ink,
-          marginTop: 4,
-          marginBottom: 18,
-          lineHeight: 1.05,
-        }}>
-          What's new on the shelf?
+        {/* Header — kicker + title with the live Category pill
+            pinned to the top-right. The pill renders as a
+            status indicator: orange (theme.color.burnt) when
+            our auto-resolve / scan landed on a category,
+            dashed muted when nothing has resolved yet. Tap
+            opens the full picker so the user can override.
+            Sits inside the header row so it never collides
+            with the form below. */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <Kicker tone={theme.color.inkFaint}>Add to pantry</Kicker>
+            <div style={{
+              fontFamily: font.display,
+              fontSize: 28,
+              fontWeight: 400,
+              letterSpacing: "0.025em",
+              color: theme.color.ink,
+              marginTop: 4,
+              marginBottom: 18,
+              lineHeight: 1.05,
+            }}>
+              What's new on the shelf?
+            </div>
+          </div>
+          {(() => {
+            const t = typeId ? findFoodType(typeId) : null;
+            const tone = theme.color.burnt;
+            return (
+              <button
+                type="button"
+                className="mcm-focusable"
+                onClick={() => setPickerOpen("category")}
+                aria-label={t ? `Category: ${t.label}` : "Pick a category"}
+                title={t ? `Category · ${t.label}` : "Pick a category"}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: t
+                    ? `1px solid ${withAlpha(tone, 0.45)}`
+                    : `1px dashed ${theme.color.hairline}`,
+                  background: t
+                    ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                    : "transparent",
+                  color: t ? theme.color.ink : theme.color.inkMuted,
+                  fontFamily: font.detail,
+                  fontStyle: "italic",
+                  fontWeight: 400,
+                  fontSize: 13,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  marginTop: 2,
+                  whiteSpace: "nowrap",
+                  transition: "background 200ms ease, border-color 200ms ease",
+                }}
+              >
+                {t ? (
+                  <>
+                    <span style={{ fontSize: 14, lineHeight: 1, fontStyle: "normal" }}>{t.emoji}</span>
+                    <span>{t.label}</span>
+                  </>
+                ) : (
+                  <span>+ category</span>
+                )}
+              </button>
+            );
+          })()}
         </div>
 
         {/* Scan CTA — top of the form so it reads as the
@@ -3570,105 +3626,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           placeholder="e.g. Kerrygold"
           style={inputBase}
         />
-
-        {/* Canonical chip (CLAUDE.md axis 2 — tan #b8a878).
-            Auto-resolved from the name via inferCanonicalFromName
-            and from OFF / lookupBarcode hits. Tap opens the
-            picker so the user can re-link to a different
-            canonical (e.g. "Sourdough Loaf" → bread canonical).
-            Sits one row above Category per the identity-field
-            hierarchy. */}
-        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Canonical</FieldLabel>
-        {(() => {
-          const ing = canonicalId ? findIngredient(canonicalId) : null;
-          const tone = "#b8a878"; // tan — reserved CANONICAL color
-          return (
-            <button
-              type="button"
-              className="mcm-focusable"
-              onClick={() => setPickerOpen("canonical")}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 14px",
-                borderRadius: 999,
-                border: ing
-                  ? `1px solid ${withAlpha(tone, 0.45)}`
-                  : `1px dashed ${theme.color.hairline}`,
-                background: ing
-                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                  : "transparent",
-                color: ing ? theme.color.ink : theme.color.inkMuted,
-                fontFamily: font.detail,
-                fontStyle: "italic",
-                fontWeight: 400,
-                fontSize: 16,
-                cursor: "pointer",
-                transition: "background 200ms ease, border-color 200ms ease",
-              }}
-            >
-              {ing ? (
-                <>
-                  <span style={{ fontSize: 18, lineHeight: 1, fontStyle: "normal" }}>{ing.emoji}</span>
-                  <span>{ing.name}</span>
-                </>
-              ) : (
-                <span>+ link a canonical</span>
-              )}
-            </button>
-          );
-        })()}
-
-        {/* Category chip (CLAUDE.md "CATEGORIES" axis, color
-            family: orange / theme.color.burnt). Auto-resolved
-            from the name as the user types and from OFF tag
-            hints after a successful scan. Tap opens the picker
-            so the user can override when our inference is off.
-            The override flag inside the component locks the
-            value once they've picked, so further name typing
-            doesn't clobber the choice. */}
-        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Category</FieldLabel>
-        {(() => {
-          const t = typeId ? findFoodType(typeId) : null;
-          const tone = theme.color.burnt;
-          return (
-            <button
-              type="button"
-              className="mcm-focusable"
-              onClick={() => setPickerOpen("category")}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "10px 14px",
-                borderRadius: 999,
-                border: t
-                  ? `1px solid ${withAlpha(tone, 0.45)}`
-                  : `1px dashed ${theme.color.hairline}`,
-                background: t
-                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                  : "transparent",
-                color: t ? theme.color.ink : theme.color.inkMuted,
-                fontFamily: font.detail,
-                fontStyle: "italic",
-                fontWeight: 400,
-                fontSize: 16,
-                cursor: "pointer",
-                transition: "background 200ms ease, border-color 200ms ease",
-              }}
-            >
-              {t ? (
-                <>
-                  <span style={{ fontSize: 18, lineHeight: 1, fontStyle: "normal" }}>{t.emoji}</span>
-                  <span>{t.label}</span>
-                </>
-              ) : (
-                <span>+ pick a category</span>
-              )}
-            </button>
-          );
-        })()}
 
         {/* Location segmented row — matches FloatingLocationDock
             color treatment so users see the same swatch system
