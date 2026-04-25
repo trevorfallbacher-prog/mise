@@ -696,7 +696,7 @@ export default function PantryScreen({
               lineHeight: 1.0,
             }}
           >
-            The Pantry
+            The Kitchen
           </SerifHeader>
         </FadeIn>
 
