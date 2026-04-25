@@ -243,6 +243,10 @@ export default function PantryScreen({
   // action. App.jsx wires this to setPantry filter; Showcase
   // leaves it undefined (no remove action shown).
   onRemoveItem,
+  // Manual / scan add — called when the "+" button is tapped.
+  // App.jsx wires this to mount the MCMAddDraftSheet overlay.
+  // Showcase leaves undefined.
+  onOpenAdd,
   hideDock = false,
 }) {
   const { theme } = useTheme();
@@ -661,7 +665,7 @@ export default function PantryScreen({
               - Cart button: shopping list.
             All three are siblings in a flex row so they align
             cleanly without position:absolute math-matching. */}
-        {(onGoToShopping || onOpenReceipts) && (
+        {(onGoToShopping || onOpenReceipts || onOpenAdd) && (
           <div style={{
             position: "absolute",
             top: 22,
@@ -671,6 +675,9 @@ export default function PantryScreen({
             alignItems: "center",
             gap: 10,
           }}>
+            {onOpenAdd && (
+              <AddButton onClick={onOpenAdd} />
+            )}
             {onOpenReceipts && (
               <ReceiptButton spendCents={spendCents} onClick={onOpenReceipts} />
             )}
@@ -1194,6 +1201,50 @@ const NAV_TABS = [
 // dollar-amount badge pinned to the upper-right corner — same
 // pattern as the cart's count badge, just $ instead of an
 // integer.
+// Add button — top-right toolbar affordance for the
+// manual-add / scan flow. Same 60×60 glass pill as the cart
+// + receipt buttons; teal "+" glyph instead of an icon
+// because it's a constructive action and the teal reads as
+// fresh / inventory across the app.
+function AddButton({ onClick }) {
+  const { theme } = useTheme();
+  return (
+    <motion.button
+      onClick={onClick}
+      aria-label="Add an item to the pantry"
+      title="Add an item"
+      className="mcm-focusable"
+      whileHover={{ y: -2, scale: 1.04 }}
+      whileTap={{ scale: 0.94 }}
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 380, damping: 26 }}
+      style={{
+        position: "relative",
+        width: 60,
+        height: 60,
+        borderRadius: 999,
+        border: `1px solid ${theme.color.glassBorder}`,
+        background: theme.color.glassFillHeavy,
+        backdropFilter: "blur(14px) saturate(150%)",
+        WebkitBackdropFilter: "blur(14px) saturate(150%)",
+        boxShadow: theme.shadow.soft,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        padding: 0,
+        color: theme.color.teal,
+        fontSize: 32,
+        lineHeight: 1,
+        fontWeight: 300,
+      }}
+    >
+      +
+    </motion.button>
+  );
+}
+
 function ReceiptButton({ spendCents = 0, onClick }) {
   const { theme } = useTheme();
   const dollars = Math.round(spendCents / 100);
@@ -3038,5 +3089,294 @@ function SearchGlyph() {
       <path d="M16.5 16.5 L21 21" stroke={theme.color.inkMuted} strokeWidth="1.6" strokeLinecap="round" />
     </svg>
   );
+}
+
+// ─────────────────────────────────────────────────────────────
+// MCMAddDraftSheet — manual-add (and, in a follow-up commit,
+// scan-prefilled) entry surface. Mounted at App level when
+// onOpenAdd fires; calls onSubmit(row) with a partial pantry-
+// row shape that App.jsx wraps with id + purchasedAt before
+// pushing into setPantry.
+//
+// Seed: { mode: "blank" } today; { mode: "scan", name, brand,
+// amount, unit, ... } once scan is wired in commit 2.
+// ─────────────────────────────────────────────────────────────
+export function MCMAddDraftSheet({ seed = { mode: "blank" }, onClose, onSubmit }) {
+  const { theme } = useTheme();
+  // Form state — seeded from `seed` so the same component
+  // works for empty (manual) and pre-filled (scan) entry. The
+  // useState initializer runs once per mount; keying the sheet
+  // on seed identity from the parent re-mounts when a fresh
+  // scan lands (see App.jsx wiring).
+  const [name,   setName]   = useState(seed.name   || "");
+  const [brand,  setBrand]  = useState(seed.brand  || "");
+  const [amount, setAmount] = useState(seed.amount != null ? String(seed.amount) : "");
+  const [unit,   setUnit]   = useState(seed.unit   || "");
+  const [location, setLocation] = useState(seed.location || "fridge");
+
+  const canSubmit = name.trim().length > 0;
+
+  // Esc closes — same keyboard pattern PantryScreen uses for
+  // its sticky surfaces.
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    const cat = defaultCategoryForLocation(location);
+    onSubmit && onSubmit({
+      name: name.trim(),
+      brand: brand.trim() || null,
+      amount: amount ? Number(amount) : null,
+      unit: unit.trim() || null,
+      category: cat,
+      location,
+      // Tile defaults to "misc" — user can re-classify after
+      // the row lands. Saves a multi-step picker in the add
+      // flow itself.
+      tileId: null,
+      // No expiration set on manual add by default (user can
+      // edit after). Days-chip will be empty.
+      expiresAt: null,
+    });
+  };
+
+  const inputBase = {
+    width: "100%",
+    border: `1px solid ${theme.color.hairline}`,
+    background: theme.color.glassFillHeavy,
+    color: theme.color.ink,
+    borderRadius: 12,
+    padding: "12px 14px",
+    fontFamily: font.sans,
+    fontSize: 15,
+    outline: "none",
+    boxShadow: theme.shadow.inputInset,
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Add an item to the pantry"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 50,
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        background: "rgba(20,12,4,0.55)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
+      onClick={(e) => {
+        // Backdrop click closes — only when the click target
+        // is the backdrop itself, not the sheet content.
+        if (e.target === e.currentTarget) onClose && onClose();
+      }}
+    >
+      <motion.div
+        initial={{ y: 32, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 32, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 360, damping: 32 }}
+        style={{
+          width: "100%",
+          maxWidth: 520,
+          margin: "0 12px 24px",
+          padding: 22,
+          borderRadius: 20,
+          background: theme.color.glassFillHeavy,
+          border: `1px solid ${theme.color.glassBorder}`,
+          backdropFilter: "blur(24px) saturate(160%)",
+          WebkitBackdropFilter: "blur(24px) saturate(160%)",
+          boxShadow: "0 24px 60px rgba(20,12,4,0.40), 0 4px 16px rgba(20,12,4,0.20)",
+          ...THEME_TRANSITION,
+        }}
+      >
+        {/* Header — kicker + title */}
+        <Kicker tone={theme.color.inkFaint}>Add to pantry</Kicker>
+        <div style={{
+          fontFamily: font.display,
+          fontSize: 28,
+          fontWeight: 400,
+          letterSpacing: "0.025em",
+          color: theme.color.ink,
+          marginTop: 4,
+          marginBottom: 18,
+          lineHeight: 1.05,
+        }}>
+          What's new on the shelf?
+        </div>
+
+        {/* Name */}
+        <FieldLabel theme={theme}>Name</FieldLabel>
+        <input
+          autoFocus
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="e.g. Sourdough Loaf"
+          style={{
+            ...inputBase,
+            // Beverly Drive Right matches item-card name face
+            // so the user sees a typographic preview of how the
+            // row will read on the shelf.
+            fontFamily: font.itemName,
+            fontSize: 18,
+          }}
+        />
+
+        {/* Amount + Unit row */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+          <div>
+            <FieldLabel theme={theme}>Amount</FieldLabel>
+            <input
+              type="number"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="1"
+              style={{ ...inputBase, fontFamily: font.itemSub, fontSize: 16 }}
+            />
+          </div>
+          <div>
+            <FieldLabel theme={theme}>Unit</FieldLabel>
+            <input
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              placeholder="loaf, oz, gallon…"
+              style={{ ...inputBase, fontFamily: font.itemSub, fontSize: 16 }}
+            />
+          </div>
+        </div>
+
+        {/* Brand */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Brand <span style={{ opacity: 0.5 }}>(optional)</span></FieldLabel>
+        <input
+          value={brand}
+          onChange={(e) => setBrand(e.target.value)}
+          placeholder="e.g. Kerrygold"
+          style={inputBase}
+        />
+
+        {/* Location segmented row — matches FloatingLocationDock
+            color treatment so users see the same swatch system
+            here as on the dock. */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Where does it go?</FieldLabel>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 4 }}>
+          {LOCATIONS.map((loc) => {
+            const active = location === loc.id;
+            const dotColor = LOCATION_DOT[loc.id];
+            return (
+              <button
+                key={loc.id}
+                type="button"
+                className="mcm-focusable"
+                onClick={() => setLocation(loc.id)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  padding: "10px 8px",
+                  borderRadius: 12,
+                  border: active
+                    ? `1px solid ${withAlpha(dotColor, 0.45)}`
+                    : `1px solid ${theme.color.hairline}`,
+                  background: active
+                    ? `linear-gradient(${withAlpha(dotColor, 0.18)}, ${withAlpha(dotColor, 0.18)}), ${theme.color.glassFillHeavy}`
+                    : "transparent",
+                  color: active ? theme.color.ink : theme.color.inkMuted,
+                  fontFamily: font.sans,
+                  fontSize: 13,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  transition: "background 200ms ease, color 200ms ease, border-color 200ms ease",
+                }}
+              >
+                <span style={{
+                  display: "inline-block",
+                  width: 8, height: 8,
+                  borderRadius: "50%",
+                  background: dotColor,
+                  boxShadow: `0 1px 2px rgba(30,20,8,0.20)`,
+                }} />
+                {loc.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Action row */}
+        <div style={{
+          display: "flex", gap: 10, marginTop: 22,
+          justifyContent: "flex-end",
+        }}>
+          <button
+            type="button"
+            className="mcm-focusable"
+            onClick={onClose}
+            style={{
+              padding: "12px 18px",
+              borderRadius: 999,
+              border: `1px solid ${theme.color.hairline}`,
+              background: "transparent",
+              color: theme.color.inkMuted,
+              fontFamily: font.sans, fontSize: 14, fontWeight: 500,
+              cursor: "pointer",
+            }}
+          >
+            Cancel
+          </button>
+          <PrimaryButton
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            style={{
+              padding: "12px 22px",
+              fontSize: 14,
+              opacity: canSubmit ? 1 : 0.45,
+              cursor: canSubmit ? "pointer" : "not-allowed",
+            }}
+          >
+            Add to pantry
+          </PrimaryButton>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// Field label primitive — small DM Mono uppercase kicker
+// above each input. Pulled into a helper so the label voice
+// stays consistent across the form's six fields.
+function FieldLabel({ theme, children, style }) {
+  return (
+    <div style={{
+      fontFamily: font.mono,
+      fontSize: 10,
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+      color: theme.color.inkFaint,
+      marginBottom: 6,
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+// Coarse default — when the user picks Fridge / Pantry /
+// Freezer in the add form, infer a category bucket so the
+// classifier can tile the row. Mirrors defaultLocationForCategory
+// in reverse (the inverse mapping). User can re-tile after the
+// row lands via the existing edit flow.
+function defaultCategoryForLocation(location) {
+  if (location === "freezer") return "frozen";
+  if (location === "pantry")  return "pantry";
+  return "dairy"; // most-likely fridge default; user re-tiles via edit
 }
 

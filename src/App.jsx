@@ -18,7 +18,7 @@ import XpToastStack from "./components/XpToastStack";
 import CookMode from "./components/CookMode";
 import CookBanner from "./components/CookBanner";
 import MCMCookingShowcase from "./experiments/mcm-cooking/Showcase";
-import MCMPantryScreen from "./experiments/mcm-cooking/PantryScreen";
+import MCMPantryScreen, { MCMAddDraftSheet } from "./experiments/mcm-cooking/PantryScreen";
 import { ThemeProvider as MCMThemeProvider } from "./experiments/mcm-cooking/theme";
 import ItemCard from "./components/ItemCard";
 import { useActiveCookSession } from "./lib/useActiveCookSession";
@@ -284,6 +284,12 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
   // history modal. Rendered at App-level (not inside MCM) so the
   // modal stacks above everything including the floating dock.
   const [mcmReceiptsOpen, setMcmReceiptsOpen] = useState(false);
+  // MCM scan + manual-add sheet. When set, the AddDraftSheet
+  // overlay opens at App level. Initial value is the seed
+  // record the sheet renders against — { mode: "blank" } for
+  // manual entry, { mode: "scan", ...prefilledFields } for
+  // post-scan draft. Null = sheet closed.
+  const [mcmAddDraft, setMcmAddDraft]     = useState(null);
   // `forceClassicPantry` — one-tap escape hatch back to the classic
   // Kitchen render for the Pantry tab. Not wired to a UI yet; exists
   // so we can flip it via devtools / localStorage if the MCM path
@@ -646,6 +652,11 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                   shoppingCount={Array.isArray(shoppingList) ? shoppingList.length : 0}
                   onOpenReceipts={() => setMcmReceiptsOpen(true)}
                   spendCents={spendCents}
+                  // Scan + manual-add bridge. Seeds the AddDraftSheet
+                  // with `{ mode: "blank" }` — empty fields. The sheet
+                  // itself will offer a Scan button that re-seeds with
+                  // OFF lookup results when used.
+                  onOpenAdd={() => setMcmAddDraft({ mode: "blank" })}
                   onRemoveItem={(item) => {
                     // Swipe-to-remove from the MCM item card. Filters
                     // the row out of the local pantry; useSyncedList
@@ -740,6 +751,30 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
           }}
           onClose={() => setMcmReceiptsOpen(false)}
         />
+      )}
+
+      {/* MCM scan + manual-add sheet. Renders inside its own
+          MCMThemeProvider so the warm palette holds even though
+          it's mounted at App level (above the dark UI). On
+          submit, the sheet hands back a complete pantry-row
+          shape and we append it via setPantry — useSyncedList's
+          diff path persists the insert to Supabase
+          automatically. */}
+      {mcmAddDraft && (
+        <MCMThemeProvider>
+          <MCMAddDraftSheet
+            seed={mcmAddDraft}
+            onClose={() => setMcmAddDraft(null)}
+            onSubmit={(row) => {
+              setPantry(prev => [...prev, {
+                id: crypto.randomUUID(),
+                purchasedAt: new Date(),
+                ...row,
+              }]);
+              setMcmAddDraft(null);
+            }}
+          />
+        </MCMThemeProvider>
       )}
 
       {settingsOpen && (
