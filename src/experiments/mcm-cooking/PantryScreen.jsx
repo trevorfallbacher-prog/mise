@@ -3800,7 +3800,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               // Right padding clears the pinned scan button
               // (40px circle + 12px margin) so long typed
               // names don't collide with the icon.
-              paddingRight: 56,
+              paddingRight: 72,
             }}
           />
           <button
@@ -3812,12 +3812,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             style={{
               position: "absolute",
               top: "50%",
-              right: 8,
+              // Negative right + larger size so the icon spills
+              // slightly past the input's border on both vertical
+              // edges. The baked-in circle on upc_scanner.svg lets
+              // it visually anchor itself rather than depending on
+              // a wrapper.
+              right: -10,
               transform: "translateY(-50%)",
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 40, height: 40,
+              width: 64, height: 64,
               borderRadius: 999,
               border: "none",
               background: "transparent",
