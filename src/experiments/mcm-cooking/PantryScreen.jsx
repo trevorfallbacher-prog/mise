@@ -2379,21 +2379,21 @@ function TileGrid({ location, cardsByTile, onPickTile, warnCountByTile }) {
             <motion.div
               key={tile.id}
               layout
-              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              // Pronounced entrance so the icons "reset home" when
+              // the user clears search and the TileGrid remounts.
+              // Each tile springs in from scale 0.85 + offset, with
+              // a wider stagger (60ms) so the user reads it as a
+              // satisfying wave rather than a flat fade.
+              initial={{ opacity: 0, scale: 0.85, y: 12 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.96 }}
-              // Press feedback — empty tiles skip the press
-              // animation since they're not interactive. Small
-              // 0.97 feels like a gentle tap rather than a heavy
-              // slam; pairs with the 0.22s body crossfade when
-              // the user commits by drilling in.
+              exit={{ opacity: 0, scale: 0.92 }}
               whileTap={empty ? undefined : { scale: 0.97 }}
-              // Hover lift (desktop / trackpad) — 2px rise with
-              // a 1% scale nudges the card toward the viewer so
-              // the glass material reads more as a solid object
-              // than a flat overlay. Ignored on empty tiles.
               whileHover={empty ? undefined : { y: -2, scale: 1.01 }}
-              transition={{ duration: 0.32, delay: i * 0.02, ease: [0.22, 1, 0.36, 1] }}
+              transition={{
+                opacity: { duration: 0.28, delay: i * 0.06 },
+                scale:   { type: "spring", stiffness: 320, damping: 22, delay: i * 0.06 },
+                y:       { type: "spring", stiffness: 320, damping: 22, delay: i * 0.06 },
+              }}
             >
               <TileCard
                 tile={tile}
@@ -3609,13 +3609,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               // tileIconFor handles the location-prefixed lookup
               // for distinct misc-per-location icons.
               const svg = tile ? tileIconFor(tile.id, location) : null;
+              // "Resolved" means the cascade landed on a real
+              // tile with a real SVG. A null tile, the generic
+              // misc fallback, or any tile that hasn't shipped
+              // its SVG all read as "missing" so we surface a +
+              // affordance the user can tap to pick explicitly,
+              // rather than a brown 📦 placeholder that looks
+              // like the system gave up.
+              const resolved = !!tile && tile.id !== "misc" && !!svg;
               return (
                 <button
                   type="button"
                   className="mcm-focusable"
                   onClick={() => setPickerOpen("tile")}
-                  aria-label={tile ? `Stored in: ${tile.label}` : "Pick a shelf"}
-                  title={tile ? `Stored in · ${tile.label}` : "Pick a shelf"}
+                  aria-label={resolved ? `Stored in: ${tile.label}` : "Pick a shelf"}
+                  title={resolved ? `Stored in · ${tile.label}` : "Pick a shelf"}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -3623,36 +3631,32 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     width: 40, height: 40,
                     padding: 0,
                     borderRadius: 999,
-                    border: tile
+                    border: resolved
                       ? `1px solid ${withAlpha(tone, 0.45)}`
-                      : `1px dashed ${theme.color.hairline}`,
-                    background: tile
+                      : `1px dashed ${withAlpha(tone, 0.55)}`,
+                    background: resolved
                       ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                      : "transparent",
-                    color: tile ? theme.color.ink : theme.color.inkMuted,
+                      : `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
+                    color: resolved ? theme.color.ink : tone,
                     cursor: "pointer",
                     flexShrink: 0,
                     transition: "background 200ms ease, border-color 200ms ease",
                   }}
                 >
-                  {tile ? (
-                    svg ? (
-                      <img
-                        src={svg}
-                        alt=""
-                        aria-hidden
-                        style={{
-                          width: 26, height: 26, objectFit: "contain",
-                          filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.18))",
-                        }}
-                      />
-                    ) : (
-                      <span style={{ fontSize: 20, lineHeight: 1 }}>{tile.emoji}</span>
-                    )
+                  {resolved ? (
+                    <img
+                      src={svg}
+                      alt=""
+                      aria-hidden
+                      style={{
+                        width: 26, height: 26, objectFit: "contain",
+                        filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.18))",
+                      }}
+                    />
                   ) : (
                     <span style={{
-                      fontFamily: font.detail, fontStyle: "italic",
-                      fontSize: 13,
+                      fontSize: 22, lineHeight: 1, fontWeight: 300,
+                      color: tone,
                     }}>+</span>
                   )}
                 </button>
