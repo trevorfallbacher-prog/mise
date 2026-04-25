@@ -1,7 +1,7 @@
 // Module-scope helpers + constants shared across the MCM cooking
-// pantry surface. Pulled out of PantryScreen.jsx so the screen
+// pantry surface. Pulled out of KitchenScreen.jsx so the screen
 // shell can stay focused on top-level wiring while the extracted
-// component files (PantryCard, ItemGrid, AddDraftSheet, …) all
+// component files (KitchenCard, ItemGrid, AddDraftSheet, …) all
 // import a single canonical version of the helper.
 
 import {
@@ -200,7 +200,7 @@ export function defaultCategoryForLocation(location) {
 }
 
 // Map a raw pantry row (from usePantry) OR a demo row into the
-// card shape the PantryCard renderer expects. Detects by whether
+// card shape the KitchenCard renderer expects. Detects by whether
 // `.qty` is pre-baked (demo) vs. derived from `.amount` / `.unit`
 // (real). Keeps the downstream card component dumb — it sees
 // ONE shape regardless of source. Also stamps `_location` +
@@ -239,7 +239,7 @@ export function toCard(raw) {
     amount:   raw.amount != null ? Number(raw.amount) : null,
     max:      raw.max    != null ? Number(raw.max)    : null,
     unit:     raw.unit   || null,
-    // Canonical id flows through so PantryCard can read the
+    // Canonical id flows through so KitchenCard can read the
     // canonical's nutrition data via useIngredientInfo / the
     // bundled INGREDIENTS registry. Lets the card surface
     // calories without re-running classification.

@@ -54,7 +54,7 @@ import { ReceiptButton, CartButton } from "./HeroToolbar";
 import { FloatingLocationDock, LOCATION_DOT } from "./FloatingLocationDock";
 import { TileGrid } from "./TileGrid";
 
-// Hardcoded demo items — only used when PantryScreen is rendered
+// Hardcoded demo items — only used when KitchenScreen is rendered
 // standalone (Showcase.jsx) without an `items` prop. Kept so the
 // design-reference surface keeps working untouched.
 const DEMO_ITEMS = [
@@ -72,7 +72,7 @@ const DEMO_ITEMS = [
   { id:12, emoji: "🍗", name: "Chicken Thighs",       qty: "1.5 lb",     location: "Meat & Seafood",  cat: "meat",    status: "ok",      days: 3 },
 ];
 
-export default function PantryScreen({
+export default function KitchenScreen({
   items,
   // When true, the pantry is still fetching from Supabase on cold
   // mount. Shows a skeleton state instead of the empty-shelf copy
@@ -102,7 +102,7 @@ export default function PantryScreen({
   // action. App.jsx wires this to setPantry filter; Showcase
   // leaves it undefined (no remove action shown).
   onRemoveItem,
-  // Inline-update handler — called from PantryCard when the
+  // Inline-update handler — called from KitchenCard when the
   // user adjusts a row in place (currently the tappable fill
   // gauge; future inline editors land here too). Receives
   // (rawRow, partialPatch) and the parent merges. Showcase
@@ -143,7 +143,7 @@ export default function PantryScreen({
   // Single source of truth for which item card has its swipe-
   // to-remove drawer open. iOS pattern — only one card can be
   // open at a time. When user swipes another card, the previous
-  // one auto-closes via the prop cascade in PantryCard. null
+  // one auto-closes via the prop cascade in KitchenCard. null
   // means none open.
   const [openSwipeId, setOpenSwipeId] = useState(null);
   // Tracks whether the search input has keyboard focus so the
@@ -283,7 +283,7 @@ export default function PantryScreen({
 
   const goodCount = cards.filter((i) => i.status === "ok").length;
   // Items visible in the current tile drill-down — derived lazily
-  // so the grid can reuse the same PantryCard renderer that the
+  // so the grid can reuse the same KitchenCard renderer that the
   // flat version used. When no tile drilled, `visible` is unused
   // (tile grid renders instead). Drilled items run through the
   // sort selector; search hits keep the pantry's native order so
@@ -960,7 +960,7 @@ export default function PantryScreen({
           its entrance (slide up + fade) when search is cleared.
           Without this wrapper the dock just pops in/out. */}
       <AnimatePresence>
-        {/* Only show the location dock when MCMPantryScreen is
+        {/* Only show the location dock when MCMKitchenScreen is
             embedded in the real app (hideDock=true → the
             internal BottomDock is suppressed, so the location
             dock is the only floating pill at the bottom). In
@@ -1119,7 +1119,7 @@ function TriageCTA({ warnCount, firstExpiring, onOpenItem }) {
 // skeleton unmounts via the AnimatePresence body crossfade, so
 // loading → real feels like a soft fade rather than a content
 // flash. Shimmer is a CSS keyframe applied via the global style
-// tag at the top of PantryScreen so each ghost block uses the
+// tag at the top of KitchenScreen so each ghost block uses the
 // same animation timeline (they all pulse together rather than
 // stagger, which reads as "waiting" better than a wave of
 // independent animations).
@@ -1752,7 +1752,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, onUpdateI
             whileHover={{ y: -2, scale: 1.01 }}
             transition={{ duration: 0.32, delay: i * 0.025, ease: [0.22, 1, 0.36, 1] }}
           >
-            <PantryCard
+            <KitchenCard
               item={it}
               tileLabel={tileLabelFor(it)}
               onPick={() => {
@@ -1780,7 +1780,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, onUpdateI
 // threshold yet (matches iOS Mail / Things behavior).
 const SWIPE_OPEN_THRESHOLD = 36;
 
-function PantryCard({
+function KitchenCard({
   item,
   onPick,
   tileLabel = null,
@@ -2864,7 +2864,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     }
   };
 
-  // Esc closes — same keyboard pattern PantryScreen uses for
+  // Esc closes — same keyboard pattern KitchenScreen uses for
   // its sticky surfaces.
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose && onClose(); };
@@ -2904,7 +2904,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     // means SEALED; amount < max means OPENED with that fraction
     // left. Empty package size leaves both null so the row falls
     // back to a quantity-less entry (the gauge hides itself in
-    // that mode — see PantryCard).
+    // that mode — see KitchenCard).
     const pkgN  = packageSize ? Number(packageSize) : null;
     const maxN  = Number.isFinite(pkgN) && pkgN > 0 ? pkgN : null;
     const amtN  = maxN != null ? Math.max(0, Math.min(1, remaining)) * maxN : null;
@@ -4115,7 +4115,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               canonical exposes a shelf-life window.
             • null — explicit shelf-stable, no clock.
             • Date — explicit user pick.
-            PantryCard's days-chip + spoilage aura kick in once
+            KitchenCard's days-chip + spoilage aura kick in once
             a date materializes. */}
         <FieldLabel theme={theme} style={{ marginTop: 14 }}>Expires</FieldLabel>
         {(() => {

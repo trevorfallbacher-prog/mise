@@ -9,7 +9,7 @@ import { font } from "./tokens";
 
 // Shopping-cart button — top-right floating affordance that
 // carries the user from pantry-browse into the shopping-list
-// view. Absolutely positioned in the PantryScreen content
+// view. Absolutely positioned in the KitchenScreen content
 // wrapper (which is position:relative) so it rides in the upper-
 // right regardless of hero content below. 44x44 circular glass
 // Receipt button — 60×60 glass pill in the hero top-right
