@@ -12,7 +12,7 @@
 // which source it got.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, LayoutGroup, useMotionValue, useAnimation } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup, useMotionValue, useAnimation, useTransform } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
@@ -2558,6 +2558,12 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
   const swipeControls = useAnimation();
   const [swipeOpen, setSwipeOpen] = useState(false);
   const swipeEnabled = typeof onRemove === "function";
+  // Action-button opacity tied to swipe progress. swipeX 0 →
+  // action opacity 0 (button invisible behind a closed card so
+  // it doesn't bleed through GlassPanel's translucent fill);
+  // swipeX -96 → opacity 1 (fully revealed). useTransform
+  // clamps to [0,1] across the range automatically.
+  const actionOpacity = useTransform(swipeX, [-SWIPE_ACTION_WIDTH, 0], [1, 0]);
 
   const animateSwipe = (toOpen) => {
     setSwipeOpen(toOpen);
@@ -2612,7 +2618,7 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
           could replace later). Hidden when swipe isn't wired
           (Showcase, no onRemove). */}
       {swipeEnabled && (
-        <button
+        <motion.button
           onClick={handleRemove}
           aria-label={`Remove ${item.name} from pantry`}
           className="mcm-focusable"
@@ -2630,6 +2636,11 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
             color: theme.color.ctaText,
             cursor: "pointer",
             padding: 0,
+            // Opacity scales with swipe progress (motion value
+            // bound above) — invisible at rest, fully opaque
+            // at full open. Avoids bleeding through the
+            // translucent GlassPanel before the user swipes.
+            opacity: actionOpacity,
           }}
         >
           <span style={{ fontSize: 22, lineHeight: 1 }}>🗑</span>
@@ -2640,7 +2651,7 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
           }}>
             Remove
           </span>
-        </button>
+        </motion.button>
       )}
     <motion.div
       // Drag-to-reveal swipe. drag="x" with constraints
