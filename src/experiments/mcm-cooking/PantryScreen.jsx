@@ -3034,8 +3034,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // scan lands (see App.jsx wiring).
   const [name,   setName]   = useState(seed.name   || "");
   const [brand,  setBrand]  = useState(seed.brand  || "");
-  const [amount, setAmount] = useState(seed.amount != null ? String(seed.amount) : "");
-  const [unit,   setUnit]   = useState(seed.unit   || "");
+  // Package size is the FULL container's amount (becomes
+  // pantry_items.max). The remaining slider scales down from
+  // there to express how much is actually left. amount === max
+  // → SEALED; amount < max → OPENED.
+  const [packageSize, setPackageSize] = useState(seed.amount != null ? String(seed.amount) : "");
+  const [unit,        setUnit]        = useState(seed.unit   || "");
+  // Slider state — fraction of the package still in the
+  // container. Defaults to 1 (sealed) since most adds are
+  // fresh-from-the-store; the user can drag it down to log
+  // an item that's already been opened (e.g. a half-finished
+  // jar of mustard moved over from another household).
+  const [remaining,   setRemaining]   = useState(1);
   const [location, setLocation] = useState(seed.location || "fridge");
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
@@ -3093,8 +3103,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       if (!name.trim() && res.productName) setName(res.productName);
       if (!brand.trim() && res.brand)      setBrand(res.brand);
       const pkg = res.quantity ? parsePackageSize(res.quantity) : null;
-      if (!amount && pkg?.amount != null) setAmount(String(pkg.amount));
-      if (!unit   && pkg?.unit)           setUnit(pkg.unit);
+      if (!packageSize && pkg?.amount != null) setPackageSize(String(pkg.amount));
+      if (!unit        && pkg?.unit)           setUnit(pkg.unit);
+      // Fresh scan = brand-new package. Snap the slider back to
+      // sealed/full so the user starts from the natural state.
+      setRemaining(1);
       setScanStatus("found");
     } catch (e) {
       console.warn("[mcm-add] scan lookup failed:", e?.message || e);
@@ -3128,10 +3141,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         location,
       }).catch(err => console.warn("[mcm-add] correction write failed:", err?.message || err));
     }
+    // Convert package size + remaining fraction into the
+    // amount/max pair the rest of the app reads. amount === max
+    // means SEALED; amount < max means OPENED with that fraction
+    // left. Empty package size leaves both null so the row falls
+    // back to a quantity-less entry (the gauge hides itself in
+    // that mode — see PantryCard).
+    const pkgN  = packageSize ? Number(packageSize) : null;
+    const maxN  = Number.isFinite(pkgN) && pkgN > 0 ? pkgN : null;
+    const amtN  = maxN != null ? Math.max(0, Math.min(1, remaining)) * maxN : null;
     onSubmit && onSubmit({
       name: name.trim(),
       brand: brand.trim() || null,
-      amount: amount ? Number(amount) : null,
+      amount: amtN,
+      max:    maxN,
       unit: unit.trim() || null,
       category: cat,
       location,
@@ -3297,16 +3320,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           }}
         />
 
-        {/* Amount + Unit row */}
+        {/* Package size — the FULL container amount + unit. The
+            remaining slider below scales down from this number
+            so we can persist amount/max as the storage shape
+            without making the user think in two numbers. */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
           <div>
-            <FieldLabel theme={theme}>Amount</FieldLabel>
+            <FieldLabel theme={theme}>Package size</FieldLabel>
             <input
               type="number"
               inputMode="decimal"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="1"
+              value={packageSize}
+              onChange={(e) => setPackageSize(e.target.value)}
+              placeholder="16"
               style={{ ...inputBase, fontFamily: font.itemSub, fontSize: 16 }}
             />
           </div>
@@ -3315,11 +3341,65 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             <input
               value={unit}
               onChange={(e) => setUnit(e.target.value)}
-              placeholder="loaf, oz, gallon…"
+              placeholder="oz, lb, count…"
               style={{ ...inputBase, fontFamily: font.itemSub, fontSize: 16 }}
             />
           </div>
         </div>
+
+        {/* Remaining slider — only renders once the package size
+            is set (you can't visualize "what's left" without
+            knowing the full container). Defaults to sealed/full
+            so a fresh-from-the-store add reads as 100%. Drag to
+            log an item that's already been opened (e.g. moving
+            a half-finished jar over from another household).
+            Mirrors classic Kitchen's amount/max model: amount
+            === max → SEALED, amount < max → OPENED. */}
+        {(() => {
+          const pkgN = Number(packageSize);
+          if (!Number.isFinite(pkgN) || pkgN <= 0) return null;
+          const remainingAmount = pkgN * Math.max(0, Math.min(1, remaining));
+          const isSealed = remaining >= 0.999;
+          const fmt = (n) => Number.isInteger(n) ? String(n) : n.toFixed(1);
+          const sliderColor = isSealed ? theme.color.teal : theme.color.burnt;
+          return (
+            <div style={{ marginTop: 14 }}>
+              <div style={{
+                display: "flex", alignItems: "baseline", justifyContent: "space-between",
+                marginBottom: 6,
+              }}>
+                <span style={{
+                  fontFamily: font.mono, fontSize: 11,
+                  letterSpacing: "0.12em", textTransform: "uppercase",
+                  color: isSealed ? theme.color.teal : theme.color.burnt,
+                  fontWeight: 600,
+                }}>
+                  {isSealed ? "Sealed" : "Opened"}
+                </span>
+                <span style={{
+                  fontFamily: font.mono, fontSize: 12,
+                  color: theme.color.inkMuted,
+                }}>
+                  {fmt(remainingAmount)} / {fmt(pkgN)} {unit || ""}
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0" max="1" step="0.01"
+                value={remaining}
+                onChange={(e) => setRemaining(Number(e.target.value))}
+                aria-label="How much is left in the package"
+                style={{
+                  width: "100%",
+                  accentColor: sliderColor,
+                  // Tap targets — bigger thumb on touch devices
+                  // via accentColor + the input's native min height
+                  // already provides this on iOS / Android.
+                }}
+              />
+            </div>
+          );
+        })()}
 
         {/* Brand */}
         <FieldLabel theme={theme} style={{ marginTop: 14 }}>Brand <span style={{ opacity: 0.5 }}>(optional)</span></FieldLabel>
