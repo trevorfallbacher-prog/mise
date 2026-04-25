@@ -4091,10 +4091,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               fontWeight: 300,
               fontSize: 32,
               lineHeight: 1,
-              // Right padding adapts: small when only the scan
-              // icon is on the right, larger when the state pill
-              // also rides at the end of the bar.
               paddingRight: padRight,
+              // Focus ring — soft teal halo when the input has
+              // focus, matching the kitchen search bar's
+              // treatment so the two entry points read as the
+              // same primary control. Transitions so focus /
+              // blur feel continuous.
+              border: nameFocused
+                ? `1px solid ${theme.color.teal}`
+                : inputBase.border,
+              boxShadow: nameFocused
+                ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.inputInset}`
+                : inputBase.boxShadow,
+              transition: "border-color 200ms ease, box-shadow 200ms ease",
             }}
           />
           {showStatePill && (
@@ -4773,7 +4782,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               cursor: canSubmit ? "pointer" : "not-allowed",
             }}
           >
-            Add to kitchen
+            {canonicalId && findIngredient(canonicalId)?.name
+              ? `Add ${findIngredient(canonicalId).name}`
+              : "Add to kitchen"}
           </PrimaryButton>
         </div>
       </motion.div>
