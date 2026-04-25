@@ -2249,7 +2249,12 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, showTileContext = false
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+      // Horizontal item cards (icon left, text right) want
+      // ~260px wide minimum so the name + meta row breathe
+      // without truncating immediately. Auto-fit gives 1 col
+      // on phones, 2 at tablet, 3 at desktop on the 960px
+      // content column.
+      gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
       gap: 12,
       marginTop: 20,
     }}>
@@ -2537,59 +2542,23 @@ function PantryCard({ item, onPick, tileLabel = null }) {
       onClick={onPick}
       padding={14}
       style={{
-        // Slimmer cards (was 148) so 3–4 columns don't dominate
-        // the viewport at desktop widths; phones still show a
-        // comfortable-height tap target because minHeight is a
-        // floor, not a cap.
-        display: "flex", flexDirection: "column",
-        gap: 10, minHeight: 132,
+        // Horizontal layout — same density fix that worked for
+        // tile cards. Icon on the left at 60px (was 36, top-
+        // anchored), text column right-side stacking name +
+        // qty/brand + meta row (category pill + days chip).
+        // minHeight cut from 132 → 92 since vertical air no
+        // longer pads out the bottom.
+        position: "relative",
+        display: "flex", flexDirection: "row", alignItems: "stretch",
+        gap: 14, minHeight: 92,
         ...warnOverlay,
       }}
     >
-      {/* Tile-context chip — rendered only when ItemGrid is in
-          search mode (showTileContext=true). Tells the user which
-          tile this hit lives in so cross-location searches don't
-          lose the orientation of each result. Small DM Mono,
-          aligned with the card's metadata voice. */}
-      {tileLabel && (
-        <div style={{
-          fontFamily: font.mono, fontSize: 9,
-          letterSpacing: "0.10em", textTransform: "uppercase",
-          color: theme.color.inkFaint,
-          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-          marginTop: -2,
-        }}>
-          {tileLabel}
-        </div>
-      )}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        {iconUrl ? (
-          <img
-            src={iconUrl}
-            alt=""
-            style={{
-              width: 36, height: 36, objectFit: "contain",
-              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-            }}
-          />
-        ) : (
-          <div style={{
-            // Emoji at 34px to roughly match the 36×36 SVG visual
-            // weight above — Apple/Noto emoji glyphs render at
-            // ~95% of their font-size box, so 34 ≈ 36 rendered
-            // square. Keeps icon vs emoji items visually consistent.
-            fontSize: 34, lineHeight: 1,
-            filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-          }}>
-            {item.emoji}
-          </div>
-        )}
-        {/* Single-slot badge. Priority: warn > new > ok. A warn
-            item takes precedence because it's more actionable —
-            "expiring" beats "just added" for signalling, and
-            showing both at once made the status corner visually
-            busy. Items that are fresh AND recent get the NEW chip;
-            fresh-but-older items just get the small ok dot. */}
+      {/* Status / NEW / ok badge — absolutely positioned in the
+          card's upper-right corner so it floats over both the
+          icon column and the text column without taking row
+          space. Same priority cascade: warn > new > ok. */}
+      <div style={{ position: "absolute", top: 10, right: 12, zIndex: 1 }}>
         {warn ? (
           <StatusDot tone="warn" size={10} />
         ) : isRecent(item) ? (
@@ -2609,7 +2578,57 @@ function PantryCard({ item, onPick, tileLabel = null }) {
         )}
       </div>
 
-      <div style={{ flex: 1, minWidth: 0 }}>
+      {/* Icon column — bumped 36 → 60px, aligned to the vertical
+          center of the card so it visually anchors the layout. */}
+      <div style={{
+        display: "flex", alignItems: "center",
+        flexShrink: 0,
+      }}>
+        {iconUrl ? (
+          <img
+            src={iconUrl}
+            alt=""
+            style={{
+              width: 60, height: 60, objectFit: "contain",
+              filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+            }}
+          />
+        ) : (
+          <div style={{
+            // 56px emoji ≈ 60px SVG visual weight (Apple/Noto
+            // glyphs render at ~95% of font-size).
+            fontSize: 56, lineHeight: 1,
+            filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+          }}>
+            {item.emoji}
+          </div>
+        )}
+      </div>
+
+      {/* Text column — name + qty/brand + meta row. minWidth: 0
+          so the inner flex children honor ellipsis truncation
+          rather than overflowing the card. */}
+      <div style={{
+        flex: 1, minWidth: 0,
+        display: "flex", flexDirection: "column",
+        justifyContent: "center",
+        gap: 4,
+        // Right padding so the absolute status badge doesn't
+        // overlap long names.
+        paddingRight: 22,
+      }}>
+        {/* Tile-context chip when in search mode — sits above
+            the name as a small kicker. */}
+        {tileLabel && (
+          <div style={{
+            fontFamily: font.mono, fontSize: 9,
+            letterSpacing: "0.10em", textTransform: "uppercase",
+            color: theme.color.inkFaint,
+            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>
+            {tileLabel}
+          </div>
+        )}
         <div style={{
           fontFamily: font.serif, fontStyle: "italic", fontWeight: 400,
           fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
@@ -2618,14 +2637,10 @@ function PantryCard({ item, onPick, tileLabel = null }) {
         }}>
           {item.name}
         </div>
-        {/* Qty + brand row. Brand follows the CLAUDE.md browse
-            pattern ("Butter · Kerrygold") — grey DM Mono sitting
-            as a subtle identity label without competing with the
-            serif name above. Middle-dot separator only renders
-            when brand exists; no brand = just the qty line. */}
+        {/* Qty + brand row (existing CLAUDE.md "Butter ·
+            Kerrygold" pattern). */}
         <div style={{
           display: "flex", alignItems: "baseline", gap: 6,
-          marginTop: 4,
           fontFamily: font.mono, fontSize: 11,
           letterSpacing: "0.02em",
           whiteSpace: "nowrap", overflow: "hidden",
@@ -2646,37 +2661,35 @@ function PantryCard({ item, onPick, tileLabel = null }) {
             </>
           )}
         </div>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
-        {/* Category pill — shows the WWEIA food type ("Cheese",
-            "Yogurt", "Sausages") rather than the tile name (which
-            every item in the drilled tile would share, so was
-            redundant). Tinted burnt to match CLAUDE.md's reserved
-            orange CATEGORY axis color. Hidden when no typeLabel
-            is resolvable. */}
-        {item.typeLabel ? (
-          <TintedPill
-            tone="burnt"
-            size="sm"
-            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
-          >
-            {item.typeLabel}
-          </TintedPill>
-        ) : <span />}
-        <span style={{
-          fontFamily: font.mono, fontSize: 10,
-          // Three-tier urgency color. Eye-scan tells the user
-          // which items deserve attention without reading the
-          // number: plenty of time (muted ink) / plan ahead
-          // (mustard) / use soon (burnt). Matches the classic
-          // "fuel gauge" pattern without needing a literal bar.
-          color: daysChipColor(item.days, theme),
-          whiteSpace: "nowrap",
-          fontWeight: warn ? 500 : 400,
-        }}>
-          {formatDaysChip(item.days)}
-        </span>
+        {/* Meta row — category pill on left, days chip on right.
+            Renders only when at least one of the two has content,
+            so cards without a category and without a date fall
+            back to a tighter two-line layout. */}
+        {(item.typeLabel || item.days != null) && (
+          <div style={{
+            display: "flex", alignItems: "center",
+            justifyContent: "space-between", gap: 6,
+            marginTop: 2,
+          }}>
+            {item.typeLabel ? (
+              <TintedPill
+                tone="burnt"
+                size="sm"
+                style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {item.typeLabel}
+              </TintedPill>
+            ) : <span />}
+            <span style={{
+              fontFamily: font.mono, fontSize: 10,
+              color: daysChipColor(item.days, theme),
+              whiteSpace: "nowrap",
+              fontWeight: warn ? 500 : 400,
+            }}>
+              {formatDaysChip(item.days)}
+            </span>
+          </div>
+        )}
       </div>
     </GlassPanel>
   );
