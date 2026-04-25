@@ -2659,9 +2659,11 @@ function PantryCard({ item, onPick, tileLabel = null }) {
           // tile-card display face (Pale Martini). Single
           // weight 400, normal style — no italic. Fraunces
           // italic stays as the fallback while Kinescope
-          // loads.
+          // loads. Sized larger (22 vs the previous 18) since
+          // Kinescope is a script-style face and needs more
+          // pixel area to stay legible at glance.
           fontFamily: font.itemName, fontStyle: "normal", fontWeight: 400,
-          fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
+          fontSize: 22, lineHeight: 1.1, color: theme.color.ink,
           letterSpacing: "0",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
