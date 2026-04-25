@@ -3594,14 +3594,49 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               gap: 6, flexShrink: 0, marginTop: 2,
             }}
           >
-            {/* Category pill is intentionally omitted right now —
-                FOOD_TYPES (wweia_cheese, wweia_yogurt, etc.) don't
-                have their own SVG icon set yet. Without a per-type
-                visual, the chip would have to fall back to emoji
-                while Stored In renders a real SVG, and that mixed
-                hero rail reads as inconsistent. The cascade still
-                resolves and writes typeId behind the scenes;
-                reinstate this block once category SVGs are in. */}
+            {/* Category pill — orange + add-circle. FOOD_TYPES
+                don't have their own SVG icon set yet, so instead
+                of a half-baked emoji fallback the pill renders as
+                a tappable "+" affordance: dashed border when no
+                category is set, solid filled when one is. Tap
+                opens the picker either way so the user can add
+                or change. */}
+            {(() => {
+              const t = typeId ? findFoodType(typeId) : null;
+              const tone = theme.color.burnt;
+              return (
+                <button
+                  type="button"
+                  className="mcm-focusable"
+                  onClick={() => setPickerOpen("category")}
+                  aria-label={t ? `Category: ${t.label}` : "Pick a category"}
+                  title={t ? `Category · ${t.label}` : "Pick a category"}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    width: 40, height: 40,
+                    padding: 0,
+                    borderRadius: 999,
+                    border: t
+                      ? `1px solid ${withAlpha(tone, 0.55)}`
+                      : `1px dashed ${withAlpha(tone, 0.55)}`,
+                    background: t
+                      ? `linear-gradient(${withAlpha(tone, 0.30)}, ${withAlpha(tone, 0.30)}), ${theme.color.glassFillHeavy}`
+                      : `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
+                    color: tone,
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    transition: "background 200ms ease, border-color 200ms ease",
+                  }}
+                >
+                  <span style={{
+                    fontSize: 22, lineHeight: 1, fontWeight: 300,
+                    color: tone,
+                  }}>+</span>
+                </button>
+              );
+            })()}
             {(() => {
               const loc = LOCATIONS.find(l => l.id === location);
               const tile = loc && tileId ? loc.tiles.find(x => x.id === tileId) : null;
