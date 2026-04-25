@@ -3929,7 +3929,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             }}
           >
             {scanStatus === "looking" && "Looking that one up…"}
-            {scanStatus === "found"   && "Got it — fields filled below."}
+            {scanStatus === "found"   && "Got it — review the fields below."}
             {scanStatus === "miss"    && "Couldn't find that barcode. Fill it in by hand."}
             {scanStatus === "error"   && "Lookup hit a snag. Try again or fill it in by hand."}
           </div>
@@ -3960,7 +3960,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           // Reserve room for the scan icon (~64px wide minus
           // overflow + gap), and additional space for the state
           // pill when it's present (~110px max).
-          const padRight = showStatePill ? 200 : 72;
+          // padRight = scan-icon clearance (~64) + gap + state pill width.
+          // When the state has a label we pad for the typical pill width (~110);
+          // when the pill is empty ("+ state") we can pad less so cramped
+          // phone widths still leave room for typed names.
+          const padRight = !showStatePill ? 72 : (state ? 180 : 132);
           return (
         <div style={{ position: "relative" }}>
           <input
