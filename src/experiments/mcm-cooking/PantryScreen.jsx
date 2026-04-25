@@ -3319,6 +3319,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // "Looking up…" → "Got it" / "Couldn't find that one."
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState(null); // null | "looking" | "found" | "miss" | "error"
+  // Terminal scan-status messages auto-dismiss after a few
+  // seconds so they don't loiter while the user fills in the
+  // form. "looking" stays until the lookup resolves; "found"
+  // dismisses faster (it's a confirmation), "miss" / "error"
+  // linger longer so the user has time to read the recovery
+  // hint.
+  useEffect(() => {
+    if (!scanStatus || scanStatus === "looking") return;
+    const ms = scanStatus === "found" ? 2400 : 5000;
+    const t = setTimeout(() => setScanStatus(null), ms);
+    return () => clearTimeout(t);
+  }, [scanStatus]);
   // Household-curated brand nutrition rows. Passed into
   // lookupBarcode so a UPC matched only by the family's saved
   // brand entries (no OFF / no USDA hit) still resolves —
