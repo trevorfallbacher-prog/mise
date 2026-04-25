@@ -3641,24 +3641,53 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               const loc = LOCATIONS.find(l => l.id === location);
               const tile = loc && tileId ? loc.tiles.find(x => x.id === tileId) : null;
               const tone = "#7eb8d4"; // blue — reserved STORED IN color
-              // tileIconFor handles the location-prefixed lookup
-              // for distinct misc-per-location icons.
               const svg = tile ? tileIconFor(tile.id, location) : null;
-              // "Resolved" means the cascade landed on a real
-              // tile with a real SVG. A null tile, the generic
-              // misc fallback, or any tile that hasn't shipped
-              // its SVG all read as "missing" so we surface a +
-              // affordance the user can tap to pick explicitly,
-              // rather than a brown 📦 placeholder that looks
-              // like the system gave up.
               const resolved = !!tile && tile.id !== "misc" && !!svg;
+              // When an SVG is found the file already has its own
+              // circle / border baked in — render it bare at 100%
+              // so we don't double-frame it. Otherwise show the
+              // dashed teal-blue + add-circle as the unresolved
+              // affordance.
+              if (resolved) {
+                return (
+                  <button
+                    type="button"
+                    className="mcm-focusable"
+                    onClick={() => setPickerOpen("tile")}
+                    aria-label={`Stored in: ${tile.label}`}
+                    title={`Stored in · ${tile.label}`}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 40, height: 40,
+                      padding: 0,
+                      border: "none",
+                      background: "transparent",
+                      cursor: "pointer",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <img
+                      src={svg}
+                      alt=""
+                      aria-hidden
+                      style={{
+                        width: "100%", height: "100%", objectFit: "contain",
+                        display: "block",
+                        filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.22))",
+                      }}
+                    />
+                  </button>
+                );
+              }
               return (
                 <button
                   type="button"
                   className="mcm-focusable"
                   onClick={() => setPickerOpen("tile")}
-                  aria-label={resolved ? `Stored in: ${tile.label}` : "Pick a shelf"}
-                  title={resolved ? `Stored in · ${tile.label}` : "Pick a shelf"}
+                  aria-label="Pick a shelf"
+                  title="Pick a shelf"
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -3666,34 +3695,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     width: 40, height: 40,
                     padding: 0,
                     borderRadius: 999,
-                    border: resolved
-                      ? `1px solid ${withAlpha(tone, 0.45)}`
-                      : `1px dashed ${withAlpha(tone, 0.55)}`,
-                    background: resolved
-                      ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                      : `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
-                    color: resolved ? theme.color.ink : tone,
+                    border: `1px dashed ${withAlpha(tone, 0.55)}`,
+                    background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
+                    color: tone,
                     cursor: "pointer",
                     flexShrink: 0,
                     transition: "background 200ms ease, border-color 200ms ease",
                   }}
                 >
-                  {resolved ? (
-                    <img
-                      src={svg}
-                      alt=""
-                      aria-hidden
-                      style={{
-                        width: 26, height: 26, objectFit: "contain",
-                        filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.18))",
-                      }}
-                    />
-                  ) : (
-                    <span style={{
-                      fontSize: 22, lineHeight: 1, fontWeight: 300,
-                      color: tone,
-                    }}>+</span>
-                  )}
+                  <span style={{
+                    fontSize: 22, lineHeight: 1, fontWeight: 300,
+                    color: tone,
+                  }}>+</span>
                 </button>
               );
             })()}
