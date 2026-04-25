@@ -3491,7 +3491,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           }}
         >
           <img
-            src="/icons/scan.svg"
+            src="/icons/upc_scanner.svg"
             alt=""
             aria-hidden
             style={{
