@@ -237,7 +237,7 @@ export default function PantryScreen({
   // (keeps Showcase clean).
   onGoToShopping,
   shoppingCount = 0,
-  // Receipts bridge — onOpenReceipts callback + current-month
+// Receipts bridge — onOpenReceipts callback + current-month
   // spend in cents. When wired, the hero top-right shows a
   // spend chip + receipt button alongside the cart. Both
   // undefined in Showcase.
@@ -568,14 +568,6 @@ export default function PantryScreen({
         @media (max-width: 420px) {
           .mcm-tile-blurb { display: none !important; }
         }
-        /* Hide the keyboard shortcut hint on devices that can't
-           hover (touch phones/tablets) — a kbd glyph showing a
-           shortcut that user can't physically trigger is just
-           noise. Keyboard-attached tablets (iPads in a stand)
-           report hover:hover and keep the hint. */
-        @media (hover: none) {
-          .mcm-kbd-hint { display: none !important; }
-        }
       `}</style>
       <WarmBackdrop />
 
@@ -651,26 +643,12 @@ export default function PantryScreen({
           e.stopPropagation();
         }
       }}>
-        {/* Shopping cart — top-right of the content column,
-            absolutely-positioned so it sits above the hero's own
-            flow without pushing anything. Renders the bundled
-            shopping_cart.svg at 26x26 inside a 44x44 glass pill
-            (accessibility tap target). Count badge appears when
-            shoppingCount > 0. Tap bridges to the classic Kitchen
-            shopping list view via the onGoToShopping callback
-            (App.jsx flips pantryView → "shopping"). Hidden when
-            the prop isn't wired (Showcase mode, design demo). */}
-        {/* Top-right toolbar cluster. Holds (L→R):
-              - Spend chip: this-month receipt total, DM Mono
-                style. Tapping it also opens receipts (same as
-                the receipt button), so users who read the
-                dollar amount can drill into what they spent.
-              - Receipt button: bundled receipt.svg icon,
-                opens ReceiptHistoryModal.
-              - Cart button: shopping list.
-            All three are siblings in a flex row so they align
-            cleanly without position:absolute math-matching. */}
-        {(onGoToShopping || onOpenReceipts || onOpenAdd) && (
+        {/* Top-right toolbar cluster — Receipt + Cart only.
+            The Add (+) action lives inline with the search bar
+            below; keeping Receipt + Cart pinned up here
+            preserves the "grounded" hero anchor while freeing
+            real estate from competing with the title. */}
+        {(onGoToShopping || onOpenReceipts) && (
           <div style={{
             position: "absolute",
             top: 22,
@@ -680,9 +658,6 @@ export default function PantryScreen({
             alignItems: "center",
             gap: 10,
           }}>
-            {onOpenAdd && (
-              <AddButton onClick={onOpenAdd} />
-            )}
             {onOpenReceipts && (
               <ReceiptButton spendCents={spendCents} onClick={onOpenReceipts} />
             )}
@@ -842,7 +817,7 @@ export default function PantryScreen({
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setSearchFocused(false)}
-              placeholder="Search the pantry…"
+              placeholder="Search or Add to Kitchen"
               style={{
                 flex: 1,
                 border: "none",
@@ -853,30 +828,6 @@ export default function PantryScreen({
                 color: theme.color.ink,
               }}
             />
-            {/* Keyboard hint badge — shows the "/" shortcut in a kbd-
-                style pill at the right edge of the input. Fades out
-                when the input has focus OR has any text typed so it
-                doesn't compete with the search content. Hidden on
-                touch devices via the CSS rule below (@media hover:
-                none) — a kbd badge is useless on a phone. */}
-            {!searchFocused && !query && (
-              <kbd
-                aria-hidden="true"
-                className="mcm-kbd-hint"
-                style={{
-                  fontFamily: font.mono,
-                  fontSize: 11,
-                  padding: "3px 8px",
-                  borderRadius: 6,
-                  border: `1px solid ${theme.color.hairline}`,
-                  background: withAlpha(theme.color.ink, 0.04),
-                  color: theme.color.inkFaint,
-                  lineHeight: 1,
-                }}
-              >
-                /
-              </kbd>
-            )}
             {query && (
               <button
                 onClick={() => setQuery("")}
@@ -888,6 +839,36 @@ export default function PantryScreen({
                 }}
               >
                 CLEAR
+              </button>
+            )}
+            {/* Inline Add affordance — teal "+" pinned to the
+                right edge of the search bar. Same row as the
+                search input so the two primary entry points
+                (find what's in the kitchen, put something new
+                in it) read as one toolbar. Hidden when there's
+                a live query so CLEAR has the floor. */}
+            {onOpenAdd && !query && (
+              <button
+                onClick={onOpenAdd}
+                aria-label="Add an item to the kitchen"
+                title="Add an item"
+                className="mcm-focusable"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 36, height: 36,
+                  borderRadius: 999,
+                  border: `1px solid ${withAlpha(theme.color.teal, 0.35)}`,
+                  background: withAlpha(theme.color.teal, 0.12),
+                  color: theme.color.teal,
+                  fontSize: 22, lineHeight: 1, fontWeight: 300,
+                  cursor: "pointer",
+                  flexShrink: 0,
+                  transition: "background 160ms ease, border-color 160ms ease, transform 120ms ease",
+                }}
+              >
+                +
               </button>
             )}
           </GlassPanel>
@@ -1197,59 +1178,10 @@ const NAV_TABS = [
 // view. Absolutely positioned in the PantryScreen content
 // wrapper (which is position:relative) so it rides in the upper-
 // right regardless of hero content below. 44x44 circular glass
-// pill with the bundled shopping_cart.svg inside; when the
-// shopping list has items a small burnt count badge rides on
-// the upper-right corner of the icon.
-// Receipt button — 60×60 glass pill with the bundled
-// receipt.svg. Same shape as CartButton; the cluster reads as
-// one toolbar. Optional `spendCents` shows up as a burnt
-// dollar-amount badge pinned to the upper-right corner — same
-// pattern as the cart's count badge, just $ instead of an
-// integer.
-// Add button — top-right toolbar affordance for the
-// manual-add / scan flow. Same 60×60 glass pill as the cart
-// + receipt buttons; teal "+" glyph instead of an icon
-// because it's a constructive action and the teal reads as
-// fresh / inventory across the app.
-function AddButton({ onClick }) {
-  const { theme } = useTheme();
-  return (
-    <motion.button
-      onClick={onClick}
-      aria-label="Add an item to the pantry"
-      title="Add an item"
-      className="mcm-focusable"
-      whileHover={{ y: -2, scale: 1.04 }}
-      whileTap={{ scale: 0.94 }}
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ type: "spring", stiffness: 380, damping: 26 }}
-      style={{
-        position: "relative",
-        width: 60,
-        height: 60,
-        borderRadius: 999,
-        border: `1px solid ${theme.color.glassBorder}`,
-        background: theme.color.glassFillHeavy,
-        backdropFilter: "blur(14px) saturate(150%)",
-        WebkitBackdropFilter: "blur(14px) saturate(150%)",
-        boxShadow: theme.shadow.soft,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        padding: 0,
-        color: theme.color.teal,
-        fontSize: 32,
-        lineHeight: 1,
-        fontWeight: 300,
-      }}
-    >
-      +
-    </motion.button>
-  );
-}
-
+// Receipt button — 60×60 glass pill in the hero top-right
+// with the bundled receipt.svg. Optional `spendCents` shows up
+// as a small burnt dollar-amount badge pinned to the upper-
+// right corner.
 function ReceiptButton({ spendCents = 0, onClick }) {
   const { theme } = useTheme();
   const dollars = Math.round(spendCents / 100);
@@ -1272,26 +1204,21 @@ function ReceiptButton({ spendCents = 0, onClick }) {
       transition={{ type: "spring", stiffness: 380, damping: 26 }}
       style={{
         position: "relative",
-        width: 60,
-        height: 60,
+        width: 60, height: 60,
         borderRadius: 999,
         border: `1px solid ${theme.color.glassBorder}`,
         background: theme.color.glassFillHeavy,
         backdropFilter: "blur(14px) saturate(150%)",
         WebkitBackdropFilter: "blur(14px) saturate(150%)",
         boxShadow: theme.shadow.soft,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        padding: 0,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", padding: 0,
         ...THEME_TRANSITION,
       }}
     >
       <img
         src="/icons/receipt.svg"
-        alt=""
-        aria-hidden
+        alt="" aria-hidden
         style={{
           width: 38, height: 38, objectFit: "contain",
           filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
@@ -1306,13 +1233,9 @@ function ReceiptButton({ spendCents = 0, onClick }) {
           borderRadius: 999,
           background: theme.color.burnt,
           color: theme.color.ctaText,
-          fontFamily: font.mono,
-          fontSize: 11,
-          fontWeight: 600,
+          fontFamily: font.mono, fontSize: 11, fontWeight: 600,
           letterSpacing: "-0.02em",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
           boxShadow: "0 2px 6px rgba(168,73,17,0.35)",
           border: `1px solid ${theme.color.glassBorder}`,
         }}>
@@ -1323,6 +1246,9 @@ function ReceiptButton({ spendCents = 0, onClick }) {
   );
 }
 
+// Cart button — 60×60 glass pill with the bundled
+// shopping_cart.svg. Burnt count badge appears when the
+// shopping list has items.
 function CartButton({ count = 0, onClick }) {
   const { theme } = useTheme();
   const label = count === 0
@@ -1341,26 +1267,21 @@ function CartButton({ count = 0, onClick }) {
       transition={{ type: "spring", stiffness: 380, damping: 26 }}
       style={{
         position: "relative",
-        width: 60,
-        height: 60,
+        width: 60, height: 60,
         borderRadius: 999,
         border: `1px solid ${theme.color.glassBorder}`,
         background: theme.color.glassFillHeavy,
         backdropFilter: "blur(14px) saturate(150%)",
         WebkitBackdropFilter: "blur(14px) saturate(150%)",
         boxShadow: theme.shadow.soft,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        cursor: "pointer",
-        padding: 0,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", padding: 0,
         ...THEME_TRANSITION,
       }}
     >
       <img
         src="/icons/shopping_cart.svg"
-        alt=""
-        aria-hidden
+        alt="" aria-hidden
         style={{
           width: 38, height: 38, objectFit: "contain",
           filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
@@ -1375,13 +1296,9 @@ function CartButton({ count = 0, onClick }) {
           borderRadius: 999,
           background: theme.color.burnt,
           color: theme.color.ctaText,
-          fontFamily: font.mono,
-          fontSize: 11,
-          fontWeight: 600,
+          fontFamily: font.mono, fontSize: 11, fontWeight: 600,
           letterSpacing: "-0.02em",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
           boxShadow: "0 2px 6px rgba(168,73,17,0.35)",
           border: `1px solid ${theme.color.glassBorder}`,
         }}>
@@ -2940,8 +2857,12 @@ function PantryCard({
           // and the row's own subheader (Beverly Drive Right).
           // Single weight 300, normal style.
           fontFamily: font.itemName, fontStyle: "normal", fontWeight: 300,
-          fontSize: 28, lineHeight: 1.05, color: theme.color.ink,
+          fontSize: 30, lineHeight: 1, color: theme.color.ink,
           letterSpacing: "0",
+          // Filmotype Honey carries extra descender space below
+          // the baseline; pull the subheader up so the row
+          // doesn't read as two disconnected lines.
+          marginBottom: -6,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {item.name}
