@@ -3061,7 +3061,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // without them digging.
   const [canonicalId, setCanonicalId] = useState(seed.canonicalId || null);
   const [canonicalOverridden, setCanonicalOverridden] = useState(!!seed.canonicalId);
-  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical"
+  // Stored In (CLAUDE.md axis 5 — blue #7eb8d4). Resolved from
+  // the location's tile classifier on every relevant input
+  // change so the user sees where the row will land before
+  // submitting. Override flag locks the value once the user
+  // has picked from the tile picker.
+  const [tileId, setTileId] = useState(seed.tileId || null);
+  const [tileOverridden, setTileOverridden] = useState(!!seed.tileId);
+  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile"
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
   // axis AND swaps the typed text for the canonical's display
@@ -3123,6 +3130,25 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     setCanonicalId(id || null);
   }, [name, canonicalOverridden]);
 
+  // Resolve the Stored In tile via the location's classifier.
+  // Synthesizes a draft item from the current axis state and
+  // hands it to fridgeTileFor / pantryTileFor / freezerTileFor
+  // (whichever matches the active location). Re-runs whenever
+  // the inputs that drive classification change.
+  useEffect(() => {
+    if (tileOverridden) return;
+    const loc = LOCATIONS.find(l => l.id === location);
+    if (!loc) return;
+    const draft = {
+      name: name.trim(),
+      canonicalId: canonicalId || null,
+      typeId: typeId || null,
+      category: defaultCategoryForLocation(location),
+    };
+    const id = loc.classify(draft, { findIngredient, hubForIngredient });
+    setTileId(id || null);
+  }, [name, canonicalId, typeId, location, tileOverridden]);
+
   const canSubmit = name.trim().length > 0;
 
   const handleScan = async (upc) => {
@@ -3148,6 +3174,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // still re-pick after, and that re-pick writes back via
       // rememberBarcodeCorrection on submit.
       if (correction?.location) setLocation(correction.location);
+      // Tile correction beats the live classifier. Lock the
+      // override so subsequent name/canonical edits don't
+      // re-run the classifier and stomp the user's prior pick.
+      if (correction?.tileId) {
+        setTileId(correction.tileId);
+        setTileOverridden(true);
+      }
 
       if (!res || !res.found) {
         // Soft miss — but if a correction surfaced, that's still
@@ -3170,9 +3203,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // Seed the category from OFF tag hints if the user hasn't
       // already overridden. tagHintsToAxes maps the OFF
       // category vocabulary into our internal typeId.
-      if (!typeOverridden && Array.isArray(res.categoryHints) && res.categoryHints.length > 0) {
+      if (Array.isArray(res.categoryHints) && res.categoryHints.length > 0) {
         const axes = tagHintsToAxes(res.categoryHints);
-        if (axes.typeId) setTypeId(axes.typeId);
+        if (!typeOverridden && axes.typeId) setTypeId(axes.typeId);
+        if (!tileOverridden && axes.tileId) setTileId(axes.tileId);
       }
       // Seed the canonical from a direct lookupBarcode hit when
       // present. Same don't-clobber-override rule.
@@ -3210,6 +3244,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         isAdmin: !!isAdmin,
         barcodeUpc,
         location,
+        tileId: tileId || null,
+        typeId: typeId || null,
+        canonicalId: canonicalId || null,
       }).catch(err => console.warn("[mcm-add] correction write failed:", err?.message || err));
     }
     // Convert package size + remaining fraction into the
@@ -3231,10 +3268,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       typeId: typeId || null,
       canonicalId: canonicalId || null,
       location,
-      // Tile defaults to "misc" — user can re-classify after
-      // the row lands. Saves a multi-step picker in the add
-      // flow itself.
-      tileId: null,
+      // Resolved tile from the live classifier (or user
+      // override). Falls back to null when the classifier
+      // can't pick a tile for this location; the parent
+      // setPantry path lets the existing classify logic fill
+      // the gap if so.
+      tileId: tileId || null,
       // No expiration set on manual add by default (user can
       // edit after). Days-chip will be empty.
       expiresAt: null,
@@ -3323,51 +3362,103 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               What's new on the shelf?
             </div>
           </div>
-          {(() => {
-            const t = typeId ? findFoodType(typeId) : null;
-            const tone = theme.color.burnt;
-            return (
-              <button
-                type="button"
-                className="mcm-focusable"
-                onClick={() => setPickerOpen("category")}
-                aria-label={t ? `Category: ${t.label}` : "Pick a category"}
-                title={t ? `Category · ${t.label}` : "Pick a category"}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: t
-                    ? `1px solid ${withAlpha(tone, 0.45)}`
-                    : `1px dashed ${theme.color.hairline}`,
-                  background: t
-                    ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                    : "transparent",
-                  color: t ? theme.color.ink : theme.color.inkMuted,
-                  fontFamily: font.detail,
-                  fontStyle: "italic",
-                  fontWeight: 400,
-                  fontSize: 13,
-                  cursor: "pointer",
-                  flexShrink: 0,
-                  marginTop: 2,
-                  whiteSpace: "nowrap",
-                  transition: "background 200ms ease, border-color 200ms ease",
-                }}
-              >
-                {t ? (
-                  <>
-                    <span style={{ fontSize: 14, lineHeight: 1, fontStyle: "normal" }}>{t.emoji}</span>
-                    <span>{t.label}</span>
-                  </>
-                ) : (
-                  <span>+ category</span>
-                )}
-              </button>
-            );
-          })()}
+          {/* Right-rail status pills — Category (orange) and
+              Stored In (blue) per CLAUDE.md reserved colors.
+              Stack vertically so two pills don't crowd a narrow
+              header on phones. Tap either to open its picker
+              for an override. */}
+          <div style={{
+            display: "flex", flexDirection: "column", alignItems: "flex-end",
+            gap: 6, flexShrink: 0, marginTop: 2,
+          }}>
+            {(() => {
+              const t = typeId ? findFoodType(typeId) : null;
+              const tone = theme.color.burnt;
+              return (
+                <button
+                  type="button"
+                  className="mcm-focusable"
+                  onClick={() => setPickerOpen("category")}
+                  aria-label={t ? `Category: ${t.label}` : "Pick a category"}
+                  title={t ? `Category · ${t.label}` : "Pick a category"}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    border: t
+                      ? `1px solid ${withAlpha(tone, 0.45)}`
+                      : `1px dashed ${theme.color.hairline}`,
+                    background: t
+                      ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                      : "transparent",
+                    color: t ? theme.color.ink : theme.color.inkMuted,
+                    fontFamily: font.detail,
+                    fontStyle: "italic",
+                    fontWeight: 400,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    transition: "background 200ms ease, border-color 200ms ease",
+                  }}
+                >
+                  {t ? (
+                    <>
+                      <span style={{ fontSize: 14, lineHeight: 1, fontStyle: "normal" }}>{t.emoji}</span>
+                      <span>{t.label}</span>
+                    </>
+                  ) : (
+                    <span>+ category</span>
+                  )}
+                </button>
+              );
+            })()}
+            {(() => {
+              const loc = LOCATIONS.find(l => l.id === location);
+              const tile = loc && tileId ? loc.tiles.find(x => x.id === tileId) : null;
+              const tone = "#7eb8d4"; // blue — reserved STORED IN color
+              return (
+                <button
+                  type="button"
+                  className="mcm-focusable"
+                  onClick={() => setPickerOpen("tile")}
+                  aria-label={tile ? `Stored in: ${tile.label}` : "Pick a shelf"}
+                  title={tile ? `Stored in · ${tile.label}` : "Pick a shelf"}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "6px 10px",
+                    borderRadius: 999,
+                    border: tile
+                      ? `1px solid ${withAlpha(tone, 0.45)}`
+                      : `1px dashed ${theme.color.hairline}`,
+                    background: tile
+                      ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                      : "transparent",
+                    color: tile ? theme.color.ink : theme.color.inkMuted,
+                    fontFamily: font.detail,
+                    fontStyle: "italic",
+                    fontWeight: 400,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    transition: "background 200ms ease, border-color 200ms ease",
+                  }}
+                >
+                  {tile ? (
+                    <>
+                      <span style={{ fontSize: 14, lineHeight: 1, fontStyle: "normal" }}>{tile.emoji}</span>
+                      <span>{tile.label}</span>
+                    </>
+                  ) : (
+                    <span>+ shelf</span>
+                  )}
+                </button>
+              );
+            })()}
+          </div>
         </div>
 
         {/* Scan CTA — top of the form so it reads as the
@@ -3750,6 +3841,27 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           onClose={() => setPickerOpen(null)}
         />
       )}
+      {pickerOpen === "tile" && (() => {
+        const loc = LOCATIONS.find(l => l.id === location);
+        const tiles = loc?.tiles || [];
+        return (
+          <MCMPickerSheet
+            kicker="Stored in"
+            title={`Which ${loc?.label.toLowerCase() || "shelf"} tile?`}
+            accent="#7eb8d4"
+            options={tiles.map(t => ({
+              id: t.id, label: t.label, emoji: t.emoji, sub: t.blurb,
+            }))}
+            value={tileId}
+            onPick={(id) => {
+              setTileId(id);
+              setTileOverridden(true);
+              setPickerOpen(null);
+            }}
+            onClose={() => setPickerOpen(null)}
+          />
+        );
+      })()}
       {pickerOpen === "canonical" && (
         <MCMPickerSheet
           kicker="Canonical"
