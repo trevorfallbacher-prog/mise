@@ -2862,7 +2862,7 @@ function PantryCard({
           // Filmotype Honey carries extra descender space below
           // the baseline; pull the subheader up so the row
           // doesn't read as two disconnected lines.
-          marginBottom: -6,
+          marginBottom: -8,
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {item.name}
