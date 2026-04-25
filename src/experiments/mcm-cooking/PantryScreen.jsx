@@ -12,7 +12,7 @@
 // which source it got.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
+import { motion, AnimatePresence, LayoutGroup, useMotionValue, useAnimation } from "framer-motion";
 import {
   WarmBackdrop, GlassPanel, PrimaryButton,
   StatusDot, Kicker, SerifHeader, FadeIn, Starburst,
@@ -238,6 +238,11 @@ export default function PantryScreen({
   // undefined in Showcase.
   onOpenReceipts,
   spendCents = 0,
+  // Swipe-to-remove handler — called with the raw pantry row
+  // when the user swipes a card open and confirms the Remove
+  // action. App.jsx wires this to setPantry filter; Showcase
+  // leaves it undefined (no remove action shown).
+  onRemoveItem,
   hideDock = false,
 }) {
   const { theme } = useTheme();
@@ -969,8 +974,8 @@ export default function PantryScreen({
               // population feels continuous rather than strobing
               // between ghost and real.
               if (loading && cards.length === 0) return <TileGridSkeleton />;
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} showTileContext />;
-              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} showTileContext />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} />;
               // Whole-location empty state — when the active
               // location has zero items, skip the wall of dimmed
               // tiles and show a warm dedicated message instead.
@@ -2228,7 +2233,7 @@ function SearchSummary({ hits, query, onClear }) {
 // Item grid — the animated 2-to-N column grid used for BOTH the
 // drilled-tile view and the search-hits view. Factored out so the
 // card-layout code isn't duplicated across the two render branches.
-function ItemGrid({ items, onOpenItem, onOpenUnitPicker, showTileContext = false }) {
+function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, showTileContext = false }) {
   // In search mode (showTileContext=true) each card renders a
   // small tile-context chip ("FROM DAIRY & EGGS") so users who
   // searched cross-location know where each hit lives. Resolve
@@ -2271,6 +2276,7 @@ function ItemGrid({ items, onOpenItem, onOpenUnitPicker, showTileContext = false
                 if (onOpenItem && it._raw) onOpenItem(it._raw);
                 else if (onOpenUnitPicker) onOpenUnitPicker();
               }}
+              onRemove={onRemoveItem && it._raw ? () => onRemoveItem(it._raw) : null}
             />
           </motion.div>
         ))}
@@ -2513,7 +2519,18 @@ function TileCard({ tile, location, count, warnCount, onPick }) {
   );
 }
 
-function PantryCard({ item, onPick, tileLabel = null }) {
+// Width of the swipe-reveal action drawer behind each item card
+// (the Remove button). 96px gives the button comfortable tap
+// area without consuming so much of the card width that a
+// half-open swipe looks like a glitch.
+const SWIPE_ACTION_WIDTH = 96;
+// Past this leftward offset (in px) on dragEnd, the card snaps
+// fully open. Anything less snaps closed. Velocity also opens
+// when fast-flicked even if displacement hasn't crossed the
+// threshold yet (matches iOS Mail / Things behavior).
+const SWIPE_OPEN_THRESHOLD = 36;
+
+function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
   const { theme } = useTheme();
   const warn = item.status === "warn";
   // Warn cards pick up a gentle theme-derived burnt wash so
@@ -2529,7 +2546,117 @@ function PantryCard({ item, onPick, tileLabel = null }) {
   const canonicalId = item?._raw?.canonicalId || null;
   const iconUrl = canonicalImageUrlFor(canonicalId, null);
 
+  // Swipe-to-reveal state. `swipeX` is the horizontal offset
+  // motion value the inner card animates against. `swipeOpen`
+  // is the latched two-state — closed (x:0) or open (x:-WIDTH).
+  // Drag handlers set the latch on release based on offset +
+  // velocity; an effect animates `swipeX` to match. Tapping
+  // the open card closes it instead of firing onPick (so a
+  // user who swipes accidentally and taps doesn't open the
+  // editor unintentionally).
+  const swipeX = useMotionValue(0);
+  const swipeControls = useAnimation();
+  const [swipeOpen, setSwipeOpen] = useState(false);
+  const swipeEnabled = typeof onRemove === "function";
+
+  const animateSwipe = (toOpen) => {
+    setSwipeOpen(toOpen);
+    swipeControls.start({
+      x: toOpen ? -SWIPE_ACTION_WIDTH : 0,
+      transition: { type: "spring", stiffness: 420, damping: 38 },
+    });
+  };
+
+  const handleDragEnd = (_event, info) => {
+    const offsetPastThreshold = info.offset.x < -SWIPE_OPEN_THRESHOLD;
+    const fastLeftFlick = info.velocity.x < -350;
+    const fastRightFlick = info.velocity.x >  350;
+    if (fastRightFlick) animateSwipe(false);
+    else if (offsetPastThreshold || fastLeftFlick) animateSwipe(true);
+    else animateSwipe(false);
+  };
+
+  const handleClick = (e) => {
+    // Tapping while open closes the swipe; tapping while
+    // closed opens the editor. Both cases stopPropagation so
+    // the parent ItemGrid motion.div doesn't double-handle.
+    if (swipeOpen) {
+      e.stopPropagation();
+      animateSwipe(false);
+      return;
+    }
+    if (onPick) onPick();
+  };
+
+  const handleRemove = (e) => {
+    e.stopPropagation();
+    animateSwipe(false);
+    if (onRemove) onRemove();
+  };
+
   return (
+    <div style={{
+      // Swipe shell — clips the inner card so the Remove
+      // action button doesn't show until the user drags.
+      // Rounded to match the card's borderRadius so the clip
+      // edge follows the same curve.
+      position: "relative",
+      borderRadius: 22,
+      overflow: "hidden",
+    }}>
+      {/* Remove action — fixed behind the card on the right.
+          Visually inert until the user swipes the card open,
+          at which point it slides into view. Burnt-tinted to
+          match CLAUDE.md's "destructive" register; the icon
+          glyph is a trash bin emoji as a fallback (custom SVG
+          could replace later). Hidden when swipe isn't wired
+          (Showcase, no onRemove). */}
+      {swipeEnabled && (
+        <button
+          onClick={handleRemove}
+          aria-label={`Remove ${item.name} from pantry`}
+          className="mcm-focusable"
+          style={{
+            position: "absolute",
+            top: 0, right: 0, bottom: 0,
+            width: SWIPE_ACTION_WIDTH,
+            display: "inline-flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 4,
+            border: "none",
+            background: theme.color.burnt,
+            color: theme.color.ctaText,
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          <span style={{ fontSize: 22, lineHeight: 1 }}>🗑</span>
+          <span style={{
+            fontFamily: font.mono, fontSize: 10,
+            letterSpacing: "0.10em", textTransform: "uppercase",
+            fontWeight: 600,
+          }}>
+            Remove
+          </span>
+        </button>
+      )}
+    <motion.div
+      // Drag-to-reveal swipe. drag="x" with constraints
+      // clamped between 0 (closed) and -ACTION_WIDTH (open).
+      // dragElastic 0.05 lets the user feel a subtle pull
+      // past the limit without overshooting. animate is
+      // controlled by swipeControls so dragEnd can snap to
+      // either bistable position.
+      drag={swipeEnabled ? "x" : false}
+      dragConstraints={{ left: -SWIPE_ACTION_WIDTH, right: 0 }}
+      dragElastic={0.05}
+      dragMomentum={false}
+      onDragEnd={swipeEnabled ? handleDragEnd : undefined}
+      animate={swipeControls}
+      style={{ x: swipeX }}
+    >
     <motion.div
       // Spoilage aura — fixed-size green halo that lingers
       // around the card's edge when the item is warn. Shadow
@@ -2563,7 +2690,7 @@ function PantryCard({ item, onPick, tileLabel = null }) {
     >
     <GlassPanel
       interactive
-      onClick={onPick}
+      onClick={handleClick}
       padding={10}
       style={{
         // Horizontal layout — icon on the left at 60px, text
@@ -2728,6 +2855,8 @@ function PantryCard({ item, onPick, tileLabel = null }) {
       </div>
     </GlassPanel>
     </motion.div>
+    </motion.div>
+    </div>
   );
 }
 

@@ -646,6 +646,14 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                   shoppingCount={Array.isArray(shoppingList) ? shoppingList.length : 0}
                   onOpenReceipts={() => setMcmReceiptsOpen(true)}
                   spendCents={spendCents}
+                  onRemoveItem={(item) => {
+                    // Swipe-to-remove from the MCM item card. Filters
+                    // the row out of the local pantry; useSyncedList
+                    // persists the delete to Supabase via the diff
+                    // path. Family pantries propagate the delete via
+                    // realtime to other members.
+                    setPantry(prev => prev.filter(p => p.id !== item.id));
+                  }}
                   hideDock
                 />
               </MCMThemeProvider>
