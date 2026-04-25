@@ -99,15 +99,16 @@ export const font = {
   // italic." Truculenta + Futura ride the fallback stack so
   // pre-load and old browsers degrade gracefully.
   display: "'Pale Martini', 'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
-  // Item-card name face — Kinescope (Adobe Fonts/Typekit, kit
-  // cnf4qlv loaded via index.html). Used on PantryCard NAMES so
-  // items read in a different typographic register than tile
-  // cards. Fraunces italic stays as the fallback ride.
-  itemName: "'kinescope', 'Fraunces', 'Iowan Old Style', Georgia, serif",
-  // Item-card SUBHEADER face — Beverly Drive Right (same Adobe
-  // Fonts kit). Used on the qty · brand line under each item
-  // name so the metadata reads as a related but distinct beat
-  // below the name.
+  // Item-card name face — Beverly Drive Right (Adobe Fonts /
+  // Typekit, kit cnf4qlv loaded via index.html). Used on
+  // PantryCard NAMES so items read in a different typographic
+  // register than tile cards. Fraunces italic rides as the
+  // fallback for pre-load and Adobe-Fonts-blocked browsers.
+  itemName: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
+  // Item-card SUBHEADER face — same Beverly Drive Right at a
+  // smaller size. Token kept distinct from itemName so future
+  // splits (e.g. swap subheader to a different family) don't
+  // require touching every callsite.
   itemSub: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
   sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
   mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
