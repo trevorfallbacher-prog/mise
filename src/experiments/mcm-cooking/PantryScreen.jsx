@@ -4130,10 +4130,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               src="/icons/upc_scanner.svg"
               alt=""
               aria-hidden
+              className="mise-scan-halo"
               style={{
                 width: "100%", height: "100%", objectFit: "contain",
                 display: "block",
-                filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.18))",
+                // Animated drop-shadow halo from the
+                // .mise-scan-halo class — flags scanning as the
+                // preferred / premium add path. Filter is set on
+                // the keyframes; nothing inline here so we don't
+                // override the animation.
               }}
             />
           </button>

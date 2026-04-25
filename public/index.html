@@ -79,6 +79,21 @@
       .mise-cta { animation: miseHaloPulse 3.2s ease-in-out infinite; }
       .mise-cta:hover { filter: brightness(1.05); }
 
+      /* Scan-halo — applied to the upc_scanner.svg image at the
+         right edge of the AddDraftSheet's Name input to flag
+         scanning as the preferred / premium add path. Uses
+         filter: drop-shadow so the glow follows the SVG's
+         baked-in circle (rather than the rectangular bounding
+         box). 4s cycle to read as ambient breath rather than
+         attention-grabbing. */
+      @keyframes miseScanHalo {
+        0%, 100% { filter: drop-shadow(0 1px 2px rgba(30,30,30,0.18))
+                          drop-shadow(0 0 6px rgba(127,180,212,0.55)); }
+        50%      { filter: drop-shadow(0 1px 2px rgba(30,30,30,0.18))
+                          drop-shadow(0 0 14px rgba(127,180,212,0.85)); }
+      }
+      .mise-scan-halo { animation: miseScanHalo 4s ease-in-out infinite; }
+
       /* Fade-in-up — a universal mount animation for mount-once rows
          in lists (scan-draft rows, pantry tiles, picker options). Used
          by the `.mise-fade-in` utility class with a CSS var for
