@@ -3327,6 +3327,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // jar of mustard moved over from another household).
   const [remaining,   setRemaining]   = useState(1);
   const [location, setLocation] = useState(seed.location || "fridge");
+  // Override flag — set true the moment the user taps a location
+  // segment, so the canonical-driven auto-resolve below stops
+  // overriding their explicit choice. Initial true when the seed
+  // already carries a location (the caller has already decided).
+  const [locationOverridden, setLocationOverridden] = useState(!!seed.location);
   // Food category (CLAUDE.md "CATEGORIES" axis). Resolved
   // from name inference when no manual pick has been made;
   // the override flag locks the value once the user has tapped
@@ -3544,6 +3549,25 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     const def = defaultStateFor(canonicalId);
     setState(def || null);
   }, [canonicalId, stateOverridden]);
+
+  // Auto-select the LOCATION (fridge / pantry / freezer) from
+  // the canonical's storage.location when the user hasn't
+  // manually picked a segment yet. Reads via getIngredientInfo
+  // so admin-approved DB enrichment overrides bundled. Eggs are
+  // shelf-stable when truly fresh, but 90% of households store
+  // them in the fridge — the canonical's storage.location
+  // captures that everyday-reality default so the user doesn't
+  // have to fight the form.
+  useEffect(() => {
+    if (locationOverridden) return;
+    if (!canonicalId) return;
+    const ing = findIngredient(canonicalId);
+    const info = getIngredientInfo(ing, getDbInfo(canonicalId));
+    const home = info?.storage?.location;
+    if (home === "fridge" || home === "pantry" || home === "freezer") {
+      setLocation(home);
+    }
+  }, [canonicalId, locationOverridden, getDbInfo]);
 
   // Resolve the Stored In tile via the location's classifier.
   // Synthesizes a draft item from the current axis state and
@@ -4079,6 +4103,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   setTypeOverridden(false);
                   setTileOverridden(false);
                   setStateOverridden(false);
+                  setLocationOverridden(false);
                 }
               }
             }}
@@ -4248,6 +4273,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     setTypeOverridden(false);
                     setTileOverridden(false);
                     setStateOverridden(false);
+                    setLocationOverridden(false);
                     setSuppressTypeahead(true);
                   }}
                   style={{
@@ -4310,6 +4336,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     setTypeOverridden(false);
                     setTileOverridden(false);
                     setStateOverridden(false);
+                    setLocationOverridden(false);
                     setSuppressTypeahead(true);
                   }}
                   style={{
@@ -4732,7 +4759,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 key={loc.id}
                 type="button"
                 className="mcm-focusable"
-                onClick={() => setLocation(loc.id)}
+                onClick={() => {
+                  setLocation(loc.id);
+                  // Lock the user's explicit pick so the
+                  // canonical-driven auto-resolve doesn't keep
+                  // re-overriding it on subsequent canonical
+                  // changes.
+                  setLocationOverridden(true);
+                }}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
