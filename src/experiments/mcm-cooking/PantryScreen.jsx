@@ -3520,36 +3520,58 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         setTileOverridden(true);
       }
 
-      if (!res || !res.found) {
-        // Soft miss — but if a correction surfaced, that's still
-        // useful (we filled in location). Otherwise it's a true
-        // dead-end and the user types it in by hand.
-        setScanStatus(correction ? "found" : "miss");
+      // Type correction beats the live name-inference. Same
+      // cascade rule as tile.
+      if (correction?.typeId && !typeOverridden) {
+        setTypeId(correction.typeId);
+      }
+
+      // OFF / USDA payload pre-fill (when found).
+      if (res?.found) {
+        if (!name.trim() && res.productName) setName(res.productName);
+        if (!brand.trim() && res.brand)      setBrand(res.brand);
+        const pkg = res.quantity ? parsePackageSize(res.quantity) : null;
+        if (!packageSize && pkg?.amount != null) setPackageSize(String(pkg.amount));
+        if (!unit        && pkg?.unit)           setUnit(pkg.unit);
+        setRemaining(1);
+        if (Array.isArray(res.categoryHints) && res.categoryHints.length > 0) {
+          const axes = tagHintsToAxes(res.categoryHints);
+          if (!typeOverridden && axes.typeId) setTypeId(axes.typeId);
+          if (!tileOverridden && axes.tileId) setTileId(axes.tileId);
+        }
+      }
+
+      // Resolve the winning canonical from the cascade —
+      // correction beats OFF — and apply it. This is what was
+      // missing before: a correction-only hit (OFF miss) that
+      // taught us the canonical wasn't being applied because
+      // the OFF early-return short-circuited everything below.
+      const resolvedCanonicalId = correction?.canonicalId || res?.canonicalId || null;
+      if (resolvedCanonicalId && !canonicalOverridden) {
+        setCanonicalId(resolvedCanonicalId);
+      }
+
+      // Canonical-fallback fill — when OFF gave us no
+      // productName / unit but we have a canonical anchor,
+      // borrow the canonical's display name + default unit so
+      // the row at least lands with a sane identity instead of
+      // an empty form. Critical for the OFF-miss / correction-
+      // hit case the user just hit ("scanner said it had it
+      // but didn't fill in any information").
+      if (resolvedCanonicalId) {
+        const ing = findIngredient(resolvedCanonicalId);
+        if (ing) {
+          if (!name.trim() && ing.name) setName(ing.name);
+          if (!unit && ing.defaultUnit) setUnit(ing.defaultUnit);
+        }
+      }
+
+      // Final status — anything that landed counts as "found".
+      const anythingPopulated =
+        res?.found || correction || resolvedCanonicalId;
+      if (!anythingPopulated) {
+        setScanStatus("miss");
         return;
-      }
-      // Pre-fill fields. Don't overwrite user-typed name/brand
-      // if they exist — scanning into a partially-filled form
-      // shouldn't clobber what the user already entered.
-      if (!name.trim() && res.productName) setName(res.productName);
-      if (!brand.trim() && res.brand)      setBrand(res.brand);
-      const pkg = res.quantity ? parsePackageSize(res.quantity) : null;
-      if (!packageSize && pkg?.amount != null) setPackageSize(String(pkg.amount));
-      if (!unit        && pkg?.unit)           setUnit(pkg.unit);
-      // Fresh scan = brand-new package. Snap the slider back to
-      // sealed/full so the user starts from the natural state.
-      setRemaining(1);
-      // Seed the category from OFF tag hints if the user hasn't
-      // already overridden. tagHintsToAxes maps the OFF
-      // category vocabulary into our internal typeId.
-      if (Array.isArray(res.categoryHints) && res.categoryHints.length > 0) {
-        const axes = tagHintsToAxes(res.categoryHints);
-        if (!typeOverridden && axes.typeId) setTypeId(axes.typeId);
-        if (!tileOverridden && axes.tileId) setTileId(axes.tileId);
-      }
-      // Seed the canonical from a direct lookupBarcode hit when
-      // present. Same don't-clobber-override rule.
-      if (!canonicalOverridden && res.canonicalId) {
-        setCanonicalId(res.canonicalId);
       }
       setScanStatus("found");
     } catch (e) {
@@ -3924,6 +3946,22 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             entry path (scan a barcode) lives in the same
             visual row. */}
         <FieldLabel theme={theme}>Name</FieldLabel>
+        {(() => {
+          // Inline State pill — sits at the right end of the
+          // Name input, just before the scan button. Only shows
+          // once a canonical with a state vocabulary is pinned
+          // (cheese, meat, bread, etc.). Paddings adjust based
+          // on whether the pill is rendering so a long typed
+          // name doesn't collide with it.
+          const stateOpts = canonicalId ? (statesForIngredient(canonicalId) || []) : [];
+          const showStatePill = stateOpts.length > 0;
+          const stateLabel = state ? (STATE_LABELS[state] || state) : null;
+          const stateTone = "#c7a8d4";
+          // Reserve room for the scan icon (~64px wide minus
+          // overflow + gap), and additional space for the state
+          // pill when it's present (~110px max).
+          const padRight = showStatePill ? 200 : 72;
+          return (
         <div style={{ position: "relative" }}>
           <input
             autoFocus
@@ -3962,22 +4000,67 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             placeholder="e.g. Sourdough Loaf"
             style={{
               ...inputBase,
-              // Filmotype Honey matches item-card name face so
-              // the user sees a typographic preview of how the
-              // row will read on the shelf. Honey reads small for
-              // its em-box, so we run it ~2x the body size with
-              // tight line-height — same rule applied to the
-              // shelf row (PantryCard) below.
               fontFamily: font.itemName,
               fontWeight: 300,
               fontSize: 32,
               lineHeight: 1,
-              // Right padding clears the pinned scan button
-              // (40px circle + 12px margin) so long typed
-              // names don't collide with the icon.
-              paddingRight: 72,
+              // Right padding adapts: small when only the scan
+              // icon is on the right, larger when the state pill
+              // also rides at the end of the bar.
+              paddingRight: padRight,
             }}
           />
+          {showStatePill && (
+            <button
+              type="button"
+              className="mcm-focusable"
+              onClick={() => setPickerOpen("state")}
+              aria-label={stateLabel ? `State: ${stateLabel}` : "Pick a state"}
+              title={stateLabel ? `State · ${stateLabel}` : "Pick a state"}
+              style={{
+                position: "absolute",
+                top: "50%",
+                // Sits left of the scan icon (which is at
+                // right: -10 with width 64 — so the right edge
+                // of the input border is at right: 0, and the
+                // scan icon's circle starts at right: 26 of the
+                // button's bbox). 70px gives breathing room.
+                right: 70,
+                transform: "translateY(-50%)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                height: 32,
+                padding: "0 12px",
+                borderRadius: 999,
+                border: stateLabel
+                  ? `1px solid ${withAlpha(stateTone, 0.55)}`
+                  : `1px dashed ${withAlpha(stateTone, 0.55)}`,
+                background: stateLabel
+                  ? `linear-gradient(${withAlpha(stateTone, 0.22)}, ${withAlpha(stateTone, 0.22)}), ${theme.color.glassFillHeavy}`
+                  : `linear-gradient(${withAlpha(stateTone, 0.06)}, ${withAlpha(stateTone, 0.06)}), ${theme.color.glassFillHeavy}`,
+                color: stateLabel ? theme.color.ink : theme.color.inkMuted,
+                fontFamily: font.detail,
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 13,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                maxWidth: 120,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                transition: "background 200ms ease, border-color 200ms ease",
+              }}
+            >
+              <span style={{
+                overflow: "hidden", textOverflow: "ellipsis",
+              }}>{stateLabel || "+ state"}</span>
+              <span aria-hidden style={{
+                fontSize: 10, color: theme.color.inkFaint,
+                fontStyle: "normal", flexShrink: 0,
+              }}>▾</span>
+            </button>
+          )}
           <button
             type="button"
             className="mcm-focusable"
@@ -3987,11 +4070,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             style={{
               position: "absolute",
               top: "50%",
-              // Negative right + larger size so the icon spills
-              // slightly past the input's border on both vertical
-              // edges. The baked-in circle on upc_scanner.svg lets
-              // it visually anchor itself rather than depending on
-              // a wrapper.
               right: -10,
               transform: "translateY(-50%)",
               display: "inline-flex",
@@ -4159,58 +4237,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </div>
           )}
         </div>
-
-        {/* State chip — sits between canonical and package size
-            because the physical state of the item gates which
-            unit options make sense (block vs grated cheese,
-            whole vs ground beef). Auto-fills from the canonical's
-            natural default; tap to override. Hidden when the
-            canonical has no state vocabulary (most pantry items
-            don't — only cheese / meat / bread / produce families
-            ship a state list). */}
-        {canonicalId && (() => {
-          const stateOptions = statesForIngredient(canonicalId) || [];
-          if (stateOptions.length === 0) return null;
-          const tone = "#c7a8d4"; // soft purple — reserved STATE color
-          const label = state ? (STATE_LABELS[state] || state) : null;
-          const has = !!state;
-          return (
-            <>
-              <FieldLabel theme={theme} style={{ marginTop: 14 }}>State</FieldLabel>
-              <button
-                type="button"
-                className="mcm-focusable"
-                onClick={() => setPickerOpen("state")}
-                aria-label={has ? `State: ${label}` : "Pick a state"}
-                title={has ? `State · ${label}` : "Pick a state"}
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "10px 14px",
-                  borderRadius: 999,
-                  border: has
-                    ? `1px solid ${withAlpha(tone, 0.55)}`
-                    : `1px dashed ${withAlpha(tone, 0.55)}`,
-                  background: has
-                    ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
-                    : `linear-gradient(${withAlpha(tone, 0.06)}, ${withAlpha(tone, 0.06)}), ${theme.color.glassFillHeavy}`,
-                  color: has ? theme.color.ink : theme.color.inkMuted,
-                  fontFamily: font.detail,
-                  fontStyle: "italic",
-                  fontWeight: 400,
-                  fontSize: 16,
-                  cursor: "pointer",
-                  transition: "background 200ms ease, border-color 200ms ease",
-                }}
-              >
-                <span>{has ? label : "+ pick a state"}</span>
-                <span aria-hidden style={{
-                  fontSize: 11, color: theme.color.inkFaint,
-                  fontStyle: "normal",
-                }}>▾</span>
-              </button>
-            </>
           );
         })()}
 
