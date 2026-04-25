@@ -3947,28 +3947,39 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   display: "flex", gap: 4, alignItems: "stretch",
                   marginBottom: 6,
                 }}>
-                  {steps.map(s => (
-                    <motion.div
-                      key={s.id}
-                      animate={s.done
-                        ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
-                        : { scaleY: 1 }}
-                      transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-                      style={{
-                        flex: 1,
-                        height: 4,
-                        borderRadius: 2,
-                        transformOrigin: "center",
-                        background: s.done
-                          ? tone
-                          : withAlpha(theme.color.ink, 0.08),
-                        boxShadow: s.done
-                          ? `0 0 6px ${withAlpha(tone, 0.45)}`
-                          : "none",
-                        transition: "background 220ms ease, box-shadow 220ms ease",
-                      }}
-                    />
-                  ))}
+                  {steps.map((s, i) => {
+                    // Count-based fill — segment[i] is "on" when
+                    // i < completed, regardless of WHICH specific
+                    // step is done. Reads as a left-to-right
+                    // progress bar that resets cleanly on
+                    // backwards progression (clearing a field
+                    // drops the count, the rightmost lit segment
+                    // dims). Avoids the prior "step 1 + 3 lit
+                    // with a gap at 2" look that misled the eye.
+                    const filled = i < completed;
+                    return (
+                      <motion.div
+                        key={s.id}
+                        animate={filled
+                          ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
+                          : { scaleY: 1 }}
+                        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                        style={{
+                          flex: 1,
+                          height: 4,
+                          borderRadius: 2,
+                          transformOrigin: "center",
+                          background: filled
+                            ? tone
+                            : withAlpha(theme.color.ink, 0.08),
+                          boxShadow: filled
+                            ? `0 0 6px ${withAlpha(tone, 0.45)}`
+                            : "none",
+                          transition: "background 220ms ease, box-shadow 220ms ease",
+                        }}
+                      />
+                    );
+                  })}
                 </div>
                 <AnimatePresence mode="wait">
                   <motion.div
