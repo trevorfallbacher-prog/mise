@@ -5186,9 +5186,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   }),
             }}
           >
-            {canonicalId && findIngredient(canonicalId)?.name
-              ? `Add ${findIngredient(canonicalId).name}`
-              : "Add to kitchen"}
+            {(() => {
+              // User-created canonicals (via "+ Add canonical")
+              // aren't in the bundled INGREDIENTS map, so
+              // findIngredient returns null even though
+              // canonicalId is set. Fall through to the typed
+              // name so the submit doesn't read the generic
+              // "Add to kitchen" right after the user just
+              // committed a fresh canonical from their typing.
+              if (canonicalId) {
+                const display = findIngredient(canonicalId)?.name || name.trim();
+                if (display) return `Add ${display}`;
+              }
+              return "Add to kitchen";
+            })()}
           </PrimaryButton>
         </div>
       </motion.div>
@@ -5280,9 +5291,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       {pickerOpen === "expires" && (() => {
         // Auto leads — system-derived expiry from the canonical's
         // shelf-life data. Auto's sub-line previews the
-        // estimate when the canonical exposes one.
+        // estimate when the canonical exposes one. Same
+        // humanizer the pill uses so the picker doesn't read
+        // "~365 days from today" while the pill says "in ~1
+        // year".
+        const humanizeWindow = (days) => {
+          if (days <= 0) return "today";
+          if (days === 1) return "tomorrow";
+          if (days < 14) return `${days} days from today`;
+          if (days < 30) return `~${Math.round(days / 7)} weeks from today`;
+          if (days < 365) return `~${Math.round(days / 30)} months from today`;
+          const years = Math.round(days / 365);
+          return `~${years} year${years === 1 ? "" : "s"} from today`;
+        };
         const autoSub = autoDays
-          ? `~${autoDays} day${autoDays === 1 ? "" : "s"} from today`
+          ? humanizeWindow(autoDays)
           : "Smart guess from the canonical";
         const presets = [
           { id: "auto",    label: "Auto",           sub: autoSub,                      kind: "auto" },
