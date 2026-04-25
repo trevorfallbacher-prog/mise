@@ -107,6 +107,21 @@
       }
       .mise-submit-ready { animation: miseSubmitReady 3.6s ease-in-out infinite; }
 
+      /* Avatar-ready halo — applied to the AddDraftSheet's
+         progress avatar when she lands at Step4 (all required
+         fields done). Blue breath that celebrates the user
+         crossing the finish line. Filter: drop-shadow follows
+         the SVG's actual figure outline rather than the wrapper
+         box. 3.6s cycle to feel celebratory, matches the
+         submit-ready halo's tempo. */
+      @keyframes miseAvatarReady {
+        0%, 100% { filter: drop-shadow(0 1px 3px rgba(20,12,4,0.25))
+                          drop-shadow(0 0 8px  rgba(126,184,212,0.55)); }
+        50%      { filter: drop-shadow(0 1px 3px rgba(20,12,4,0.25))
+                          drop-shadow(0 0 18px rgba(126,184,212,0.85)); }
+      }
+      .mise-avatar-ready { animation: miseAvatarReady 3.6s ease-in-out infinite; }
+
       /* Fade-in-up — a universal mount animation for mount-once rows
          in lists (scan-draft rows, pantry tiles, picker options). Used
          by the `.mise-fade-in` utility class with a CSS var for

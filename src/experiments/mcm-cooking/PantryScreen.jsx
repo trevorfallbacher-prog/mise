@@ -4027,6 +4027,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     src={stateSrc}
                     alt=""
                     aria-hidden
+                    // Blue halo activates only at the ready
+                    // state (stateIndex === 3). Class drives a
+                    // filter:drop-shadow keyframe so the glow
+                    // hugs her figure outline; we drop the
+                    // inline filter when ready so the keyframe
+                    // can fully control it.
+                    className={ready ? "mise-avatar-ready" : undefined}
                     initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
                     animate={{ opacity: 1, scale: 1,    rotate: 0 }}
                     exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
@@ -4034,7 +4041,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     style={{
                       position: "absolute", inset: 0,
                       width: "100%", height: "100%", objectFit: "contain",
-                      filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
+                      filter: ready
+                        ? undefined
+                        : "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
                     }}
                   />
                 </AnimatePresence>
