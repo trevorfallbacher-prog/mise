@@ -2564,17 +2564,19 @@ function PantryCard({ item, onPick, tileLabel = null }) {
     <GlassPanel
       interactive
       onClick={onPick}
-      padding={14}
+      padding={10}
       style={{
-        // Horizontal layout — same density fix that worked for
-        // tile cards. Icon on the left at 60px (was 36, top-
-        // anchored), text column right-side stacking name +
-        // qty/brand + meta row (category pill + days chip).
-        // minHeight cut from 132 → 92 since vertical air no
-        // longer pads out the bottom.
+        // Horizontal layout — icon on the left at 60px, text
+        // column right-side stacking name + qty/brand + meta
+        // row (category pill + days chip). Vertical chrome
+        // tuned tight: padding 10 (was 14), minHeight 76
+        // (was 92), gap 12 between icon + text (was 14). Text
+        // column gap below also tightened from 4 → 2 so the
+        // three lines (name / subhead / meta) feel like a
+        // single label block rather than spaced-out tiers.
         position: "relative",
         display: "flex", flexDirection: "row", alignItems: "stretch",
-        gap: 14, minHeight: 92,
+        gap: 12, minHeight: 76,
         ...warnOverlay,
       }}
     >
@@ -2636,7 +2638,7 @@ function PantryCard({ item, onPick, tileLabel = null }) {
         flex: 1, minWidth: 0,
         display: "flex", flexDirection: "column",
         justifyContent: "center",
-        gap: 4,
+        gap: 2,
         // Right padding so the absolute status badge doesn't
         // overlap long names.
         paddingRight: 22,
@@ -2702,7 +2704,7 @@ function PantryCard({ item, onPick, tileLabel = null }) {
           <div style={{
             display: "flex", alignItems: "center",
             justifyContent: "space-between", gap: 6,
-            marginTop: 2,
+            marginTop: 0,
           }}>
             {item.typeLabel ? (
               <TintedPill
