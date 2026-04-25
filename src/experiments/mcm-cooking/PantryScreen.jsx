@@ -974,6 +974,15 @@ export default function PantryScreen({
               if (loading && cards.length === 0) return <TileGridSkeleton />;
               if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} showTileContext />;
               if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} />;
+              // Whole-location empty state — when the active
+              // location has zero items, skip the wall of dimmed
+              // tiles and show a warm dedicated message instead.
+              // Keeps the user-experience honest ("your freezer
+              // is empty") rather than abandoned-looking.
+              const locationTotal = sumLocationTiles(cardsByLocTile[locationTab]);
+              if (cards.length > 0 && locationTotal === 0) {
+                return <LocationEmptyState location={activeLocation} />;
+              }
               return (
                 <TileGrid
                   location={activeLocation}
@@ -1510,6 +1519,67 @@ function TileGridSkeleton() {
 // error screen. Copy is warmer than plain "Nothing matches"
 // — pantries are a personal space, and empty states are a
 // good chance to sound human.
+
+// Whole-location empty state — shown when the active location
+// (Fridge / Pantry / Freezer) has zero items in any tile. Skips
+// the visual noise of a grayed-out tile wall and gives the user
+// a clear "this whole shelf is bare" moment with the location's
+// own swatch color tying the message to the dock segment they're
+// on.
+function LocationEmptyState({ location }) {
+  const { theme } = useTheme();
+  const dotColor = LOCATION_DOT[location.id] || theme.color.inkMuted;
+  const copy = {
+    fridge:  "Your fridge is empty. Time for a grocery run.",
+    pantry:  "The pantry shelves are bare.",
+    freezer: "Nothing in the freezer yet.",
+  }[location.id] || "Nothing on these shelves yet.";
+  return (
+    <FadeIn>
+      <div style={{
+        position: "relative",
+        marginTop: 48,
+        padding: "60px 20px",
+        textAlign: "center",
+        overflow: "hidden",
+      }}>
+        <Starburst
+          size={220}
+          color={withAlpha(dotColor, 0.18)}
+          style={{
+            position: "absolute",
+            top: "50%", left: "50%",
+            transform: "translate(-50%, -50%)",
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        />
+        <div style={{ position: "relative", zIndex: 1 }}>
+          {/* Big colored dot — same swatch color as the active
+              dock segment, so the empty-state visually ties to
+              "yes, this is the location you picked." */}
+          <div style={{
+            display: "inline-block",
+            width: 16, height: 16,
+            borderRadius: "50%",
+            background: dotColor,
+            boxShadow: `0 0 0 6px ${withAlpha(dotColor, 0.18)}, 0 2px 4px rgba(30,20,8,0.20)`,
+            marginBottom: 18,
+          }} />
+          <div style={{
+            fontFamily: font.serif, fontStyle: "italic",
+            fontSize: 22, lineHeight: 1.2,
+            color: theme.color.ink,
+            letterSpacing: "-0.01em",
+          }}>
+            {copy}
+          </div>
+        </div>
+      </div>
+    </FadeIn>
+  );
+}
+
 function EmptyState({ kind, query, tile }) {
   const { theme } = useTheme();
   const title = kind === "no-matches"
