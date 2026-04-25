@@ -99,13 +99,14 @@ export const font = {
   // italic." Truculenta + Futura ride the fallback stack so
   // pre-load and old browsers degrade gracefully.
   display: "'Pale Martini', 'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
-  // Item-name face — Kinescope (Adobe Fonts/Typekit, loaded via
-  // the kit link in index.html). Used ONLY on PantryCard item
-  // names so items read in a different typographic register
-  // than tile cards. Fraunces italic stays as the fallback
-  // ride: pre-load and old browsers degrade to the prior look,
-  // unsupported devices to plain serif.
-  itemName: "'kinescope', 'Fraunces', 'Iowan Old Style', Georgia, serif",
+  // Item-name face — Beverly Drive Right (Adobe Fonts/Typekit,
+  // loaded via the kit link in index.html). Used ONLY on
+  // PantryCard item names so items read in a different
+  // typographic register than tile cards. Fraunces italic
+  // stays as the fallback ride: pre-load and old browsers
+  // degrade to the prior look, unsupported devices to plain
+  // serif.
+  itemName: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
   sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
   mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
 };

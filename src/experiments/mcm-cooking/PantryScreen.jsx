@@ -2654,14 +2654,12 @@ function PantryCard({ item, onPick, tileLabel = null }) {
           </div>
         )}
         <div style={{
-          // Kinescope (Typekit) — Adobe Fonts face that gives
-          // item names their own register, distinct from the
-          // tile-card display face (Pale Martini). Single
-          // weight 400, normal style — no italic. Fraunces
-          // italic stays as the fallback while Kinescope
-          // loads. Sized larger (22 vs the previous 18) since
-          // Kinescope is a script-style face and needs more
-          // pixel area to stay legible at glance.
+          // Beverly Drive Right (Typekit) — Adobe Fonts face
+          // that gives item names their own register, distinct
+          // from the tile-card display face (Pale Martini).
+          // Single weight 400, normal style — no italic.
+          // Fraunces italic stays as the fallback while the
+          // Adobe kit loads.
           fontFamily: font.itemName, fontStyle: "normal", fontWeight: 400,
           fontSize: 22, lineHeight: 1.1, color: theme.color.ink,
           letterSpacing: "0",
