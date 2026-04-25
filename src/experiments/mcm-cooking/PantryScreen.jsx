@@ -2791,7 +2791,7 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
           // — the subheader echoes the name's voice at a
           // softer scale.
           fontFamily: font.itemName, fontStyle: "normal", fontWeight: 400,
-          fontSize: 24, lineHeight: 1.1, color: theme.color.ink,
+          fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
           letterSpacing: "0",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
