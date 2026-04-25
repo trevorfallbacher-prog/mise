@@ -4567,11 +4567,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const isAuto = expiresAt === "auto";
           const isDate = expiresAt instanceof Date;
           const isShelfStable = expiresAt === null;
+          // Shared humanizer so "Auto · in ~14 days" and
+          // "In ~14 days" use the same scale (days → weeks →
+          // months → years) and never read 365-day labels.
+          const humanizeDays = (days) => {
+            if (days <= 0) return "Today";
+            if (days === 1) return "Tomorrow";
+            if (days < 14) return `${days} days`;
+            if (days < 30) return `${Math.round(days / 7)} weeks`;
+            if (days < 365) return `~${Math.round(days / 30)} months`;
+            const years = Math.round(days / 365);
+            return `~${years} year${years === 1 ? "" : "s"}`;
+          };
           let label;
           if (isAuto) {
-            label = autoDays
-              ? `Auto · in ~${autoDays} day${autoDays === 1 ? "" : "s"}`
-              : "Auto";
+            label = autoDays ? `Auto · in ${humanizeDays(autoDays)}` : "Auto";
           } else if (isShelfStable) {
             label = "Doesn't expire";
           } else if (isDate) {
@@ -4579,10 +4589,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             const days = Math.round((expiresAt - now) / 86400000);
             label = days <= 0 ? "Today"
               : days === 1 ? "Tomorrow"
-              : days < 14 ? `In ${days} days`
-              : days < 30 ? `In ${Math.round(days / 7)} weeks`
-              : days < 365 ? `In ~${Math.round(days / 30)} months`
-              : `In ~${Math.round(days / 365)} years`;
+              : `In ${humanizeDays(days)}`;
           }
           // Treat any non-null value (auto OR explicit date) as
           // "set" for visual state — both carry an active clock.
