@@ -3983,6 +3983,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           )}
         </div>
 
+        {/* Everything from Package size down to Brand is gated
+            behind a pinned canonical: without a canonical the
+            unit dropdown options are generic, popular-size
+            observations are empty, and brand suggestions have
+            no anchor — showing all that empty scaffolding lets
+            the form look busy before the user has done anything.
+            Once canonical lands, the cascade has real metadata
+            to populate every downstream section. */}
+        {canonicalId && (<>
         {/* Package size — single bar with a typeable amount on
             the left and a unit dropdown pinned right. Unit
             options are derived from the active canonical's
@@ -4262,6 +4271,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </div>
           )}
         </div>
+        </>)}
 
         {/* Expiration chip — null means shelf-stable (no clock).
             Picker offers quick presets (1 week, 2 weeks, 1 month,
