@@ -2701,6 +2701,16 @@ function PantryCard({
       animateSwipe(false);
       return;
     }
+    // Same one-shot dismiss pattern for the fill-gauge slider:
+    // if it's open, a tap on the surrounding card closes it
+    // rather than launching the full editor. Prevents the
+    // jarring "I tapped near the slider and the whole card
+    // opened" experience.
+    if (fillEditing) {
+      e.stopPropagation();
+      setFillEditing(false);
+      return;
+    }
     if (onPick) onPick();
   };
 
