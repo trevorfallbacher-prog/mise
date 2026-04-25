@@ -4346,7 +4346,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           // When the state has a label we pad for the typical pill width (~110);
           // when the pill is empty ("+ state") we can pad less so cramped
           // phone widths still leave room for typed names.
-          const padRight = !showStatePill ? 72 : (state ? 180 : 132);
+          const padRight = !showStatePill ? 78 : (state ? 186 : 138);
           return (
         <div style={{ position: "relative" }}>
           <input
@@ -4504,7 +4504,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
-              width: 64, height: 64,
+              // 10% bigger than the prior 64 — gives the
+              // scanner a little more visual weight at the
+              // right edge of the bar without breaking the
+              // input's right-padding clearance.
+              width: 70, height: 70,
               borderRadius: 999,
               border: "none",
               background: "transparent",
