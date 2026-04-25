@@ -86,9 +86,40 @@ export const shadow = {
 };
 
 export const font = {
-  serif: "'Fraunces', 'Iowan Old Style', Georgia, serif",
-  sans:  "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
-  mono:  "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
+  // Editorial serif for body-italic uses — card names, empty-state
+  // lines, CTA copy. Fraunces is a soft, humanist serif with a
+  // proper italic that reads beautifully at sub-24px.
+  serif:   "'Fraunces', 'Iowan Old Style', Georgia, serif",
+  // MCM display face — Pale Martini, a custom hand-drawn
+  // mid-century display face self-hosted from
+  // public/fonts/PaleMartini.woff2 (loaded via @font-face in
+  // index.html). Used for the hero ("The Pantry") and tile /
+  // drilled labels where the register wants to shout
+  // "mid-century magazine cover" rather than "soft book
+  // italic." Truculenta + Futura ride the fallback stack so
+  // pre-load and old browsers degrade gracefully.
+  display: "'Pale Martini', 'Truculenta', 'Futura', 'Trade Gothic', system-ui, sans-serif",
+  // Item-card name face — Filmotype Honey (Adobe Fonts /
+  // Typekit, kit cnf4qlv loaded via index.html). Used on
+  // PantryCard NAMES so items read in a different typographic
+  // register than tile cards. Single weight 300, normal style.
+  // Fraunces italic rides as the fallback for pre-load and
+  // Adobe-Fonts-blocked browsers.
+  itemName: "'filmotype-honey', 'Fraunces', 'Iowan Old Style', Georgia, serif",
+  // Item-card SUBHEADER face — Beverly Drive Right at a smaller
+  // size. Token kept distinct from itemName so the header /
+  // subheader pairing reads as two voices in the same row.
+  itemSub: "'beverly-drive-right', 'Fraunces', 'Iowan Old Style', Georgia, serif",
+  sans:    "'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+  mono:    "'DM Mono', 'SF Mono', ui-monospace, Menlo, monospace",
+  // Instrument Serif (Adobe Fonts / Typekit, kit cnf4qlv loaded
+  // via index.html). Used for "boring details" — secondary
+  // data lines, field labels, summary copy. Default usage is
+  // italic 400 (set fontStyle: "italic" at the callsite). Reads
+  // as quiet editorial in contrast with Pale Martini (loud
+  // display) and Filmotype Honey (cursive name face). Fraunces
+  // italic rides as the fallback for pre-load.
+  detail:  "'instrument-serif', 'Fraunces', 'Iowan Old Style', Georgia, serif",
 };
 
 // Composed helpers so screens don't re-implement the glass recipe.

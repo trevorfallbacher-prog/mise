@@ -8,7 +8,25 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300;1,9..144,300;1,9..144,400&display=swap" rel="stylesheet" />
+    <!-- Adobe Fonts (Typekit) kit — provides "filmotype-honey"
+         (item-card NAMES, weight 300) and "beverly-drive-right"
+         (item-card SUBHEADERS). Two distinct faces so the row's
+         header / subheader read as two voices. -->
+    <link rel="stylesheet" href="https://use.typekit.net/cnf4qlv.css" />
     <style>
+      /* Pale Martini — custom display face for MCM headers.
+         Self-hosted (woff2 from public/fonts/) instead of routed
+         through Google Fonts since this is a non-Google
+         typeface. font-display: swap renders fallback Truculenta
+         /Futura first so the page paints fast, then re-renders
+         in Pale Martini once the file lands. */
+      @font-face {
+        font-family: "Pale Martini";
+        src: url("/fonts/PaleMartini.woff2") format("woff2");
+        font-weight: 400;
+        font-style: normal;
+        font-display: swap;
+      }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: #111; color: #f5f5f0; -webkit-font-smoothing: antialiased; }
       ::-webkit-scrollbar { display: none; }
@@ -60,6 +78,73 @@
       }
       .mise-cta { animation: miseHaloPulse 3.2s ease-in-out infinite; }
       .mise-cta:hover { filter: brightness(1.05); }
+
+      /* Scan-halo — applied to the upc_scanner.svg image at the
+         right edge of the AddDraftSheet's Name input to flag
+         scanning as the preferred / premium add path. Uses
+         filter: drop-shadow so the glow follows the SVG's
+         baked-in circle (rather than the rectangular bounding
+         box). 4s cycle to read as ambient breath rather than
+         attention-grabbing. */
+      @keyframes miseScanHalo {
+        0%, 100% { filter: drop-shadow(0 1px 2px rgba(30,30,30,0.18))
+                          drop-shadow(0 0 6px rgba(127,180,212,0.55)); }
+        50%      { filter: drop-shadow(0 1px 2px rgba(30,30,30,0.18))
+                          drop-shadow(0 0 14px rgba(127,180,212,0.85)); }
+      }
+      .mise-scan-halo { animation: miseScanHalo 4s ease-in-out infinite; }
+
+      /* Submit-ready halo — applied to the AddDraftSheet's
+         primary submit button when the form's required-fields
+         progress hits Ready. Teal-tinted breath that reads
+         "yes, you can press this now." 3.6s cycle to feel
+         celebratory without thrashing. */
+      @keyframes miseSubmitReady {
+        0%, 100% { box-shadow: 0 0 0 0 rgba(47,143,131,0.35),
+                               0 0 18px 0 rgba(47,143,131,0.20); }
+        50%      { box-shadow: 0 0 0 4px rgba(47,143,131,0.00),
+                               0 0 30px 4px rgba(47,143,131,0.40); }
+      }
+      .mise-submit-ready { animation: miseSubmitReady 3.6s ease-in-out infinite; }
+
+      /* Avatar-ready halo — applied to the AddDraftSheet's
+         progress avatar when she lands at Step4 (all required
+         fields done). Blue breath that celebrates the user
+         crossing the finish line. Filter: drop-shadow follows
+         the SVG's actual figure outline rather than the wrapper
+         box. 3.6s cycle to feel celebratory, matches the
+         submit-ready halo's tempo. */
+      @keyframes miseAvatarReady {
+        0%, 100% { filter: drop-shadow(0 1px 3px rgba(20,12,4,0.25))
+                          drop-shadow(0 0 8px  rgba(126,184,212,0.55)); }
+        50%      { filter: drop-shadow(0 1px 3px rgba(20,12,4,0.25))
+                          drop-shadow(0 0 18px rgba(126,184,212,0.85)); }
+      }
+      .mise-avatar-ready { animation: miseAvatarReady 3.6s ease-in-out infinite; }
+
+      /* Heart float — emitted around the AddDraftSheet's
+         progress strip when the secret "love mode" kicks in
+         (form lingers in the Ready state for ~1.5s). Each
+         heart drifts up + fades + rotates slightly so they
+         don't read as a uniform parade. infinite iteration so
+         the effect persists while loveMode is on; staggered
+         per-heart animation-delay (set inline) gives the
+         cascade. */
+      @keyframes miseHeartFloat {
+        0%   { transform: translateY(8px)   scale(0.5) rotate(-10deg); opacity: 0; }
+        20%  { opacity: 1; }
+        100% { transform: translateY(-72px) scale(1.15) rotate(18deg); opacity: 0; }
+      }
+      .mise-heart {
+        position: absolute;
+        color: #ec6545;
+        font-size: 16px;
+        line-height: 1;
+        pointer-events: none;
+        text-shadow: 0 1px 3px rgba(236,101,69,0.45);
+        animation: miseHeartFloat 1.8s ease-out infinite;
+        will-change: transform, opacity;
+      }
 
       /* Fade-in-up — a universal mount animation for mount-once rows
          in lists (scan-draft rows, pantry tiles, picker options). Used
