@@ -2712,6 +2712,17 @@ function PantryCard({ item, onPick, tileLabel = null, onRemove = null }) {
         // column gap below also tightened from 4 → 2 so the
         // three lines (name / subhead / meta) feel like a
         // single label block rather than spaced-out tiers.
+        //
+        // Right corners squared off when swipe is wired so the
+        // card's exposed right edge butts flat against the
+        // Remove action behind it instead of curving inward
+        // and leaving a wedge gap. At rest the wrapper's clip
+        // (top-right/bottom-right rounded) hides the squared
+        // edge, so the resting card still looks rounded.
+        ...(swipeEnabled ? {
+          borderTopRightRadius: 0,
+          borderBottomRightRadius: 0,
+        } : null),
         position: "relative",
         display: "flex", flexDirection: "row", alignItems: "stretch",
         gap: 12, minHeight: 76,
