@@ -34,6 +34,7 @@ import {
   inferCanonicalFromName, dbCanonicalsSnapshot,
 } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
+import { usePopularPackages } from "../../lib/usePopularPackages";
 import { findFoodType, FOOD_TYPES, inferFoodTypeFromName } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
@@ -3114,6 +3115,16 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     () => [...INGREDIENTS, ...dbCanonicalsSnapshot()],
     [dbMap]
   );
+  // Top popular package sizes for the picked canonical. The
+  // hook is brand-aware: when the user has typed a brand we
+  // get brand-specific hits ranked first, with canonical-wide
+  // observations filling the remainder. Idle (returns []) until
+  // a canonical is set, which matches the cascade gate above.
+  const { rows: popularPackages } = usePopularPackages(
+    brand.trim() || null,
+    canonicalId || null,
+    3,
+  );
   const nameSuggestions = useMemo(() => {
     const q = name.trim().toLowerCase();
     if (q.length < 2) return [];
@@ -3773,6 +3784,74 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             />
           </div>
         </div>
+
+        {/* Popular-package quick-picks — surfaced once a canonical
+            is pinned. Reads from popular_package_sizes (RPC),
+            ranked brand-first then canonical-wide. Tap a chip to
+            slam both Package size and Unit at once; the chip
+            highlights when its values match the current pair so
+            the user sees what's currently selected. */}
+        {canonicalId && popularPackages.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{
+              fontFamily: font.mono, fontSize: 10,
+              letterSpacing: "0.14em", textTransform: "uppercase",
+              color: theme.color.inkFaint,
+              marginBottom: 6,
+            }}>
+              Popular sizes
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {popularPackages.map((p, i) => {
+                const active = Number(packageSize) === p.amount && (unit || "").toLowerCase() === (p.unit || "").toLowerCase();
+                const fmt = (n) => Number.isInteger(n) ? String(n) : Number(n).toFixed(1);
+                return (
+                  <button
+                    key={`${p.amount}-${p.unit}-${i}`}
+                    type="button"
+                    className="mcm-focusable"
+                    onClick={() => {
+                      setPackageSize(String(p.amount));
+                      setUnit(p.unit || "");
+                      setRemaining(1);
+                    }}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      border: active
+                        ? `1px solid ${withAlpha(theme.color.teal, 0.55)}`
+                        : `1px solid ${theme.color.hairline}`,
+                      background: active
+                        ? `linear-gradient(${withAlpha(theme.color.teal, 0.18)}, ${withAlpha(theme.color.teal, 0.18)}), ${theme.color.glassFillHeavy}`
+                        : "transparent",
+                      color: active ? theme.color.ink : theme.color.inkMuted,
+                      fontFamily: font.detail,
+                      fontStyle: "italic",
+                      fontWeight: 400,
+                      fontSize: 13,
+                      cursor: "pointer",
+                      transition: "background 160ms ease, border-color 160ms ease",
+                    }}
+                  >
+                    <span>{fmt(p.amount)} {p.unit}</span>
+                    {p.brand && (
+                      <span style={{
+                        fontFamily: font.mono, fontSize: 9,
+                        color: theme.color.inkFaint,
+                        letterSpacing: "0.04em",
+                      }}>
+                        · {p.brand}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Remaining slider — only renders once the package size
             is set (you can't visualize "what's left" without
