@@ -17,6 +17,7 @@ import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
 import {
   SWIPE_ACTION_WIDTH, shelfLifeFor, isRecent, formatDaysChip, daysChipColor,
 } from "./helpers";
+import { BrandPickerSheet } from "./BrandPickerSheet";
 
 // Past this leftward offset (in px) on dragEnd, the card snaps
 // fully open. Anything less snaps closed. Velocity also opens
@@ -42,6 +43,11 @@ export function KitchenCard({
   isSwipeOpen = false,
   onSwipeOpen = null,
   onSwipeClose = null,
+  // Distinct brands across the user's pantry — used as the
+  // suggestion list when the "+ ADD BRAND" affordance opens
+  // the BrandPickerSheet. Empty array is fine (the sheet falls
+  // back to a "type one to start" empty-state copy).
+  brandSuggestions = [],
 }) {
   const { theme } = useTheme();
   // Canonical nutrition lookup — DB-approved info wins, bundled
@@ -88,6 +94,10 @@ export function KitchenCard({
   // so the user sees the bar redraw as they slide. Disabled
   // when onUpdate isn't wired (Showcase mode).
   const [fillEditing, setFillEditing] = useState(false);
+  // Brand picker is a modal sheet; this latch decides whether
+  // BrandPickerSheet is mounted. Tap the "+ ADD BRAND" chip to
+  // open, picker calls onClose to dismiss.
+  const [brandEditing, setBrandEditing] = useState(false);
   const updateEnabled = typeof onUpdate === "function";
   // Action-button opacity tied to swipe progress. swipeX 0 →
   // action opacity 0 (button invisible behind a closed card so
@@ -373,6 +383,40 @@ export function KitchenCard({
             {tileLabel}
           </div>
         )}
+        {/* + ADD BRAND affordance — small UNSET_CHIP-style button
+            that sits ABOVE the name when the row has no brand
+            (per the CLAUDE.md identity-hierarchy spec: empty
+            brand slot inline reads as broken, so the affordance
+            goes on its own line above the header). Only renders
+            when onUpdate is wired (Showcase mode stays inert).
+            Tapping opens the BrandPickerSheet for free-form
+            entry + suggestion-list pick. */}
+        {!item.brand && updateEnabled && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setBrandEditing(true);
+            }}
+            aria-label={`Add a brand to ${item.name}`}
+            className="mcm-focusable"
+            style={{
+              alignSelf: "flex-start",
+              fontFamily: font.mono, fontSize: 9,
+              color: theme.color.inkMuted,
+              background: "transparent",
+              border: `1px dashed ${theme.color.hairline}`,
+              borderRadius: 4,
+              padding: "1px 6px",
+              letterSpacing: "0.10em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              marginBottom: 1,
+            }}
+          >
+            + add brand
+          </button>
+        )}
         <div style={{
           // Filmotype Honey (Typekit) — Adobe Fonts face on
           // item-card NAMES so items read in a different
@@ -620,6 +664,16 @@ export function KitchenCard({
     </GlassPanel>
     </motion.div>
     </motion.div>
+    {brandEditing && (
+      <BrandPickerSheet
+        suggestions={brandSuggestions}
+        onPick={(brand) => {
+          setBrandEditing(false);
+          if (updateEnabled) onUpdate({ brand });
+        }}
+        onClose={() => setBrandEditing(false)}
+      />
+    )}
     </div>
   );
 }
