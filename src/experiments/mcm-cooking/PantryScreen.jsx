@@ -2531,22 +2531,26 @@ function PantryCard({ item, onPick, tileLabel = null }) {
 
   return (
     <motion.div
-      // Spoilage aura — animated green box-shadow glow that
-      // paints outward from the card's bounds when the item
-      // is warn. The previous radial-gradient overlay had
-      // its color centered on the card and faded to 0 at the
-      // edge (where you actually need to see it); a box-
-      // shadow inverts that — it draws starting AT the edge
-      // and grows outward, so the green is densest right
-      // around the card's border. Animation pulses the shadow
-      // size + alpha together so the glow appears to breathe
-      // outward and back. borderRadius matches the GlassPanel
-      // so the glow follows the rounded corners cleanly.
+      // Spoilage aura — fixed-size green halo that lingers
+      // around the card's edge when the item is warn. Shadow
+      // dimensions stay constant (no growth into the
+      // surrounding space); only the alpha breathes between
+      // two non-zero values so the glow never disappears, just
+      // pulses gently like a slow background hum. Reads as
+      // "this card is in the warn state at all times" rather
+      // than "every 3.6s it tries to remind me."
+      //
+      // initial seeds the shadow at its low-alpha baseline so
+      // the aura is visible from first paint instead of fading
+      // in from 0.
+      initial={warn ? {
+        boxShadow: "0 0 16px 3px rgba(123,156,92,0.42), 0 0 32px 6px rgba(123,156,92,0.22)",
+      } : undefined}
       animate={warn ? {
         boxShadow: [
-          "0 0 0 0 rgba(123,156,92,0), 0 0 0 0 rgba(123,156,92,0)",
-          "0 0 24px 6px rgba(123,156,92,0.55), 0 0 48px 12px rgba(123,156,92,0.30)",
-          "0 0 0 0 rgba(123,156,92,0), 0 0 0 0 rgba(123,156,92,0)",
+          "0 0 16px 3px rgba(123,156,92,0.42), 0 0 32px 6px rgba(123,156,92,0.22)",
+          "0 0 16px 3px rgba(123,156,92,0.70), 0 0 32px 6px rgba(123,156,92,0.40)",
+          "0 0 16px 3px rgba(123,156,92,0.42), 0 0 32px 6px rgba(123,156,92,0.22)",
         ],
       } : undefined}
       transition={warn ? { duration: 3.6, ease: "easeInOut", repeat: Infinity } : undefined}
