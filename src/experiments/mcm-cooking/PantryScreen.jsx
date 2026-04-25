@@ -3748,7 +3748,29 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           <input
             autoFocus
             value={name}
-            onChange={(e) => { setName(e.target.value); setSuppressTypeahead(false); }}
+            onChange={(e) => {
+              const next = e.target.value;
+              setName(next);
+              setSuppressTypeahead(false);
+              // Release the canonical-override lock when the
+              // typed text diverges from the bound canonical's
+              // display name. Without this, picking "Cheddar"
+              // and then editing to "Mozzarella" leaves the
+              // canonical pinned to cheddar forever. The check
+              // is "no longer the canonical's name (case- and
+              // trim-insensitive)" so light typos / backspacing
+              // mid-name still keep the lock — only a real
+              // divergence releases it.
+              if (canonicalOverridden && canonicalId) {
+                const ing = findIngredient(canonicalId);
+                const lockedName = (ing?.name || "").trim().toLowerCase();
+                if (next.trim().toLowerCase() !== lockedName) {
+                  setCanonicalOverridden(false);
+                  setTypeOverridden(false);
+                  setTileOverridden(false);
+                }
+              }
+            }}
             onFocus={() => setNameFocused(true)}
             onBlur={() => {
               // Defer the close so a click on a suggestion
