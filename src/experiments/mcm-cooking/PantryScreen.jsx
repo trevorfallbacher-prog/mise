@@ -3112,13 +3112,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   const { rows: brandNutritionRows } = useBrandNutrition();
 
   // Live name-inference for the category chip — runs only when
-  // the user hasn't manually overridden. Cheap (FOOD_TYPES is
-  // small and matched by alias substring) so we don't memoize.
+  // the user hasn't manually overridden. When the canonical is
+  // pinned we infer against the canonical's display name first
+  // (more authoritative than whatever the user typed) and fall
+  // back to the typed name otherwise.
   useEffect(() => {
     if (typeOverridden) return;
-    const inferred = inferFoodTypeFromName(name);
+    const ing = canonicalId ? findIngredient(canonicalId) : null;
+    const sourceName = ing?.name || name;
+    const inferred = inferFoodTypeFromName(sourceName);
     setTypeId(inferred?.id || null);
-  }, [name, typeOverridden]);
+  }, [name, canonicalId, typeOverridden]);
 
   // Same pattern for the canonical chip — typing "cheddar"
   // resolves to the cheese / cheddar canonical so the chip
@@ -3595,6 +3599,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     setName(ing.name);
                     setCanonicalId(ing.id);
                     setCanonicalOverridden(true);
+                    // Unlock the downstream axes so the
+                    // category + tile re-derive against the
+                    // freshly-picked canonical's metadata. The
+                    // user picking a canonical means they
+                    // trust our cascade — any prior manual
+                    // category / tile override should release
+                    // so the new canonical drives those values.
+                    setTypeOverridden(false);
+                    setTileOverridden(false);
                     setSuppressTypeahead(true);
                   }}
                   style={{
