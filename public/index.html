@@ -122,6 +122,30 @@
       }
       .mise-avatar-ready { animation: miseAvatarReady 3.6s ease-in-out infinite; }
 
+      /* Heart float — emitted around the AddDraftSheet's
+         progress strip when the secret "love mode" kicks in
+         (form lingers in the Ready state for ~1.5s). Each
+         heart drifts up + fades + rotates slightly so they
+         don't read as a uniform parade. infinite iteration so
+         the effect persists while loveMode is on; staggered
+         per-heart animation-delay (set inline) gives the
+         cascade. */
+      @keyframes miseHeartFloat {
+        0%   { transform: translateY(8px)   scale(0.5) rotate(-10deg); opacity: 0; }
+        20%  { opacity: 1; }
+        100% { transform: translateY(-72px) scale(1.15) rotate(18deg); opacity: 0; }
+      }
+      .mise-heart {
+        position: absolute;
+        color: #ec6545;
+        font-size: 16px;
+        line-height: 1;
+        pointer-events: none;
+        text-shadow: 0 1px 3px rgba(236,101,69,0.45);
+        animation: miseHeartFloat 1.8s ease-out infinite;
+        will-change: transform, opacity;
+      }
+
       /* Fade-in-up — a universal mount animation for mount-once rows
          in lists (scan-draft rows, pantry tiles, picker options). Used
          by the `.mise-fade-in` utility class with a CSS var for

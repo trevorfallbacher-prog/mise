@@ -3906,24 +3906,33 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const total = steps.length;
           const ready = completed === total;
           const nextStep = steps.find(s => !s.done);
+          // Secret step 5 — when the form's required fields are
+          // ALL set AND the user also filled in the optional
+          // Brand, she falls in love. Step5.svg + red palette
+          // + floating hearts. Reward for going beyond the
+          // minimum.
+          const loveMode = ready && brand.trim().length > 0;
           // Avatar mapping — 4 emotional states for 4 thresholds
-          // (0..3 done). Humans count from 1, so what we render
-          // as stateIndex 0..3 is step 1..4 in user-facing copy.
+          // (0..3 done) plus the secret 5th. Humans count from 1,
+          // so stateIndex 0..3 is step 1..4 in user-facing copy
+          // (and step 5 when loveMode flips on).
           const stateIndex = Math.min(completed, 3);
-          const stateSrc = [
-            "/icons/AddItemProgression/Step1.svg",
-            "/icons/AddItemProgression/Step2.svg",
-            "/icons/AddItemProgression/Step%203.svg",
-            "/icons/AddItemProgression/Step4.svg",
-          ][stateIndex];
+          const stateSrc = loveMode
+            ? "/icons/AddItemProgression/Step5.svg"
+            : [
+                "/icons/AddItemProgression/Step1.svg",
+                "/icons/AddItemProgression/Step2.svg",
+                "/icons/AddItemProgression/Step%203.svg",
+                "/icons/AddItemProgression/Step4.svg",
+              ][stateIndex];
           // Per-state palette pulled from each avatar's
           // background tint — meter fill + caption text shift
           // to match her so the strip reads as one mood with
-          // her as the anchor. Step 4 (ready) keeps the prior
-          // theme teal which already worked.
+          // her as the anchor. Step 4 (ready) keeps the theme
+          // teal; step 5 (love) goes red.
           const stateColors = ["#4a8e92", "#eac289", "#79a49c", theme.color.teal];
-          const tone = stateColors[stateIndex];
-          const captionKey = ready ? "ready" : `step-${stateIndex}-${nextStep?.id || "next"}`;
+          const tone = loveMode ? "#ec6545" : stateColors[stateIndex];
+          const captionKey = loveMode ? "love" : ready ? "ready" : `step-${stateIndex}-${nextStep?.id || "next"}`;
           return (
             // Sticky to the top of the scrolling sheet so the
             // user keeps a fixed anchor while content reflows
@@ -4008,7 +4017,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                       display: "inline-flex", alignItems: "center", gap: 6,
                     }}
                   >
-                    {ready ? (
+                    {loveMode ? (
+                      <>
+                        <motion.span
+                          aria-hidden
+                          initial={{ scale: 0.4, rotate: -20, opacity: 0 }}
+                          animate={{ scale: 1, rotate: 0, opacity: 1 }}
+                          transition={{ type: "spring", stiffness: 480, damping: 18 }}
+                          style={{ fontSize: 14, lineHeight: 1 }}
+                        >
+                          ♥
+                        </motion.span>
+                        She loves it · ready to save
+                      </>
+                    ) : ready ? (
                       <>
                         <motion.span
                           aria-hidden
@@ -4041,20 +4063,24 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               <div style={{
                 width: 64, height: 64, flexShrink: 0,
                 position: "relative",
+                // Hearts overflow above the strip on love mode;
+                // need overflow visible so they can float past
+                // the avatar's bbox.
+                overflow: "visible",
               }}>
                 <AnimatePresence initial={false}>
                   <motion.img
-                    key={stateIndex}
+                    key={stateSrc}
                     src={stateSrc}
                     alt=""
                     aria-hidden
-                    // Blue halo activates only at the ready
-                    // state (stateIndex === 3). Class drives a
-                    // filter:drop-shadow keyframe so the glow
-                    // hugs her figure outline; we drop the
-                    // inline filter when ready so the keyframe
-                    // can fully control it.
-                    className={ready ? "mise-avatar-ready" : undefined}
+                    // Halo cascade: blue at step 4 (ready),
+                    // unset at step 5 (love — the hearts and
+                    // red caption carry the celebration).
+                    // Class drives a filter:drop-shadow
+                    // keyframe so the glow hugs her figure
+                    // outline; inline filter takes over otherwise.
+                    className={ready && !loveMode ? "mise-avatar-ready" : undefined}
                     initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
                     animate={{ opacity: 1, scale: 1,    rotate: 0 }}
                     exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
@@ -4062,11 +4088,47 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     style={{
                       position: "absolute", inset: 0,
                       width: "100%", height: "100%", objectFit: "contain",
-                      filter: ready
+                      filter: ready && !loveMode
                         ? undefined
                         : "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
                     }}
                   />
+                </AnimatePresence>
+                {/* Hearts overlay — emits five hearts at
+                    staggered delays so they cascade up past
+                    the avatar continuously while love mode
+                    holds. CSS keyframe handles the float +
+                    fade so we don't need a per-heart spring
+                    in framer-motion. Hearts loop infinitely;
+                    AnimatePresence handles the fade-in /
+                    fade-out of the wrapper itself when
+                    loveMode flips. */}
+                <AnimatePresence>
+                  {loveMode && (
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      style={{
+                        position: "absolute", inset: 0,
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {[0, 1, 2, 3, 4].map(i => (
+                        <span
+                          key={i}
+                          aria-hidden
+                          className="mise-heart"
+                          style={{
+                            left: `${10 + i * 11}px`,
+                            bottom: 4,
+                            animationDelay: `${i * 0.36}s`,
+                            fontSize: 14 + (i % 2) * 2,
+                          }}
+                        >♥</span>
+                      ))}
+                    </motion.div>
+                  )}
                 </AnimatePresence>
               </div>
             </div>
