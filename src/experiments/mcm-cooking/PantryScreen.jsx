@@ -4485,18 +4485,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               aria-hidden
               // Halo only while the form's still in progress —
               // once the human "wins" (all required fields set),
-              // the scanner backs off: class drops, a grey
-              // desaturate filter takes over, and a softer
-              // opacity fade signals it lost to the human.
+              // the scanner concedes: class drops + a grayscale
+              // + dimmed-brightness filter takes over. Opacity
+              // stays at 1 so the SVG's baked-in circle still
+              // fully covers the input border behind it (a 50%
+              // opacity reveal looked like a render bug).
               className={formReady ? undefined : "mise-scan-halo"}
               style={{
                 width: "100%", height: "100%", objectFit: "contain",
                 display: "block",
                 filter: formReady
-                  ? "grayscale(1) brightness(0.85)"
+                  ? "grayscale(1) brightness(0.7)"
                   : undefined,
-                opacity: formReady ? 0.5 : 1,
-                transition: "filter 600ms ease, opacity 600ms ease",
+                transition: "filter 600ms ease",
               }}
             />
           </button>
