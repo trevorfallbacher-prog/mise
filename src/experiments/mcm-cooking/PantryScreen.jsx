@@ -34,7 +34,7 @@ import { findFoodType } from "../../data/foodTypes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
-import { rememberBarcodeCorrection } from "../../lib/barcodeCorrections";
+import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
 import { canonicalImageUrlFor, tileIconFor } from "../../lib/canonicalIcons";
 
 const CLASSIFIER_HELPERS = { findIngredient, hubForIngredient };
@@ -3134,9 +3134,30 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     setScanning(false);
     setScanStatus("looking");
     try {
-      const res = await lookupBarcode(upc, { brandNutritionRows: [] });
+      // Run the OFF/USDA lookup and the prior-correction lookup
+      // in parallel — they're independent reads. The correction
+      // is the higher tier per CLAUDE.md's resolution cascade
+      // (family + global corrections beat raw OFF data), so its
+      // values win when both surface a hint for the same axis.
+      const [res, correction] = await Promise.all([
+        lookupBarcode(upc, { brandNutritionRows: [] }),
+        findBarcodeCorrection(upc).catch(err => {
+          console.warn("[mcm-add] correction read failed:", err?.message || err);
+          return null;
+        }),
+      ]);
+      // Apply the correction's location whenever one was taught.
+      // The user is initiating the scan, so they expect prior
+      // teachings to win over the form's default seed. They can
+      // still re-pick after, and that re-pick writes back via
+      // rememberBarcodeCorrection on submit.
+      if (correction?.location) setLocation(correction.location);
+
       if (!res || !res.found) {
-        setScanStatus("miss");
+        // Soft miss — but if a correction surfaced, that's still
+        // useful (we filled in location). Otherwise it's a true
+        // dead-end and the user types it in by hand.
+        setScanStatus(correction ? "found" : "miss");
         return;
       }
       // Pre-fill fields. Don't overwrite user-typed name/brand
