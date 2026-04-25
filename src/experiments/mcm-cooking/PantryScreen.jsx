@@ -2530,32 +2530,33 @@ function PantryCard({ item, onPick, tileLabel = null }) {
   const iconUrl = canonicalImageUrlFor(canonicalId, null);
 
   return (
-    <div style={{ position: "relative" }}>
-      {/* Spoilage aura — soft green-yellow halo around the
-          entire card's outer edge for warn items. Reads as
-          "this is starting to smell" / "food turning"
-          ambient cue. Sized inset:-12 so the glow extends
-          past the card's bounds, blur 18px so the halo
-          dissolves softly into the warm backdrop. Slow
-          breathe (3.6s) to feel atmospheric, not alarming.
-          DOM-ordered before the panel so the panel naturally
-          draws on top — only the edges of the aura escape
-          past the card. */}
-      {warn && (
-        <motion.span
-          aria-hidden
-          animate={{ opacity: [0.45, 0.85, 0.45] }}
-          transition={{ duration: 3.6, ease: "easeInOut", repeat: Infinity }}
-          style={{
-            position: "absolute",
-            inset: -14,
-            borderRadius: 28,
-            background: "radial-gradient(ellipse at center, rgba(123,156,92,0.55) 0%, rgba(123,156,92,0.30) 45%, rgba(123,156,92,0) 78%)",
-            filter: "blur(18px)",
-            pointerEvents: "none",
-          }}
-        />
-      )}
+    <motion.div
+      // Spoilage aura — animated green box-shadow glow that
+      // paints outward from the card's bounds when the item
+      // is warn. The previous radial-gradient overlay had
+      // its color centered on the card and faded to 0 at the
+      // edge (where you actually need to see it); a box-
+      // shadow inverts that — it draws starting AT the edge
+      // and grows outward, so the green is densest right
+      // around the card's border. Animation pulses the shadow
+      // size + alpha together so the glow appears to breathe
+      // outward and back. borderRadius matches the GlassPanel
+      // so the glow follows the rounded corners cleanly.
+      animate={warn ? {
+        boxShadow: [
+          "0 0 0 0 rgba(123,156,92,0), 0 0 0 0 rgba(123,156,92,0)",
+          "0 0 24px 6px rgba(123,156,92,0.55), 0 0 48px 12px rgba(123,156,92,0.30)",
+          "0 0 0 0 rgba(123,156,92,0), 0 0 0 0 rgba(123,156,92,0)",
+        ],
+      } : undefined}
+      transition={warn ? { duration: 3.6, ease: "easeInOut", repeat: Infinity } : undefined}
+      style={{
+        position: "relative",
+        borderRadius: 22, // match GlassPanel rounding so the
+                          // glow contour follows the card edge
+                          // rather than spilling square corners
+      }}
+    >
     <GlassPanel
       interactive
       onClick={onPick}
@@ -2711,7 +2712,7 @@ function PantryCard({ item, onPick, tileLabel = null }) {
         )}
       </div>
     </GlassPanel>
-    </div>
+    </motion.div>
   );
 }
 
