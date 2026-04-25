@@ -3372,9 +3372,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           </div>
           {/* Right-rail status pills — Category (orange) and
               Stored In (blue) per CLAUDE.md reserved colors.
-              Stack vertically so two pills don't crowd a narrow
-              header on phones. Tap either to open its picker
-              for an override. */}
+              Hidden until the canonical is pinned: with no
+              canonical the inferred values are noisy guesses
+              (or empty) and showing the pills implies a
+              decision the user hasn't made yet. Once a
+              canonical lands the cascade fills both pills with
+              real metadata, so they appear together. */}
+          {canonicalId && (
           <div style={{
             display: "flex", flexDirection: "column", alignItems: "flex-end",
             gap: 6, flexShrink: 0, marginTop: 2,
@@ -3467,6 +3471,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               );
             })()}
           </div>
+          )}
         </div>
 
         {scanStatus && (
