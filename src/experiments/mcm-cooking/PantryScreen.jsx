@@ -3054,11 +3054,17 @@ function PantryCard({
                 disabled={!updateEnabled}
                 style={{
                   width: "100%",
-                  padding: 0,
-                  marginTop: 4,
+                  // Padding expands the tap target without
+                  // moving the visual bar — 8px above + below
+                  // the 4px bar gives a ~20px touch zone, still
+                  // under Apple's 44px guideline but workable
+                  // for a row-density inline control.
+                  padding: "8px 0",
+                  marginTop: -4,
                   background: "transparent",
                   border: "none",
                   cursor: updateEnabled ? "pointer" : "default",
+                  display: "block",
                 }}
               >
                 <div
