@@ -29,7 +29,7 @@ import { font, radius } from "./tokens";
 import { FRIDGE_TILES,  tileIdForItem          as fridgeTileFor  } from "../../lib/fridgeTiles";
 import { PANTRY_TILES,  pantryTileIdForItem    as pantryTileFor  } from "../../lib/pantryTiles";
 import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../lib/freezerTiles";
-import { findIngredient, hubForIngredient } from "../../data/ingredients";
+import { findIngredient, hubForIngredient, INGREDIENTS, inferCanonicalFromName } from "../../data/ingredients";
 import { findFoodType, FOOD_TYPES, inferFoodTypeFromName } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
@@ -3055,7 +3055,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // doesn't clobber their choice.
   const [typeId, setTypeId] = useState(seed.typeId || null);
   const [typeOverridden, setTypeOverridden] = useState(!!seed.typeId);
-  const [pickerOpen, setPickerOpen] = useState(null); // null | "category"
+  // Canonical (CLAUDE.md axis 2 — tan). Same auto-resolve +
+  // override pattern as the category axis so the user types
+  // "cheddar" and the picker pre-selects the cheese canonical
+  // without them digging.
+  const [canonicalId, setCanonicalId] = useState(seed.canonicalId || null);
+  const [canonicalOverridden, setCanonicalOverridden] = useState(!!seed.canonicalId);
+  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical"
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -3081,6 +3087,16 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     const inferred = inferFoodTypeFromName(name);
     setTypeId(inferred?.id || null);
   }, [name, typeOverridden]);
+
+  // Same pattern for the canonical chip — typing "cheddar"
+  // resolves to the cheese / cheddar canonical so the chip
+  // can pre-select. Override flag locks the picked value
+  // against further typing.
+  useEffect(() => {
+    if (canonicalOverridden) return;
+    const id = inferCanonicalFromName(name);
+    setCanonicalId(id || null);
+  }, [name, canonicalOverridden]);
 
   const canSubmit = name.trim().length > 0;
 
@@ -3133,6 +3149,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         const axes = tagHintsToAxes(res.categoryHints);
         if (axes.typeId) setTypeId(axes.typeId);
       }
+      // Seed the canonical from a direct lookupBarcode hit when
+      // present. Same don't-clobber-override rule.
+      if (!canonicalOverridden && res.canonicalId) {
+        setCanonicalId(res.canonicalId);
+      }
       setScanStatus("found");
     } catch (e) {
       console.warn("[mcm-add] scan lookup failed:", e?.message || e);
@@ -3183,6 +3204,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       unit: unit.trim() || null,
       category: cat,
       typeId: typeId || null,
+      canonicalId: canonicalId || null,
       location,
       // Tile defaults to "misc" — user can re-classify after
       // the row lands. Saves a multi-step picker in the add
@@ -3436,6 +3458,55 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           style={inputBase}
         />
 
+        {/* Canonical chip (CLAUDE.md axis 2 — tan #b8a878).
+            Auto-resolved from the name via inferCanonicalFromName
+            and from OFF / lookupBarcode hits. Tap opens the
+            picker so the user can re-link to a different
+            canonical (e.g. "Sourdough Loaf" → bread canonical).
+            Sits one row above Category per the identity-field
+            hierarchy. */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Canonical</FieldLabel>
+        {(() => {
+          const ing = canonicalId ? findIngredient(canonicalId) : null;
+          const tone = "#b8a878"; // tan — reserved CANONICAL color
+          return (
+            <button
+              type="button"
+              className="mcm-focusable"
+              onClick={() => setPickerOpen("canonical")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "10px 14px",
+                borderRadius: 999,
+                border: ing
+                  ? `1px solid ${withAlpha(tone, 0.45)}`
+                  : `1px dashed ${theme.color.hairline}`,
+                background: ing
+                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                  : "transparent",
+                color: ing ? theme.color.ink : theme.color.inkMuted,
+                fontFamily: font.detail,
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 16,
+                cursor: "pointer",
+                transition: "background 200ms ease, border-color 200ms ease",
+              }}
+            >
+              {ing ? (
+                <>
+                  <span style={{ fontSize: 18, lineHeight: 1, fontStyle: "normal" }}>{ing.emoji}</span>
+                  <span>{ing.name}</span>
+                </>
+              ) : (
+                <span>+ link a canonical</span>
+              )}
+            </button>
+          );
+        })()}
+
         {/* Category chip (CLAUDE.md "CATEGORIES" axis, color
             family: orange / theme.color.burnt). Auto-resolved
             from the name as the user types and from OFF tag
@@ -3609,6 +3680,30 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           onClose={() => setPickerOpen(null)}
         />
       )}
+      {pickerOpen === "canonical" && (
+        <MCMPickerSheet
+          kicker="Canonical"
+          title="Which ingredient is this?"
+          accent="#b8a878"
+          options={INGREDIENTS.map(ing => ({
+            id: ing.id,
+            label: ing.name,
+            emoji: ing.emoji,
+            // Sub line uses the category as a quick scope
+            // signal so two similarly-named canonicals
+            // (e.g. "milk" dairy vs "coconut milk" pantry)
+            // are distinguishable mid-list.
+            sub: ing.category ? ing.category : null,
+          }))}
+          value={canonicalId}
+          onPick={(id) => {
+            setCanonicalId(id);
+            setCanonicalOverridden(true);
+            setPickerOpen(null);
+          }}
+          onClose={() => setPickerOpen(null)}
+        />
+      )}
     </div>
   );
 }
@@ -3624,10 +3719,16 @@ function MCMPickerSheet({ kicker, title, options = [], value, onPick, onClose, a
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
-    return options.filter(o =>
-      (o.label || "").toLowerCase().includes(q)
-      || (o.sub || "").toLowerCase().includes(q)
-    );
+    return options.filter(o => {
+      if ((o.label || "").toLowerCase().includes(q)) return true;
+      if ((o.sub   || "").toLowerCase().includes(q)) return true;
+      // Optional `keywords` array — callers attach extra search
+      // tokens (canonical aliases, common alternate names) so
+      // typing "cheddar" finds the broader cheese canonical even
+      // when the canonical's label is just "Cheese".
+      if (Array.isArray(o.keywords) && o.keywords.some(k => (k || "").toLowerCase().includes(q))) return true;
+      return false;
+    });
   }, [options, query]);
 
   // Esc closes — same keyboard pattern as the AddDraftSheet
