@@ -2656,7 +2656,7 @@ function PantryCard({
       {swipeEnabled && (
         <motion.button
           onClick={handleRemove}
-          aria-label={`Remove ${item.name} from pantry`}
+          aria-label={`Remove ${item.name} from kitchen`}
           className="mcm-focusable"
           style={{
             position: "absolute",
@@ -3301,7 +3301,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Add an item to the pantry"
+      aria-label="Add an item to the kitchen"
       style={{
         position: "fixed",
         inset: 0,
@@ -3348,7 +3348,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             with the form below. */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <Kicker tone={theme.color.inkFaint}>Add to pantry</Kicker>
+            <Kicker tone={theme.color.inkFaint}>Add to kitchen</Kicker>
             <div style={{
               fontFamily: font.display,
               fontSize: 28,
@@ -3461,46 +3461,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           </div>
         </div>
 
-        {/* Scan CTA — top of the form so it reads as the
-            preferred path. Successful scans pre-fill name /
-            brand / amount / unit; user still confirms via the
-            primary submit at the bottom. Status message renders
-            below the button so the user sees lookup progress
-            without the form jumping around. */}
-        <button
-          type="button"
-          className="mcm-focusable"
-          onClick={() => { setScanStatus(null); setScanning(true); }}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 8,
-            width: "100%",
-            padding: "12px 16px",
-            borderRadius: 14,
-            border: `1px solid ${withAlpha(theme.color.teal, 0.45)}`,
-            background: `linear-gradient(${withAlpha(theme.color.teal, 0.16)}, ${withAlpha(theme.color.teal, 0.16)}), ${theme.color.glassFillHeavy}`,
-            color: theme.color.ink,
-            fontFamily: font.sans,
-            fontSize: 14,
-            fontWeight: 600,
-            letterSpacing: "0.02em",
-            cursor: "pointer",
-            marginBottom: 14,
-          }}
-        >
-          <img
-            src="/icons/upc_scanner.svg"
-            alt=""
-            aria-hidden
-            style={{
-              width: 18, height: 18, objectFit: "contain",
-              filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
-            }}
-          />
-          Scan a barcode
-        </button>
         {scanStatus && (
           <div
             role="status"
@@ -3532,7 +3492,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             the canonical's display name AND locks the
             canonicalId axis in one tap (same self-teaching
             cascade as classic Kitchen, just folded into the
-            primary entry control). */}
+            primary entry control). The scan button sits pinned
+            to the right edge of the same input so the second
+            entry path (scan a barcode) lives in the same
+            visual row. */}
         <FieldLabel theme={theme}>Name</FieldLabel>
         <div style={{ position: "relative" }}>
           <input
@@ -3559,8 +3522,45 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               fontWeight: 300,
               fontSize: 32,
               lineHeight: 1,
+              // Right padding clears the pinned scan button
+              // (40px circle + 12px margin) so long typed
+              // names don't collide with the icon.
+              paddingRight: 56,
             }}
           />
+          <button
+            type="button"
+            className="mcm-focusable"
+            onClick={() => { setScanStatus(null); setScanning(true); }}
+            aria-label="Scan a barcode"
+            title="Scan a barcode"
+            style={{
+              position: "absolute",
+              top: "50%",
+              right: 8,
+              transform: "translateY(-50%)",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 40, height: 40,
+              borderRadius: 999,
+              border: `1px solid ${withAlpha(theme.color.teal, 0.45)}`,
+              background: `linear-gradient(${withAlpha(theme.color.teal, 0.16)}, ${withAlpha(theme.color.teal, 0.16)}), ${theme.color.glassFillHeavy}`,
+              cursor: "pointer",
+              padding: 0,
+              transition: "background 160ms ease, border-color 160ms ease, transform 120ms ease",
+            }}
+          >
+            <img
+              src="/icons/upc_scanner.svg"
+              alt=""
+              aria-hidden
+              style={{
+                width: 22, height: 22, objectFit: "contain",
+                filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
+              }}
+            />
+          </button>
           {nameFocused && !suppressTypeahead && nameSuggestions.length > 0 && (
             <div
               role="listbox"
@@ -3805,7 +3805,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               cursor: canSubmit ? "pointer" : "not-allowed",
             }}
           >
-            Add to pantry
+            Add to kitchen
           </PrimaryButton>
         </div>
       </motion.div>
