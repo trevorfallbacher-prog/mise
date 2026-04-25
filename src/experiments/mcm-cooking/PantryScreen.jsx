@@ -2969,18 +2969,27 @@ function PantryCard({
               display: "flex", alignItems: "center", gap: 8,
               flexShrink: 0,
             }}>
-              {nutrition?.kcal != null && (
-                <span style={{
-                  fontFamily: font.mono, fontSize: 10,
-                  color: theme.color.inkFaint,
-                  letterSpacing: "0.04em",
-                  whiteSpace: "nowrap",
-                }}
-                title={`${Math.round(nutrition.kcal)} kcal per ${nutrition.per || "100g"}`}
-                >
-                  {Math.round(nutrition.kcal)} kcal
-                </span>
-              )}
+              {nutrition?.kcal != null && (() => {
+                // Format the per-anchor compactly: "100g" → "/100g",
+                // "count" → "/ea", "serving" → "/serv". Keeps the
+                // chip honest without ballooning the row.
+                const per = (nutrition.per || "100g");
+                const compact = per === "count" ? "/ea"
+                  : per === "serving" ? "/serv"
+                  : `/${per}`;
+                return (
+                  <span style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    color: theme.color.inkFaint,
+                    letterSpacing: "0.04em",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={`${Math.round(nutrition.kcal)} kcal per ${per}`}
+                  >
+                    {Math.round(nutrition.kcal)} kcal{compact}
+                  </span>
+                );
+              })()}
               <span style={{
                 fontFamily: font.mono, fontSize: 10,
                 color: daysChipColor(item.days, theme),
