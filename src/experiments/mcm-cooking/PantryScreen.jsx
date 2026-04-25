@@ -3141,17 +3141,28 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // Resolve the Stored In tile via the location's classifier.
   // Synthesizes a draft item from the current axis state and
   // hands it to fridgeTileFor / pantryTileFor / freezerTileFor
-  // (whichever matches the active location). Re-runs whenever
-  // the inputs that drive classification change.
+  // (whichever matches the active location). The classifier
+  // expects `ingredientId` (legacy field name, predates the
+  // canonical-axis rename) so we pass the canonical there.
+  // Without that mapping every row would short-circuit to the
+  // location's category fallback ("dairy" for fridge), which
+  // is exactly what was happening before this fix.
   useEffect(() => {
     if (tileOverridden) return;
     const loc = LOCATIONS.find(l => l.id === location);
     if (!loc) return;
+    const ing = canonicalId ? findIngredient(canonicalId) : null;
     const draft = {
       name: name.trim(),
-      canonicalId: canonicalId || null,
+      ingredientId: canonicalId || null,
       typeId: typeId || null,
-      category: defaultCategoryForLocation(location),
+      // Use the canonical's own category when we have one, so
+      // the classifier's category-routing path (meat → meat_poultry,
+      // produce → produce, etc.) fires for canonicals we know
+      // about. Falls back to the location default only when no
+      // canonical is set — at which point the pills are hidden
+      // anyway per the canonical-pin gate above.
+      category: ing?.category || defaultCategoryForLocation(location),
     };
     const id = loc.classify(draft, { findIngredient, hubForIngredient });
     setTileId(id || null);
