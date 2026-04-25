@@ -625,6 +625,22 @@ export default function PantryScreen({
         // more). 180px total covers both without leaving a huge
         // dead gap when the dock is hidden (search mode).
         padding: "28px 20px 180px",
+      }}
+      // Tap-anywhere-closes-swipe — when any item card has its
+      // swipe drawer open, the next click anywhere in the
+      // content wrapper closes it. onClickCapture (NOT onClick)
+      // fires during the capture phase, BEFORE any descendant
+      // card's own onClick. We stopPropagation so a tap on a
+      // different (closed) card doesn't open its editor — just
+      // closes the open swipe. Matches iOS Mail's "any tap
+      // closes an open row" behavior. The close-button inside
+      // the Remove drawer stops propagation itself so its tap
+      // still fires the actual delete.
+      onClickCapture={(e) => {
+        if (openSwipeId) {
+          setOpenSwipeId(null);
+          e.stopPropagation();
+        }
       }}>
         {/* Shopping cart — top-right of the content column,
             absolutely-positioned so it sits above the hero's own
@@ -2610,14 +2626,13 @@ function PantryCard({
   // sets a different openSwipeId), this prop flips to false
   // and we animate ourselves closed without re-notifying the
   // parent (already cleared from THEIR perspective).
+  // Inverse: parent reset after we closed ourselves — no-op.
+  // We don't auto-OPEN from the prop change because swipe
+  // open is always user-initiated (drag), never broadcast.
   useEffect(() => {
     if (!isSwipeOpen && swipeOpen) {
       animateSwipe(false, { notify: false });
     }
-    // Inverse: parent reset after we closed ourselves — no-op.
-    // We don't auto-OPEN from the prop change because swipe
-    // open is always user-initiated (drag), never broadcast.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSwipeOpen]);
 
   const handleDragEnd = (_event, info) => {
@@ -2690,7 +2705,18 @@ function PantryCard({
             opacity: actionOpacity,
           }}
         >
-          <span style={{ fontSize: 22, lineHeight: 1 }}>🗑</span>
+          <img
+            src="/icons/trash.svg"
+            alt=""
+            aria-hidden
+            style={{
+              width: 26, height: 26, objectFit: "contain",
+              // Drop shadow keeps the icon distinct against the
+              // burnt action background; without it a dark icon
+              // on dark-orange can mush together visually.
+              filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.30))",
+            }}
+          />
           <span style={{
             fontFamily: font.mono, fontSize: 10,
             letterSpacing: "0.10em", textTransform: "uppercase",
