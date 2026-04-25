@@ -3615,46 +3615,73 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               gap: 6, flexShrink: 0, marginTop: 2,
             }}
           >
-            {/* Category pill — orange + add-circle. FOOD_TYPES
-                don't have their own SVG icon set yet, so instead
-                of a half-baked emoji fallback the pill renders as
-                a tappable "+" affordance: dashed border when no
-                category is set, solid filled when one is. Tap
-                opens the picker either way so the user can add
-                or change. */}
+            {/* Category pill — orange. When unset, renders as a
+                tappable + add-circle (dashed border) so the user
+                has an obvious affordance to attach a category.
+                When set, renders as a name pill ("Cheese",
+                "Yogurt") since FOOD_TYPES don't have their own
+                SVG icons yet — falling back to text keeps the
+                resolved value glanceable until artwork ships. */}
             {(() => {
               const t = typeId ? findFoodType(typeId) : null;
               const tone = theme.color.burnt;
+              if (!t) {
+                return (
+                  <button
+                    type="button"
+                    className="mcm-focusable"
+                    onClick={() => setPickerOpen("category")}
+                    aria-label="Pick a category"
+                    title="Pick a category"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 40, height: 40,
+                      padding: 0,
+                      borderRadius: 999,
+                      border: `1px dashed ${withAlpha(tone, 0.55)}`,
+                      background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
+                      color: tone,
+                      cursor: "pointer",
+                      flexShrink: 0,
+                      transition: "background 200ms ease, border-color 200ms ease",
+                    }}
+                  >
+                    <span style={{
+                      fontSize: 22, lineHeight: 1, fontWeight: 300,
+                      color: tone,
+                    }}>+</span>
+                  </button>
+                );
+              }
               return (
                 <button
                   type="button"
                   className="mcm-focusable"
                   onClick={() => setPickerOpen("category")}
-                  aria-label={t ? `Category: ${t.label}` : "Pick a category"}
-                  title={t ? `Category · ${t.label}` : "Pick a category"}
+                  aria-label={`Category: ${t.label}`}
+                  title={`Category · ${t.label}`}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    width: 40, height: 40,
-                    padding: 0,
+                    height: 40,
+                    padding: "0 14px",
                     borderRadius: 999,
-                    border: t
-                      ? `1px solid ${withAlpha(tone, 0.55)}`
-                      : `1px dashed ${withAlpha(tone, 0.55)}`,
-                    background: t
-                      ? `linear-gradient(${withAlpha(tone, 0.30)}, ${withAlpha(tone, 0.30)}), ${theme.color.glassFillHeavy}`
-                      : `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
-                    color: tone,
+                    border: `1px solid ${withAlpha(tone, 0.55)}`,
+                    background: `linear-gradient(${withAlpha(tone, 0.22)}, ${withAlpha(tone, 0.22)}), ${theme.color.glassFillHeavy}`,
+                    color: theme.color.ink,
+                    fontFamily: font.detail,
+                    fontStyle: "italic",
+                    fontWeight: 400,
+                    fontSize: 14,
                     cursor: "pointer",
                     flexShrink: 0,
+                    whiteSpace: "nowrap",
                     transition: "background 200ms ease, border-color 200ms ease",
                   }}
                 >
-                  <span style={{
-                    fontSize: 22, lineHeight: 1, fontWeight: 300,
-                    color: tone,
-                  }}>+</span>
+                  {t.label}
                 </button>
               );
             })()}
