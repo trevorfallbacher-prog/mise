@@ -3907,11 +3907,23 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const ready = completed === total;
           const nextStep = steps.find(s => !s.done);
           // Secret step 5 — when the form's required fields are
-          // ALL set AND the user also filled in the optional
-          // Brand, she falls in love. Step5.svg + red palette
-          // + floating hearts. Reward for going beyond the
-          // minimum.
-          const loveMode = ready && brand.trim().length > 0;
+          // ALL set AND the typed Brand actually matches a
+          // brand our system already knows about (either
+          // canonical-scoped observations from
+          // popular_package_sizes OR the broader
+          // brand_nutrition household registry), she falls in
+          // love. Step5.svg + red palette + floating hearts.
+          // Reward for going beyond the minimum AND landing on
+          // a real brand — typing "asdf" doesn't count.
+          const loveMode = (() => {
+            if (!ready) return false;
+            const b = brand.trim().toLowerCase();
+            if (!b) return false;
+            if (brandSuggestions.some(x => x.toLowerCase() === b)) return true;
+            if (Array.isArray(brandNutritionRows) &&
+                brandNutritionRows.some(r => (r.brand || "").toLowerCase() === b)) return true;
+            return false;
+          })();
           // Avatar mapping — 4 emotional states for 4 thresholds
           // (0..3 done) plus the secret 5th. Humans count from 1,
           // so stateIndex 0..3 is step 1..4 in user-facing copy
