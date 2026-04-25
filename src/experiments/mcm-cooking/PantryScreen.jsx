@@ -3892,13 +3892,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const tone = ready ? theme.color.teal : theme.color.mustard;
           const nextStep = steps.find(s => !s.done);
           const captionKey = ready ? "ready" : `${completed}-${nextStep?.id || "next"}`;
-          // Emotional avatars (frustrated → happy) ride to the
-          // left of the segments. 4 images, 5 thresholds: she
-          // stays "almost there" (Step3) while the user has
-          // 2 or 3 fields done, and graduates to Step4 only at
-          // the ready state. Step1 = nothing done; Step2 =
-          // one in. Files in /icons/AddItemProgression/.
-          const stateIndex = ready ? 3 : Math.min(completed, 2);
+          // Emotional avatar mapping — there's no Step0, so she
+          // doesn't render at all until the user has at least one
+          // field done. Then it's a clean 1:1: completed=1 →
+          // Step1, completed=2 → Step2, completed=3 → Step3,
+          // completed=4 → Step4 (ready/happy).
+          const showAvatar = completed >= 1;
+          const stateIndex = Math.max(0, Math.min(completed - 1, 3));
           const stateSrc = [
             "/icons/AddItemProgression/Step1.svg",
             "/icons/AddItemProgression/Step2.svg",
@@ -4002,36 +4002,33 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
 
               {/* Avatar — anchored on the RIGHT so she reads as
                   the goal the user is filling fields toward.
-                  Sized 64×64 (~15% bigger than the prior 56) so
-                  the emotional reaction has more visual weight.
-                  AnimatePresence drops mode="wait" so the
-                  states crossfade simultaneously rather than
-                  staggering — felt sluggish in practice with
-                  rapid multi-field auto-fills (typeahead pick
-                  flips canonical + state + tile + location +
-                  unit all at once). The bigger scale + rotate
-                  jolt makes the swap read clearly even in those
-                  fast transitions. */}
+                  Hidden until at least one field is done (no
+                  Step0 image), then 1:1 maps Step1..Step4 to
+                  completed counts 1..4. AnimatePresence handles
+                  both the inter-state crossfade AND her initial
+                  mount when the user fills the first field. */}
               <div style={{
                 width: 64, height: 64, flexShrink: 0,
                 position: "relative",
               }}>
-                <AnimatePresence initial={false}>
-                  <motion.img
-                    key={stateIndex}
-                    src={stateSrc}
-                    alt=""
-                    aria-hidden
-                    initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
-                    animate={{ opacity: 1, scale: 1,    rotate: 0 }}
-                    exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
-                    transition={{ type: "spring", stiffness: 320, damping: 18 }}
-                    style={{
-                      position: "absolute", inset: 0,
-                      width: "100%", height: "100%", objectFit: "contain",
-                      filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
-                    }}
-                  />
+                <AnimatePresence>
+                  {showAvatar && (
+                    <motion.img
+                      key={stateIndex}
+                      src={stateSrc}
+                      alt=""
+                      aria-hidden
+                      initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
+                      animate={{ opacity: 1, scale: 1,    rotate: 0 }}
+                      exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
+                      transition={{ type: "spring", stiffness: 320, damping: 18 }}
+                      style={{
+                        position: "absolute", inset: 0,
+                        width: "100%", height: "100%", objectFit: "contain",
+                        filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
+                      }}
+                    />
+                  )}
                 </AnimatePresence>
               </div>
             </div>
