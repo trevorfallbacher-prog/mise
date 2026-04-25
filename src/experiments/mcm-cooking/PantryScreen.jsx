@@ -2530,6 +2530,32 @@ function PantryCard({ item, onPick, tileLabel = null }) {
   const iconUrl = canonicalImageUrlFor(canonicalId, null);
 
   return (
+    <div style={{ position: "relative" }}>
+      {/* Spoilage aura — soft green-yellow halo around the
+          entire card's outer edge for warn items. Reads as
+          "this is starting to smell" / "food turning"
+          ambient cue. Sized inset:-12 so the glow extends
+          past the card's bounds, blur 18px so the halo
+          dissolves softly into the warm backdrop. Slow
+          breathe (3.6s) to feel atmospheric, not alarming.
+          DOM-ordered before the panel so the panel naturally
+          draws on top — only the edges of the aura escape
+          past the card. */}
+      {warn && (
+        <motion.span
+          aria-hidden
+          animate={{ opacity: [0.45, 0.85, 0.45] }}
+          transition={{ duration: 3.6, ease: "easeInOut", repeat: Infinity }}
+          style={{
+            position: "absolute",
+            inset: -14,
+            borderRadius: 28,
+            background: "radial-gradient(ellipse at center, rgba(123,156,92,0.55) 0%, rgba(123,156,92,0.30) 45%, rgba(123,156,92,0) 78%)",
+            filter: "blur(18px)",
+            pointerEvents: "none",
+          }}
+        />
+      )}
     <GlassPanel
       interactive
       onClick={onPick}
@@ -2572,42 +2598,11 @@ function PantryCard({ item, onPick, tileLabel = null }) {
       </div>
 
       {/* Icon column — bumped 36 → 60px, aligned to the vertical
-          center of the card so it visually anchors the layout.
-          Wrapped in position:relative so the warn "stench" aura
-          (below) can sit behind the icon without affecting flow. */}
+          center of the card so it visually anchors the layout. */}
       <div style={{
-        position: "relative",
         display: "flex", alignItems: "center",
         flexShrink: 0,
       }}>
-        {/* Spoilage aura — soft green-yellow radial gradient
-            that pulses slowly behind warn-status icons. Reads as
-            "this is starting to smell" — bacterial/fermentation
-            cue without going full red-alert. Color is a muted
-            moldy green (#7B9C5C) at low alpha so it blends with
-            the warm theme rather than fighting it. 3.6s breathe
-            cycle with scale + opacity in sync. Hidden on
-            non-warn cards. */}
-        {warn && (
-          <motion.span
-            aria-hidden
-            animate={{
-              opacity: [0.35, 0.7, 0.35],
-              scale:   [0.95, 1.10, 0.95],
-            }}
-            transition={{ duration: 3.6, ease: "easeInOut", repeat: Infinity }}
-            style={{
-              position: "absolute",
-              inset: -8,
-              borderRadius: "50%",
-              background: "radial-gradient(circle, rgba(123,156,92,0.55) 0%, rgba(123,156,92,0.18) 45%, rgba(123,156,92,0) 75%)",
-              filter: "blur(6px)",
-              pointerEvents: "none",
-              zIndex: 0,
-            }}
-          />
-        )}
-        <div style={{ position: "relative", zIndex: 1 }}>
         {iconUrl ? (
           <img
             src={iconUrl}
@@ -2627,7 +2622,6 @@ function PantryCard({ item, onPick, tileLabel = null }) {
             {item.emoji}
           </div>
         )}
-        </div>
       </div>
 
       {/* Text column — name + qty/brand + meta row. minWidth: 0
@@ -2717,6 +2711,7 @@ function PantryCard({ item, onPick, tileLabel = null }) {
         )}
       </div>
     </GlassPanel>
+    </div>
   );
 }
 
