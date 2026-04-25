@@ -4004,22 +4004,28 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   the goal the user is filling fields toward.
                   Sized 64×64 (~15% bigger than the prior 56) so
                   the emotional reaction has more visual weight.
-                  AnimatePresence + spring scale crossfades the
-                  states so each transition reads as a reaction. */}
+                  AnimatePresence drops mode="wait" so the
+                  states crossfade simultaneously rather than
+                  staggering — felt sluggish in practice with
+                  rapid multi-field auto-fills (typeahead pick
+                  flips canonical + state + tile + location +
+                  unit all at once). The bigger scale + rotate
+                  jolt makes the swap read clearly even in those
+                  fast transitions. */}
               <div style={{
                 width: 64, height: 64, flexShrink: 0,
                 position: "relative",
               }}>
-                <AnimatePresence mode="wait">
+                <AnimatePresence initial={false}>
                   <motion.img
                     key={stateIndex}
                     src={stateSrc}
                     alt=""
                     aria-hidden
-                    initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.85 }}
-                    transition={{ type: "spring", stiffness: 360, damping: 24 }}
+                    initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
+                    animate={{ opacity: 1, scale: 1,    rotate: 0 }}
+                    exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
+                    transition={{ type: "spring", stiffness: 320, damping: 18 }}
                     style={{
                       position: "absolute", inset: 0,
                       width: "100%", height: "100%", objectFit: "contain",
@@ -4281,6 +4287,32 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               const next = e.target.value;
               setName(next);
               setSuppressTypeahead(false);
+              // FULL RESET when the user clears the name input.
+              // The form is the user's notion of "this item I'm
+              // adding"; clearing the name means they're starting
+              // over. Wipe every downstream filter / pick so the
+              // progress strip drops back to 0 and the avatar
+              // returns to her most-frustrated face.
+              if (next.trim().length === 0) {
+                setCanonicalId(null);
+                setCanonicalOverridden(false);
+                setTypeId(null);
+                setTypeOverridden(false);
+                setTileId(null);
+                setTileOverridden(false);
+                setState(null);
+                setStateOverridden(false);
+                setLocationOverridden(false);
+                setPackageSize("");
+                setUnit("");
+                setBrand("");
+                setRemaining(1);
+                setExpiresAt("auto");
+                setBarcodeUpc(null);
+                setScanStatus(null);
+                setAttemptedSubmit(false);
+                return;
+              }
               // Release the canonical-override lock when the
               // typed text diverges from the bound canonical's
               // display name. Without this, picking "Cheddar"
