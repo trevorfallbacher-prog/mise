@@ -3142,7 +3142,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // has picked from the tile picker.
   const [tileId, setTileId] = useState(seed.tileId || null);
   const [tileOverridden, setTileOverridden] = useState(!!seed.tileId);
-  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit"
+  // Expiration — null means shelf-stable (no clock). When set,
+  // PantryCard's days-to-expire chip + spoilage aura kick in.
+  // Stored as a Date (or null) to match the rest of the app's
+  // expiresAt convention.
+  const [expiresAt, setExpiresAt] = useState(seed.expiresAt instanceof Date ? seed.expiresAt : null);
+  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit" | "expires"
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
   // axis AND swaps the typed text for the canonical's display
@@ -3425,9 +3430,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // setPantry path lets the existing classify logic fill
       // the gap if so.
       tileId: tileId || null,
-      // No expiration set on manual add by default (user can
-      // edit after). Days-chip will be empty.
-      expiresAt: null,
+      expiresAt: expiresAt instanceof Date ? expiresAt : null,
       // Carry the scanned UPC (when present) so future scans
       // of the same barcode pick up corrections via
       // findBarcodeCorrection.
@@ -4184,6 +4187,61 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           )}
         </div>
 
+        {/* Expiration chip — null means shelf-stable (no clock).
+            Picker offers quick presets (1 week, 2 weeks, 1 month,
+            etc.) plus a custom-date escape hatch. PantryCard's
+            days-chip + spoilage aura kick in once a date is set. */}
+        <FieldLabel theme={theme} style={{ marginTop: 14 }}>Expires</FieldLabel>
+        {(() => {
+          const now = new Date();
+          const days = expiresAt ? Math.round((expiresAt - now) / 86400000) : null;
+          const tone = "#c7a8d4"; // soft purple — semantically distinct from the
+                                   // 6 reserved axis colors so this chip doesn't
+                                   // collide with one of them visually.
+          const has = expiresAt instanceof Date;
+          const label = !has
+            ? "Doesn't expire"
+            : days <= 0 ? "Today"
+            : days === 1 ? "Tomorrow"
+            : days < 14 ? `In ${days} days`
+            : days < 30 ? `In ${Math.round(days / 7)} weeks`
+            : days < 365 ? `In ~${Math.round(days / 30)} months`
+            : `In ~${Math.round(days / 365)} years`;
+          return (
+            <button
+              type="button"
+              className="mcm-focusable"
+              onClick={() => setPickerOpen("expires")}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 14px",
+                borderRadius: 999,
+                border: has
+                  ? `1px solid ${withAlpha(tone, 0.45)}`
+                  : `1px dashed ${theme.color.hairline}`,
+                background: has
+                  ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                  : "transparent",
+                color: has ? theme.color.ink : theme.color.inkMuted,
+                fontFamily: font.detail,
+                fontStyle: "italic",
+                fontWeight: 400,
+                fontSize: 16,
+                cursor: "pointer",
+                transition: "background 200ms ease, border-color 200ms ease",
+              }}
+            >
+              <span>{label}</span>
+              <span aria-hidden style={{
+                fontSize: 11, color: theme.color.inkFaint,
+                fontStyle: "normal",
+              }}>▾</span>
+            </button>
+          );
+        })()}
+
         {/* Location segmented row — matches FloatingLocationDock
             color treatment so users see the same swatch system
             here as on the dock. */}
@@ -4327,6 +4385,47 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             }))}
             value={unit}
             onPick={(id) => { setUnit(id); setPickerOpen(null); }}
+            onClose={() => setPickerOpen(null)}
+          />
+        );
+      })()}
+      {pickerOpen === "expires" && (() => {
+        // Quick presets keyed by relative-day offset. The
+        // "shelf-stable" option clears the date entirely so
+        // PantryCard hides the days-chip + spoilage aura.
+        const presets = [
+          { id: "none",    label: "Doesn't expire", sub: "Shelf-stable", days: null },
+          { id: "today",   label: "Today",          sub: "Use it now",   days: 0 },
+          { id: "3d",      label: "3 days",         sub: "Fresh produce, leftovers", days: 3 },
+          { id: "1w",      label: "1 week",         sub: "Most fridge items", days: 7 },
+          { id: "2w",      label: "2 weeks",        sub: "Cured meats, hard cheese", days: 14 },
+          { id: "1m",      label: "1 month",        sub: "Dairy with seal",   days: 30 },
+          { id: "3m",      label: "3 months",       sub: "Pantry / freezer",  days: 90 },
+          { id: "6m",      label: "6 months",       sub: "Long-life pantry",  days: 180 },
+          { id: "1y",      label: "1 year",         sub: "Canned, dry goods", days: 365 },
+        ];
+        return (
+          <MCMPickerSheet
+            kicker="Expires"
+            title="When does this go bad?"
+            accent="#c7a8d4"
+            options={presets.map(p => ({
+              id: p.id, label: p.label, sub: p.sub,
+            }))}
+            value={null}
+            onPick={(id) => {
+              const p = presets.find(x => x.id === id);
+              if (!p) return;
+              if (p.days == null) {
+                setExpiresAt(null);
+              } else {
+                const d = new Date();
+                d.setDate(d.getDate() + p.days);
+                d.setHours(23, 59, 0, 0);
+                setExpiresAt(d);
+              }
+              setPickerOpen(null);
+            }}
             onClose={() => setPickerOpen(null)}
           />
         );
