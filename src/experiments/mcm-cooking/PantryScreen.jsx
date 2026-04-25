@@ -3544,11 +3544,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               justifyContent: "center",
               width: 40, height: 40,
               borderRadius: 999,
-              border: `1px solid ${withAlpha(theme.color.teal, 0.45)}`,
-              background: `linear-gradient(${withAlpha(theme.color.teal, 0.16)}, ${withAlpha(theme.color.teal, 0.16)}), ${theme.color.glassFillHeavy}`,
+              border: "none",
+              background: "transparent",
               cursor: "pointer",
               padding: 0,
-              transition: "background 160ms ease, border-color 160ms ease, transform 120ms ease",
+              transition: "transform 120ms ease, opacity 120ms ease",
             }}
           >
             <img
@@ -3556,8 +3556,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               alt=""
               aria-hidden
               style={{
-                width: 22, height: 22, objectFit: "contain",
-                filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.12))",
+                width: "100%", height: "100%", objectFit: "contain",
+                display: "block",
+                filter: "drop-shadow(0 1px 2px rgba(30,30,30,0.18))",
               }}
             />
           </button>
