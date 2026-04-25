@@ -2572,11 +2572,42 @@ function PantryCard({ item, onPick, tileLabel = null }) {
       </div>
 
       {/* Icon column — bumped 36 → 60px, aligned to the vertical
-          center of the card so it visually anchors the layout. */}
+          center of the card so it visually anchors the layout.
+          Wrapped in position:relative so the warn "stench" aura
+          (below) can sit behind the icon without affecting flow. */}
       <div style={{
+        position: "relative",
         display: "flex", alignItems: "center",
         flexShrink: 0,
       }}>
+        {/* Spoilage aura — soft green-yellow radial gradient
+            that pulses slowly behind warn-status icons. Reads as
+            "this is starting to smell" — bacterial/fermentation
+            cue without going full red-alert. Color is a muted
+            moldy green (#7B9C5C) at low alpha so it blends with
+            the warm theme rather than fighting it. 3.6s breathe
+            cycle with scale + opacity in sync. Hidden on
+            non-warn cards. */}
+        {warn && (
+          <motion.span
+            aria-hidden
+            animate={{
+              opacity: [0.35, 0.7, 0.35],
+              scale:   [0.95, 1.10, 0.95],
+            }}
+            transition={{ duration: 3.6, ease: "easeInOut", repeat: Infinity }}
+            style={{
+              position: "absolute",
+              inset: -8,
+              borderRadius: "50%",
+              background: "radial-gradient(circle, rgba(123,156,92,0.55) 0%, rgba(123,156,92,0.18) 45%, rgba(123,156,92,0) 75%)",
+              filter: "blur(6px)",
+              pointerEvents: "none",
+              zIndex: 0,
+            }}
+          />
+        )}
+        <div style={{ position: "relative", zIndex: 1 }}>
         {iconUrl ? (
           <img
             src={iconUrl}
@@ -2596,6 +2627,7 @@ function PantryCard({ item, onPick, tileLabel = null }) {
             {item.emoji}
           </div>
         )}
+        </div>
       </div>
 
       {/* Text column — name + qty/brand + meta row. minWidth: 0
