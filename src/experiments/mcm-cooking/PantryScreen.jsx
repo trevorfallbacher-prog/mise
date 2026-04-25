@@ -3930,33 +3930,9 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               alignItems: "center",
               gap: 12,
             }}>
-              {/* Avatar — crossfades between emotional states as
-                  the user fills fields. AnimatePresence drives the
-                  swap so the change feels like she's reacting
-                  rather than the icon flickering. */}
-              <div style={{
-                width: 56, height: 56, flexShrink: 0,
-                position: "relative",
-              }}>
-                <AnimatePresence mode="wait">
-                  <motion.img
-                    key={stateIndex}
-                    src={stateSrc}
-                    alt=""
-                    aria-hidden
-                    initial={{ opacity: 0, scale: 0.85 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.85 }}
-                    transition={{ type: "spring", stiffness: 360, damping: 24 }}
-                    style={{
-                      position: "absolute", inset: 0,
-                      width: "100%", height: "100%", objectFit: "contain",
-                      filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
-                    }}
-                  />
-                </AnimatePresence>
-              </div>
-
+              {/* Progress segments + caption — sit on the LEFT
+                  so the user reads "I'm trying to get to her"
+                  with the avatar on the right as the goal. */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{
                   display: "flex", gap: 4, alignItems: "stretch",
@@ -4021,6 +3997,35 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                       </>
                     )}
                   </motion.div>
+                </AnimatePresence>
+              </div>
+
+              {/* Avatar — anchored on the RIGHT so she reads as
+                  the goal the user is filling fields toward.
+                  Sized 64×64 (~15% bigger than the prior 56) so
+                  the emotional reaction has more visual weight.
+                  AnimatePresence + spring scale crossfades the
+                  states so each transition reads as a reaction. */}
+              <div style={{
+                width: 64, height: 64, flexShrink: 0,
+                position: "relative",
+              }}>
+                <AnimatePresence mode="wait">
+                  <motion.img
+                    key={stateIndex}
+                    src={stateSrc}
+                    alt=""
+                    aria-hidden
+                    initial={{ opacity: 0, scale: 0.85 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.85 }}
+                    transition={{ type: "spring", stiffness: 360, damping: 24 }}
+                    style={{
+                      position: "absolute", inset: 0,
+                      width: "100%", height: "100%", objectFit: "contain",
+                      filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
+                    }}
+                  />
                 </AnimatePresence>
               </div>
             </div>
