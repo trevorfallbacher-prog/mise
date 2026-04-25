@@ -219,26 +219,37 @@ export default function CookCompleteSummary({ cookLogId, onClose }) {
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "center", minHeight: 220 }}>
-        {revealed.map((b, i) => (
-          <div key={i} style={{
-            display: "flex", alignItems: "baseline", gap: 14,
-            animation: "ccsBeatIn 360ms ease-out backwards",
-          }}>
-            <span style={{
-              fontFamily: "'DM Mono',monospace",
-              fontSize: 26, fontWeight: 600, color: b.color,
-              minWidth: 80, textAlign: "right",
+        {revealed.map((b, i) => {
+          // Defensive guards — if a malformed beat ever lands here
+          // (undefined entry from a stale closure / unexpected event
+          // shape from xp_events), we render a muted fallback row
+          // rather than crashing the summary mid-cook-save. Beat
+          // shape is { kind, label, value, color } — every field
+          // gets a fallback so any one missing doesn't take down
+          // the whole sequence.
+          if (!b) return null;
+          return (
+            <div key={i} style={{
+              display: "flex", alignItems: "baseline", gap: 14,
+              animation: "ccsBeatIn 360ms ease-out backwards",
             }}>
-              {b.value}
-            </span>
-            <span style={{
-              fontFamily: "'DM Sans',sans-serif",
-              fontSize: 14, color: "#aaa", letterSpacing: "0.02em",
-            }}>
-              {b.label}
-            </span>
-          </div>
-        ))}
+              <span style={{
+                fontFamily: "'DM Mono',monospace",
+                fontSize: 26, fontWeight: 600,
+                color: b.color || "#aaa",
+                minWidth: 80, textAlign: "right",
+              }}>
+                {b.value ?? ""}
+              </span>
+              <span style={{
+                fontFamily: "'DM Sans',sans-serif",
+                fontSize: 14, color: "#aaa", letterSpacing: "0.02em",
+              }}>
+                {b.label ?? ""}
+              </span>
+            </div>
+          );
+        })}
       </div>
 
       {showTotal && (
