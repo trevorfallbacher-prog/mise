@@ -3120,8 +3120,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     if (typeOverridden) return;
     const ing = canonicalId ? findIngredient(canonicalId) : null;
     const sourceName = ing?.name || name;
-    const inferred = inferFoodTypeFromName(sourceName);
-    setTypeId(inferred?.id || null);
+    // inferFoodTypeFromName returns the matching food-type ID
+    // string (or null), not an object — the previous read of
+    // `.id` on the string left typeId perpetually null and
+    // killed the cascade.
+    const inferredId = inferFoodTypeFromName(sourceName);
+    setTypeId(inferredId || null);
   }, [name, canonicalId, typeOverridden]);
 
   // Same pattern for the canonical chip — typing "cheddar"
