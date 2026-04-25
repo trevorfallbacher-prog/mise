@@ -3893,7 +3893,27 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const nextStep = steps.find(s => !s.done);
           const captionKey = ready ? "ready" : `${completed}-${nextStep?.id || "next"}`;
           return (
-            <div style={{ marginBottom: 12 }}>
+            // Sticky to the top of the scrolling sheet so the
+            // user keeps a fixed anchor while content reflows
+            // below (typeahead opening, package bar appearing,
+            // pills springing in). Negative side-margins span
+            // the full panel width; padding compensates so
+            // content reads as a pinned header, not loose
+            // floating chrome. Backdrop blur + glass fill
+            // covers the form rows scrolling underneath.
+            <div style={{
+              position: "sticky",
+              top: -22, // sheet's parent padding is 22; pin at the visual top
+              zIndex: 4,
+              margin: "-22px -22px 12px -22px",
+              padding: "22px 22px 12px",
+              background: withAlpha(theme.color.glassFillHeavy, 0.92),
+              backdropFilter: "blur(20px) saturate(150%)",
+              WebkitBackdropFilter: "blur(20px) saturate(150%)",
+              borderBottom: `1px solid ${theme.color.hairline}`,
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+            }}>
               <div style={{
                 display: "flex", gap: 4, alignItems: "stretch",
                 marginBottom: 6,
@@ -3901,10 +3921,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 {steps.map(s => (
                   <motion.div
                     key={s.id}
-                    // Filled segments spring up briefly when the
-                    // step transitions to done. Provides a small
-                    // moment of "tick — that's another one" so the
-                    // user feels rewarded for each completed field.
                     animate={s.done
                       ? { scaleY: ready ? 1.4 : [1, 1.6, 1] }
                       : { scaleY: 1 }}
