@@ -657,6 +657,13 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
                   // itself will offer a Scan button that re-seeds with
                   // OFF lookup results when used.
                   onOpenAdd={() => setMcmAddDraft({ mode: "blank" })}
+                  // Cook-flow entry — wired to the Plan tab where the
+                  // user can pick a recipe and launch CookMode. Used
+                  // by MCMKitchenScreen's positive CTA when the
+                  // pantry is healthy (no warn items) so a stocked
+                  // user has a clear path forward instead of an
+                  // empty surface.
+                  onStartCooking={() => setTab("plan")}
                   onRemoveItem={(item) => {
                     // Swipe-to-remove from the MCM item card. Filters
                     // the row out of the local pantry; useSyncedList
