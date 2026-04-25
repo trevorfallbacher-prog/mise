@@ -2939,7 +2939,7 @@ function PantryCard({
           // and the row's own subheader (Beverly Drive Right).
           // Single weight 300, normal style.
           fontFamily: font.itemName, fontStyle: "normal", fontWeight: 300,
-          fontSize: 18, lineHeight: 1.15, color: theme.color.ink,
+          fontSize: 28, lineHeight: 1.05, color: theme.color.ink,
           letterSpacing: "0",
           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
         }}>
