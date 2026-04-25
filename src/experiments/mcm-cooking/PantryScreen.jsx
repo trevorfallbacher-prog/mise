@@ -3478,6 +3478,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         style={{
           width: "100%",
           maxWidth: 520,
+          // Cap height so the sheet doesn't overflow the viewport
+          // on phones — once a canonical lands the form grows
+          // (pills + popular sizes + brand typeahead) and could
+          // exceed even a tall iPhone. Inner scroll keeps the
+          // header pinned visually while the form below pages.
+          maxHeight: "90vh",
+          overflowY: "auto",
           margin: "0 12px 24px",
           padding: 22,
           borderRadius: 20,
@@ -3998,6 +4005,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                       setPackageSize(String(p.amount));
                       setUnit(p.unit || "");
                       setRemaining(1);
+                      // Only auto-fill brand when the user hasn't
+                      // typed one — picking "16 oz · Marketside"
+                      // implies they want the brand too, but a
+                      // user-typed brand should never get
+                      // clobbered by a chip pick.
+                      if (p.brand && !brand.trim()) {
+                        setBrand(p.brand);
+                      }
                     }}
                     style={{
                       display: "inline-flex",
