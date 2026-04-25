@@ -3522,10 +3522,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               canonical lands the cascade fills both pills with
               real metadata, so they appear together. */}
           {canonicalId && (
-          <div style={{
-            display: "flex", flexDirection: "column", alignItems: "flex-end",
-            gap: 6, flexShrink: 0, marginTop: 2,
-          }}>
+          <motion.div
+            // Fade + slide-in when the pills appear so the cascade
+            // feels alive rather than popping in. Subtle enough to
+            // not pull focus from the Name input the user is
+            // probably still hovering near.
+            initial={{ opacity: 0, x: 8, scale: 0.9 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            transition={{ type: "spring", stiffness: 380, damping: 28 }}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "flex-end",
+              gap: 6, flexShrink: 0, marginTop: 2,
+            }}
+          >
             {(() => {
               const t = typeId ? findFoodType(typeId) : null;
               const tone = theme.color.burnt;
@@ -3642,7 +3651,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 </button>
               );
             })()}
-          </div>
+          </motion.div>
           )}
         </div>
 
