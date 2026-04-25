@@ -1485,7 +1485,8 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   className="mcm-focusable"
                   onMouseDown={(e) => {
                     e.preventDefault();
-                    const slug = name.trim().toLowerCase()
+                    const sourceName = name.trim();
+                    const slug = sourceName.toLowerCase()
                       .replace(/[^a-z0-9]+/g, "_")
                       .replace(/^_+|_+$/g, "");
                     if (!slug) return;
@@ -1496,6 +1497,22 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     setStateOverridden(false);
                     setLocationOverridden(false);
                     setSuppressTypeahead(true);
+                    // Parity with the AI photo flow: register the
+                    // freshly-minted slug in pending_ingredient_info
+                    // so it stops being a "shell" — refreshPending
+                    // pulls it into the local map, useIngredientInfo's
+                    // dbMap+pendingMap merge re-registers the alias
+                    // map, and the typeahead / inferCanonicalFromName
+                    // can find this slug from any other surface in
+                    // the app (other Add forms, Item edits, recipe
+                    // pairing). Fire-and-forget — failure here just
+                    // means the slug doesn't enrich, the row still
+                    // commits with canonicalId set.
+                    enrichIngredient({ source_name: sourceName })
+                      .then(() => refreshPending?.())
+                      .catch(err =>
+                        console.warn("[mcm-add] typeahead canonical enrich failed:", err?.message || err),
+                      );
                   }}
                   style={{
                     display: "flex", alignItems: "center", gap: 12,
