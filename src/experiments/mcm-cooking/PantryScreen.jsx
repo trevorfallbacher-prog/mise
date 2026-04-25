@@ -4293,7 +4293,42 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             to the right edge of the same input so the second
             entry path (scan a barcode) lives in the same
             visual row. */}
-        <FieldLabel theme={theme}>Name</FieldLabel>
+        {/* Field label row — "NAME" on the left, scan-prompt
+            hint on the right urging the user toward the
+            scanner for fast entry. Hint hides once a canonical
+            lands (scanner is most useful BEFORE identifying
+            the item; afterwards it'd just nag). */}
+        <div style={{
+          display: "flex", alignItems: "baseline",
+          justifyContent: "space-between", gap: 8,
+        }}>
+          <FieldLabel theme={theme}>Name</FieldLabel>
+          <AnimatePresence>
+            {!canonicalId && (
+              <motion.span
+                key="scan-hint"
+                initial={{ opacity: 0, x: 6 }}
+                animate={{ opacity: 0.92, x: 0 }}
+                exit={{ opacity: 0, x: 6 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                style={{
+                  fontFamily: font.detail,
+                  fontStyle: "italic",
+                  fontWeight: 400,
+                  fontSize: 12,
+                  color: "#7eb8d4", // teal-blue, matches the scan halo
+                  whiteSpace: "nowrap",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                Try the UPC Scanner for instant results!
+                <span aria-hidden style={{ fontSize: 13, lineHeight: 1 }}>↗</span>
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </div>
         {(() => {
           // Inline State pill — sits at the right end of the
           // Name input, just before the scan button. Only shows
