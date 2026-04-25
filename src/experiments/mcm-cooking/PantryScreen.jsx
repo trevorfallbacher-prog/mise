@@ -32,6 +32,7 @@ import { FREEZER_TILES, freezerTileIdForItem   as freezerTileFor } from "../../l
 import {
   findIngredient, hubForIngredient, INGREDIENTS,
   inferCanonicalFromName, dbCanonicalsSnapshot,
+  statesForIngredient, defaultStateFor, STATE_LABELS,
 } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { usePopularPackages } from "../../lib/usePopularPackages";
@@ -3191,12 +3192,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // has picked from the tile picker.
   const [tileId, setTileId] = useState(seed.tileId || null);
   const [tileOverridden, setTileOverridden] = useState(!!seed.tileId);
+  // STATE axis (CLAUDE.md axis 6 — soft purple #c7a8d4). Sits
+  // between canonical and package size in the form because the
+  // physical state of an item gates which units make sense
+  // (block vs grated cheese, whole vs ground beef). Auto-fills
+  // from the canonical's defaultStateFor when one is pinned;
+  // override flag locks the user's pick against further
+  // canonical changes.
+  const [state, setState] = useState(seed.state || null);
+  const [stateOverridden, setStateOverridden] = useState(!!seed.state);
   // Expiration — null means shelf-stable (no clock). When set,
   // PantryCard's days-to-expire chip + spoilage aura kick in.
   // Stored as a Date (or null) to match the rest of the app's
   // expiresAt convention.
   const [expiresAt, setExpiresAt] = useState(seed.expiresAt instanceof Date ? seed.expiresAt : null);
-  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit" | "expires"
+  const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit" | "expires" | "state"
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
   // axis AND swaps the typed text for the canonical's display
@@ -3323,6 +3333,16 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     const id = inferCanonicalFromName(name);
     setCanonicalId(id || null);
   }, [name, canonicalOverridden]);
+
+  // Auto-resolve the State axis to the canonical's natural
+  // default (block for cheese, whole for meats, etc.) whenever
+  // the canonical changes and the user hasn't manually picked.
+  useEffect(() => {
+    if (stateOverridden) return;
+    if (!canonicalId) { setState(null); return; }
+    const def = defaultStateFor(canonicalId);
+    setState(def || null);
+  }, [canonicalId, stateOverridden]);
 
   // Resolve the Stored In tile via the location's classifier.
   // Synthesizes a draft item from the current axis state and
@@ -3472,6 +3492,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       category: cat,
       typeId: typeId || null,
       canonicalId: canonicalId || null,
+      state: state || null,
       location,
       // Resolved tile from the live classifier (or user
       // override). Falls back to null when the classifier
@@ -3774,6 +3795,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                   setCanonicalOverridden(false);
                   setTypeOverridden(false);
                   setTileOverridden(false);
+                  setStateOverridden(false);
                 }
               }
             }}
@@ -3884,6 +3906,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     // so the new canonical drives those values.
                     setTypeOverridden(false);
                     setTileOverridden(false);
+                    setStateOverridden(false);
                     setSuppressTypeahead(true);
                   }}
                   style={{
@@ -3945,6 +3968,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                     setCanonicalOverridden(true);
                     setTypeOverridden(false);
                     setTileOverridden(false);
+                    setStateOverridden(false);
                     setSuppressTypeahead(true);
                   }}
                   style={{
@@ -3982,6 +4006,60 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             </div>
           )}
         </div>
+
+        {/* State chip — sits between canonical and package size
+            because the physical state of the item gates which
+            unit options make sense (block vs grated cheese,
+            whole vs ground beef). Auto-fills from the canonical's
+            natural default; tap to override. Hidden when the
+            canonical has no state vocabulary (most pantry items
+            don't — only cheese / meat / bread / produce families
+            ship a state list). */}
+        {canonicalId && (() => {
+          const stateOptions = statesForIngredient(canonicalId) || [];
+          if (stateOptions.length === 0) return null;
+          const tone = "#c7a8d4"; // soft purple — reserved STATE color
+          const label = state ? (STATE_LABELS[state] || state) : null;
+          const has = !!state;
+          return (
+            <>
+              <FieldLabel theme={theme} style={{ marginTop: 14 }}>State</FieldLabel>
+              <button
+                type="button"
+                className="mcm-focusable"
+                onClick={() => setPickerOpen("state")}
+                aria-label={has ? `State: ${label}` : "Pick a state"}
+                title={has ? `State · ${label}` : "Pick a state"}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 14px",
+                  borderRadius: 999,
+                  border: has
+                    ? `1px solid ${withAlpha(tone, 0.55)}`
+                    : `1px dashed ${withAlpha(tone, 0.55)}`,
+                  background: has
+                    ? `linear-gradient(${withAlpha(tone, 0.18)}, ${withAlpha(tone, 0.18)}), ${theme.color.glassFillHeavy}`
+                    : `linear-gradient(${withAlpha(tone, 0.06)}, ${withAlpha(tone, 0.06)}), ${theme.color.glassFillHeavy}`,
+                  color: has ? theme.color.ink : theme.color.inkMuted,
+                  fontFamily: font.detail,
+                  fontStyle: "italic",
+                  fontWeight: 400,
+                  fontSize: 16,
+                  cursor: "pointer",
+                  transition: "background 200ms ease, border-color 200ms ease",
+                }}
+              >
+                <span>{has ? label : "+ pick a state"}</span>
+                <span aria-hidden style={{
+                  fontSize: 11, color: theme.color.inkFaint,
+                  fontStyle: "normal",
+                }}>▾</span>
+              </button>
+            </>
+          );
+        })()}
 
         {/* Everything from Package size down to Brand is gated
             behind a pinned canonical: without a canonical the
@@ -4471,6 +4549,27 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             }))}
             value={unit}
             onPick={(id) => { setUnit(id); setPickerOpen(null); }}
+            onClose={() => setPickerOpen(null)}
+          />
+        );
+      })()}
+      {pickerOpen === "state" && canonicalId && (() => {
+        const opts = statesForIngredient(canonicalId) || [];
+        return (
+          <MCMPickerSheet
+            kicker="State"
+            title="What state is it in?"
+            accent="#c7a8d4"
+            options={opts.map(s => ({
+              id: s,
+              label: STATE_LABELS[s] || s,
+            }))}
+            value={state}
+            onPick={(id) => {
+              setState(id);
+              setStateOverridden(true);
+              setPickerOpen(null);
+            }}
             onClose={() => setPickerOpen(null)}
           />
         );
