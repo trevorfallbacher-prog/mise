@@ -4324,7 +4324,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 }}
               >
                 Try the UPC Scanner for instant results!
-                <span aria-hidden style={{ fontSize: 13, lineHeight: 1 }}>↗</span>
               </motion.span>
             )}
           </AnimatePresence>
