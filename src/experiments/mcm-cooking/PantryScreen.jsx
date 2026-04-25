@@ -3601,23 +3601,30 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
 
   // Validation — required fields the row needs to be useful
   // downstream (recipe matching, freshness clock, fill gauge).
+  //
+  // Note: there's no separate "name" requirement because the
+  // name IS the canonical in this app. Once a canonical is
+  // committed (via typeahead pick, auto-resolve from typed
+  // text, or the "+ Add canonical" escape hatch) the name is
+  // necessarily set — every path through the form that lands
+  // a canonical also lands a name. So checking canonicalId is
+  // a strict superset of checking name.trim().length > 0.
+  //
   // canonicalId acceptance is broad: any non-null value passes,
-  // which covers all three sources — bundled INGREDIENTS,
-  // admin-approved DB canonicals (via useIngredientInfo's
+  // covering all three sources — bundled INGREDIENTS, admin-
+  // approved DB canonicals (via useIngredientInfo's
   // dbCanonicals), and user-typed slugs from the "+ Add
-  // canonical" escape hatch. Any of those means the user has
-  // committed to an identity worth saving.
+  // canonical" escape hatch.
   const validationErrors = useMemo(() => {
     const errors = [];
-    if (!name.trim()) errors.push({ field: "name", message: "name" });
-    if (!canonicalId) errors.push({ field: "canonical", message: "canonical (pick from suggestions)" });
+    if (!canonicalId) errors.push({ field: "canonical", message: "canonical (type or pick from suggestions)" });
     const pkgN = Number(packageSize);
     if (!Number.isFinite(pkgN) || pkgN <= 0) {
       errors.push({ field: "packageSize", message: "package size" });
     }
     if (!unit.trim()) errors.push({ field: "unit", message: "unit" });
     return errors;
-  }, [name, canonicalId, packageSize, unit]);
+  }, [canonicalId, packageSize, unit]);
   const errorFields = useMemo(() => {
     const set = new Set();
     for (const e of validationErrors) set.add(e.field);
@@ -3880,8 +3887,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             list is the validation source of truth: name +
             canonical + package size + unit. */}
         {(() => {
+          // 3 required steps — name dropped because the name IS
+          // the canonical. Every path that commits a canonical
+          // (typeahead pick, auto-resolve from typing, "+ Add
+          // canonical" escape hatch) also writes name, so
+          // checking canonicalId is the strict superset.
           const steps = [
-            { id: "name",        label: "name",         done: !!name.trim() },
             { id: "canonical",   label: "canonical",    done: !!canonicalId },
             { id: "packageSize", label: "package size", done: !!packageSize && Number(packageSize) > 0 },
             { id: "unit",        label: "unit",         done: !!unit.trim() },
@@ -3892,13 +3903,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const tone = ready ? theme.color.teal : theme.color.mustard;
           const nextStep = steps.find(s => !s.done);
           const captionKey = ready ? "ready" : `${completed}-${nextStep?.id || "next"}`;
-          // Emotional avatar mapping — there's no Step0, so she
-          // doesn't render at all until the user has at least one
-          // field done. Then it's a clean 1:1: completed=1 →
-          // Step1, completed=2 → Step2, completed=3 → Step3,
-          // completed=4 → Step4 (ready/happy).
-          const showAvatar = completed >= 1;
-          const stateIndex = Math.max(0, Math.min(completed - 1, 3));
+          // Avatar always renders — 4 emotional states map
+          // cleanly to 4 thresholds (0..3 done): 0=Step1
+          // (most frustrated, form just opened), 1=Step2,
+          // 2=Step3 (almost there), 3=Step4 (ready).
+          const stateIndex = Math.min(completed, 3);
           const stateSrc = [
             "/icons/AddItemProgression/Step1.svg",
             "/icons/AddItemProgression/Step2.svg",
@@ -4002,33 +4011,32 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
 
               {/* Avatar — anchored on the RIGHT so she reads as
                   the goal the user is filling fields toward.
-                  Hidden until at least one field is done (no
-                  Step0 image), then 1:1 maps Step1..Step4 to
-                  completed counts 1..4. AnimatePresence handles
-                  both the inter-state crossfade AND her initial
-                  mount when the user fills the first field. */}
+                  Always rendered now that there are 3 required
+                  steps (canonical / packageSize / unit) and 4
+                  emotional images: 0 done → Step1 (most
+                  frustrated, fresh form), 1 → Step2, 2 →
+                  Step3, 3 → Step4 (ready). Clean 1:1 with the
+                  completion count. */}
               <div style={{
                 width: 64, height: 64, flexShrink: 0,
                 position: "relative",
               }}>
-                <AnimatePresence>
-                  {showAvatar && (
-                    <motion.img
-                      key={stateIndex}
-                      src={stateSrc}
-                      alt=""
-                      aria-hidden
-                      initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
-                      animate={{ opacity: 1, scale: 1,    rotate: 0 }}
-                      exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
-                      transition={{ type: "spring", stiffness: 320, damping: 18 }}
-                      style={{
-                        position: "absolute", inset: 0,
-                        width: "100%", height: "100%", objectFit: "contain",
-                        filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
-                      }}
-                    />
-                  )}
+                <AnimatePresence initial={false}>
+                  <motion.img
+                    key={stateIndex}
+                    src={stateSrc}
+                    alt=""
+                    aria-hidden
+                    initial={{ opacity: 0, scale: 0.55, rotate: -8 }}
+                    animate={{ opacity: 1, scale: 1,    rotate: 0 }}
+                    exit={{    opacity: 0, scale: 0.55, rotate: 8 }}
+                    transition={{ type: "spring", stiffness: 320, damping: 18 }}
+                    style={{
+                      position: "absolute", inset: 0,
+                      width: "100%", height: "100%", objectFit: "contain",
+                      filter: "drop-shadow(0 1px 3px rgba(20,12,4,0.25))",
+                    }}
+                  />
                 </AnimatePresence>
               </div>
             </div>
@@ -4350,12 +4358,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               // and the user has attempted submit; otherwise
               // the focus halo (teal) takes over. Plain border
               // when neither.
-              border: showErrors && (errorFields.has("name") || errorFields.has("canonical"))
+              border: showErrors && errorFields.has("canonical")
                 ? `1px solid ${theme.color.mustard}`
                 : nameFocused
                   ? `1px solid ${theme.color.teal}`
                   : inputBase.border,
-              boxShadow: showErrors && (errorFields.has("name") || errorFields.has("canonical"))
+              boxShadow: showErrors && errorFields.has("canonical")
                 ? `0 0 0 3px ${withAlpha(theme.color.mustard, 0.18)}, ${theme.shadow.inputInset}`
                 : nameFocused
                   ? `0 0 0 3px ${withAlpha(theme.color.teal, 0.14)}, ${theme.shadow.inputInset}`
