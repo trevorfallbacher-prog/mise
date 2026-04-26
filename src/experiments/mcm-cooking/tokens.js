@@ -40,6 +40,27 @@ export const color = {
   hairline:       "rgba(30,30,30,0.08)",
 };
 
+// CLAUDE.md reserved axis colors — picker-accent / chip-fg shorthand.
+// Re-exported from lib/tokens.js's CHIP_TONES so there's exactly
+// one source of truth for the six identity-axis hexes app-wide:
+// CHIP_TONES carries the full fg/bg/border tone for chip surfaces,
+// `axis` is just the .fg shortcut for spots that only need the
+// accent color (picker accents, single-line tints, etc.).
+//
+// NEVER inline these hexes in a component file — import `axis` from
+// here (mcm code) or `CHIP_TONES` from lib/tokens (everywhere else)
+// so the hierarchy stays enforceable.
+import { CHIP_TONES } from "../../lib/tokens";
+
+export const axis = {
+  canonical:    CHIP_TONES.canonical.fg,
+  cut:          CHIP_TONES.cut.fg,
+  foodCategory: CHIP_TONES.category.fg,
+  storedIn:     CHIP_TONES.location.fg,
+  state:        CHIP_TONES.state.fg,
+  ingredients:  CHIP_TONES.ingredients.fg,
+};
+
 export const radius = {
   sm: 10,
   md: 16,
