@@ -844,11 +844,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
         style={{
           // Hard-pinned to the bottom of the screen, mobile-first.
-          // No JS recalculation — static values only. dvh shrinks
-          // when the iOS keyboard opens (browser-native), so the
-          // sheet stays clear of the keyboard without us touching
-          // the position value at all. Inner overflowY keeps long
-          // forms scrollable inside the sheet's frame.
+          // No JS recalculation — static values only. Locked to
+          // a FIXED height (not max-height) so the sheet's top
+          // edge doesn't move as the form grows. Additional
+          // fields appearing on canonical-pick fill the slack
+          // inside the sheet via overflowY instead of shoving
+          // the whole module up the screen. dvh shrinks when
+          // the iOS keyboard opens (browser-native).
           position: "fixed",
           left: 0,
           right: 0,
@@ -857,7 +859,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           marginRight: "auto",
           width: "calc(100% - 24px)",
           maxWidth: 520,
-          maxHeight: "90dvh",
+          height: "90dvh",
           overflowY: "auto",
           scrollbarGutter: "stable",
           padding: 22,
