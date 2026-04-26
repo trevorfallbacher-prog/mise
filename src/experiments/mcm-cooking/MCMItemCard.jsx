@@ -204,20 +204,16 @@ export function MCMItemCard({
             italic for the title so it reads as the same hand as the
             rest of the MCM surface. */}
         <div style={{ ...inline(space.flow), alignItems: "flex-start" }}>
-          {(iconUrl || item.emoji) && (
+          {iconUrl && (
             <div style={{ flexShrink: 0, paddingTop: 2 }}>
-              {iconUrl ? (
-                <img
-                  src={iconUrl}
-                  alt=""
-                  style={{
-                    width: 56, height: 56, objectFit: "contain",
-                    filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-                  }}
-                />
-              ) : (
-                <div style={{ fontSize: 48, lineHeight: 1 }}>{item.emoji}</div>
-              )}
+              <img
+                src={iconUrl}
+                alt=""
+                style={{
+                  width: 56, height: 56, objectFit: "contain",
+                  filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
+                }}
+              />
             </div>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
