@@ -7,7 +7,7 @@
 // amount, unit, ... } when scan re-seeds.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useDragControls } from "framer-motion";
 import { PrimaryButton, Kicker, withAlpha } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
 import { font, axis } from "./tokens";
@@ -122,6 +122,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     : "auto"
   );
   const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit" | "expires" | "state"
+  // Drag-to-dismiss controls (manual; sheet body stays scrollable
+  // because dragListener=false on the motion.div — only the top
+  // grabber pill starts a drag).
+  const dragControls = useDragControls();
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
   // axis AND swaps the typed text for the canonical's display
@@ -905,6 +909,24 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
+        // Drag-down-to-dismiss matches MCMItemCard. Manual
+        // dragControls + dragListener=false keeps the sheet body
+        // scrollable; the grabber pill below is the only entry
+        // point. Top constraint pinned at 0 so the sheet can't be
+        // pulled upward off-screen; bottom unbounded so the pull
+        // tracks the finger 1:1 and release past 120 px (or
+        // velocity > 500) calls onClose.
+        drag="y"
+        dragControls={dragControls}
+        dragListener={false}
+        dragConstraints={{ top: 0 }}
+        dragElastic={{ top: 0, bottom: 0 }}
+        dragMomentum={false}
+        onDragEnd={(_event, info) => {
+          if (info.offset.y > 120 || info.velocity.y > 500) {
+            onClose && onClose();
+          }
+        }}
         style={{
           // Hard-pinned to the bottom of the screen, mobile-first.
           // No JS recalculation — static values only. Locked to
@@ -935,6 +957,34 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           ...THEME_TRANSITION,
         }}
       >
+        {/* Drag handle — small grabber pill at the top of the sheet
+            (iOS modal pattern). Wrapping div is a 22 px touch zone
+            so the handle is forgiving to thumb misses; touch-action
+            none prevents iOS from claiming the pointer for scroll
+            before framer's drag controller starts. */}
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          aria-hidden
+          style={{
+            width: "100%",
+            height: 22,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "grab",
+            touchAction: "none",
+            marginTop: -10,
+            marginBottom: 6,
+          }}
+        >
+          <span style={{
+            width: 40,
+            height: 4,
+            borderRadius: 2,
+            background: theme.color.inkFaint,
+            opacity: 0.35,
+          }} />
+        </div>
         {/* Header — kicker + title with the live Category pill
             pinned to the top-right. The pill renders as a
             status indicator: orange (theme.color.burnt) when
