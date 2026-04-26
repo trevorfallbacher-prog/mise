@@ -966,6 +966,22 @@ export default function ShopModeCheckout({
         if (row.tile_id)      correctionPatch.tileId      = row.tile_id;
         if (row.location)     correctionPatch.location    = row.location;
         if (scan.canonicalId) correctionPatch.canonicalId = scan.canonicalId;
+        // Product-detail teach (migration 0140 brought family tier to
+        // parity with global on these). Source-side values, not the
+        // resolved row values: scan.brand / scan.productName preserve
+        // the OFF/USDA payload that would be lost if we taught the
+        // canonical-derived display name. Per-package size (pkgAmount,
+        // not amount = pkgAmount * qty) so a future single-unit scan
+        // of the same UPC rehydrates correctly. Skip the "package"
+        // unit fallback — it's a placeholder, never a real teach.
+        if (scan.brand)        correctionPatch.brand = scan.brand;
+        if (scan.productName)  correctionPatch.name  = scan.productName;
+        if (Number.isFinite(pkgAmount) && pkgAmount > 0) {
+          correctionPatch.packageSizeAmount = pkgAmount;
+        }
+        if (pkgUnit && pkgUnit !== "package") {
+          correctionPatch.packageSizeUnit = pkgUnit;
+        }
         if (scan.barcodeUpc && Object.keys(correctionPatch).length > 0) {
           teachQueue.push(
             rememberBarcodeCorrection({

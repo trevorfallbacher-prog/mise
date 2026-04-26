@@ -52,13 +52,17 @@ function fromFamily(row) {
     emoji:           row.emoji || null,
     ingredientIds:   Array.isArray(row.ingredient_ids) ? row.ingredient_ids : [],
     correctionCount: row.correction_count || 1,
-    // External-baseline fields never populate on family rows (the
-    // ingest only writes to the global table). Emitted as nulls so
-    // call-sites can destructure uniformly regardless of source tier.
-    brand:              null,
-    name:               null,
-    packageSizeAmount:  null,
-    packageSizeUnit:    null,
+    // brand has lived on user_scan_corrections since migration 0062;
+    // name / package_size_* arrived in migration 0140 to bring the
+    // family tier to parity with barcode_identity_corrections (0130).
+    // The remaining external-baseline fields (imageUrl, categoryHints,
+    // sourceProvenance, lastExternalSync) only ever populate on global
+    // rows — the USDA ingest writes admin-tier — so they stay null
+    // here for call-site shape parity across tiers.
+    brand:              row.brand || null,
+    name:               row.name || null,
+    packageSizeAmount:  row.package_size_amount ?? null,
+    packageSizeUnit:    row.package_size_unit || null,
     imageUrl:           null,
     categoryHints:      [],
     sourceProvenance:   {},
@@ -164,10 +168,14 @@ export async function rememberBarcodeCorrection({
   barcodeUpc,
   canonicalId,
   typeId,
-  tileId,     // migration 0129 — STORED IN shelf override
-  location,   // migration 0129 — fridge/pantry/freezer override
+  tileId,             // migration 0129 — STORED IN shelf override
+  location,           // migration 0129 — fridge/pantry/freezer override
   emoji,
   ingredientIds,
+  brand,              // migration 0062 (family) / 0130 (global)
+  name,               // migration 0140 (family) / 0130 (global) — product display name
+  packageSizeAmount,  // migration 0140 (family) / 0130 (global) — numeric
+  packageSizeUnit,    // migration 0140 (family) / 0130 (global) — "oz" / "g" / etc.
   categoryHints = null,   // optional — admin path seeds the tag map when present
 }) {
   if (!userId || !barcodeUpc) return { error: new Error("userId + barcodeUpc required") };
@@ -184,6 +192,18 @@ export async function rememberBarcodeCorrection({
   if (emoji)       patch.emoji        = emoji;
   if (Array.isArray(ingredientIds) && ingredientIds.length > 0) {
     patch.ingredient_ids = ingredientIds;
+  }
+  // Product-detail fields. Skip empty strings so a caller passing
+  // "" doesn't blow away a real prior value with whitespace.
+  const trimmedBrand = typeof brand === "string" ? brand.trim() : null;
+  const trimmedName  = typeof name === "string" ? name.trim() : null;
+  if (trimmedBrand) patch.brand = trimmedBrand;
+  if (trimmedName)  patch.name  = trimmedName;
+  if (Number.isFinite(packageSizeAmount) && packageSizeAmount > 0) {
+    patch.package_size_amount = packageSizeAmount;
+  }
+  if (typeof packageSizeUnit === "string" && packageSizeUnit.trim()) {
+    patch.package_size_unit = packageSizeUnit.trim();
   }
   if (Object.keys(patch).length === 0) {
     // Loud no-op so a caller that silently passes nothing-to-teach
@@ -214,7 +234,8 @@ export async function rememberBarcodeCorrection({
     // stamp; ingredientIds isn't locked because the tag-map path has
     // its own admin-write flow.
     const provKeys = Object.keys(patch).filter(k =>
-      ["canonical_id", "type_id", "tile_id", "location", "emoji"].includes(k)
+      ["canonical_id", "type_id", "tile_id", "location", "emoji",
+       "brand", "name", "package_size_amount", "package_size_unit"].includes(k)
     );
     const nextProv = { ...(existing?.source_provenance || {}) };
     for (const k of provKeys) nextProv[k] = "admin";
