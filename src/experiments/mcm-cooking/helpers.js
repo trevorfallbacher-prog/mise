@@ -6,6 +6,7 @@
 
 import {
   findIngredient, hubForIngredient, getIngredientInfo,
+  cutLabel, STATE_LABELS,
 } from "../../data/ingredients";
 import { findFoodType } from "../../data/foodTypes";
 import { FRIDGE_TILES,  tileIdForItem        as fridgeTileFor  } from "../../lib/fridgeTiles";
@@ -199,6 +200,62 @@ export function defaultCategoryForLocation(location) {
   return "dairy"; // most-likely fridge default; user re-tiles via edit
 }
 
+// Build the displayed item title from its identity components.
+// CLAUDE.md identity-hierarchy rule: the HEADER is DERIVED, not
+// free-text — `[Brand] [State] [Canonical] [Cut]` when those are
+// set, falling back to canonical alone, falling back to
+// raw.name only for free-text / pre-canonical rows. Including
+// state and cut here so a row like (state="ground", canonical=
+// beef, cut=chuck) reads as "Ground Beef Chuck" instead of
+// whatever the user happened to type into the scan flow.
+//
+// Empty pieces are skipped, so a brand-less ground-chuck row
+// reads "Ground Beef Chuck" without leading whitespace, and a
+// row that's only a canonical reads as just the canonical name.
+export function buildDisplayName(raw) {
+  if (!raw) return "Untitled";
+  const ing = raw.canonicalId ? findIngredient(raw.canonicalId) : null;
+  // Free-text fallback: nothing canonical to derive against, so
+  // honor the row's typed name (or "Untitled" if even that's empty).
+  if (!ing) return raw.name?.trim() || "Untitled";
+  const stateText = raw.state ? (STATE_LABELS[raw.state] || raw.state) : null;
+  const cutText   = raw.cut   ? cutLabel(raw.cut)                       : null;
+  const parts = [
+    raw.brand?.trim()  || null,
+    stateText          || null,
+    ing.name           || null,
+    cutText            || null,
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : (raw.name?.trim() || "Untitled");
+}
+
+// Pull display claims off a raw pantry row. Source order:
+//   1. raw.attributes.claims  (legacy ItemCard write path —
+//      the curated user-facing claim list)
+//   2. raw.claims             (newer scan-write shape)
+//   3. raw.scanDebug.memoryBook.claims (AI-photo passthrough)
+// Returns a deduped string array; empty when nothing surfaces.
+export function getItemClaims(raw) {
+  if (!raw) return [];
+  const candidates = [];
+  if (Array.isArray(raw.attributes?.claims)) candidates.push(...raw.attributes.claims);
+  if (Array.isArray(raw.claims)) candidates.push(...raw.claims);
+  const mb = raw.scanDebug?.memoryBook?.claims;
+  if (Array.isArray(mb)) candidates.push(...mb);
+  // Dedupe while preserving order.
+  const seen = new Set();
+  const out = [];
+  for (const c of candidates) {
+    const t = typeof c === "string" ? c.trim() : "";
+    if (!t) continue;
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(t);
+  }
+  return out;
+}
+
 // Map a raw pantry row (from usePantry) OR a demo row into the
 // card shape the KitchenCard renderer expects. Detects by whether
 // `.qty` is pre-baked (demo) vs. derived from `.amount` / `.unit`
@@ -230,7 +287,14 @@ export function toCard(raw) {
   return {
     id:       raw.id,
     emoji:    raw.emoji || "🍽️",
-    name:     raw.name || "Untitled",
+    // Display name is derived from identity components per the
+    // CLAUDE.md hierarchy rule, so a typo'd raw.name doesn't
+    // fossilize as the visible title once the canonical lands.
+    name:     buildDisplayName(raw),
+    rawName:  raw.name || null,
+    cut:      raw.cut || null,
+    state:    raw.state || null,
+    claims:   getItemClaims(raw),
     qty:      formatQty(raw.amount, raw.unit),
     // Raw amount + max for the fill gauge — mirrors classic
     // Kitchen's pct() helper. Cards use these to render the

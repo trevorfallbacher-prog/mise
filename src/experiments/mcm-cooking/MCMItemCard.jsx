@@ -33,6 +33,7 @@ import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
 import {
   LOCATIONS, shelfLifeFor, formatDaysChip, daysChipColor,
+  buildDisplayName, getItemClaims,
 } from "./helpers";
 import { LOCATION_DOT } from "./FloatingLocationDock";
 import { AddDraftHeaderPills } from "./AddDraftHeaderPills";
@@ -63,6 +64,11 @@ export function MCMItemCard({
   const [tileId,      setTileIdState]      = useState(item.tileId      || null);
   const [location,    setLocationState]    = useState(item.location    || "fridge");
   const [stateAxis,   setStateAxisState]   = useState(item.state       || null);
+  // Cut is preserved through the editor but not yet user-editable
+  // here (no cut picker in v1). Surfaces in the derived display
+  // name when set so a row like (state=ground, canonical=beef,
+  // cut=chuck) reads as "Ground Beef Chuck".
+  const [cut] = useState(item.cut || null);
   const [amount,      setAmountState]      = useState(item.amount ?? null);
   const [max,         setMaxState]         = useState(item.max    ?? null);
   const [unit,        setUnitState]        = useState(item.unit        || "");
@@ -142,6 +148,23 @@ export function MCMItemCard({
   const iconUrl  = canonicalImageUrlFor(canonicalId, null);
   const stateOpts = canonicalId ? (statesForIngredient(canonicalId) || []) : [];
 
+  // Derived display name — re-runs as the user mutates the
+  // identity components below (brand chip / canonical pick /
+  // state pick), so the headline reflects the current truth.
+  // Falls through to free-text `name` only when no canonical is
+  // bound (the genuine pre-canonical / scratch case).
+  const derivedName = useMemo(
+    () => buildDisplayName({
+      name, brand, canonicalId, state: stateAxis, cut,
+    }),
+    [name, brand, canonicalId, stateAxis, cut]
+  );
+
+  // Claims (Organic / Grass-fed / Made in Italy / etc.) read
+  // straight off the raw row — these aren't editable here in
+  // v1. Empty array hides the strip entirely.
+  const claims = useMemo(() => getItemClaims(item), [item]);
+
   // Days-until-expiry display (chip-style, color follows freshness)
   const daysToExpiry = (() => {
     if (!expiresAt) return null;
@@ -218,16 +241,17 @@ export function MCMItemCard({
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <Kicker tone={theme.color.inkFaint}>Editing</Kicker>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Name this item"
-              style={{
-                // Item-card name register — Filmotype Honey via
-                // font.itemName, matching the KitchenCard name face
-                // exactly so tapping a card animates from one type
-                // size of the same hand into the next, rather than
-                // swapping faces on transition.
+            {/* Header name. When a canonical is bound, the title is
+                DERIVED from identity components (brand + state +
+                canonical + cut) per the CLAUDE.md hierarchy rule, so
+                a typo'd raw.name doesn't fossilize as the visible
+                title. Edits land via the identity rail at the bottom.
+                When no canonical is bound (free-text / pre-canonical
+                rows), the header stays a writable input — the
+                user's typed text IS the row's identity until a
+                canonical lands. */}
+            {canonicalId ? (
+              <div style={{
                 fontFamily: font.itemName,
                 fontStyle: "normal",
                 fontWeight: 300,
@@ -235,14 +259,47 @@ export function MCMItemCard({
                 lineHeight: 1.05,
                 letterSpacing: "0",
                 color: theme.color.ink,
-                width: "100%",
                 marginTop: 2,
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                padding: 0,
-              }}
-            />
+                whiteSpace: "normal",
+                wordBreak: "break-word",
+              }}>
+                {derivedName}
+              </div>
+            ) : (
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Name this item"
+                style={{
+                  fontFamily: font.itemName,
+                  fontStyle: "normal",
+                  fontWeight: 300,
+                  fontSize: 38,
+                  lineHeight: 1.05,
+                  letterSpacing: "0",
+                  color: theme.color.ink,
+                  width: "100%",
+                  marginTop: 2,
+                  background: "transparent",
+                  border: "none",
+                  outline: "none",
+                  padding: 0,
+                }}
+              />
+            )}
+            {claims.length > 0 && (
+              <div style={{
+                marginTop: space.tight,
+                fontFamily: font.detail,
+                fontStyle: "italic",
+                fontSize: 13,
+                lineHeight: 1.4,
+                color: theme.color.inkMuted,
+                letterSpacing: "0.005em",
+              }}>
+                {claims.join(", ")}
+              </div>
+            )}
           </div>
           <AddDraftHeaderPills
             theme={theme}
