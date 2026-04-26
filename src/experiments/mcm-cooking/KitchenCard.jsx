@@ -10,7 +10,7 @@ import {
   GlassPanel, StatusDot, TintedPill, statusTintOverlay, withAlpha,
 } from "./primitives";
 import { useTheme } from "./theme";
-import { font } from "./tokens";
+import { font, space, radius } from "./tokens";
 import { findIngredient } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
@@ -406,8 +406,8 @@ export function KitchenCard({
               color: theme.color.inkMuted,
               background: "transparent",
               border: `1px dashed ${theme.color.hairline}`,
-              borderRadius: 4,
-              padding: "1px 6px",
+              borderRadius: radius.chip,
+              padding: `${space.nudge}px ${space.tight}px`,
               letterSpacing: "0.10em",
               textTransform: "uppercase",
               cursor: "pointer",
