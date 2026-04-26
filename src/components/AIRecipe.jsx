@@ -99,13 +99,28 @@ const COURSE_CHIPS = [
   { id: "prep",      label: "Prep" },
 ];
 
-// PRIORITY chips — which side of the "I want X / I have Y" tension
-// wins. Only meaningful when a course is set (see buildPrefs). The
-// emojis pre-prime the user: 🎯 = category/target, 📦 = pantry/use
-// what's there.
+// PRIORITY chips — three modes that define how Claude balances the
+// user's meal prompt against the pantry contents:
+//
+//   classic       — User gets what they asked for. Meal prompt is
+//                   king; the pantry is a soft reference. Shopping
+//                   rows for missing ingredients are fine.
+//   chefs_choice  — Most freedom. Chef leans on the pantry (especially
+//                   expiring rows) but is free to reach for whatever
+//                   elevates the dish. Shopping rows are fine.
+//   pantry        — STRICT pantry-only. Every ingredientId MUST be in
+//                   the pantry block. Expiry priority is highest. If
+//                   the meal prompt names something the pantry can't
+//                   support, the edge fn returns a structured reason
+//                   instead of inventing a shopping row.
+//
+// Legacy `category` / `pantry` priority values from old drafts get
+// migrated at draft-load time (category → classic, pantry → chefs_choice
+// since the old pantry mode was soft, not strict).
 const PRIORITY_CHIPS = [
-  { id: "category", label: "🎯 Follow the category" },
-  { id: "pantry",   label: "📦 Use my pantry"       },
+  { id: "classic",      label: "🎯 Classic"      },
+  { id: "chefs_choice", label: "👨‍🍳 Chef's choice" },
+  { id: "pantry",       label: "📦 Pantry only"  },
 ];
 
 // Canonical ids that count as "protein" for the STAR INGREDIENTS
@@ -524,7 +539,7 @@ export default function AIRecipe({
   // dogs). "pantry" keeps the old behavior where Claude drafts around
   // whatever's stocked and bends the course to fit. Hidden from the
   // UI when course === "any" — no tension to resolve.
-  const [priority,   setPriority]   = useState("category");
+  const [priority,   setPriority]   = useState("classic");
   const [starIngredientIds, setStarIngredientIds] = useState([]);
   // Search query for the MUST-INCLUDE picker. Filters starOptionGroups
   // by substring (case-insensitive) against item labels so a user
@@ -766,7 +781,7 @@ export default function AIRecipe({
     setMealPrompt("");
     setMealTiming("any");
     setCourse("any");
-    setPriority("category");
+    setPriority("classic");
     setStarIngredientIds([]);
     setCuisine("any");
     setTime("medium");
@@ -801,7 +816,8 @@ export default function AIRecipe({
         mode: isRegen ? "lean" : "rich",
         starIngredientIds,
         // filterPantryByCourse is a no-op when course is "any" (no
-        // compatibility set) or priority is "pantry" — pass both
+        // compatibility set) or priority is "chefs_choice" / "pantry"
+        // (chef wants free hand / strict pantry-only) — pass both
         // through unconditionally; the filter does the gating.
         course:   course === "any" ? undefined : course,
         priority,

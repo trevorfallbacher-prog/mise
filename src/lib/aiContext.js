@@ -57,13 +57,15 @@ export function buildAIContext({
   cookLogs = [],
   mode = "rich",
   starIngredientIds = [],
-  // Category-priority pantry filter. When the user picks a tight
-  // course (bake / dessert / prep) AND priority === "category", we
+  // Classic-priority pantry filter. When the user picks a tight
+  // course (bake / dessert / prep) AND priority === "classic", we
   // pre-filter the pantry rows Claude sees to items compatible with
   // that category. Claude physically can't draft a hot-dog skillet
   // under Baked Goods when hot dogs aren't in the palette. Pass-
-  // through (no filter) for course="any" / main / side / appetizer
-  // and for priority="pantry".
+  // through (no filter) for course="any" / main / side / appetizer,
+  // for priority="chefs_choice" (chef wants free hand), and for
+  // priority="pantry" (every pantry row is part of the source list,
+  // hiding compatibility-incompatible rows would mislead the user).
   course,
   priority,
 } = {}) {

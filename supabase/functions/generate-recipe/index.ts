@@ -102,21 +102,21 @@ type Prefs = {
   // that aren't plate roles and don't live in a meal slot.
   course?: string;
   // Which side of the "I want X / I have Y" tension wins.
-  //   "category" — course / timing / cuisine are authoritative; Claude
-  //                rejects drafts that don't fit the category even when
-  //                the pantry pushes toward something else. The client
-  //                also pre-filters the pantry block for tight-category
-  //                courses (bake/dessert/prep) so incompatible items
-  //                never become visible narrative pressure.
-  //   "pantry"   — legacy behavior. Pantry items drive the draft; the
-  //                course is a soft hint Claude bends around the
-  //                ingredients.
   // The client sends priority on EVERY call (sketch + final). Edge fn
-  // does NOT default undefined→"category" — a missing value means
-  // "don't use a priority block at all," which is distinct from
-  // "category mode." Silent defaulting previously flipped precedence
-  // mid-session when the final pass dropped the field.
-  priority?: "category" | "pantry";
+  // does NOT default undefined → any mode — a missing value means
+  // "don't use a priority block at all." Silent defaulting previously
+  // flipped precedence mid-session when the final pass dropped the
+  // field. Three modes:
+  //   classic       — user's meal prompt is king, pantry is a soft
+  //                   reference, shopping rows fine.
+  //   chefs_choice  — AI has freedom; leans on pantry + expiring rows
+  //                   but free to reach for ingredients that elevate.
+  //   pantry        — STRICT. Every ingredientId MUST be in the pantry
+  //                   block. Expiry priority is highest. If meal prompt
+  //                   names something the pantry can't support, return
+  //                   reason="pantry_cant_satisfy_prompt" rather than
+  //                   inventing shopping rows.
+  priority?: "classic" | "chefs_choice" | "pantry";
   // True when the client actually filtered the pantry rows before
   // sending them (see courseCompat.js). The PRECEDENCE block uses this
   // to tell the truth — previously it unconditionally claimed "the
@@ -439,79 +439,115 @@ function assemblePromptHeader(
   // pantry has been filtered," which was a lie for main/side/
   // appetizer courses — Claude trusted the lie, Claude drafted
   // around expiring savory rows under a category the user wanted.
-  const priorityMode: "category" | "pantry" | null =
-    prefs.priority === "category" ? "category"
-    : prefs.priority === "pantry" ? "pantry"
+  const priorityMode: "classic" | "chefs_choice" | "pantry" | null =
+    prefs.priority === "classic"      ? "classic"
+    : prefs.priority === "chefs_choice" ? "chefs_choice"
+    : prefs.priority === "pantry"     ? "pantry"
     : null;
   const pantryFiltered = prefs.pantryFiltered === true;
-  const pantryHonesty = priorityMode === "category"
-    ? (pantryFiltered
-      ? `The pantry block above has been pre-filtered to category-compatible items; use it as a palette but don't feel obligated to use every row.`
-      : `The pantry block above is NOT filtered — it's the user's full pantry. You are in CATEGORY-PRIORITY mode: treat the pantry as a soft reference, NOT a shopping list you must exhaust. Most rows will not be in the dish. Ignore urgency/expiry narratives — the user explicitly asked for a category output, not for you to use up what's going bad.`)
-    : "";
-  const precedenceBlock = priorityMode === "category" ? `
+
+  // Pantry-honesty line — describes what the pantry block represents
+  // for THIS mode. Different modes need different framings so Claude
+  // doesn't treat a soft palette as a strict source list (or vice
+  // versa). The historic bug: an unconditional "pantry has been
+  // filtered" claim that was a lie in main/side/appetizer courses.
+  const pantryHonesty =
+    priorityMode === "classic"
+      ? (pantryFiltered
+        ? `The pantry block above has been pre-filtered to category-compatible items; use it as a palette but don't feel obligated to use every row.`
+        : `The pantry block above is NOT filtered — it's the user's full pantry. You are in CLASSIC mode: the user's meal prompt is the authority. Treat the pantry as a soft reference, not a list you must exhaust. Adding ingredients not in the pantry as shopping rows is fine when the dish calls for them.`)
+      : priorityMode === "chefs_choice"
+        ? `The pantry block above is the user's full pantry. You are in CHEF'S CHOICE mode: you have creative freedom. Lean on the pantry where it shines (especially expiring rows — using these reduces waste), but feel free to reach for ingredients not in the pantry when they meaningfully elevate the dish. Shopping rows are welcome.`
+        : priorityMode === "pantry"
+          ? `The pantry block above is the user's full pantry. You are in PANTRY-ONLY mode: HARD CONSTRAINT — every ingredientId in your final recipe MUST appear in the pantry block above. Expiring rows have priority — use them first. Shopping rows are FORBIDDEN in this mode.`
+          : "";
+
+  const precedenceBlock =
+    priorityMode === "classic" ? `
 PRECEDENCE (hard → soft). Earlier beats later when they conflict.
-You are in CATEGORY-PRIORITY mode: the user picked a course and
-wants that category respected over pantry convenience.
+You are in CLASSIC mode: the user gets what they asked for.
   1. Dietary / allergy constraints from the profile block.
-  2. COURSE — if set, the recipe MUST function as that course. This
-     is authoritative. A "bake" output is a baked good, not a meal
-     with a bread element. A "dessert" output is sweet. A "prep"
-     output is a single-component jar/bottle. Do not reframe the
-     category to fit the pantry.
-  3. The USER ASK in HARD CONSTRAINTS — the user's typed words are
-     the second-strongest signal after course. If they named a dish,
-     draft that dish within the course. If they named a protein or
-     cuisine, honor it even if the pantry doesn't have it.
+  2. The USER ASK in HARD CONSTRAINTS — the meal prompt is the
+     authority. If they named a dish, draft that dish. If they named
+     a protein or cuisine, honor it even if the pantry doesn't have
+     it (the missing items become shopping rows in the sketch).
+  3. COURSE — if set, the recipe MUST function as that course. A
+     "bake" output is a baked good. A "dessert" output is sweet.
+     Do not reframe the category to fit the pantry.
   4. MEAL TIMING — if set, the recipe fits that meal within the
      category (breakfast pastry, dinner prep, etc.).
   5. STAR INGREDIENTS — compatible only. If a starred item doesn't
-     fit the course category (e.g. hot dogs starred but course is
-     "bake"), SILENTLY DROP that star. Do not bend the category to
-     include it. Keep compatible stars (butter, flour, sugar, eggs
-     for bake; aromatics for prep; fruit/dairy for dessert).
+     fit the course / meal prompt, SILENTLY DROP that star.
   6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
      constraints above.
 
 ${pantryHonesty}
 
-Lean toward creative, non-obvious combinations WITHIN the category.
-A boring chocolate chip cookie is a failure mode; so is a savory
-skillet disguised as a bake. Reach for something the user might
-not have thought of themselves — but keep it in-category.
-` : `
+Lean toward creative, non-obvious combinations WITHIN what the user
+asked for. A boring rendition of the named dish is a failure mode.
+` : priorityMode === "chefs_choice" ? `
 PRECEDENCE (hard → soft). Earlier beats later when they conflict.
-You are in PANTRY-PRIORITY mode: the user wants to cook around what
-they have, not chase a category at the expense of waste.
+You are in CHEF'S CHOICE mode: maximum creative latitude. The chef
+knows what's in the pantry, knows which rows are expiring, and
+chooses freely — leaning on what's there when it serves the dish,
+reaching outside when something better elevates it.
   1. Dietary / allergy constraints from the profile block.
   2. STAR INGREDIENTS in USER PREFERENCES — if the user listed any,
-     the recipe MUST feature EVERY one as a primary component, not
-     as a garnish or afterthought. Don't substitute them away.
+     the recipe MUST feature EVERY one as a primary component.
      Pantry rows marked "★ STARRED BY USER" are the same list.
-  3. The MEAL PROMPT text — the user's direct ask ("Italian lasagna,
-     Sunday dinner energy"). When it calls out a protein or dish,
-     reach for it even if it isn't in their pantry; they'll source
-     what's missing.
-  4. MEAL TIMING — if set, the recipe MUST fit that meal (breakfast
-     = breakfast dishes, dinner = dinner dishes).
-  5. COURSE — a soft hint in this mode. Try to honor it, but if the
-     pantry can't support it (course="bake" with zero flour/sugar/
-     butter/eggs/etc.), return a structured reason="pantry_incompatible_with_course"
-     so the client can suggest switching to Main or shopping first.
-     Do NOT fake a category by labeling a savory skillet "Baked
-     Goods." Better to admit the mismatch than produce a misleading
-     draft.
-  6. CUISINE / TIME / DIFFICULTY — nuance knobs applied within the
-     constraints above.
+  3. The MEAL PROMPT text — the user's direct ask. Honor it, but
+     don't be enslaved to it; if the chef sees a more interesting
+     dish in the pantry that fits the spirit of the ask, take that
+     freedom.
+  4. EXPIRY RESCUE — pantry rows expiring within 5 days are
+     opportunity, not obligation. Weave one in when it makes the
+     dish better; ignore them when they don't fit. Reducing waste
+     is a tiebreaker, not a constraint.
+  5. MEAL TIMING — if set, the recipe fits that meal.
+  6. COURSE — a soft hint. Try to honor it; fall back to a related
+     course if the pantry + ask don't support the literal one.
+  7. CUISINE / TIME / DIFFICULTY — nuance knobs.
 
-Lean on the pantry as your primary source and prioritize items that
-are expiring soon to reduce waste. A handful of assumed staples
-(salt, pepper, oil, water) is always fine.
+${pantryHonesty}
 
-Lean toward creative, non-obvious combinations. When the user asks
-for a draft from their pantry, boring defaults (generic pasta, plain
-omelette) are a failure mode; reach for something the user might not
-have thought of themselves.
+Lean toward dishes the user wouldn't have thought of themselves. The
+chef's signature is using familiar ingredients in unfamiliar ways.
+Boring defaults (generic pasta, plain omelette) are a failure mode.
+Shopping rows are welcome when they unlock a better dish — but each
+one should justify its existence; don't pad the recipe with shopping.
+` : `
+PRECEDENCE (hard → soft). Earlier beats later when they conflict.
+You are in PANTRY-ONLY mode: STRICT pantry constraint. The recipe
+must be cookable with what's already in the kitchen, full stop.
+  1. Dietary / allergy constraints from the profile block.
+  2. PANTRY HARD CONSTRAINT — every ingredientId in the final
+     recipe MUST appear in the PANTRY block above. There are NO
+     shopping rows in this mode. If the meal prompt names something
+     the pantry can't support, return a structured response with
+     reason="pantry_cant_satisfy_prompt" and a short message
+     pointing at what's missing — do NOT invent ingredients.
+  3. EXPIRY PRIORITY — pantry rows expiring within 5 days take
+     precedence over fresher rows. Build the dish around them.
+  4. STAR INGREDIENTS in USER PREFERENCES — if the user listed any,
+     the recipe MUST feature EVERY one. (Stars must already be in
+     the pantry by definition — the picker only shows pantry rows.)
+  5. The MEAL PROMPT text — a direction, not a destination. Honor
+     it where the pantry can support it; deviate (or return the
+     structured pantry_cant_satisfy_prompt response) when it can't.
+  6. MEAL TIMING — if set, fit that meal.
+  7. COURSE — a soft hint; if the pantry can't support the literal
+     course, return reason="pantry_incompatible_with_course".
+  8. CUISINE / TIME / DIFFICULTY — nuance knobs.
+
+${pantryHonesty}
+
+Assumed staples that are ALWAYS available without being in the
+pantry block: salt, pepper, water, neutral cooking oil. Anything
+else — herbs, spices, sauces, condiments — must be in the pantry.
+
+Lean toward creative, non-obvious combinations of pantry rows. The
+constraint is the canvas; a flavorful dish from what's already
+there is the whole point.
 `;
 
   // Final self-check gate. Claude reliably respects HARD CONSTRAINTS

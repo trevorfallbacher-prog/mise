@@ -38,7 +38,13 @@
 // phase recipes survive tab close. V1 drafts are dropped on load
 // rather than migrated — the schema diff is small and the risk of a
 // partial recover is worse than a clean slate.
-const VERSION = 2;
+//
+// VERSION 3: priority enum changed from 2-mode (category | pantry) to
+// 3-mode (classic | chefs_choice | pantry). The string "pantry" exists
+// in both schemas with different semantics — old soft-pantry-with-
+// shopping vs new strict-pantry-only — so v2 drafts CANNOT be passed
+// through. They get dropped on load (same pattern as the v1 → v2 cut).
+const VERSION = 3;
 // After 14 days, drafts go stale — either the user moved on or the
 // pantry has drifted enough that the sketch is wrong anyway. Clear
 // on read rather than auto-delete at save time so we don't do I/O

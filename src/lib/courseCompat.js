@@ -139,8 +139,17 @@ export function compatibilitySetFor(course) {
 //     that becomes a real annoyance we can add a keyword check,
 //     but initially it's better to hide them than risk Claude
 //     weaving them into a bake.
+// Priority modes that pre-filter the pantry against course compat:
+//   classic       — meal prompt is king, course constraint is hard;
+//                   keep the pantry palette tight to category-fit rows
+//                   so Claude doesn't draft around incompatible items.
+//   chefs_choice  — pass through (chef has free hand to pull from
+//                   anywhere in the pantry).
+//   pantry        — pass through (the entire pantry IS the source list;
+//                   filtering would hide options the user wants to see
+//                   in pantry-strict mode).
 export function filterPantryByCourse(rows, course, priority) {
-  if (priority !== "category") return rows;
+  if (priority !== "classic") return rows;
   const set = compatibilitySetFor(course);
   if (!set) return rows;
   return (rows || []).filter(r => r?.canonicalId && set.has(r.canonicalId));
@@ -149,10 +158,10 @@ export function filterPantryByCourse(rows, course, priority) {
 // True when filterPantryByCourse would actually remove rows for this
 // (course, priority) combination. Lets the edge function tailor the
 // PRECEDENCE block so it doesn't claim "the pantry has been filtered"
-// when no filter ran (main / side / appetizer under category priority
+// when no filter ran (main / side / appetizer under classic priority
 // historically tripped this — the prompt lied and Claude drafted
 // around expiring items anyway).
 export function courseHasPantryFilter(course, priority) {
-  if (priority !== "category") return false;
+  if (priority !== "classic") return false;
   return compatibilitySetFor(course) != null;
 }
