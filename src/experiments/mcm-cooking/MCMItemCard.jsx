@@ -17,7 +17,7 @@
 // persisted immediately. There's no Save button — the bottom row
 // is Delete + Done.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useDragControls } from "framer-motion";
 import { Kicker, withAlpha } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
@@ -32,6 +32,7 @@ import {
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
 import { useBodyScrollLock } from "../../lib/useBodyScrollLock";
+import { useSheetDismissAtTop } from "../../lib/useSheetDismissAtTop";
 import {
   LOCATIONS, shelfLifeFor, formatDaysChip, daysChipColor,
   buildDisplayName, getItemClaims,
@@ -116,11 +117,13 @@ export function MCMItemCard({
 
   // Drag-to-dismiss controls. Manual dragControls (vs. the default
   // listener-on-the-whole-element) so the sheet body stays
-  // scrollable; only the top drag handle starts a drag. Pulling
-  // the handle past DRAG_DISMISS_PX or releasing it with enough
-  // downward velocity calls onClose; otherwise framer springs it
-  // back to y=0 on release.
+  // scrollable; the top grabber pill OR a pull-down-from-the-top
+  // gesture starts a drag. Pulling past DRAG_DISMISS_PX or
+  // releasing with enough downward velocity calls onClose;
+  // otherwise framer springs it back to y=0 on release.
   const dragControls = useDragControls();
+  const sheetRef = useRef(null);
+  const dismissHandlers = useSheetDismissAtTop(sheetRef, dragControls);
 
   // Confirm-delete inline gate so a stray tap on the destructive
   // action doesn't blow away the row. First tap arms; second tap
@@ -224,19 +227,23 @@ export function MCMItemCard({
       }}
     >
       <motion.div
+        ref={sheetRef}
         initial={{ y: 32, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
-        // Drag-down-to-dismiss. The handle (top pill) starts a drag
-        // via dragControls; the rest of the sheet stays scrollable
-        // because dragListener={false} disables the auto-pointer
-        // capture that would otherwise eat content scrolls. Top
-        // constraint pinned to 0 so the user can't drag the sheet
-        // upward off-screen; bottom unbounded so the pull tracks the
-        // finger 1:1. Release past DRAG_DISMISS_PX or with downward
-        // velocity > DRAG_DISMISS_VEL closes via onClose; otherwise
-        // framer springs back to rest.
+        // Drag-down-to-dismiss. Two entry points, both wired via
+        // the same dragControls instance so framer drives the
+        // animation either way:
+        //   * the grabber pill at the top calls dragControls.start
+        //     directly on pointerdown
+        //   * useSheetDismissAtTop watches the WHOLE sheet for a
+        //     pull-down gesture starting at scrollTop=0 (and
+        //     skipping interactive targets), so a hard scroll past
+        //     the top dismisses without the user having to land on
+        //     the pill first
+        // dragListener={false} keeps framer from auto-capturing
+        // every pointer event; everything goes through dragControls.
         drag="y"
         dragControls={dragControls}
         dragListener={false}
@@ -250,6 +257,7 @@ export function MCMItemCard({
             onClose && onClose();
           }
         }}
+        {...dismissHandlers}
         style={{
           position: "fixed",
           left: 0,
