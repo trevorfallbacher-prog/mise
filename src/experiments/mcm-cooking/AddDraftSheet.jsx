@@ -26,18 +26,19 @@ import {
 import { detectBrand } from "../../data/knownBrands";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { usePopularPackages } from "../../lib/usePopularPackages";
-import { findFoodType, FOOD_TYPES, inferFoodTypeFromName, typeIdForCanonical } from "../../data/foodTypes";
+import { FOOD_TYPES, inferFoodTypeFromName, typeIdForCanonical } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
 import { useBrandNutrition } from "../../lib/useBrandNutrition";
-import { tileIconFor } from "../../lib/canonicalIcons";
 import MemoryBookCapture from "./MemoryBookCapture";
 import { AddDraftProgressStrip } from "./AddDraftProgressStrip";
 import { AddDraftPickers } from "./AddDraftPickers";
 import { ScanDataPanel } from "./ScanDataPanel";
+import { AddDraftHeaderPills } from "./AddDraftHeaderPills";
+import { NameTypeaheadList } from "./NameTypeaheadList";
 import { enrichIngredient } from "../../lib/enrichIngredient";
 
 // MCMAddDraftSheet — manual-add (and, in a follow-up commit,
@@ -913,187 +914,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               decision the user hasn't made yet. Once a
               canonical lands the cascade fills both pills with
               real metadata, so they appear together. */}
-          {canonicalId && (
-          <motion.div
-            // Fade + slide-in when the pills appear so the cascade
-            // feels alive rather than popping in. Subtle enough to
-            // not pull focus from the Name input the user is
-            // probably still hovering near.
-            initial={{ opacity: 0, x: 8, scale: 0.9 }}
-            animate={{ opacity: 1, x: 0, scale: 1 }}
-            transition={{ type: "spring", stiffness: 380, damping: 28 }}
-            style={{
-              display: "flex", flexDirection: "row", alignItems: "center",
-              gap: 6, flexShrink: 0, marginTop: 2,
-            }}
-          >
-            {/* Category pill — orange. When unset, renders as a
-                tappable + add-circle (dashed border) so the user
-                has an obvious affordance to attach a category.
-                When set, renders as a name pill ("Cheese",
-                "Yogurt") since FOOD_TYPES don't have their own
-                SVG icons yet — falling back to text keeps the
-                resolved value glanceable until artwork ships. */}
-            {(() => {
-              const t = typeId ? findFoodType(typeId) : null;
-              const tone = theme.color.burnt;
-              // AnimatePresence with mode="wait" pops the chip when the
-              // cascade flips it from unset → set (or swaps category).
-              // The spring entry on the resolved pill makes the auto-
-              // resolve feel like the system did work for the user.
-              return (
-                <AnimatePresence mode="wait" initial={false}>
-                  {!t ? (
-                    <motion.button
-                      key="unset-category"
-                      type="button"
-                      className="mcm-focusable"
-                      onClick={() => setPickerOpen("category")}
-                      aria-label="Pick a category"
-                      title="Pick a category"
-                      initial={{ opacity: 0, scale: 0.85 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.85 }}
-                      transition={{ duration: 0.16, ease: "easeOut" }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 40, height: 40,
-                        padding: 0,
-                        borderRadius: 999,
-                        border: `1px dashed ${withAlpha(tone, 0.55)}`,
-                        background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
-                        color: tone,
-                        cursor: "pointer",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span style={{
-                        fontSize: 22, lineHeight: 1, fontWeight: 300,
-                        color: tone,
-                      }}>+</span>
-                    </motion.button>
-                  ) : (
-                    <motion.button
-                      key={`category-${t.id}`}
-                      type="button"
-                      className="mcm-focusable"
-                      onClick={() => setPickerOpen("category")}
-                      aria-label={`Category: ${t.label}`}
-                      title={`Category · ${t.label}`}
-                      initial={{ opacity: 0, scale: 0.6 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.85 }}
-                      transition={{ type: "spring", stiffness: 460, damping: 24 }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        height: 40,
-                        padding: "0 14px",
-                        borderRadius: 999,
-                        border: `1px solid ${withAlpha(tone, 0.55)}`,
-                        background: `linear-gradient(${withAlpha(tone, 0.22)}, ${withAlpha(tone, 0.22)}), ${theme.color.glassFillHeavy}`,
-                        color: theme.color.ink,
-                        fontFamily: font.detail,
-                        fontStyle: "italic",
-                        fontWeight: 400,
-                        fontSize: 14,
-                        cursor: "pointer",
-                        flexShrink: 0,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {t.label}
-                    </motion.button>
-                  )}
-                </AnimatePresence>
-              );
-            })()}
-            {(() => {
-              const loc = LOCATIONS.find(l => l.id === location);
-              const tile = loc && tileId ? loc.tiles.find(x => x.id === tileId) : null;
-              const tone = axis.storedIn;
-              const svg = tile ? tileIconFor(tile.id, location) : null;
-              const resolved = !!tile && tile.id !== "misc" && !!svg;
-              // Same pop-on-resolve treatment as the category chip.
-              // Keying by tile.id swaps the SVG with a fresh spring
-              // animation when the cascade lands a new shelf, so the
-              // user sees the icon "land" instead of cross-fading.
-              return (
-                <AnimatePresence mode="wait" initial={false}>
-                  {resolved ? (
-                    <motion.button
-                      key={`tile-${tile.id}`}
-                      type="button"
-                      className="mcm-focusable"
-                      onClick={() => setPickerOpen("tile")}
-                      aria-label={`Stored in: ${tile.label}`}
-                      title={`Stored in · ${tile.label}`}
-                      initial={{ opacity: 0, scale: 0.6 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.85 }}
-                      transition={{ type: "spring", stiffness: 460, damping: 24 }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 40, height: 40,
-                        padding: 0,
-                        border: "none",
-                        background: "transparent",
-                        cursor: "pointer",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <img
-                        src={svg}
-                        alt=""
-                        aria-hidden
-                        style={{
-                          width: "100%", height: "100%", objectFit: "contain",
-                          display: "block",
-                          filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.22))",
-                        }}
-                      />
-                    </motion.button>
-                  ) : (
-                    <motion.button
-                      key="unset-tile"
-                      type="button"
-                      className="mcm-focusable"
-                      onClick={() => setPickerOpen("tile")}
-                      aria-label="Pick a shelf"
-                      title="Pick a shelf"
-                      initial={{ opacity: 0, scale: 0.85 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.85 }}
-                      transition={{ duration: 0.16, ease: "easeOut" }}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: 40, height: 40,
-                        padding: 0,
-                        borderRadius: 999,
-                        border: `1px dashed ${withAlpha(tone, 0.55)}`,
-                        background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
-                        color: tone,
-                        cursor: "pointer",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span style={{
-                        fontSize: 22, lineHeight: 1, fontWeight: 300,
-                        color: tone,
-                      }}>+</span>
-                    </motion.button>
-                  )}
-                </AnimatePresence>
-              );
-            })()}
-          </motion.div>
-          )}
+          <AddDraftHeaderPills
+            theme={theme}
+            canonicalId={canonicalId}
+            typeId={typeId}
+            tileId={tileId}
+            location={location}
+            onPickCategory={() => setPickerOpen("category")}
+            onPickTile={() => setPickerOpen("tile")}
+          />
         </div>
 
         {/* Scan-status banner — fixed-height row so the form
@@ -1448,172 +1277,24 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               }}
             />
           </button>
-          {nameFocused && !suppressTypeahead && typeaheadAnchor && (nameSuggestions.length > 0 || name.trim().length >= 2) && (
-            <div
-              role="listbox"
-              aria-label="Canonical suggestions"
-              style={{
-                // Fixed-to-viewport anchoring (vs. absolute under the
-                // input) so iOS keyboard-open and any layout shift
-                // below the input doesn't drag the dropdown off the
-                // user's finger. Position is recomputed on every
-                // visualViewport scroll/resize via the effect above.
-                position: "fixed",
-                top: typeaheadAnchor.top,
-                left: typeaheadAnchor.left,
-                width: typeaheadAnchor.width,
-                zIndex: 1000,
-                padding: 6,
-                borderRadius: 14,
-                background: theme.color.glassFillHeavy,
-                border: `1px solid ${theme.color.glassBorder}`,
-                backdropFilter: "blur(20px) saturate(150%)",
-                WebkitBackdropFilter: "blur(20px) saturate(150%)",
-                boxShadow: "0 18px 36px rgba(20,12,4,0.28), 0 4px 12px rgba(20,12,4,0.16)",
-                ...THEME_TRANSITION,
-              }}
-            >
-              {nameSuggestions.map(ing => (
-                <button
-                  key={ing.id}
-                  type="button"
-                  role="option"
-                  aria-selected={ing.id === canonicalId}
-                  className="mcm-focusable"
-                  // onMouseDown fires before onBlur on the input,
-                  // so the pick lands without a click being lost.
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    setName(ing.name);
-                    setCanonicalId(ing.id);
-                    setCanonicalOverridden(true);
-                    // Unlock the downstream axes so the
-                    // category + tile re-derive against the
-                    // freshly-picked canonical's metadata. The
-                    // user picking a canonical means they
-                    // trust our cascade — any prior manual
-                    // category / tile override should release
-                    // so the new canonical drives those values.
-                    setTypeOverridden(false);
-                    setTileOverridden(false);
-                    setStateOverridden(false);
-                    setLocationOverridden(false);
-                    setSuppressTypeahead(true);
-                  }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    width: "100%",
-                    padding: "8px 10px",
-                    margin: "1px 0",
-                    borderRadius: 10,
-                    border: "1px solid transparent",
-                    background: ing.id === canonicalId
-                      ? `linear-gradient(${withAlpha(axis.canonical, 0.18)}, ${withAlpha(axis.canonical, 0.18)}), transparent`
-                      : "transparent",
-                    cursor: "pointer", textAlign: "left",
-                    color: theme.color.ink,
-                    transition: "background 140ms ease",
-                  }}
-                  onMouseEnter={(e) => { if (ing.id !== canonicalId) e.currentTarget.style.background = withAlpha(theme.color.ink, 0.05); }}
-                  onMouseLeave={(e) => { if (ing.id !== canonicalId) e.currentTarget.style.background = "transparent"; }}
-                >
-                  {ing.emoji && <span style={{ fontSize: 18, lineHeight: 1, flexShrink: 0 }}>{ing.emoji}</span>}
-                  <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-                    <span style={{ fontFamily: font.sans, fontSize: 14, fontWeight: 500 }}>
-                      {ing.name}
-                    </span>
-                    {ing.category && (
-                      <span style={{
-                        fontFamily: font.detail, fontStyle: "italic", fontWeight: 400,
-                        fontSize: 12, color: theme.color.inkMuted, marginTop: 1,
-                      }}>
-                        {ing.category}
-                      </span>
-                    )}
-                  </span>
-                  {ing.id === canonicalId && (
-                    <span style={{ color: axis.canonical, fontSize: 14 }}>✓</span>
-                  )}
-                </button>
-              ))}
-              {/* No-results escape hatch — when the typed name
-                  doesn't match any bundled canonical, surface a
-                  "+ Add canonical" row that creates a new
-                  user-scoped canonical from the typed text.
-                  Slug-cases the input so the underlying
-                  pantry_items.canonical_id stays URL-safe; the
-                  CLAUDE.md self-teaching cascade picks it up
-                  the same as a bundled slug. */}
-              {nameSuggestions.length === 0 && name.trim().length >= 2 && (
-                <button
-                  type="button"
-                  role="option"
-                  className="mcm-focusable"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    const sourceName = name.trim();
-                    const slug = sourceName.toLowerCase()
-                      .replace(/[^a-z0-9]+/g, "_")
-                      .replace(/^_+|_+$/g, "");
-                    if (!slug) return;
-                    setCanonicalId(slug);
-                    setCanonicalOverridden(true);
-                    setTypeOverridden(false);
-                    setTileOverridden(false);
-                    setStateOverridden(false);
-                    setLocationOverridden(false);
-                    setSuppressTypeahead(true);
-                    // Parity with the AI photo flow: register the
-                    // freshly-minted slug in pending_ingredient_info
-                    // so it stops being a "shell" — refreshPending
-                    // pulls it into the local map, useIngredientInfo's
-                    // dbMap+pendingMap merge re-registers the alias
-                    // map, and the typeahead / inferCanonicalFromName
-                    // can find this slug from any other surface in
-                    // the app (other Add forms, Item edits, recipe
-                    // pairing). Fire-and-forget — failure here just
-                    // means the slug doesn't enrich, the row still
-                    // commits with canonicalId set.
-                    enrichIngredient({ source_name: sourceName })
-                      .then(() => refreshPending?.())
-                      .catch(err =>
-                        console.warn("[mcm-add] typeahead canonical enrich failed:", err?.message || err),
-                      );
-                  }}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    width: "100%",
-                    padding: "10px 10px",
-                    margin: "1px 0",
-                    borderRadius: 10,
-                    border: `1px dashed ${withAlpha(axis.canonical, 0.45)}`,
-                    background: "transparent",
-                    cursor: "pointer", textAlign: "left",
-                    color: theme.color.ink,
-                    transition: "background 140ms ease",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = withAlpha(axis.canonical, 0.10); }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  <span style={{
-                    fontSize: 18, lineHeight: 1, flexShrink: 0,
-                    color: axis.canonical,
-                  }}>+</span>
-                  <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-                    <span style={{ fontFamily: font.sans, fontSize: 14, fontWeight: 500 }}>
-                      Add "{name.trim()}" as a new canonical
-                    </span>
-                    <span style={{
-                      fontFamily: font.detail, fontStyle: "italic", fontWeight: 400,
-                      fontSize: 12, color: theme.color.inkMuted, marginTop: 1,
-                    }}>
-                      Saved to your kitchen — admin can promote later.
-                    </span>
-                  </span>
-                </button>
-              )}
-            </div>
-          )}
+          <NameTypeaheadList
+            theme={theme}
+            nameFocused={nameFocused}
+            suppressTypeahead={suppressTypeahead}
+            typeaheadAnchor={typeaheadAnchor}
+            nameSuggestions={nameSuggestions}
+            name={name}
+            canonicalId={canonicalId}
+            setName={setName}
+            setCanonicalId={setCanonicalId}
+            setCanonicalOverridden={setCanonicalOverridden}
+            setTypeOverridden={setTypeOverridden}
+            setTileOverridden={setTileOverridden}
+            setStateOverridden={setStateOverridden}
+            setLocationOverridden={setLocationOverridden}
+            setSuppressTypeahead={setSuppressTypeahead}
+            refreshPending={refreshPending}
+          />
         </div>
           );
         })()}
