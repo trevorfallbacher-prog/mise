@@ -148,26 +148,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       setTypeaheadAnchor({ top: r.bottom + 6, left: r.left, width: r.width });
     };
     update();
-    // Lift the input near the top of the visible viewport so the
-    // typeahead has the room between input and keyboard top to
-    // render its rows. 80ms gives iOS a beat to start its own
-    // keyboard-open animation; the second update inside captures
-    // the final post-keyboard rect.
-    const t = setTimeout(() => {
-      nameInputRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-      setTimeout(update, 320);
-    }, 80);
     const vv = window.visualViewport;
     vv?.addEventListener("resize", update);
     vv?.addEventListener("scroll", update);
     window.addEventListener("scroll", update, true);
     return () => {
-      clearTimeout(t);
       vv?.removeEventListener("resize", update);
       vv?.removeEventListener("scroll", update);
       window.removeEventListener("scroll", update, true);
     };
   }, [nameFocused]);
+
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -836,9 +827,6 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         position: "fixed",
         inset: 0,
         zIndex: 50,
-        display: "flex",
-        alignItems: "flex-end",
-        justifyContent: "center",
         background: "rgba(20,12,4,0.55)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
@@ -855,20 +843,23 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         exit={{ y: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
         style={{
-          width: "100%",
+          // Hard-pinned to the bottom of the screen, mobile-first.
+          // No JS recalculation — static values only. dvh shrinks
+          // when the iOS keyboard opens (browser-native), so the
+          // sheet stays clear of the keyboard without us touching
+          // the position value at all. Inner overflowY keeps long
+          // forms scrollable inside the sheet's frame.
+          position: "fixed",
+          left: 0,
+          right: 0,
+          bottom: "env(safe-area-inset-bottom, 0px)",
+          marginLeft: "auto",
+          marginRight: "auto",
+          width: "calc(100% - 24px)",
           maxWidth: 520,
-          // Cap height so the sheet doesn't overflow the viewport
-          // on phones — once a canonical lands the form grows
-          // (pills + popular sizes + brand typeahead) and could
-          // exceed even a tall iPhone. Inner scroll keeps the
-          // header pinned visually while the form below pages.
-          maxHeight: "90vh",
+          maxHeight: "90dvh",
           overflowY: "auto",
-          // Keep the scrollbar slot reserved so content doesn't
-          // reflow horizontally when the inner scrollbar appears
-          // / disappears as form sections expand.
           scrollbarGutter: "stable",
-          margin: "0 12px 24px",
           padding: 22,
           borderRadius: 20,
           background: theme.color.glassFillHeavy,
