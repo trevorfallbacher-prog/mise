@@ -123,7 +123,13 @@ export function MCMItemCard({
   // otherwise framer springs it back to y=0 on release.
   const dragControls = useDragControls();
   const sheetRef = useRef(null);
-  const dismissHandlers = useSheetDismissAtTop(sheetRef, dragControls);
+  // Pull-past-the-top dismiss — distance-thresholded. When the sheet
+  // is scrolled to the top and the user's finger moves more than
+  // 100 px downward (skipping touches that land on interactive
+  // elements), fire onClose directly. iOS's native rubber-band
+  // gives the visual feedback during the pull; no framer-drag
+  // handoff or release-to-confirm step.
+  const dismissHandlers = useSheetDismissAtTop(sheetRef, () => onClose && onClose());
 
   // Confirm-delete inline gate so a stray tap on the destructive
   // action doesn't blow away the row. First tap arms; second tap
@@ -232,18 +238,16 @@ export function MCMItemCard({
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
-        // Drag-down-to-dismiss. Two entry points, both wired via
-        // the same dragControls instance so framer drives the
-        // animation either way:
-        //   * the grabber pill at the top calls dragControls.start
-        //     directly on pointerdown
-        //   * useSheetDismissAtTop watches the WHOLE sheet for a
-        //     pull-down gesture starting at scrollTop=0 (and
-        //     skipping interactive targets), so a hard scroll past
-        //     the top dismisses without the user having to land on
-        //     the pill first
+        // Two ways to dismiss:
+        //   * Tap the grabber pill at the top and pull — framer
+        //     drag-follows the finger, releases past 120 px / 500
+        //     v/s closes (visceral, deliberate gesture)
+        //   * Scroll the content past the top — useSheetDismissAtTop
+        //     watches for a 100 px downward pull at scrollTop=0
+        //     (skipping interactive targets) and fires onClose
+        //     directly, no drag handoff needed
         // dragListener={false} keeps framer from auto-capturing
-        // every pointer event; everything goes through dragControls.
+        // every pointer event so the sheet body stays scrollable.
         drag="y"
         dragControls={dragControls}
         dragListener={false}

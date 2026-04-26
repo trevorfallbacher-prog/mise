@@ -124,15 +124,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     : "auto"
   );
   const [pickerOpen, setPickerOpen] = useState(null); // null | "category" | "canonical" | "tile" | "unit" | "expires" | "state"
-  // Drag-to-dismiss controls. Manual dragControls — the sheet
-  // body stays scrollable because dragListener=false; the top
-  // grabber pill starts a drag directly, AND useSheetDismissAtTop
-  // watches the rest of the sheet for a pull-down gesture
-  // starting at scrollTop=0 (skipping interactive targets) so a
-  // hard scroll past the top dismisses without landing on the pill.
+  // Two ways to dismiss: the top grabber pill (framer
+  // drag-follows-finger) and a 100 px downward pull at scrollTop=0
+  // (distance-only, fires onClose directly via
+  // useSheetDismissAtTop — no drag handoff, no release-to-confirm).
   const dragControls = useDragControls();
   const sheetRef = useRef(null);
-  const dismissHandlers = useSheetDismissAtTop(sheetRef, dragControls);
+  const dismissHandlers = useSheetDismissAtTop(sheetRef, () => onClose && onClose());
   // Typeahead — suggestions floated under the Name input as
   // the user types. Tapping a suggestion locks the canonical
   // axis AND swaps the typed text for the canonical's display
@@ -934,14 +932,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
-        // Drag-down-to-dismiss matches MCMItemCard. Two gesture
-        // entries — the top grabber pill (direct dragControls.start)
-        // and useSheetDismissAtTop (pull-down anywhere on the sheet
-        // when scrollTop=0). dragListener=false keeps framer from
-        // auto-capturing pointer events; both entries route through
-        // dragControls. Top constraint pinned at 0; bottom unbounded
-        // so the pull tracks the finger 1:1 and release past 120 px
-        // (or velocity > 500) calls onClose.
+        // Two dismiss paths matching MCMItemCard:
+        //   * Grabber pill at the top — framer drag-follows the
+        //     finger, releases past 120 px / 500 v/s closes
+        //   * Scroll past top — 100 px downward pull at
+        //     scrollTop=0 fires onClose directly via the hook
+        // dragListener=false keeps the sheet body scrollable.
         drag="y"
         dragControls={dragControls}
         dragListener={false}
