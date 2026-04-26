@@ -2141,6 +2141,29 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
+    // Carbonated soft drink — the cola/lemon-lime/root-beer family.
+    // Recipes that call for "cola" don't fight a Pepsi-only pantry
+    // because the canonical sits ABOVE brand: Pepsi, Coke, RC, store
+    // brands all reduce to `soda` here. Common shelf forms are 12 fl oz
+    // cans (often in 6-/12-/24-packs) and 2L / 20oz bottles, so the
+    // unit ladder leads with can / bottle and includes fl_oz / ml for
+    // recipe-side fractional usage. category="pantry" because no
+    // "beverage" category exists in the registry yet — the LOCATION
+    // / TILE axes route it correctly via tagHintsToAxes (categoryHints
+    // tagged "carbonated-drinks" → category=beverage, tile=drinks).
+    id: "soda", name: "Soda", emoji: "🥤", category: "pantry",
+    units: [
+      { id: "can",    label: "cans",    toBase: 355 }, // 12 fl oz can
+      { id: "bottle", label: "bottles", toBase: 591 }, // 20 fl oz bottle
+      { id: "fl_oz",  label: "fl oz",   toBase: 29.57 },
+      { id: "ml",     label: "ml",      toBase: 1 },
+      { id: "l",      label: "L",       toBase: 1000 },
+    ],
+    defaultUnit: "can",
+    preferredUnit: { us: "fl_oz", metric: "ml" },
+    nutrition: { per: "100g", kcal: 42, protein_g: 0, fat_g: 0, carb_g: 11, sodium_mg: 4 },
+  },
+  {
     id: "soy_sauce", name: "Soy Sauce", emoji: "🍶", category: "pantry",
     units: [
       { id: "bottle", label: "bottles", toBase: 296 }, // 10oz

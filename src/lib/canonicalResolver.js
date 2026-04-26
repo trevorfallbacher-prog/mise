@@ -35,6 +35,8 @@ import {
   INGREDIENTS,
   dbCanonicalsSnapshot,
 } from "../data/ingredients";
+import { detectBrand } from "../data/knownBrands";
+import { lookupOffTagAlias } from "../data/offTagAliases";
 import { normalizeUnitId, UNIT_AMOUNT_MULTIPLIERS } from "./units/aliases";
 
 // Module-scope cache for canonical-name tokens. Rebuilt lazily on
@@ -311,6 +313,59 @@ export function resolveCanonicalFromScan({
             confidence: "exact",
             reason: "learned",
             matchedOn: tag,
+            autoApply: true,
+          };
+        }
+      }
+    }
+  }
+
+  // Tier 1.5 — seeded OFF taxonomy aliases. Sister to the learned
+  // tag map but PROACTIVE: hand-curated mappings for common OFF
+  // slugs (en:colas → soda, en:greek-yogurts → greek_yogurt, …)
+  // resolve at exact confidence on day one without waiting for a
+  // user correction first. See src/data/offTagAliases.js.
+  // Walks categoryHints in order so the most-specific OFF tag wins
+  // (matches the same convention the fuzzy tier below uses).
+  if (typeof findIngredient === "function") {
+    for (const tag of (categoryHints || [])) {
+      const canonicalId = lookupOffTagAlias(tag);
+      if (canonicalId) {
+        const ing = findIngredient(canonicalId);
+        if (ing) {
+          return {
+            canonical: ing,
+            confidence: "exact",
+            reason: `seeded-tag:${tag}`,
+            matchedOn: tag,
+            autoApply: true,
+          };
+        }
+      }
+    }
+  }
+
+  // Tier 1.7 — known-brand canonical hint. When a brand we recognize
+  // sits in the brand field (or in productName because OFF returned
+  // brand=null), and that brand maps cleanly to a single canonical
+  // (Pepsi → soda, Chobani → greek_yogurt, Kerrygold → butter), we
+  // pair at exact confidence without needing OFF's taxonomy or fuzzy
+  // matching to come through. Multi-line brands (Kraft, Heinz)
+  // intentionally have no canonicalHint — they fall through to the
+  // fuzzy tiers but still get brand isolation in the Kitchen scan
+  // path. See src/data/knownBrands.js.
+  if (typeof findIngredient === "function") {
+    const brandHaystack = [brand, productName].filter(Boolean).join(" ");
+    if (brandHaystack) {
+      const hit = detectBrand(brandHaystack);
+      if (hit && hit.canonicalHint) {
+        const ing = findIngredient(hit.canonicalHint);
+        if (ing) {
+          return {
+            canonical: ing,
+            confidence: "exact",
+            reason: `brand:${hit.matchedToken}`,
+            matchedOn: hit.matchedToken,
             autoApply: true,
           };
         }

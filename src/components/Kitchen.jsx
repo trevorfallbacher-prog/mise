@@ -9,6 +9,7 @@ import {
   stateLabel, statesForIngredient, statesForItem, detectStateFromText,
   inferCanonicalFromName, fuzzyMatchIngredient, parseIdentity,
 } from "../data/ingredients";
+import { detectBrand } from "../data/knownBrands";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
@@ -1116,11 +1117,25 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
                 return;
               }
               // Brand: OFF brands field first, parseIdentity over
-              // productName as fallback (same pattern as AddItemModal).
+              // productName as fallback (same pattern as AddItemModal),
+              // then detectBrand against the curated KNOWN_BRANDS
+              // vocabulary as a tertiary fallback. parseIdentity is
+              // tuned for receipt OCR abbreviations (KG/CHOB/KFT) and
+              // doesn't carry full-word manufacturers like Pepsi or
+              // Coca-Cola — without this last layer, an OFF response
+              // with brand=null but productName="Pepsi Zero Sugar
+              // Cola" lands as no-brand on the row.
               let effectiveBrand = res.brand || null;
               if (!effectiveBrand && res.productName) {
                 const parsed = parseIdentity(res.productName);
                 if (parsed?.brand) effectiveBrand = parsed.brand;
+              }
+              if (!effectiveBrand) {
+                const brandHaystack = [res.brand, res.productName].filter(Boolean).join(" ");
+                if (brandHaystack) {
+                  const knownHit = detectBrand(brandHaystack);
+                  if (knownHit?.display) effectiveBrand = knownHit.display;
+                }
               }
               // Tier 0 — UPC correction memory (migration 0067).
               // If ANY correction exists for this UPC, we trust it
@@ -3388,6 +3403,13 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                     if (!effectiveBrand && res.productName) {
                       const parsed = parseIdentity(res.productName);
                       if (parsed?.brand) effectiveBrand = parsed.brand;
+                    }
+                    if (!effectiveBrand) {
+                      const brandHaystack = [res.brand, res.productName].filter(Boolean).join(" ");
+                      if (brandHaystack) {
+                        const knownHit = detectBrand(brandHaystack);
+                        if (knownHit?.display) effectiveBrand = knownHit.display;
+                      }
                     }
                     setCustomBrand(prev => prev || effectiveBrand || null);
                     setCustomName(prev => prev || res.productName || "");
