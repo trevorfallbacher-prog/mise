@@ -905,64 +905,77 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             {(() => {
               const t = typeId ? findFoodType(typeId) : null;
               const tone = theme.color.burnt;
-              if (!t) {
-                return (
-                  <button
-                    type="button"
-                    className="mcm-focusable"
-                    onClick={() => setPickerOpen("category")}
-                    aria-label="Pick a category"
-                    title="Pick a category"
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 40, height: 40,
-                      padding: 0,
-                      borderRadius: 999,
-                      border: `1px dashed ${withAlpha(tone, 0.55)}`,
-                      background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
-                      color: tone,
-                      cursor: "pointer",
-                      flexShrink: 0,
-                      transition: "background 200ms ease, border-color 200ms ease",
-                    }}
-                  >
-                    <span style={{
-                      fontSize: 22, lineHeight: 1, fontWeight: 300,
-                      color: tone,
-                    }}>+</span>
-                  </button>
-                );
-              }
+              // AnimatePresence with mode="wait" pops the chip when the
+              // cascade flips it from unset → set (or swaps category).
+              // The spring entry on the resolved pill makes the auto-
+              // resolve feel like the system did work for the user.
               return (
-                <button
-                  type="button"
-                  className="mcm-focusable"
-                  onClick={() => setPickerOpen("category")}
-                  aria-label={`Category: ${t.label}`}
-                  title={`Category · ${t.label}`}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    height: 40,
-                    padding: "0 14px",
-                    borderRadius: 999,
-                    border: `1px solid ${withAlpha(tone, 0.55)}`,
-                    background: `linear-gradient(${withAlpha(tone, 0.22)}, ${withAlpha(tone, 0.22)}), ${theme.color.glassFillHeavy}`,
-                    color: theme.color.ink,
-                    fontFamily: font.detail,
-                    fontStyle: "italic",
-                    fontWeight: 400,
-                    fontSize: 14,
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    whiteSpace: "nowrap",
-                    transition: "background 200ms ease, border-color 200ms ease",
-                  }}
-                >
-                  {t.label}
-                </button>
+                <AnimatePresence mode="wait" initial={false}>
+                  {!t ? (
+                    <motion.button
+                      key="unset-category"
+                      type="button"
+                      className="mcm-focusable"
+                      onClick={() => setPickerOpen("category")}
+                      aria-label="Pick a category"
+                      title="Pick a category"
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      transition={{ duration: 0.16, ease: "easeOut" }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 40, height: 40,
+                        padding: 0,
+                        borderRadius: 999,
+                        border: `1px dashed ${withAlpha(tone, 0.55)}`,
+                        background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
+                        color: tone,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span style={{
+                        fontSize: 22, lineHeight: 1, fontWeight: 300,
+                        color: tone,
+                      }}>+</span>
+                    </motion.button>
+                  ) : (
+                    <motion.button
+                      key={`category-${t.id}`}
+                      type="button"
+                      className="mcm-focusable"
+                      onClick={() => setPickerOpen("category")}
+                      aria-label={`Category: ${t.label}`}
+                      title={`Category · ${t.label}`}
+                      initial={{ opacity: 0, scale: 0.6 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      transition={{ type: "spring", stiffness: 460, damping: 24 }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        height: 40,
+                        padding: "0 14px",
+                        borderRadius: 999,
+                        border: `1px solid ${withAlpha(tone, 0.55)}`,
+                        background: `linear-gradient(${withAlpha(tone, 0.22)}, ${withAlpha(tone, 0.22)}), ${theme.color.glassFillHeavy}`,
+                        color: theme.color.ink,
+                        fontFamily: font.detail,
+                        fontStyle: "italic",
+                        fontWeight: 400,
+                        fontSize: 14,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {t.label}
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               );
             })()}
             {(() => {
@@ -971,71 +984,80 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               const tone = axis.storedIn;
               const svg = tile ? tileIconFor(tile.id, location) : null;
               const resolved = !!tile && tile.id !== "misc" && !!svg;
-              // When an SVG is found the file already has its own
-              // circle / border baked in — render it bare at 100%
-              // so we don't double-frame it. Otherwise show the
-              // dashed teal-blue + add-circle as the unresolved
-              // affordance.
-              if (resolved) {
-                return (
-                  <button
-                    type="button"
-                    className="mcm-focusable"
-                    onClick={() => setPickerOpen("tile")}
-                    aria-label={`Stored in: ${tile.label}`}
-                    title={`Stored in · ${tile.label}`}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 40, height: 40,
-                      padding: 0,
-                      border: "none",
-                      background: "transparent",
-                      cursor: "pointer",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <img
-                      src={svg}
-                      alt=""
-                      aria-hidden
-                      style={{
-                        width: "100%", height: "100%", objectFit: "contain",
-                        display: "block",
-                        filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.22))",
-                      }}
-                    />
-                  </button>
-                );
-              }
+              // Same pop-on-resolve treatment as the category chip.
+              // Keying by tile.id swaps the SVG with a fresh spring
+              // animation when the cascade lands a new shelf, so the
+              // user sees the icon "land" instead of cross-fading.
               return (
-                <button
-                  type="button"
-                  className="mcm-focusable"
-                  onClick={() => setPickerOpen("tile")}
-                  aria-label="Pick a shelf"
-                  title="Pick a shelf"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    width: 40, height: 40,
-                    padding: 0,
-                    borderRadius: 999,
-                    border: `1px dashed ${withAlpha(tone, 0.55)}`,
-                    background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
-                    color: tone,
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    transition: "background 200ms ease, border-color 200ms ease",
-                  }}
-                >
-                  <span style={{
-                    fontSize: 22, lineHeight: 1, fontWeight: 300,
-                    color: tone,
-                  }}>+</span>
-                </button>
+                <AnimatePresence mode="wait" initial={false}>
+                  {resolved ? (
+                    <motion.button
+                      key={`tile-${tile.id}`}
+                      type="button"
+                      className="mcm-focusable"
+                      onClick={() => setPickerOpen("tile")}
+                      aria-label={`Stored in: ${tile.label}`}
+                      title={`Stored in · ${tile.label}`}
+                      initial={{ opacity: 0, scale: 0.6 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      transition={{ type: "spring", stiffness: 460, damping: 24 }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 40, height: 40,
+                        padding: 0,
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <img
+                        src={svg}
+                        alt=""
+                        aria-hidden
+                        style={{
+                          width: "100%", height: "100%", objectFit: "contain",
+                          display: "block",
+                          filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.22))",
+                        }}
+                      />
+                    </motion.button>
+                  ) : (
+                    <motion.button
+                      key="unset-tile"
+                      type="button"
+                      className="mcm-focusable"
+                      onClick={() => setPickerOpen("tile")}
+                      aria-label="Pick a shelf"
+                      title="Pick a shelf"
+                      initial={{ opacity: 0, scale: 0.85 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.85 }}
+                      transition={{ duration: 0.16, ease: "easeOut" }}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 40, height: 40,
+                        padding: 0,
+                        borderRadius: 999,
+                        border: `1px dashed ${withAlpha(tone, 0.55)}`,
+                        background: `linear-gradient(${withAlpha(tone, 0.08)}, ${withAlpha(tone, 0.08)}), ${theme.color.glassFillHeavy}`,
+                        color: tone,
+                        cursor: "pointer",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span style={{
+                        fontSize: 22, lineHeight: 1, fontWeight: 300,
+                        color: tone,
+                      }}>+</span>
+                    </motion.button>
+                  )}
+                </AnimatePresence>
               );
             })()}
           </motion.div>
