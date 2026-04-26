@@ -9,7 +9,7 @@ import { LOCATIONS } from "./helpers";
 // Item grid — the animated 2-to-N column grid used for BOTH the
 // drilled-tile view and the search-hits view. Factored out so the
 // card-layout code isn't duplicated across the two render branches.
-export function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, onUpdateItem, openSwipeId, setOpenSwipeId, showTileContext = false, brandSuggestions = [] }) {
+export function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onUpdateItem, showTileContext = false, brandSuggestions = [] }) {
   // In search mode (showTileContext=true) each card renders a
   // small tile-context chip ("FROM DAIRY & EGGS") so users who
   // searched cross-location know where each hit lives. Resolve
@@ -53,13 +53,7 @@ export function ItemGrid({ items, onOpenItem, onOpenUnitPicker, onRemoveItem, on
                 if (onOpenItem && it._raw) onOpenItem(it._raw);
                 else if (onOpenUnitPicker) onOpenUnitPicker();
               }}
-              onRemove={onRemoveItem && it._raw ? () => onRemoveItem(it._raw) : null}
               onUpdate={onUpdateItem && it._raw ? (patch) => onUpdateItem(it._raw, patch) : null}
-              isSwipeOpen={openSwipeId === it.id}
-              onSwipeOpen={() => setOpenSwipeId && setOpenSwipeId(it.id)}
-              onSwipeClose={() => {
-                if (setOpenSwipeId && openSwipeId === it.id) setOpenSwipeId(null);
-              }}
             />
           </motion.div>
         ))}

@@ -133,7 +133,6 @@ export default function KitchenScreen({
   // open at a time. When user swipes another card, the previous
   // one auto-closes via the prop cascade in KitchenCard. null
   // means none open.
-  const [openSwipeId, setOpenSwipeId] = useState(null);
   // Tracks whether the search input has keyboard focus so the
   // surrounding GlassPanel can show a focus ring. The panel's
   // own border transitions to a warm teal accent when focused —
@@ -516,22 +515,7 @@ export default function KitchenScreen({
         // dead gap when the dock is hidden (search mode).
         padding: "28px 20px 180px",
       }}
-      // Tap-anywhere-closes-swipe — when any item card has its
-      // swipe drawer open, the next click anywhere in the
-      // content wrapper closes it. onClickCapture (NOT onClick)
-      // fires during the capture phase, BEFORE any descendant
-      // card's own onClick. We stopPropagation so a tap on a
-      // different (closed) card doesn't open its editor — just
-      // closes the open swipe. Matches iOS Mail's "any tap
-      // closes an open row" behavior. The close-button inside
-      // the Remove drawer stops propagation itself so its tap
-      // still fires the actual delete.
-      onClickCapture={(e) => {
-        if (openSwipeId) {
-          setOpenSwipeId(null);
-          e.stopPropagation();
-        }
-      }}>
+      >
         {/* Top-right toolbar cluster — Receipt + Cart only.
             The Add (+) action lives inline with the search bar
             below; keeping Receipt + Cart pinned up here
@@ -904,8 +888,8 @@ export default function KitchenScreen({
               // population feels continuous rather than strobing
               // between ghost and real.
               if (loading && cards.length === 0) return <TileGridSkeleton />;
-              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} brandSuggestions={brandSuggestions} showTileContext />;
-              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onRemoveItem={onRemoveItem} onUpdateItem={onUpdateItem} openSwipeId={openSwipeId} setOpenSwipeId={setOpenSwipeId} brandSuggestions={brandSuggestions} />;
+              if (query)       return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onUpdateItem={onUpdateItem} brandSuggestions={brandSuggestions} showTileContext />;
+              if (drilledTile) return <ItemGrid items={visible} onOpenItem={onOpenItem} onOpenUnitPicker={onOpenUnitPicker} onUpdateItem={onUpdateItem} brandSuggestions={brandSuggestions} />;
               // Whole-location empty state — when the active
               // location has zero items, skip the wall of dimmed
               // tiles and show a warm dedicated message instead.

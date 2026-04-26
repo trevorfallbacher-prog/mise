@@ -1,11 +1,15 @@
 // KitchenCard — the single-item card rendered in ItemGrid for both
-// drilled-tile views and search results. Owns its own swipe-to-
-// reveal Remove drawer and the inline fill-gauge slider; both
-// behaviors degrade to read-only when their callbacks aren't
-// wired (Showcase mode).
+// drilled-tile views and search results. Tap opens the editor
+// (MCMItemCard); the inline fill-gauge slider degrades to read-only
+// when onUpdate isn't wired (Showcase mode).
+//
+// Horizontal swipe-to-reveal-Remove was removed in the migration to
+// MCMItemCard: the framer drag was unreliable on iOS (directional
+// lock + 12 px grid gap dead zone) and "tap to open, delete inside
+// the editor" is the cleaner flow.
 
-import { useEffect, useState } from "react";
-import { motion, useMotionValue, useAnimation, useTransform } from "framer-motion";
+import { useState } from "react";
+import { motion } from "framer-motion";
 import {
   GlassPanel, StatusDot, TintedPill, statusTintOverlay, withAlpha,
 } from "./primitives";
@@ -15,34 +19,18 @@ import { findIngredient } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
 import {
-  SWIPE_ACTION_WIDTH, shelfLifeFor, isRecent, formatDaysChip, daysChipColor,
+  shelfLifeFor, isRecent, formatDaysChip, daysChipColor,
 } from "./helpers";
 import { BrandPickerSheet } from "./BrandPickerSheet";
-
-// Past this leftward offset (in px) on dragEnd, the card snaps
-// fully open. Anything less snaps closed. Velocity also opens
-// when fast-flicked even if displacement hasn't crossed the
-// threshold yet (matches iOS Mail / Things behavior).
-const SWIPE_OPEN_THRESHOLD = 36;
 
 export function KitchenCard({
   item,
   onPick,
   tileLabel = null,
-  onRemove = null,
   // Inline update — called with a partial patch when the user
   // adjusts the row in place. Currently wired to the tappable
   // fill gauge; when null the gauge is read-only.
   onUpdate = null,
-  // External swipe coordination — when null these props no-op,
-  // and the card manages its own swipe state in isolation.
-  // When wired, the card REPORTS open/close via the callbacks
-  // and SUBSCRIBES to isSwipeOpen so it auto-closes when
-  // another card in the grid opens (one-card-open-at-a-time
-  // iOS pattern).
-  isSwipeOpen = false,
-  onSwipeOpen = null,
-  onSwipeClose = null,
   // Distinct brands across the user's pantry — used as the
   // suggestion list when the "+ ADD BRAND" affordance opens
   // the BrandPickerSheet. Empty array is fine (the sheet falls
@@ -76,18 +64,6 @@ export function KitchenCard({
   const canonicalId = item?._raw?.canonicalId || null;
   const iconUrl = canonicalImageUrlFor(canonicalId, null);
 
-  // Swipe-to-reveal state. `swipeX` is the horizontal offset
-  // motion value the inner card animates against. `swipeOpen`
-  // is the latched two-state — closed (x:0) or open (x:-WIDTH).
-  // Drag handlers set the latch on release based on offset +
-  // velocity; an effect animates `swipeX` to match. Tapping
-  // the open card closes it instead of firing onPick (so a
-  // user who swipes accidentally and taps doesn't open the
-  // editor unintentionally).
-  const swipeX = useMotionValue(0);
-  const swipeControls = useAnimation();
-  const [swipeOpen, setSwipeOpen] = useState(false);
-  const swipeEnabled = typeof onRemove === "function";
   // Inline fill-gauge editing — toggled by tapping the gauge
   // bar. Reveals a small slider underneath that drags the row's
   // amount between 0 and max. Live updates fire through onUpdate
@@ -99,65 +75,12 @@ export function KitchenCard({
   // open, picker calls onClose to dismiss.
   const [brandEditing, setBrandEditing] = useState(false);
   const updateEnabled = typeof onUpdate === "function";
-  // Action-button opacity tied to swipe progress. swipeX 0 →
-  // action opacity 0 (button invisible behind a closed card so
-  // it doesn't bleed through GlassPanel's translucent fill);
-  // swipeX -96 → opacity 1 (fully revealed). useTransform
-  // clamps to [0,1] across the range automatically.
-  const actionOpacity = useTransform(swipeX, [-SWIPE_ACTION_WIDTH, 0], [1, 0]);
-
-  const animateSwipe = (toOpen, { notify = true } = {}) => {
-    setSwipeOpen(toOpen);
-    swipeControls.start({
-      x: toOpen ? -SWIPE_ACTION_WIDTH : 0,
-      transition: { type: "spring", stiffness: 420, damping: 38 },
-    });
-    // Notify parent so it can close other open cards on this
-    // card's open, or clear the state on this card's close.
-    // notify:false skips the callback when WE'RE the one being
-    // told to close by the parent (avoids a feedback loop).
-    if (notify) {
-      if (toOpen && onSwipeOpen) onSwipeOpen();
-      if (!toOpen && onSwipeClose) onSwipeClose();
-    }
-  };
-
-  // External-close listener — when another card opens (parent
-  // sets a different openSwipeId), this prop flips to false
-  // and we animate ourselves closed without re-notifying the
-  // parent (already cleared from THEIR perspective).
-  // Inverse: parent reset after we closed ourselves — no-op.
-  // We don't auto-OPEN from the prop change because swipe
-  // open is always user-initiated (drag), never broadcast.
-  useEffect(() => {
-    if (!isSwipeOpen && swipeOpen) {
-      animateSwipe(false, { notify: false });
-    }
-  }, [isSwipeOpen]);
-
-  const handleDragEnd = (_event, info) => {
-    const offsetPastThreshold = info.offset.x < -SWIPE_OPEN_THRESHOLD;
-    const fastLeftFlick = info.velocity.x < -350;
-    const fastRightFlick = info.velocity.x >  350;
-    if (fastRightFlick) animateSwipe(false);
-    else if (offsetPastThreshold || fastLeftFlick) animateSwipe(true);
-    else animateSwipe(false);
-  };
 
   const handleClick = (e) => {
-    // Tapping while open closes the swipe; tapping while
-    // closed opens the editor. Both cases stopPropagation so
-    // the parent ItemGrid motion.div doesn't double-handle.
-    if (swipeOpen) {
-      e.stopPropagation();
-      animateSwipe(false);
-      return;
-    }
-    // Same one-shot dismiss pattern for the fill-gauge slider:
-    // if it's open, a tap on the surrounding card closes it
-    // rather than launching the full editor. Prevents the
-    // jarring "I tapped near the slider and the whole card
-    // opened" experience.
+    // Tapping the card opens the editor — UNLESS the inline
+    // fill-gauge slider is expanded, in which case the surrounding
+    // tap closes it first. Prevents the jarring "I tapped near
+    // the slider and the whole card opened" experience.
     if (fillEditing) {
       e.stopPropagation();
       setFillEditing(false);
@@ -166,87 +89,8 @@ export function KitchenCard({
     if (onPick) onPick();
   };
 
-  const handleRemove = (e) => {
-    e.stopPropagation();
-    animateSwipe(false);
-    if (onRemove) onRemove();
-  };
-
   return (
-    <div style={{
-      // Swipe shell — clips the inner card so the Remove
-      // action button doesn't show until the user drags.
-      // Rounded to match the card's borderRadius so the clip
-      // edge follows the same curve.
-      position: "relative",
-      borderRadius: 22,
-      overflow: "hidden",
-    }}>
-      {/* Remove action — fixed behind the card on the right.
-          Visually inert until the user swipes the card open,
-          at which point it slides into view. Burnt-tinted to
-          match CLAUDE.md's "destructive" register; the icon
-          glyph is a trash bin emoji as a fallback (custom SVG
-          could replace later). Hidden when swipe isn't wired
-          (Showcase, no onRemove). */}
-      {swipeEnabled && (
-        <motion.button
-          onClick={handleRemove}
-          aria-label={`Remove ${item.name} from kitchen`}
-          className="mcm-focusable"
-          style={{
-            position: "absolute",
-            top: 0, right: 0, bottom: 0,
-            width: SWIPE_ACTION_WIDTH,
-            display: "inline-flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 4,
-            border: "none",
-            background: theme.color.burnt,
-            color: theme.color.ctaText,
-            cursor: "pointer",
-            padding: 0,
-            // Opacity scales with swipe progress (motion value
-            // bound above) — invisible at rest, fully opaque
-            // at full open. Avoids bleeding through the
-            // translucent GlassPanel before the user swipes.
-            opacity: actionOpacity,
-          }}
-        >
-          <img
-            src="/icons/trash.svg"
-            alt=""
-            aria-hidden
-            style={{
-              // Fill the action drawer's full vertical extent
-              // with minimal padding — icon carries the affordance
-              // without a redundant text label.
-              height: "calc(100% - 8px)",
-              width: "auto",
-              maxWidth: "100%",
-              objectFit: "contain",
-              filter: "drop-shadow(0 1px 2px rgba(30,20,8,0.30))",
-            }}
-          />
-        </motion.button>
-      )}
-    <motion.div
-      // Drag-to-reveal swipe. drag="x" with constraints
-      // clamped between 0 (closed) and -ACTION_WIDTH (open).
-      // dragElastic 0.05 lets the user feel a subtle pull
-      // past the limit without overshooting. animate is
-      // controlled by swipeControls so dragEnd can snap to
-      // either bistable position.
-      drag={swipeEnabled ? "x" : false}
-      dragConstraints={{ left: -SWIPE_ACTION_WIDTH, right: 0 }}
-      dragElastic={0.05}
-      dragMomentum={false}
-      onDragEnd={swipeEnabled ? handleDragEnd : undefined}
-      animate={swipeControls}
-      style={{ x: swipeX }}
-    >
+    <>
     <motion.div
       // Spoilage aura — fixed-size green halo that lingers
       // around the card's edge when the item is warn. Shadow
@@ -291,17 +135,6 @@ export function KitchenCard({
         // column gap below also tightened from 4 → 2 so the
         // three lines (name / subhead / meta) feel like a
         // single label block rather than spaced-out tiers.
-        //
-        // Right corners squared off when swipe is wired so the
-        // card's exposed right edge butts flat against the
-        // Remove action behind it instead of curving inward
-        // and leaving a wedge gap. At rest the wrapper's clip
-        // (top-right/bottom-right rounded) hides the squared
-        // edge, so the resting card still looks rounded.
-        ...(swipeEnabled ? {
-          borderTopRightRadius: 0,
-          borderBottomRightRadius: 0,
-        } : null),
         position: "relative",
         display: "flex", flexDirection: "row", alignItems: "stretch",
         gap: 12, minHeight: 76,
@@ -656,7 +489,6 @@ export function KitchenCard({
       </div>
     </GlassPanel>
     </motion.div>
-    </motion.div>
     {brandEditing && (
       <BrandPickerSheet
         suggestions={brandSuggestions}
@@ -667,6 +499,6 @@ export function KitchenCard({
         onClose={() => setBrandEditing(false)}
       />
     )}
-    </div>
+    </>
   );
 }
