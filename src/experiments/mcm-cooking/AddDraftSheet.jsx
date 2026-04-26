@@ -32,6 +32,7 @@ import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
+import { rememberCanonicalTypeCorrection } from "../../lib/canonicalCorrections";
 import { useBrandNutrition } from "../../lib/useBrandNutrition";
 import MemoryBookCapture from "./MemoryBookCapture";
 import { AddDraftProgressStrip } from "./AddDraftProgressStrip";
@@ -221,6 +222,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   const {
     dbMap,
     getInfo: getDbInfo,
+    getPendingInfo,
     loading: ingredientInfoLoading,
     refreshPending,
   } = useIngredientInfo();
@@ -317,25 +319,32 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   }, [name, allCanonicals]);
 
   // Category cascade — runs only when the user hasn't manually
-  // overridden. When a canonical is pinned, prefer the direct
-  // canonicalId → typeId map (typeIdForCanonical) so canonicals
-  // with explicit FOOD_TYPES bridges (mayo → wweia_mayo, pizza →
-  // wweia_pizza, etc.) auto-pin even when the canonical's name
-  // doesn't textually contain a food-type alias. Falls back to
-  // name inference for the no-canonical / typed-only case.
+  // overridden. Tiered, first hit wins:
+  //   1. ingredient_info.info.type_id  — admin-curated global
+  //      (rememberCanonicalTypeCorrection writes here when admin)
+  //   2. pending_ingredient_info.info.type_id — family / own
+  //      pending teaching, awaiting admin promotion
+  //   3. typeIdForCanonical(ing)       — bundled canonical metadata,
+  //      two-pass: id-bridge then name-alias
+  //   4. inferFoodTypeFromName(name)   — text-only fallback
+  //
+  // Tiers 1-2 are the self-teaching layer: when ANY user (or admin)
+  // has previously corrected the category for this canonical, the
+  // taught typeId wins over the bundled inference. Without this, a
+  // canonical whose bundled metadata bridges to the wrong FOOD_TYPES
+  // entry would re-mistake itself on every future scan.
   useEffect(() => {
     if (typeOverridden) return;
+    const taught =
+      (canonicalId && getDbInfo(canonicalId)?.type_id)
+      || (canonicalId && getPendingInfo(canonicalId)?.type_id)
+      || null;
+    if (taught) { setTypeId(taught); return; }
     const ing = canonicalId ? findIngredient(canonicalId) : null;
-    // typeIdForCanonical does the two-pass: exact id-bridge
-    // lookup first, then name-alias fallback. Without this,
-    // canonicals whose display name doesn't alias-match any
-    // FOOD_TYPES entry (the majority of bundled canonicals)
-    // never resolved their category — the chip stayed unset
-    // even though the canonical was pinned.
     const fromCanonical = ing ? typeIdForCanonical(ing) : null;
     const inferredId = fromCanonical || inferFoodTypeFromName(name);
     setTypeId(inferredId || null);
-  }, [name, canonicalId, typeOverridden]);
+  }, [name, canonicalId, typeOverridden, getDbInfo, getPendingInfo]);
 
   // Same pattern for the canonical chip — typing "cheddar"
   // resolves to the cheese / cheddar canonical so the chip
@@ -412,6 +421,32 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     const id = loc.classify(draft, { findIngredient, hubForIngredient });
     setTileId(id || null);
   }, [name, canonicalId, typeId, location, tileOverridden]);
+
+  // Canonical-level correction write — when the user picks a
+  // category for a canonical (typeOverridden = true), teach
+  // ingredient_info / pending_ingredient_info so EVERY future item
+  // bound to that canonical resolves the same typeId, not just
+  // future scans of the same UPC. Closes the gap where UPC-keyed
+  // corrections only help the exact product the user scanned, not
+  // its sibling brands sharing the same canonical.
+  //
+  // Debounced 600ms to collapse rapid picker swaps into one write.
+  // Fires only when the user explicitly overrode (we don't teach
+  // auto-resolves — those are derived, not user knowledge).
+  useEffect(() => {
+    if (!typeOverridden || !canonicalId || !typeId) return;
+    const t = setTimeout(() => {
+      rememberCanonicalTypeCorrection({
+        userId,
+        isAdmin: !!isAdmin,
+        canonicalId,
+        typeId,
+      }).catch(err =>
+        console.warn("[mcm-add] canonical type correction-write failed:", err?.message || err),
+      );
+    }, 600);
+    return () => clearTimeout(t);
+  }, [canonicalId, typeId, typeOverridden, userId, isAdmin]);
 
   // Cascading correction-write — whenever the resolver cascade
   // settles a downstream axis (typeId, tileId, location) on a
