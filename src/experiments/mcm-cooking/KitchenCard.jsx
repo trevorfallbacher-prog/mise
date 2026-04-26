@@ -332,13 +332,15 @@ export function KitchenCard({
         )}
       </div>
 
-      {/* Icon column — bumped 36 → 60px, aligned to the vertical
-          center of the card so it visually anchors the layout. */}
-      <div style={{
-        display: "flex", alignItems: "center",
-        flexShrink: 0,
-      }}>
-        {iconUrl ? (
+      {/* Icon column — only renders when the canonical has a
+          bundled SVG. Emoji fallback is hidden until the icon set
+          catches up; rows without artwork carry on text-only and
+          read fine at the row's tight density. */}
+      {iconUrl && (
+        <div style={{
+          display: "flex", alignItems: "center",
+          flexShrink: 0,
+        }}>
           <img
             src={iconUrl}
             alt=""
@@ -347,17 +349,8 @@ export function KitchenCard({
               filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
             }}
           />
-        ) : (
-          <div style={{
-            // 56px emoji ≈ 60px SVG visual weight (Apple/Noto
-            // glyphs render at ~95% of font-size).
-            fontSize: 56, lineHeight: 1,
-            filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
-          }}>
-            {item.emoji}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Text column — name + qty/brand + meta row. minWidth: 0
           so the inner flex children honor ellipsis truncation
