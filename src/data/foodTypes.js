@@ -504,21 +504,6 @@ export function findFoodType(id) {
 }
 
 /**
- * Infer the most-likely bundled FOOD_TYPE from a user-typed name.
- * Longest-matching alias wins; ties break on FOOD_TYPES order so
- * more specific types earlier in the list get preference over
- * broader ones. Returns the type's id or null.
- *
- * Example:
- *   "Home Run Inn Pizza" -> "wweia_pizza" (alias "pizza")
- *   "Hellman's Mayo"     -> "wweia_mayo" (alias "mayo" beats shorter)
- *   "Cavatappi Pasta"    -> "wweia_pasta" (alias "pasta" OR "cavatappi")
- *   "some random text"   -> null
- *
- * Minimum alias length = 3 chars so "oil" triggers wweia_oils but
- * trivial matches like "a" don't fire.
- */
-/**
  * Return the canonical ingredient id a bundled WWEIA type maps to,
  * or null when the type has no clean identity mapping (broad buckets
  * like "Vegetables" or "Beef"). Identity, not composition — this
@@ -568,16 +553,35 @@ export function typeIdForCanonical(canonical) {
 export function inferFoodTypeFromName(name) {
   const lower = (name || "").toLowerCase().trim();
   if (lower.length < 3) return null;
+  // Head-noun preference: in English noun phrases the LAST word is
+  // what the thing IS; preceding words modify it. "Chicken stock" is
+  // a stock that happens to be made of chicken, not a chicken that
+  // happens to be a stock. Score primarily by endPos (rightmost
+  // alias wins), then alias length (more specific wins on ties),
+  // then FOOD_TYPES order (stable final tiebreak).
+  //
+  // Without this rule, longest-match alone routed "chicken stock" to
+  // wweia_poultry because "chicken" (7 chars) outranked "stock" (5).
+  // Same trap fired for chicken broth, beef broth (lucky), pork
+  // bouillon (lucky), chicken nuggets, beef jerky, and any other
+  // modifier-noun product whose modifier happens to be a longer
+  // string than its head noun.
   let best = null;
+  let bestEnd = -1;
   let bestLen = 0;
   let bestIdx = Infinity;
   FOOD_TYPES.forEach((t, idx) => {
     for (const alias of t.aliases || []) {
       if (alias.length < 3) continue;
-      if (!lower.includes(alias)) continue;
-      if (alias.length > bestLen ||
-          (alias.length === bestLen && idx < bestIdx)) {
+      // lastIndexOf so multi-occurrence picks the rightmost hit.
+      const pos = lower.lastIndexOf(alias);
+      if (pos < 0) continue;
+      const end = pos + alias.length;
+      if (end > bestEnd
+          || (end === bestEnd && alias.length > bestLen)
+          || (end === bestEnd && alias.length === bestLen && idx < bestIdx)) {
         best = t.id;
+        bestEnd = end;
         bestLen = alias.length;
         bestIdx = idx;
       }
