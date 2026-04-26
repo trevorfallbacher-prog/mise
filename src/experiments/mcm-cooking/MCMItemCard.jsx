@@ -18,7 +18,7 @@
 // is Delete + Done.
 
 import { useEffect, useMemo, useState } from "react";
-import { motion } from "framer-motion";
+import { motion, useDragControls } from "framer-motion";
 import { Kicker, withAlpha } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
 import {
@@ -113,6 +113,14 @@ export function MCMItemCard({
   const [pickerOpen, setPickerOpen] = useState(null);
   const [brandEditing, setBrandEditing] = useState(false);
 
+  // Drag-to-dismiss controls. Manual dragControls (vs. the default
+  // listener-on-the-whole-element) so the sheet body stays
+  // scrollable; only the top drag handle starts a drag. Pulling
+  // the handle past DRAG_DISMISS_PX or releasing it with enough
+  // downward velocity calls onClose; otherwise framer springs it
+  // back to y=0 on release.
+  const dragControls = useDragControls();
+
   // Confirm-delete inline gate so a stray tap on the destructive
   // action doesn't blow away the row. First tap arms; second tap
   // commits. Auto-disarms after 4s.
@@ -201,6 +209,28 @@ export function MCMItemCard({
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 32, opacity: 0 }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
+        // Drag-down-to-dismiss. The handle (top pill) starts a drag
+        // via dragControls; the rest of the sheet stays scrollable
+        // because dragListener={false} disables the auto-pointer
+        // capture that would otherwise eat content scrolls. Top
+        // constraint pinned to 0 so the user can't drag the sheet
+        // upward off-screen; bottom unbounded so the pull tracks the
+        // finger 1:1. Release past DRAG_DISMISS_PX or with downward
+        // velocity > DRAG_DISMISS_VEL closes via onClose; otherwise
+        // framer springs back to rest.
+        drag="y"
+        dragControls={dragControls}
+        dragListener={false}
+        dragConstraints={{ top: 0 }}
+        dragElastic={{ top: 0, bottom: 0 }}
+        dragMomentum={false}
+        onDragEnd={(_event, info) => {
+          const DRAG_DISMISS_PX  = 120;
+          const DRAG_DISMISS_VEL = 500;
+          if (info.offset.y > DRAG_DISMISS_PX || info.velocity.y > DRAG_DISMISS_VEL) {
+            onClose && onClose();
+          }
+        }}
         style={{
           position: "fixed",
           left: 0,
@@ -223,6 +253,34 @@ export function MCMItemCard({
           ...THEME_TRANSITION,
         }}
       >
+        {/* Drag handle — small grabber pill at the top of the sheet,
+            iOS modal pattern. The wrapping div is a 24 px touch zone
+            so the handle is forgiving to thumb misses. touch-action
+            none prevents iOS from claiming the pointer for scroll
+            before framer's drag controller starts. */}
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          aria-hidden
+          style={{
+            width: "100%",
+            height: 22,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "grab",
+            touchAction: "none",
+            marginTop: -10,
+            marginBottom: space.tight,
+          }}
+        >
+          <span style={{
+            width: 40,
+            height: 4,
+            borderRadius: 2,
+            background: theme.color.inkFaint,
+            opacity: 0.35,
+          }} />
+        </div>
         {/* Header — icon + name + right-rail axis pills. Editorial
             italic for the title so it reads as the same hand as the
             rest of the MCM surface. */}
