@@ -21,6 +21,7 @@ import MCMCookingShowcase from "./experiments/mcm-cooking/Showcase";
 import MCMKitchenScreen, { MCMAddDraftSheet } from "./experiments/mcm-cooking/KitchenScreen";
 import { ThemeProvider as MCMThemeProvider } from "./experiments/mcm-cooking/theme";
 import ItemCard from "./components/ItemCard";
+import { MCMItemCard } from "./experiments/mcm-cooking/MCMItemCard";
 import { useActiveCookSession } from "./lib/useActiveCookSession";
 import { useUserRecipes } from "./lib/useUserRecipes";
 import { useWhatsNew } from "./lib/useWhatsNew";
@@ -703,18 +704,18 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
         </AnimatePresence>
       </div>
 
-      {/* MCM Pantry edit overlay — shared ItemCard rendered above
-          the MCM grid when the user taps a card. Looks up the fresh
-          pantry row by id so realtime edits from the family flow
-          through without a close+reopen. Uses the same updatePantry-
-          style wrapper Kitchen uses internally so corrections go
-          through the standard pantry_items update path. Minimal
-          callbacks for now: onUpdate applies a shallow merge via
-          setPantry; onDelete removes the row outright. Tag-editing
-          and provenance drill-through are left for follow-up PRs
-          (they depend on Kitchen-level infra — LinkIngredient,
-          ReceiptView, etc.). Passing undefined for those callbacks
-          lets ItemCard hide the corresponding affordances. */}
+      {/* MCM Pantry edit overlay — MCMItemCard, the v1 MCM-styled
+          item editor. Drop-in replacement for the legacy ItemCard:
+          same prop shape (item / pantry / userId / isAdmin /
+          familyIds / onUpdate / onDelete / onClose), narrower
+          feature surface (rename, brand, identity-axis chips,
+          quantity gauge, expires, location, delete). Nutrition
+          deep-dive, ingredient composition, AI enrichment, and
+          cook-log provenance still live in the legacy ItemCard
+          (src/components/ItemCard.jsx) and will get their MCM
+          counterparts in follow-up PRs.
+          Looks up the fresh pantry row by id so realtime edits
+          from the family flow through without a close+reopen. */}
       {mcmOpenItem && (() => {
         const fresh = pantry.find(p => p.id === mcmOpenItem.id);
         if (!fresh) {
@@ -726,7 +727,7 @@ function AuthedApp({ user, profile, upsertProfile, patchProfile, avatars }) {
           return null;
         }
         return (
-          <ItemCard
+          <MCMItemCard
             key={fresh.id}
             item={fresh}
             pantry={pantry}
