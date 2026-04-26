@@ -1,27 +1,37 @@
 import { useRef } from "react";
 
-// "Pull past the top to dismiss" — the iOS sheet pattern, distance-
-// thresholded.
+// "Pull past the top to dismiss" — iOS sheet pattern, distance-
+// thresholded, with seamless scroll → pull handoff inside a
+// single touch.
 //
-// While the sheet's scroll content is at the top (scrollTop <= 0)
-// and the user pulls their finger downward, we measure the
-// displacement. Once it crosses DISMISS_THRESHOLD_PX, fire
-// onDismiss. iOS Safari's native rubber-band gives the visual
-// feedback during the pull (the content visibly stretches when
-// you over-scroll past the top); we just watch for the threshold
-// and call back.
+// On a large card the user typically isn't at scrollTop=0 when
+// they start a touch — they scroll up first, hit the top, then
+// keep pulling. Native iOS sheets dismiss without the user
+// releasing and re-touching; this hook does the same:
 //
-// Why distance-only and not a framer-drag handoff: a drag handoff
-// makes the sheet visibly follow the finger AND requires the user
-// to release for the dismiss to fire. That feels right when the
-// user grabs the pill deliberately, but it's overkill for the
-// "scroll past the top" gesture — the user's intent is clear once
-// they've over-pulled enough, and waiting for release adds latency.
+//   1. Pointerdown arms a touch context. We don't decide yet
+//      whether this is a dismiss gesture; we just track the
+//      pointer id.
+//   2. As the user moves their finger, we read scrollTop on
+//      every sample. The MOMENT it lands at <= 0 we record the
+//      finger's current Y as the "overscroll start" (the point
+//      from which a downward pull counts toward the dismiss
+//      threshold).
+//   3. While scrollTop is at the top, every subsequent
+//      downward movement past DISMISS_THRESHOLD_PX from that
+//      anchor fires onDismiss. If the user scrolls back into
+//      content (scrollTop > 0), the anchor clears so any new
+//      arrival at the top starts a fresh measurement.
 //
-// Skipped intentionally: touches that originate on inputs, buttons,
-// chips, sliders, listbox / option roles, or contenteditable. Those
-// get their own gesture semantics; we don't want a slider drag or
-// input tap to start dismissing.
+// The grabber pill stays separate (uses framer's dragControls
+// directly for its visceral drag-follows-finger feedback). This
+// hook is for the "scroll past the top to flick the sheet away"
+// gesture, which is intent-clear once the distance lands.
+//
+// Skipped: touches that originate on interactive elements
+// (inputs, buttons, chips, sliders, listboxes / options /
+// contenteditable). Those keep their own gesture semantics so a
+// slider drag or input tap can never dismiss a sheet.
 const INTERACTIVE_SELECTOR =
   "input, textarea, select, button, label, " +
   "[role='button'], [role='option'], [role='listbox'], " +
@@ -30,49 +40,52 @@ const INTERACTIVE_SELECTOR =
 const DISMISS_THRESHOLD_PX = 100;
 
 export function useSheetDismissAtTop(sheetRef, onDismiss) {
-  // Per-gesture state. Refs (not state) because we don't want a
-  // re-render on every pointermove sample.
-  const startRef = useRef(null);   // { y, pointerId } | null
+  // Per-gesture state. Refs (not state) — pointermove fires every
+  // frame, we don't want re-renders.
+  const ctxRef = useRef(null);
+  // shape: { pointerId, anchorY: number | null, blocked: boolean }
+  // anchorY = the finger Y at the moment scrollTop most recently
+  //           landed at the top; null when we're mid-content
+  // blocked = true if the touch began on an interactive element
 
   const onPointerDown = (e) => {
-    startRef.current = null;
-    if (e.target instanceof Element && e.target.closest(INTERACTIVE_SELECTOR)) {
-      // Interactive target — let it own the gesture.
-      return;
-    }
-    if (sheetRef.current && sheetRef.current.scrollTop > 0) {
-      // Not at top — don't arm; user is mid-scroll.
-      return;
-    }
-    startRef.current = { y: e.clientY, pointerId: e.pointerId };
+    const blocked = !!(e.target instanceof Element && e.target.closest(INTERACTIVE_SELECTOR));
+    const atTop = !sheetRef.current || sheetRef.current.scrollTop <= 0;
+    ctxRef.current = {
+      pointerId: e.pointerId,
+      anchorY: atTop ? e.clientY : null,
+      blocked,
+    };
   };
 
   const onPointerMove = (e) => {
-    const start = startRef.current;
-    if (!start) return;
-    if (e.pointerId !== start.pointerId) return;
-    // Bail if the user has somehow scrolled past the top mid-
-    // gesture (rare, but possible with multi-touch). Don't
-    // hijack their scroll.
-    if (sheetRef.current && sheetRef.current.scrollTop > 0) {
-      startRef.current = null;
+    const ctx = ctxRef.current;
+    if (!ctx || ctx.blocked) return;
+    if (e.pointerId !== ctx.pointerId) return;
+    const atTop = !sheetRef.current || sheetRef.current.scrollTop <= 0;
+    if (!atTop) {
+      // User scrolled into content — clear the anchor so we don't
+      // fire on stale finger displacement. A subsequent return to
+      // the top will re-anchor.
+      ctx.anchorY = null;
       return;
     }
-    const dy = e.clientY - start.y;
+    // Just landed at the top this frame — anchor here so the
+    // overscroll distance is measured from the moment scroll
+    // boundary was reached, not from where the touch started
+    // deeper in the content.
+    if (ctx.anchorY == null) {
+      ctx.anchorY = e.clientY;
+      return;
+    }
+    const dy = e.clientY - ctx.anchorY;
     if (dy >= DISMISS_THRESHOLD_PX) {
-      // Cross the line → dismiss. Clear startRef so subsequent
-      // moves on the same gesture don't refire.
-      startRef.current = null;
+      ctxRef.current = null;
       onDismiss && onDismiss();
     }
   };
 
-  const onPointerUp = () => {
-    startRef.current = null;
-  };
-
-  // Cancel covers cases where the browser reclaims the pointer
-  // (scroll wins, palm-rejection, etc.) — same cleanup as up.
+  const onPointerUp = () => { ctxRef.current = null; };
   const onPointerCancel = onPointerUp;
 
   return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel };
