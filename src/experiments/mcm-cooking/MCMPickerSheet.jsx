@@ -37,10 +37,14 @@ export function MCMPickerSheet({ kicker, title, options = [], value, onPick, onC
   }, [onClose]);
 
   return (
-    <div
+    <motion.div
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0, transition: { duration: 0.18, ease: "easeIn" } }}
+      transition={{ duration: 0.16, ease: "easeOut" }}
       style={{
         position: "fixed",
         inset: 0,
@@ -57,6 +61,7 @@ export function MCMPickerSheet({ kicker, title, options = [], value, onPick, onC
       <motion.div
         initial={{ y: 32, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
+        exit={{ y: 24, opacity: 0, transition: { duration: 0.18, ease: "easeIn" } }}
         transition={{ type: "spring", stiffness: 360, damping: 32 }}
         style={{
           width: "100%",
@@ -170,6 +175,6 @@ export function MCMPickerSheet({ kicker, title, options = [], value, onPick, onC
           )}
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }
