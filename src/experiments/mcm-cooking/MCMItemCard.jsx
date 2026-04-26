@@ -151,6 +151,18 @@ export function MCMItemCard({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Body scroll lock — keep the page underneath frozen while the
+  // sheet is mounted. Without this, dragging the sheet (or scrolling
+  // its body to a boundary) lets iOS scroll the page behind it,
+  // which reads as "the background is moving" even though the sheet
+  // itself is correct. Stash and restore the prior overflow so
+  // returning to the page leaves any custom value alone.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   // Identity helpers
   const ing      = canonicalId ? findIngredient(canonicalId) : null;
   const iconUrl  = canonicalImageUrlFor(canonicalId, null);
@@ -242,6 +254,11 @@ export function MCMItemCard({
           maxWidth: 520,
           maxHeight: "90dvh",
           overflowY: "auto",
+          // Prevent scroll-chaining: when the sheet's internal scroll
+          // hits its top/bottom, iOS would otherwise hand the
+          // remaining scroll to the page underneath. `contain` traps
+          // it inside the sheet so the background never reacts.
+          overscrollBehavior: "contain",
           scrollbarGutter: "stable",
           padding: space.gap,
           borderRadius: radius.panel,

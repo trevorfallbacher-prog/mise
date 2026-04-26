@@ -798,6 +798,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  // Body scroll lock — keep the page underneath frozen while the
+  // sheet is mounted so drags / scrolls on the sheet never bleed
+  // to the kitchen behind. Restore the prior overflow on unmount.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   const handleSubmit = () => {
     if (!canSubmit) return;
     // Block bad data entry — flag the missing-field state so the
@@ -946,6 +955,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           maxWidth: 520,
           height: "90dvh",
           overflowY: "auto",
+          // Trap scroll inside the sheet so iOS doesn't chain the
+          // remainder to the page underneath when the user hits
+          // the sheet's top/bottom edge.
+          overscrollBehavior: "contain",
           scrollbarGutter: "stable",
           padding: 22,
           borderRadius: 20,
