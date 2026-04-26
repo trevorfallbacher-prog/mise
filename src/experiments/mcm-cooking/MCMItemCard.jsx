@@ -22,12 +22,12 @@ import { motion } from "framer-motion";
 import { Kicker, withAlpha } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
 import {
-  font, space, radius, axis, editorialHead,
+  font, space, radius, axis, prose,
   stack, inline, divider, field, ctaButton, ghostButton,
 } from "./tokens";
 import {
   findIngredient, INGREDIENTS, dbCanonicalsSnapshot,
-  statesForIngredient, STATE_LABELS,
+  statesForIngredient, STATE_LABELS, getIngredientInfo,
 } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
@@ -83,6 +83,25 @@ export function MCMItemCard({
     if (!canonicalId) return null;
     return shelfLifeFor(canonicalId, location, { opened: false });
   }, [canonicalId, location]);
+
+  // Merged enrichment — admin-curated db row wins, bundled JS
+  // INGREDIENT_INFO fills the gap. Returns null when neither has
+  // anything to say (free-text rows with no canonical, or canonicals
+  // that haven't been enriched yet — those stay quiet rather than
+  // showing empty section labels).
+  const enrichment = useMemo(() => {
+    if (!canonicalId) return null;
+    const ing    = findIngredient(canonicalId);
+    const dbInfo = dbMap?.[canonicalId] || null;
+    return getIngredientInfo(ing, dbInfo);
+  }, [canonicalId, dbMap]);
+  const hasInfo =
+    enrichment
+    && (enrichment.nutrition
+      || enrichment.description
+      || enrichment.flavorProfile
+      || enrichment.prepTips
+      || (Array.isArray(enrichment.pairs) && enrichment.pairs.length > 0));
 
   // Picker latch (canonical / category / state / tile / unit / expires)
   const [pickerOpen, setPickerOpen] = useState(null);
@@ -208,12 +227,20 @@ export function MCMItemCard({
               onChange={(e) => setName(e.target.value)}
               placeholder="Name this item"
               style={{
-                ...editorialHead,
-                width: "100%",
-                marginTop: 4,
-                fontSize: 26,
-                lineHeight: 1.1,
+                // Item-card name register — Filmotype Honey via
+                // font.itemName, matching the KitchenCard name face
+                // exactly so tapping a card animates from one type
+                // size of the same hand into the next, rather than
+                // swapping faces on transition.
+                fontFamily: font.itemName,
+                fontStyle: "normal",
+                fontWeight: 300,
+                fontSize: 38,
+                lineHeight: 1.05,
+                letterSpacing: "0",
                 color: theme.color.ink,
+                width: "100%",
+                marginTop: 2,
                 background: "transparent",
                 border: "none",
                 outline: "none",
@@ -437,6 +464,35 @@ export function MCMItemCard({
           )}
         </div>
 
+        {/* === Product information ====================================
+            Read-only zone. Sits below the editable fields because the
+            user works on their stuff first (rename, quantity, expiry)
+            and reads the canonical's stuff second. Sections gated on
+            data presence so empty enrichment doesn't clutter; on a
+            free-text row with no canonical, this whole block stays
+            silent. */}
+        {hasInfo && (
+          <>
+            <hr style={{ ...divider, margin: `${space.gap}px 0 ${space.flow}px` }} />
+            {enrichment.nutrition && (
+              <NutritionRow nutrition={enrichment.nutrition} theme={theme} />
+            )}
+            {enrichment.description && (
+              <AboutSection
+                description={enrichment.description}
+                flavorProfile={enrichment.flavorProfile}
+                theme={theme}
+              />
+            )}
+            {enrichment.prepTips && (
+              <TipSection tip={enrichment.prepTips} theme={theme} />
+            )}
+            {Array.isArray(enrichment.pairs) && enrichment.pairs.length > 0 && (
+              <PairsSection pairs={enrichment.pairs} theme={theme} />
+            )}
+          </>
+        )}
+
         <hr style={{ ...divider, margin: `${space.block}px 0 ${space.flow}px` }} />
 
         {/* Footer — destructive on the left, primary on the right.
@@ -538,6 +594,155 @@ function AxisChip({ theme, tone, label, dashed, onClick }) {
       {label}
     </button>
   );
+}
+
+// Nutrition row — single editorial line of peer-sized data, NOT
+// the SaaS "hero metric + supporting stats" template. The kcal sits
+// inline with the macros separated by middle dots; micros (fiber,
+// sodium) get a quieter second line. Per-anchor (100g / count /
+// serving) goes in the kicker so the numbers below carry weight
+// alone.
+function NutritionRow({ nutrition, theme }) {
+  const per = nutrition.per || "100g";
+  const perLabel = per === "count"
+    ? "per item"
+    : per === "serving"
+      ? "per serving"
+      : `per ${per}`;
+  const macros = [];
+  if (nutrition.protein_g != null) macros.push(`${formatGram(nutrition.protein_g)} protein`);
+  if (nutrition.carb_g    != null) macros.push(`${formatGram(nutrition.carb_g)} carbs`);
+  if (nutrition.fat_g     != null) macros.push(`${formatGram(nutrition.fat_g)} fat`);
+  const micros = [];
+  if (nutrition.fiber_g  != null) micros.push(`${formatGram(nutrition.fiber_g)} fiber`);
+  if (nutrition.sodium_mg != null) micros.push(`${nutrition.sodium_mg}mg sodium`);
+  const kcalCell = nutrition.kcal != null ? `${Math.round(nutrition.kcal)} kcal` : null;
+  const primaryParts = [kcalCell, ...macros].filter(Boolean);
+  if (primaryParts.length === 0 && micros.length === 0) return null;
+  return (
+    <section style={{ marginTop: space.flow }}>
+      <FieldKicker theme={theme}>Nutrition · {perLabel}</FieldKicker>
+      <div style={{
+        ...stack(space.tight),
+        marginTop: space.tight,
+        fontFamily: font.detail,
+        fontStyle: "italic",
+        fontWeight: 400,
+        fontSize: 15,
+        color: theme.color.ink,
+        letterSpacing: "0.005em",
+      }}>
+        {primaryParts.length > 0 && (
+          <div>{primaryParts.join(" · ")}</div>
+        )}
+        {micros.length > 0 && (
+          <div style={{ color: theme.color.inkMuted, fontSize: 14 }}>
+            {micros.join(" · ")}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// About — description in editorial italic, then flavorProfile as a
+// quieter second voice when available. Both capped at prose.measure
+// (62ch) so a wide sheet doesn't stretch the line past the comfort
+// reading band.
+function AboutSection({ description, flavorProfile, theme }) {
+  return (
+    <section style={{ marginTop: space.gap }}>
+      <FieldKicker theme={theme}>About</FieldKicker>
+      <p style={{
+        marginTop: space.tight,
+        marginBottom: 0,
+        fontFamily: font.serif,
+        fontStyle: "italic",
+        fontWeight: 400,
+        fontSize: 15.5,
+        lineHeight: 1.55,
+        color: theme.color.ink,
+        maxWidth: prose.measure,
+      }}>
+        {description}
+      </p>
+      {flavorProfile && (
+        <p style={{
+          marginTop: space.tight,
+          marginBottom: 0,
+          fontFamily: font.detail,
+          fontStyle: "italic",
+          fontSize: 13.5,
+          lineHeight: 1.5,
+          color: theme.color.inkMuted,
+          maxWidth: prose.measure,
+        }}>
+          {flavorProfile}
+        </p>
+      )}
+    </section>
+  );
+}
+
+// Tip — Fraunces italic, slightly smaller than About so it reads
+// as supporting copy rather than competing for the same beat.
+function TipSection({ tip, theme }) {
+  return (
+    <section style={{ marginTop: space.gap }}>
+      <FieldKicker theme={theme}>Tip</FieldKicker>
+      <p style={{
+        marginTop: space.tight,
+        marginBottom: 0,
+        fontFamily: font.serif,
+        fontStyle: "italic",
+        fontWeight: 400,
+        fontSize: 14.5,
+        lineHeight: 1.55,
+        color: theme.color.ink,
+        maxWidth: prose.measure,
+      }}>
+        {tip}
+      </p>
+    </section>
+  );
+}
+
+// Pairs — comma-separated list of canonical names, capped at 8 to
+// keep the line single-row on most viewports. Resolves ids to
+// display names so the row reads as English, not slugs.
+function PairsSection({ pairs, theme }) {
+  const names = pairs
+    .slice(0, 8)
+    .map(id => findIngredient(id)?.name || prettifySlug(id))
+    .filter(Boolean);
+  if (names.length === 0) return null;
+  return (
+    <section style={{ marginTop: space.gap }}>
+      <FieldKicker theme={theme}>Pairs with</FieldKicker>
+      <p style={{
+        marginTop: space.tight,
+        marginBottom: 0,
+        fontFamily: font.detail,
+        fontStyle: "italic",
+        fontSize: 14,
+        color: theme.color.inkMuted,
+        maxWidth: prose.measure,
+      }}>
+        {names.join(", ")}
+      </p>
+    </section>
+  );
+}
+
+function formatGram(n) {
+  if (n == null) return "0g";
+  const num = Number(n);
+  if (Number.isInteger(num)) return `${num}g`;
+  return `${num.toFixed(1)}g`;
+}
+
+function prettifySlug(id) {
+  return String(id || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function chipBtn(theme, tone, dashed) {
