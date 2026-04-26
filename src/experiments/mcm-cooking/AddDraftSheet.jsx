@@ -26,7 +26,7 @@ import {
 import { detectBrand } from "../../data/knownBrands";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { usePopularPackages } from "../../lib/usePopularPackages";
-import { findFoodType, FOOD_TYPES, inferFoodTypeFromName } from "../../data/foodTypes";
+import { findFoodType, FOOD_TYPES, inferFoodTypeFromName, typeIdForCanonical } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
@@ -285,20 +285,24 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     return [...exact, ...starts, ...includes].slice(0, 6);
   }, [name, allCanonicals]);
 
-  // Live name-inference for the category chip — runs only when
-  // the user hasn't manually overridden. When the canonical is
-  // pinned we infer against the canonical's display name first
-  // (more authoritative than whatever the user typed) and fall
-  // back to the typed name otherwise.
+  // Category cascade — runs only when the user hasn't manually
+  // overridden. When a canonical is pinned, prefer the direct
+  // canonicalId → typeId map (typeIdForCanonical) so canonicals
+  // with explicit FOOD_TYPES bridges (mayo → wweia_mayo, pizza →
+  // wweia_pizza, etc.) auto-pin even when the canonical's name
+  // doesn't textually contain a food-type alias. Falls back to
+  // name inference for the no-canonical / typed-only case.
   useEffect(() => {
     if (typeOverridden) return;
     const ing = canonicalId ? findIngredient(canonicalId) : null;
-    const sourceName = ing?.name || name;
-    // inferFoodTypeFromName returns the matching food-type ID
-    // string (or null), not an object — the previous read of
-    // `.id` on the string left typeId perpetually null and
-    // killed the cascade.
-    const inferredId = inferFoodTypeFromName(sourceName);
+    // typeIdForCanonical does the two-pass: exact id-bridge
+    // lookup first, then name-alias fallback. Without this,
+    // canonicals whose display name doesn't alias-match any
+    // FOOD_TYPES entry (the majority of bundled canonicals)
+    // never resolved their category — the chip stayed unset
+    // even though the canonical was pinned.
+    const fromCanonical = ing ? typeIdForCanonical(ing) : null;
+    const inferredId = fromCanonical || inferFoodTypeFromName(name);
     setTypeId(inferredId || null);
   }, [name, canonicalId, typeOverridden]);
 
