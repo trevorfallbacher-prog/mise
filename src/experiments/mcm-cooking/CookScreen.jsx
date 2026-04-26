@@ -57,16 +57,16 @@ export default function CookScreen({ onBack, onOpenUnitPicker }) {
   const prev = () => setStepIdx((i) => Math.max(i - 1, 0));
 
   return (
-    <div style={{ position: "relative", minHeight: "100vh", overflow: "hidden" }}>
+    <div style={{ position: "relative", minHeight: "100dvh", overflow: "hidden" }}>
       <WarmBackdrop />
 
       <div style={{
         position: "relative",
         maxWidth: 480,
         margin: "0 auto",
-        padding: "20px 20px 40px",
+        padding: "20px 20px calc(40px + env(safe-area-inset-bottom))",
         display: "flex", flexDirection: "column",
-        minHeight: "100vh",
+        minHeight: "100dvh",
       }}>
         {/* --- Top bar ------------------------------------------------- */}
         <FadeIn>

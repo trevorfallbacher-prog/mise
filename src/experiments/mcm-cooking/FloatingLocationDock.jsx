@@ -55,9 +55,10 @@ export function FloatingLocationDock({ locations, active, onSelect, totals }) {
       position: "fixed",
       left: "50%",
       // Sits above the app-level bottom nav. 96px leaves a ~16px
-      // visual gap above a ~80px dark nav bar; bump if the nav is
-      // taller on a given device.
-      bottom: 96,
+      // visual gap above a ~80px dark nav bar; safe-area-inset-bottom
+      // additionally clears the iPhone home indicator on notched
+      // devices so the dock never sits in the gesture zone.
+      bottom: "calc(96px + env(safe-area-inset-bottom))",
       zIndex: 20,
       display: "flex",
       gap: 4,
@@ -94,7 +95,7 @@ export function FloatingLocationDock({ locations, active, onSelect, totals }) {
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
-              padding: "10px 18px",
+              padding: "12px 18px",
               borderRadius: 999,
               border: "none",
               background: !isActive && hovered === loc.id

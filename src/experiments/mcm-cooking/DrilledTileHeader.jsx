@@ -61,7 +61,7 @@ export function DrilledTileHeader({ tile, location, count, warnCount, sortBy, on
           aria-label={`Back to ${location} tiles`}
           className="mcm-focusable"
           style={{
-            width: 38, height: 38, flexShrink: 0,
+            width: 44, height: 44, flexShrink: 0,
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             border: `1px solid ${theme.color.hairline}`,
             background: theme.color.glassFillLite,

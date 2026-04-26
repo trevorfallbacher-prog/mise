@@ -385,7 +385,7 @@ export default function KitchenScreen({
   return (
     <div style={{
       position: "relative",
-      minHeight: "100vh",
+      minHeight: "100dvh",
       // NOTE: no `overflow: hidden` here even though it was the
       // original default. An overflow-clip ancestor kills
       // position:sticky inside — and we want the search + location

@@ -677,7 +677,7 @@ export function BottomDock({ tabs, activeId, onSelect, style }) {
     <div
       style={{
         position: "fixed",
-        bottom: 16,
+        bottom: "calc(16px + env(safe-area-inset-bottom))",
         left: 0,
         right: 0,
         display: "flex",

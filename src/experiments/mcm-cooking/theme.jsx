@@ -81,7 +81,7 @@ function ThemeTransitionShell({ theme, children }) {
   return (
     <div
       style={{
-        minHeight: "100vh",
+        minHeight: "100dvh",
         background: theme.backdrop.base,
         color: theme.color.ink,
         transition: "background 700ms ease, color 700ms ease",

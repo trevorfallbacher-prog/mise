@@ -37,7 +37,7 @@ function ShowcaseInner() {
   const closeUnitPicker = () => setUnitPickerOpen(false);
 
   return (
-    <div style={{ position: "relative", minHeight: "100vh" }}>
+    <div style={{ position: "relative", minHeight: "100dvh" }}>
       <AnimatePresence mode="wait">
         {screen === "pantry" && (
           <motion.div
