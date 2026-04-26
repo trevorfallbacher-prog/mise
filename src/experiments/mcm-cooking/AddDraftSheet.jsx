@@ -6,7 +6,7 @@
 // Seed: { mode: "blank" } today; { mode: "scan", name, brand,
 // amount, unit, ... } when scan re-seeds.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { PrimaryButton, Kicker, withAlpha } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
@@ -129,6 +129,45 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // continued focus.
   const [nameFocused, setNameFocused]           = useState(false);
   const [suppressTypeahead, setSuppressTypeahead] = useState(false);
+  // Anchor the typeahead dropdown to the input's screen position
+  // via getBoundingClientRect. Without this it sits as an
+  // absolute child of the input wrapper — which means iOS
+  // keyboard-open scroll-bounce and any layout shift below
+  // (banners, scan panel) yank the suggestions out from under
+  // the user's finger. Recomputed on every visualViewport scroll
+  // / resize so the dropdown stays glued whether the keyboard
+  // is opening, closing, or rubber-banding.
+  const nameInputRef = useRef(null);
+  const [typeaheadAnchor, setTypeaheadAnchor] = useState(null);
+  useEffect(() => {
+    if (!nameFocused) { setTypeaheadAnchor(null); return; }
+    const update = () => {
+      const el = nameInputRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setTypeaheadAnchor({ top: r.bottom + 6, left: r.left, width: r.width });
+    };
+    update();
+    // Lift the input near the top of the visible viewport so the
+    // typeahead has the room between input and keyboard top to
+    // render its rows. 80ms gives iOS a beat to start its own
+    // keyboard-open animation; the second update inside captures
+    // the final post-keyboard rect.
+    const t = setTimeout(() => {
+      nameInputRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      setTimeout(update, 320);
+    }, 80);
+    const vv = window.visualViewport;
+    vv?.addEventListener("resize", update);
+    vv?.addEventListener("scroll", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      clearTimeout(t);
+      vv?.removeEventListener("resize", update);
+      vv?.removeEventListener("scroll", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [nameFocused]);
   // Barcode lookup retains the UPC string when the user
   // scanned (vs typed manually) so the submit row carries it
   // — future scans of the same UPC pick up corrections via
@@ -1203,6 +1242,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           return (
         <div style={{ position: "relative" }}>
           <input
+            ref={nameInputRef}
             autoFocus
             value={name}
             onChange={(e) => {
@@ -1415,15 +1455,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               }}
             />
           </button>
-          {nameFocused && !suppressTypeahead && (nameSuggestions.length > 0 || name.trim().length >= 2) && (
+          {nameFocused && !suppressTypeahead && typeaheadAnchor && (nameSuggestions.length > 0 || name.trim().length >= 2) && (
             <div
               role="listbox"
               aria-label="Canonical suggestions"
               style={{
-                position: "absolute",
-                top: "calc(100% + 6px)",
-                left: 0, right: 0,
-                zIndex: 5,
+                // Fixed-to-viewport anchoring (vs. absolute under the
+                // input) so iOS keyboard-open and any layout shift
+                // below the input doesn't drag the dropdown off the
+                // user's finger. Position is recomputed on every
+                // visualViewport scroll/resize via the effect above.
+                position: "fixed",
+                top: typeaheadAnchor.top,
+                left: typeaheadAnchor.left,
+                width: typeaheadAnchor.width,
+                zIndex: 1000,
                 padding: 6,
                 borderRadius: 14,
                 background: theme.color.glassFillHeavy,
