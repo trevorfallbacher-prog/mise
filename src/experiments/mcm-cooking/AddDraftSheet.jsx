@@ -32,6 +32,7 @@ import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
+import { useBodyScrollLock } from "../../lib/useBodyScrollLock";
 import { rememberCanonicalTypeCorrection, fetchCanonicalTypeVote } from "../../lib/canonicalCorrections";
 import { useBrandNutrition } from "../../lib/useBrandNutrition";
 import MemoryBookCapture from "./MemoryBookCapture";
@@ -798,14 +799,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Body scroll lock — keep the page underneath frozen while the
-  // sheet is mounted so drags / scrolls on the sheet never bleed
-  // to the kitchen behind. Restore the prior overflow on unmount.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, []);
+  // Body scroll lock — pins the body in place via position:fixed
+  // so iOS can't scroll the page underneath while the sheet is
+  // open. See lib/useBodyScrollLock for why overflow:hidden alone
+  // doesn't work on iOS.
+  useBodyScrollLock();
 
   const handleSubmit = () => {
     if (!canSubmit) return;
@@ -906,11 +904,22 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         background: "rgba(20,12,4,0.55)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
+        // Block iOS from interpreting backdrop touches as
+        // page-level pan/zoom. With body scroll-locked above
+        // and this here, the kitchen underneath has no path to
+        // receive any gesture while the sheet is up.
+        touchAction: "none",
+        overscrollBehavior: "contain",
       }}
       onClick={(e) => {
         // Backdrop click closes — only when the click target
         // is the backdrop itself, not the sheet content.
         if (e.target === e.currentTarget) onClose && onClose();
+      }}
+      onTouchMove={(e) => {
+        // Belt-and-suspenders: stop iOS from falling through
+        // backdrop touchmoves to the page beneath.
+        if (e.target === e.currentTarget) e.preventDefault();
       }}
     >
       <motion.div

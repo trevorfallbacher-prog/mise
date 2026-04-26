@@ -31,6 +31,7 @@ import {
 } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
+import { useBodyScrollLock } from "../../lib/useBodyScrollLock";
 import {
   LOCATIONS, shelfLifeFor, formatDaysChip, daysChipColor,
   buildDisplayName, getItemClaims,
@@ -151,17 +152,11 @@ export function MCMItemCard({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  // Body scroll lock — keep the page underneath frozen while the
-  // sheet is mounted. Without this, dragging the sheet (or scrolling
-  // its body to a boundary) lets iOS scroll the page behind it,
-  // which reads as "the background is moving" even though the sheet
-  // itself is correct. Stash and restore the prior overflow so
-  // returning to the page leaves any custom value alone.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, []);
+  // Body scroll lock — pins the body in place via position:fixed
+  // so iOS can't scroll the page underneath while the sheet is
+  // open. See lib/useBodyScrollLock for why overflow:hidden alone
+  // doesn't work on iOS.
+  useBodyScrollLock();
 
   // Identity helpers
   const ing      = canonicalId ? findIngredient(canonicalId) : null;
@@ -213,8 +208,20 @@ export function MCMItemCard({
         background: "rgba(20,12,4,0.55)",
         backdropFilter: "blur(8px)",
         WebkitBackdropFilter: "blur(8px)",
+        // Block iOS from interpreting backdrop touches as
+        // page-level pan/zoom. Combined with the body scroll lock
+        // above, the page underneath has no path to receive any
+        // gesture input while this surface is up.
+        touchAction: "none",
+        overscrollBehavior: "contain",
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose && onClose(); }}
+      onTouchMove={(e) => {
+        // Belt-and-suspenders: if a touchmove originated on the
+        // backdrop itself (not a sheet child), preventDefault to
+        // make sure iOS doesn't try to fall through to the page.
+        if (e.target === e.currentTarget) e.preventDefault();
+      }}
     >
       <motion.div
         initial={{ y: 32, opacity: 0 }}
