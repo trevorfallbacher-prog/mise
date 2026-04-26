@@ -32,7 +32,7 @@ import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
 import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
-import { rememberCanonicalTypeCorrection } from "../../lib/canonicalCorrections";
+import { rememberCanonicalTypeCorrection, fetchCanonicalTypeVote } from "../../lib/canonicalCorrections";
 import { useBrandNutrition } from "../../lib/useBrandNutrition";
 import MemoryBookCapture from "./MemoryBookCapture";
 import { AddDraftProgressStrip } from "./AddDraftProgressStrip";
@@ -318,33 +318,60 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     return [...exact, ...starts, ...includes].slice(0, 6);
   }, [name, allCanonicals]);
 
+  // Crowd-vote cache for type_id resolution. Keyed by canonicalId,
+  // value is the winning typeId (≥3-vote consensus, no ties) or null
+  // when there's no consensus yet. Lazily filled — we fetch the
+  // tally the first time a canonical lands in the form, then read
+  // from cache for the rest of the session. The fetched-set ref
+  // gates duplicate fetches even before the result lands in state.
+  const [voteWinners, setVoteWinners] = useState({});
+  const fetchedVotesRef = useRef(new Set());
+  useEffect(() => {
+    if (!canonicalId) return;
+    if (fetchedVotesRef.current.has(canonicalId)) return;
+    fetchedVotesRef.current.add(canonicalId);
+    let alive = true;
+    fetchCanonicalTypeVote(canonicalId)
+      .then(winner => {
+        if (!alive) return;
+        setVoteWinners(m => ({ ...m, [canonicalId]: winner || null }));
+      })
+      .catch(() => {
+        // fetchCanonicalTypeVote already swallows + logs network
+        // errors and returns null; nothing to recover here.
+      });
+    return () => { alive = false; };
+  }, [canonicalId]);
+
   // Category cascade — runs only when the user hasn't manually
   // overridden. Tiered, first hit wins:
-  //   1. ingredient_info.info.type_id  — admin-curated global
+  //   1. pending_ingredient_info.info.type_id (own pick) — your
+  //      teaching, always wins for you. You're a contributor to
+  //      the crowd vote too, but your personal cascade resolves
+  //      against your own row directly.
+  //   2. crowd vote winner (≥3 users agree) — community consensus
+  //      via canonical_type_vote_tally RPC. Sits ABOVE admin so a
+  //      strong consensus can correct an admin's mistake. Single
+  //      mistakes don't propagate: threshold + tie-rejection in
+  //      fetchCanonicalTypeVote means one mis-pick stays as count=1
+  //      and the cascade falls through.
+  //   3. ingredient_info.info.type_id — admin-curated global
   //      (rememberCanonicalTypeCorrection writes here when admin)
-  //   2. pending_ingredient_info.info.type_id — family / own
-  //      pending teaching, awaiting admin promotion
-  //   3. typeIdForCanonical(ing)       — bundled canonical metadata,
-  //      two-pass: id-bridge then name-alias
-  //   4. inferFoodTypeFromName(name)   — text-only fallback
-  //
-  // Tiers 1-2 are the self-teaching layer: when ANY user (or admin)
-  // has previously corrected the category for this canonical, the
-  // taught typeId wins over the bundled inference. Without this, a
-  // canonical whose bundled metadata bridges to the wrong FOOD_TYPES
-  // entry would re-mistake itself on every future scan.
+  //   4. typeIdForCanonical(ing) — bundled canonical metadata,
+  //      two-pass: id-bridge then name-alias (head-noun aware)
+  //   5. inferFoodTypeFromName(name) — text-only fallback
   useEffect(() => {
     if (typeOverridden) return;
-    const taught =
-      (canonicalId && getDbInfo(canonicalId)?.type_id)
-      || (canonicalId && getPendingInfo(canonicalId)?.type_id)
-      || null;
+    const ownPick   = canonicalId ? getPendingInfo(canonicalId)?.type_id : null;
+    const crowdPick = canonicalId ? voteWinners[canonicalId] : null;
+    const adminPick = canonicalId ? getDbInfo(canonicalId)?.type_id : null;
+    const taught = ownPick || crowdPick || adminPick || null;
     if (taught) { setTypeId(taught); return; }
     const ing = canonicalId ? findIngredient(canonicalId) : null;
     const fromCanonical = ing ? typeIdForCanonical(ing) : null;
     const inferredId = fromCanonical || inferFoodTypeFromName(name);
     setTypeId(inferredId || null);
-  }, [name, canonicalId, typeOverridden, getDbInfo, getPendingInfo]);
+  }, [name, canonicalId, typeOverridden, getDbInfo, getPendingInfo, voteWinners]);
 
   // Same pattern for the canonical chip — typing "cheddar"
   // resolves to the cheese / cheddar canonical so the chip

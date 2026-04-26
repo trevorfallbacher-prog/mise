@@ -98,3 +98,43 @@ export async function rememberCanonicalTypeCorrection({
     );
   if (error) throw error;
 }
+
+/**
+ * Crowd-vote read for a canonical's type_id. Asks the SECURITY
+ * DEFINER RPC for per-typeId vote counts across all users (RLS would
+ * otherwise scope this to the caller's own row, which makes the
+ * "is the crowd disagreeing with me?" question impossible).
+ *
+ * Threshold-gated: returns null until at least `minVotes` users have
+ * agreed on a single typeId. Below threshold, the cascade falls
+ * through to bundled inference, which is deterministic and right for
+ * known canonicals after the head-noun fix in foodTypes.js. Above
+ * threshold, the crowd's pick wins over bundled — that's the whole
+ * point of the safety net.
+ *
+ * Tie handling: if the top two typeIds are tied on count, return null
+ * (no consensus) rather than picking arbitrarily. The cascade falls
+ * through to whatever the next tier suggests.
+ *
+ * @param {string} canonicalId
+ * @param {object} [opts]
+ * @param {number} [opts.minVotes=3] — threshold to return a winner
+ * @returns {Promise<string|null>} winning typeId or null
+ */
+export async function fetchCanonicalTypeVote(canonicalId, { minVotes = 3 } = {}) {
+  if (!canonicalId) return null;
+  const { data, error } = await supabase.rpc("canonical_type_vote_tally", {
+    p_canonical_id: canonicalId,
+  });
+  if (error) {
+    console.warn("[canonical-corrections] vote tally failed:", error?.message || error);
+    return null;
+  }
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const top = data[0];
+  if (!top || (top.vote_count ?? 0) < minVotes) return null;
+  // Tie at the top — no consensus. Don't impose one arbitrarily;
+  // let the cascade fall through to bundled inference.
+  if (data.length > 1 && data[1].vote_count === top.vote_count) return null;
+  return top.type_id || null;
+}
