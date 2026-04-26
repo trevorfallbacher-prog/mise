@@ -257,41 +257,6 @@ export function MCMItemCard({
 
         <hr style={{ ...divider, margin: `${space.flow}px 0` }} />
 
-        {/* Identity rail — brand + canonical chips. Reach for
-            chips here rather than full inputs because the row's
-            identity is nominal: the user isn't typing, they're
-            picking from the registry. */}
-        <FieldKicker theme={theme}>Identity</FieldKicker>
-        <div style={{ ...inline(space.tight), flexWrap: "wrap", marginTop: space.tight }}>
-          <AxisChip
-            theme={theme}
-            tone={theme.color.inkMuted}
-            label={brand ? `Brand · ${brand}` : "+ Add brand"}
-            dashed={!brand}
-            onClick={() => setBrandEditing(true)}
-          />
-          <AxisChip
-            theme={theme}
-            tone={axis.canonical}
-            label={ing ? `Canonical · ${ing.name}` : "+ Pick canonical"}
-            dashed={!ing}
-            onClick={() => setPickerOpen("canonical")}
-          />
-          {stateOpts.length > 0 && (
-            <AxisChip
-              theme={theme}
-              tone={axis.state}
-              label={stateAxis
-                ? `State · ${STATE_LABELS[stateAxis] || stateAxis}`
-                : "+ Set state"}
-              dashed={!stateAxis}
-              onClick={() => setPickerOpen("state")}
-            />
-          )}
-        </div>
-
-        <hr style={{ ...divider, margin: `${space.gap}px 0 ${space.flow}px` }} />
-
         {/* Quantity row — gauge + numeric readout. Slider sits
             inline (no toggle-to-reveal) since the editor is the
             place to fiddle; the grid card has the lighter
@@ -488,6 +453,45 @@ export function MCMItemCard({
             )}
           </>
         )}
+
+        <hr style={{ ...divider, margin: `${space.gap}px 0 ${space.flow}px` }} />
+
+        {/* Identity rail — brand + canonical chips. Sits at the
+            bottom of the editable zone so the user works through
+            the row's mutable state first (rename, quantity, where
+            it lives, expiry) and only revisits identity when they
+            need to (which is rarely, after the canonical lands).
+            Chips here rather than full inputs because identity is
+            nominal: the user isn't typing, they're picking from
+            the registry. */}
+        <FieldKicker theme={theme}>Identity</FieldKicker>
+        <div style={{ ...inline(space.tight), flexWrap: "wrap", marginTop: space.tight }}>
+          <AxisChip
+            theme={theme}
+            tone={theme.color.inkMuted}
+            label={brand ? `Brand · ${brand}` : "+ Add brand"}
+            dashed={!brand}
+            onClick={() => setBrandEditing(true)}
+          />
+          <AxisChip
+            theme={theme}
+            tone={axis.canonical}
+            label={ing ? `Canonical · ${ing.name}` : "+ Pick canonical"}
+            dashed={!ing}
+            onClick={() => setPickerOpen("canonical")}
+          />
+          {stateOpts.length > 0 && (
+            <AxisChip
+              theme={theme}
+              tone={axis.state}
+              label={stateAxis
+                ? `State · ${STATE_LABELS[stateAxis] || stateAxis}`
+                : "+ Set state"}
+              dashed={!stateAxis}
+              onClick={() => setPickerOpen("state")}
+            />
+          )}
+        </div>
 
         <hr style={{ ...divider, margin: `${space.block}px 0 ${space.flow}px` }} />
 
