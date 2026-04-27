@@ -18,10 +18,13 @@
 //      parent (Kitchen) to launch the receipt scan; Kitchen commits
 //      pantry rows once the receipt arrives.
 //
-// The three flash colors intentionally sit OUTSIDE the six reserved
-// identity axes (CLAUDE.md) — forest green, warm amber, brick red, all
-// different enough from tan / rust / orange / blue / purple / yellow
-// that they don't read as "new axis color".
+// Shop Mode is wrapped internally in MCMThemeProvider so the warm
+// cream / time-of-day palette holds even though it's launched from
+// the legacy Kitchen surface. The three flash status colors are
+// re-mapped onto the MCM accent palette: matched → teal,
+// needs-identity → mustard, no-data → burnt. They sit on top of the
+// theme's glass surfaces, so the page reads as one app even though
+// it sits above a dark legacy screen at mount.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import BarcodeScanner from "./BarcodeScanner";
@@ -31,34 +34,75 @@ import { findIngredient } from "../data/ingredients";
 import { resolveCanonicalFromScan } from "../lib/canonicalResolver";
 import { findBarcodeCorrection } from "../lib/barcodeCorrections";
 import { supabase } from "../lib/supabase";
-
-const FLASH_COLORS = {
-  green:  { bg: "#1f6b3a", label: "MATCHED" },       // forest — clear win
-  yellow: { bg: "#b88a1f", label: "NEEDS IDENTITY" }, // amber — fix at home
-  red:    { bg: "#8a3030", label: "NO DATA" },       // brick — manual later
-};
-
-// Muted backgrounds for list rows that have paired scans. Same hue
-// family as the flash banners above, cranked way down in saturation
-// so a list full of greens doesn't blind the user. Border still uses
-// the strong FLASH_COLORS.bg so the status reads at a glance.
-const STATUS_TILE_BG = {
-  green:  "#152b1f",
-  yellow: "#2b2415",
-  red:    "#2b1818",
-};
+import { ThemeProvider as MCMThemeProvider, useTheme } from "../experiments/mcm-cooking/theme";
+import { font, radius } from "../experiments/mcm-cooking/tokens";
+import ShopModePlacementWizard from "./ShopModePlacementWizard";
+import MemoryBookCapture from "../experiments/mcm-cooking/MemoryBookCapture";
+import { rememberBarcodeCorrection } from "../lib/barcodeCorrections";
+import { useProfile } from "../lib/useProfile";
 
 const FLASH_MS = 900; // enough to read the status, short enough to feel snappy
 
-export default function ShopMode({
+export default function ShopMode(props) {
+  // Wrap in MCMThemeProvider so the time-of-day palette resolves
+  // here independently of the legacy Kitchen screen this overlay
+  // launches from. Keeps Shop Mode looking like one app instead of
+  // a dark shell above a cream PWA.
+  return (
+    <MCMThemeProvider>
+      <ShopModeInner {...props} />
+    </MCMThemeProvider>
+  );
+}
+
+function ShopModeInner({
   userId,
   shoppingList = [],
   setShoppingList,
-  brandNutritionRows = [],
+  ensureBrandNutritionByBarcode,
   learnedTagLookup = null,
   onClose,
   onCheckoutRequest,
 }) {
+  const { theme } = useTheme();
+  // Need isAdmin to route corrections to the right tier (global vs
+  // family). Family-tier is the safe default for non-admin users.
+  const { profile } = useProfile(userId);
+  const isAdmin = profile?.role === "admin";
+
+  // Misfire affordances — when a red scan lands, the pick-mode banner
+  // surfaces two no-typing escape hatches alongside the existing
+  // tap-a-list-item flow:
+  //   * placementWizardScanId → opens ShopModePlacementWizard (2-tap
+  //     location + shelf picker). Stamps the scan with tile/location,
+  //     adds it as a new list row under the tile label, and writes a correction
+  //     so the next user gets the same placement for free.
+  //   * memoryBookScanId → opens MemoryBookCapture (photo + Haiku
+  //     categorization). Stamps the scan with the AI-resolved
+  //     canonical/brand/name, writes a correction, and pairs to the
+  //     active list item or adds it as a new list row.
+  const [placementWizardScanId, setPlacementWizardScanId] = useState(null);
+  const [memoryBookScanId, setMemoryBookScanId] = useState(null);
+
+  // Flash colors derived from theme. Mapping: matched/teal,
+  // needs-identity/mustard, no-data/burnt. These sit on top of the
+  // theme's glass surfaces so they read in any time-of-day palette.
+  const flashColors = useMemo(() => ({
+    green:  { bg: theme.color.teal,    label: "MATCHED" },
+    yellow: { bg: theme.color.mustard, label: "NEEDS IDENTITY" },
+    red:    { bg: theme.color.burnt,   label: "NO DATA" },
+  }), [theme]);
+
+  // Muted tints for paired-list rows. Same hue family as the flash
+  // colors, cranked way down so a list full of greens doesn't blind
+  // the user. Border still uses the strong flash hue so the status
+  // reads at a glance.
+  const statusTileBg = useMemo(() => ({
+    green:  theme.color.tealTint,
+    yellow: theme.color.mustardTint,
+    red:    theme.color.burntTint,
+  }), [theme]);
+
   const {
     activeTrip,
     scans,
@@ -77,8 +121,8 @@ export default function ShopMode({
   // about to scan, then scan, and the pair lands instantly. Stays
   // armed across scans so 6 apples → arm "apples" once, scan 6 times.
   // Tapping the same item again disarms; tapping a different item
-  // re-arms. 'impulse' is the magic value that routes scans into the
-  // silent-list-add path.
+  // re-arms. '__addItem__' is the magic value that routes scans into
+  // the silent list-add path.
   const [lastScan, setLastScan] = useState(null);
   const [flashVisible, setFlashVisible] = useState(false);
   const flashTimerRef = useRef(null);
@@ -265,7 +309,7 @@ export default function ShopMode({
 
     let off = null;
     try {
-      off = await lookupBarcode(upc, { brandNutritionRows });
+      off = await lookupBarcode(upc, { ensureByBarcode: ensureBrandNutritionByBarcode });
     } catch (e) {
       console.warn("[shop-mode] lookupBarcode threw:", e);
     }
@@ -391,7 +435,7 @@ export default function ShopMode({
     //   C) Scan-first fallback: set pendingPairScanId so the next
     //      list-item tap binds this scan. Used when the scan was
     //      yellow/red (no canonical to match) OR green without a
-    //      candidate on the list (impulse buy).
+    //      candidate on the list (off-list "Add Item +" buy).
     // If upsertScan just bumped qty on an already-paired trip_scan
     // (user scanning apple #2, #3, …), respect the existing binding
     // and skip all pair routing. Flash still fires so the user sees
@@ -407,9 +451,9 @@ export default function ShopMode({
     const armed = armedRef.current;
     let autoPairedTo = null;
     if (scan?.id && armed) {
-      if (armed === "__impulse__") {
-        await doImpulseAdd(scan);
-        autoPairedTo = "__impulse__";
+      if (armed === "__addItem__") {
+        await doAddItemToList(scan);
+        autoPairedTo = "__addItem__";
       } else {
         await pairScanToList(scan.id, armed);
         autoPairedTo = armed;
@@ -456,9 +500,11 @@ export default function ShopMode({
     flashTimerRef.current = setTimeout(() => setFlashVisible(false), FLASH_MS);
   }
 
-  // Silent-list-add: builds a fresh shopping_list_items row from the
+  // Silent list-add: builds a fresh shopping_list_items row from the
   // scan's OFF data (or UPC fallback) and pairs the scan to it. Used
-  // when the user has armed "impulse mode" on the bottom half.
+  // when the user has armed the "Add Item +" affordance at the top
+  // of the bottom-half list — every subsequent scan becomes its own
+  // new list row.
   //
   // Direct supabase insert (not setShoppingList) so the row exists
   // in the DB BEFORE we try to stamp paired_shopping_list_item_id on
@@ -466,7 +512,7 @@ export default function ShopMode({
   // pair silently (useSyncedList persists asynchronously, so the
   // optimistic local row isn't in the DB yet when we pair). Realtime
   // subscription picks the row up and adds it to local state.
-  async function doImpulseAdd(scan) {
+  async function doAddItemToList(scan) {
     const name = scan.productName || scan.brand || `Scanned item (${scan.barcodeUpc.slice(-4)})`;
     const newItemId = (typeof crypto !== "undefined" && crypto.randomUUID)
       ? crypto.randomUUID()
@@ -479,11 +525,16 @@ export default function ShopMode({
       amount:        scan.qty || 1,
       unit:          "",
       category:      "pantry",
+      // DB-tier identifier — locked by migration 0127 as the canonical
+      // source value for Shop-Mode-added rows. The UI label is "Add
+      // Item +" but the column value stays "trip_impulse" so existing
+      // analytics / receipt-commit / historical rows keep their
+      // semantics.
       source:        "trip_impulse",
       ingredient_id: scan.canonicalId || null,
     });
     if (error) {
-      console.warn("[shop-mode] impulse list insert failed:", error.message);
+      console.warn("[shop-mode] add-item list insert failed:", error.message);
       return;
     }
     await pairScanToList(scan.id, newItemId);
@@ -505,7 +556,7 @@ export default function ShopMode({
 
   // Unified tap handler — two-way flow:
   //   * If a scan is pending (scan-first flow), bind it to the tapped
-  //     list item (or run impulse-add for __impulse__).
+  //     list item (or run the silent list-add for __addItem__).
   //   * Otherwise, toggle ARM on the tapped item (tap-first flow).
   async function handleListTap(listItemId) {
     if (!listItemId) {
@@ -531,19 +582,19 @@ export default function ShopMode({
         // the pantry row commits as "UPC 34567". Two ways to supply it:
         //   * User typed a name in the pick-mode field (redNameDraft)
         //   * User tapped a real list item — we pull its name down
-        // Only IMPULSE without a typed name fails the gate, since
-        // impulse has no list target to borrow a name from.
+        // Only "Add Item +" without a typed name fails the gate,
+        // since add-to-list has no list target to borrow a name from.
         const isRed = pending.status === "red";
         const typedName = redNameDraft.trim();
-        const targetListItem = listItemId === "__impulse__"
+        const targetListItem = listItemId === "__addItem__"
           ? null
           : (shoppingList || []).find(i => i.id === listItemId);
         const resolvedName = typedName
           || targetListItem?.name
           || "";
         if (isRed && !resolvedName) {
-          // Only way to hit this: IMPULSE tap with no typed name.
-          console.log("[shop-mode] red impulse scan still needs a name");
+          // Only way to hit this: Add-Item tap with no typed name.
+          console.log("[shop-mode] red add-item scan still needs a name");
           return;
         }
         // Stamp the resolved name onto trip_scans so the commit pass
@@ -558,8 +609,8 @@ export default function ShopMode({
             console.warn("[shop-mode] red-scan name write failed:", e);
           }
         }
-        if (listItemId === "__impulse__") {
-          await doImpulseAdd(pending);
+        if (listItemId === "__addItem__") {
+          await doAddItemToList(pending);
         } else {
           await pairScanToList(pending.id, listItemId);
         }
@@ -589,6 +640,174 @@ export default function ShopMode({
     await pairScanToList(scanId, null);
   }
 
+  // Tap-wizard commit — stamps tile + location (and optional
+  // canonical) on the trip_scan, writes a correction so the next
+  // user lands the same placement for free, and routes the scan
+  // into either the armed list item (if the user pre-tapped one) or
+  // adds it as a new list row using the canonical name (or
+  // tile label fallback) as a placeholder name. No typing.
+  async function handleWizardComplete({
+    location, tileId, tileLabel, tileEmoji,
+    canonicalId, canonicalName, canonicalEmoji,
+  }) {
+    const scanId = placementWizardScanId;
+    setPlacementWizardScanId(null);
+    if (!scanId) return;
+    const scan = scansRef.current.find(s => s.id === scanId);
+    if (!scan) return;
+
+    // Display name — canonical wins (it's a real ingredient name like
+    // "Cheddar"), then the scan's existing OFF productName (yellow
+    // case), then the tile label fallback ("Item from Dairy & Eggs").
+    // Anything beats "UPC 12345" gibberish.
+    const placeholderName = canonicalName
+      || scan.productName
+      || `Item from ${tileLabel}`;
+    const displayEmoji = canonicalEmoji || tileEmoji || scan.emoji || null;
+
+    try {
+      const update = { product_name: placeholderName };
+      if (canonicalId) {
+        update.canonical_id = canonicalId;
+        // Promote red/yellow → green now that we know the canonical.
+        update.status = "green";
+      }
+      await supabase
+        .from("trip_scans")
+        .update(update)
+        .eq("id", scanId);
+    } catch (e) {
+      console.warn("[shop-mode] wizard scan update failed:", e);
+    }
+
+    // Correction memory — fire-and-forget, family-tier (admin gets
+    // global). Re-scanning this UPC anywhere in the app will land
+    // pre-placed (and pre-bound to the canonical when picked).
+    rememberBarcodeCorrection({
+      userId,
+      isAdmin,
+      barcodeUpc:    scan.barcodeUpc,
+      canonicalId:   canonicalId || null,
+      tileId,
+      location,
+      emoji:         displayEmoji,
+      name:          placeholderName,
+      ingredientIds: canonicalId ? [canonicalId] : null,
+    }).catch(e => console.warn("[shop-mode] wizard correction write failed:", e));
+
+    // Pair routing — same priority as the regular tap path. Armed
+    // list item wins; otherwise try a canonical-aware list match
+    // (now possible because the wizard may have bound a canonical),
+    // then fall through to add-as-new-row.
+    const armed = armedRef.current;
+    const refreshed = {
+      ...scan,
+      productName: placeholderName,
+      canonicalId: canonicalId || scan.canonicalId || null,
+      emoji:       displayEmoji,
+    };
+    if (armed && armed !== "__addItem__") {
+      await pairScanToList(scanId, armed);
+      setArmedListItemId(null);
+    } else if (canonicalId) {
+      const match = findListMatchForScan({
+        scan: refreshed,
+        listItems: listTargetsRef.current || [],
+        alreadyPairedIds: alreadyPairedListIdsRef.current || new Set(),
+      });
+      if (match) {
+        await pairScanToList(scanId, match);
+      } else {
+        await doAddItemToList(refreshed);
+      }
+    } else {
+      await doAddItemToList(refreshed);
+    }
+    setPendingPairScanId(null);
+    setRedNameDraft("");
+    markRecentScan(null);
+  }
+
+  // Memory-book commit — MemoryBookCapture handed back a fully-
+  // populated draft row from Haiku. Stamp the scan with brand /
+  // canonical / name, fire the correction (carrying state, claims,
+  // productMetadata so the household memory keeps everything the AI
+  // pulled), then pair-or-add like a green scan.
+  async function handleMemoryBookComplete(draftRow) {
+    const scanId = memoryBookScanId;
+    setMemoryBookScanId(null);
+    if (!scanId) return;
+    const scan = scansRef.current.find(s => s.id === scanId);
+    if (!scan) return;
+
+    const resolvedName = draftRow?.name
+      || (draftRow?.brand && draftRow?.canonicalName ? `${draftRow.brand} ${draftRow.canonicalName}` : null)
+      || draftRow?.canonicalName
+      || scan.productName
+      || `UPC ${scan.barcodeUpc.slice(-4)}`;
+
+    try {
+      await supabase
+        .from("trip_scans")
+        .update({
+          product_name:  resolvedName,
+          brand:         draftRow?.brand || null,
+          canonical_id:  draftRow?.canonicalId || null,
+          // Status promotes from red → green if the AI nailed a
+          // canonical, otherwise yellow (we have a name + brand but
+          // no canonical bind). Drives the row's color in the UI +
+          // downstream commit's confidence tier.
+          status: draftRow?.canonicalId ? "green" : "yellow",
+        })
+        .eq("id", scanId);
+    } catch (e) {
+      console.warn("[shop-mode] memory book scan update failed:", e);
+    }
+
+    // Correction memory — MemoryBookCapture pre-built learnedCorrection
+    // with the full Haiku-extracted set (brand, name, package size,
+    // state, claims, productMetadata). Forward verbatim.
+    if (draftRow?.learnedCorrection) {
+      rememberBarcodeCorrection({
+        userId,
+        isAdmin,
+        ...draftRow.learnedCorrection,
+      }).catch(e => console.warn("[shop-mode] memory book correction failed:", e));
+    }
+
+    // Pair routing — armed list item wins, otherwise see if the
+    // freshly-resolved canonical now matches a list row. Last
+    // resort, add as a new list row.
+    const armed = armedRef.current;
+    if (armed && armed !== "__addItem__") {
+      await pairScanToList(scanId, armed);
+      setArmedListItemId(null);
+    } else if (draftRow?.canonicalId) {
+      const enriched = {
+        ...scan,
+        productName:  resolvedName,
+        brand:        draftRow.brand || null,
+        canonicalId:  draftRow.canonicalId,
+      };
+      const match = findListMatchForScan({
+        scan: enriched,
+        listItems: listTargetsRef.current || [],
+        alreadyPairedIds: alreadyPairedListIdsRef.current || new Set(),
+      });
+      if (match) {
+        await pairScanToList(scanId, match);
+      } else {
+        await doAddItemToList(enriched);
+      }
+    } else {
+      // No canonical — add as a new list row with whatever name we have.
+      await doAddItemToList({ ...scan, productName: resolvedName, brand: draftRow?.brand || null });
+    }
+    setPendingPairScanId(null);
+    setRedNameDraft("");
+    markRecentScan(null);
+  }
+
   async function handleCheckout() {
     if (!activeTrip?.id) return;
     onCheckoutRequest?.({ trip: activeTrip, scans });
@@ -607,10 +826,24 @@ export default function ShopMode({
     onClose?.();
   }
 
+  // Shared overlay frame — fixed full-screen, theme backdrop with the
+  // gradient flowing behind everything we paint on top. paddingTop
+  // honors iOS safe-area so the status bar zone has breathing room.
+  const overlayStyle = {
+    position: "fixed", inset: 0, zIndex: 340,
+    background: theme.backdrop.base,
+    color: theme.color.ink,
+    display: "flex", flexDirection: "column",
+    paddingTop: "env(safe-area-inset-top, 0px)",
+  };
+
   if (loading) {
     return (
       <div style={overlayStyle}>
-        <div style={{ color: "#fff", padding: 32 }}>Loading trip…</div>
+        <div style={{
+          color: theme.color.ink, padding: 32,
+          fontFamily: font.detail, fontStyle: "italic", fontSize: 18,
+        }}>Loading trip…</div>
       </div>
     );
   }
@@ -619,27 +852,67 @@ export default function ShopMode({
   if (!activeTrip) {
     return (
       <div style={overlayStyle}>
-        <div style={headerStyle}>
-          <button onClick={() => onClose?.()} style={iconBtn}>←</button>
-          <div style={headerTitle}>SHOP MODE</div>
+        <div style={{
+          padding: "16px 18px 12px",
+          display: "flex", alignItems: "center", gap: 10,
+          borderBottom: `1px solid ${theme.color.hairline}`,
+          background: theme.color.glassFillHeavy,
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
+        }}>
+          <button
+            onClick={() => onClose?.()}
+            aria-label="Back"
+            style={{
+              background: theme.color.glassFillLite,
+              border: `1px solid ${theme.color.hairline}`,
+              color: theme.color.ink,
+              width: 36, height: 36, borderRadius: radius.chip,
+              cursor: "pointer", fontSize: 18,
+            }}
+          >←</button>
+          <div style={{
+            color: theme.color.ink,
+            fontFamily: font.mono, fontSize: 11,
+            letterSpacing: "0.18em", textTransform: "uppercase",
+          }}>SHOP MODE</div>
         </div>
-        <div style={{ padding: 32, color: "#eee", display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ fontStyle: "italic", fontSize: 22 }}>Ready to shop?</div>
-          <div style={{ opacity: 0.8, lineHeight: 1.5 }}>
+        <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 18 }}>
+          <div style={{
+            fontFamily: font.detail, fontStyle: "italic",
+            fontSize: 28, color: theme.color.ink, lineHeight: 1.15,
+          }}>Ready to shop?</div>
+          <div style={{
+            color: theme.color.inkMuted, lineHeight: 1.5,
+            fontFamily: font.sans, fontSize: 14,
+          }}>
             Open the scanner. Every item you scan pairs to a row on your
             list with one tap. At checkout, scan the receipt and
-            everything commits to your pantry with full brand + canonical
+            everything commits to your kitchen with full brand + canonical
             data AND accurate prices.
           </div>
-          <div style={{ opacity: 0.7, fontSize: 14 }}>
+          <div style={{
+            color: theme.color.inkFaint, fontSize: 13,
+            fontFamily: font.sans,
+          }}>
             {listTargets.length
               ? `${listTargets.length} item${listTargets.length === 1 ? "" : "s"} on your list ready to pair.`
               : `Your list is empty. Add a few items first — 'corn', 'apples', 'beer' — then come back.`}
           </div>
           <button
             onClick={startTrip}
-            style={primaryBtn}
-          >START TRIP</button>
+            style={{
+              background: `linear-gradient(180deg, ${theme.color.ctaTop} 0%, ${theme.color.ctaBottom} 100%)`,
+              color: theme.color.ctaText,
+              border: "1px solid rgba(255,255,255,0.35)",
+              borderRadius: radius.pill,
+              padding: "14px 22px",
+              fontFamily: font.detail, fontStyle: "italic",
+              fontSize: 17, letterSpacing: "0.005em",
+              boxShadow: theme.shadow.cta,
+              cursor: "pointer",
+            }}
+          >Start trip →</button>
         </div>
       </div>
     );
@@ -647,7 +920,7 @@ export default function ShopMode({
 
   // Active trip — split layout: scanner on top half, shopping list
   // on bottom half (always visible, tap-to-arm).
-  const flash = lastScan && flashVisible ? FLASH_COLORS[lastScan.flashColor] : null;
+  const flash = lastScan && flashVisible ? flashColors[lastScan.flashColor] : null;
   // Red-scan hard stop — when a scan came back with no OFF data
   // (status='red'), we pause the scanner and force the user to name
   // it + pair it. Otherwise dead-end rows stock as "UPC 1234"
@@ -673,11 +946,7 @@ export default function ShopMode({
   }
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 340,
-      background: "#000",
-      display: "flex", flexDirection: "column",
-    }}>
+    <div style={overlayStyle}>
       {/* Keyframes for the scan visuals.
           shop-mode-flash       — quick text-banner punch (~900ms)
           shop-mode-panel-flash — quick full-panel wash (~900ms)
@@ -708,7 +977,7 @@ export default function ShopMode({
         flex: "1 1 50%",
         minHeight: 0,
         position: "relative",
-        borderBottom: "1px solid #222",
+        borderBottom: `1px solid ${theme.color.hairline}`,
       }}>
         {/* Scanner is paused while a red scan awaits pair + name.
             Forces the user to handle the dead-end scan before firing
@@ -725,9 +994,7 @@ export default function ShopMode({
             pane for visceral "your scan landed" feedback. Keyed
             by lastScan.scan.id so a same-color re-scan still
             re-animates (React remounts the node when the key
-            changes). Opacity animation defined as shop-mode-panel-
-            flash keyframes below — fades in/out over the same
-            FLASH_MS window as the text banner above. */}
+            changes). */}
         {flash && lastScan?.scan?.id && (
           <div
             key={`panel-flash-${lastScan.scan.id}-${flashVisible ? "on" : "off"}`}
@@ -753,7 +1020,7 @@ export default function ShopMode({
             key={`cooldown-${lastScan.scan.id}`}
             style={{
               position: "absolute", inset: 0, zIndex: 3,
-              background: FLASH_COLORS[lastScan.flashColor]?.bg || "#444",
+              background: flashColors[lastScan.flashColor]?.bg || theme.color.inkFaint,
               pointerEvents: "none",
               animation: "shop-mode-cooldown 10000ms linear forwards",
               mixBlendMode: "screen",
@@ -768,18 +1035,20 @@ export default function ShopMode({
         {scannerBlocked && (
           <div style={{
             position: "absolute", inset: 0, zIndex: 3,
-            background: "rgba(0,0,0,0.68)",
+            background: "rgba(0,0,0,0.55)",
             display: "flex", alignItems: "center", justifyContent: "center",
             pointerEvents: "none",
           }}>
             <div style={{
-              color: "#fff", fontSize: 13, fontStyle: "italic",
+              color: theme.color.ctaText,
+              fontFamily: font.detail, fontStyle: "italic", fontSize: 14,
               padding: "8px 14px",
-              background: "rgba(138,48,48,0.6)",
-              borderRadius: 20,
-              letterSpacing: 0.6,
+              background: theme.color.burnt,
+              borderRadius: radius.pill,
+              letterSpacing: "0.04em",
+              boxShadow: theme.shadow.cta,
             }}>
-              SCANNER PAUSED — NAME + PAIR THE LAST SCAN
+              Scanner paused — name + pair the last scan
             </div>
           </div>
         )}
@@ -792,24 +1061,24 @@ export default function ShopMode({
           const s = lastScan?.scan;
           const canonical = s?.canonicalId ? findIngredient(s.canonicalId) : null;
           const display = lastScan?.flashColor === "green"
-            ? `FOUND ${(canonical?.shortName || canonical?.name || s?.productName || flash.label).toUpperCase()}`
-            : flash.label;
+            ? `Found ${(canonical?.shortName || canonical?.name || s?.productName || flash.label).toLowerCase()}`
+            : flash.label.toLowerCase();
           return (
             <div style={{
-              position: "absolute", top: 10, left: 10, right: 10, zIndex: 5,
+              position: "absolute", top: 12, left: 12, right: 12, zIndex: 5,
               padding: "10px 14px",
               background: flash.bg,
-              color: "#fff",
-              fontWeight: 700,
-              letterSpacing: 1.2,
-              fontSize: 14,
+              color: theme.color.ctaText,
+              fontFamily: font.detail, fontStyle: "italic",
+              fontSize: 16,
+              letterSpacing: "0.02em",
               textAlign: "center",
-              borderRadius: 8,
-              boxShadow: "0 4px 14px rgba(0,0,0,0.4)",
+              borderRadius: radius.field,
+              boxShadow: theme.shadow.soft,
               animation: "shop-mode-flash 900ms ease-out",
               pointerEvents: "none",
             }}>
-              {display}{looking ? " — LOOKING UP" : null}
+              {display}{looking ? " — looking up" : null}
             </div>
           );
         })()}
@@ -820,24 +1089,31 @@ export default function ShopMode({
             SKIP dismisses without change. */}
         {addAnotherPrompt?.scan && !flashVisible && (() => {
           const s = addAnotherPrompt.scan;
-          const statusBg = FLASH_COLORS[s.status]?.bg || "#444";
+          const statusBg = flashColors[s.status]?.bg || theme.color.inkFaint;
           return (
             <div style={{
-              position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 6,
+              position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 6,
               padding: "10px 12px",
-              background: "rgba(22, 18, 10, 0.96)",
-              border: `1px solid #f5c842`,
-              borderRadius: 8,
+              background: theme.color.glassFillHeavy,
+              border: `1px solid ${theme.color.mustard}`,
+              borderRadius: radius.field,
               display: "flex", alignItems: "center", gap: 10,
-              backdropFilter: "blur(4px)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              boxShadow: theme.shadow.soft,
             }}>
               <span style={{ color: statusBg, fontSize: 18 }}>●</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
-                  DUPLICATE DETECTED — ALREADY ×{s.qty || 1}
+                <div style={{
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.18em", textTransform: "uppercase",
+                  color: theme.color.mustard,
+                }}>
+                  Duplicate · already ×{s.qty || 1}
                 </div>
                 <div style={{
-                  fontSize: 14, fontStyle: "italic", color: "#fff",
+                  fontFamily: font.detail, fontStyle: "italic",
+                  fontSize: 16, color: theme.color.ink,
                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                 }}>
                   Add another {s.productName || s.brand || `item with UPC ${s.barcodeUpc}`}?
@@ -846,22 +1122,29 @@ export default function ShopMode({
               <button
                 onClick={confirmAddAnother}
                 style={{
-                  background: "#f5c842", color: "#111", border: "none",
-                  borderRadius: 6, padding: "6px 12px",
-                  fontSize: 12, fontWeight: 700, letterSpacing: 0.8,
+                  background: theme.color.teal,
+                  color: theme.color.ctaText,
+                  border: "none",
+                  borderRadius: radius.chip,
+                  padding: "6px 12px",
+                  fontFamily: font.mono, fontSize: 11,
+                  letterSpacing: "0.12em", textTransform: "uppercase",
                   cursor: "pointer",
                 }}
-              >YES, +1</button>
+              >Yes, +1</button>
               <button
                 onClick={dismissAddAnother}
                 style={{
                   background: "transparent",
-                  color: "#aaa", border: "1px solid #333",
-                  borderRadius: 6, padding: "6px 10px",
-                  fontSize: 12, letterSpacing: 0.8,
+                  color: theme.color.inkMuted,
+                  border: `1px solid ${theme.color.hairline}`,
+                  borderRadius: radius.chip,
+                  padding: "6px 10px",
+                  fontFamily: font.mono, fontSize: 11,
+                  letterSpacing: "0.12em", textTransform: "uppercase",
                   cursor: "pointer",
                 }}
-              >SKIP</button>
+              >Skip</button>
             </div>
           );
         })()}
@@ -875,25 +1158,42 @@ export default function ShopMode({
           const pending = scans.find(s => s.id === pendingPairScanId);
           if (!pending) return null;
           const isRed = pending.status === "red";
-          const statusBg = FLASH_COLORS[pending.status]?.bg || "#444";
+          const isYellow = pending.status === "yellow";
+          // Show no-typing escape hatches on red AND yellow scans —
+          // yellow has OFF data but no canonical, so the wizard /
+          // memory book are still the right tools to give the user
+          // a complete identity without typing.
+          const showMisfireActions = isRed || isYellow;
+          const statusBg = flashColors[pending.status]?.bg || theme.color.inkFaint;
           return (
             <div style={{
-              position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 5,
+              position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 5,
               padding: "10px 12px",
-              background: isRed ? "rgba(30, 14, 14, 0.97)" : "rgba(14, 10, 22, 0.94)",
+              background: theme.color.glassFillHeavy,
               border: `1px solid ${statusBg}`,
-              borderRadius: 8,
+              borderRadius: radius.field,
               display: "flex", flexDirection: "column", gap: 8,
-              backdropFilter: "blur(4px)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              boxShadow: theme.shadow.soft,
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ color: statusBg, fontSize: 18 }}>●</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 10, letterSpacing: 1.2, color: isRed ? "#f8c7c7" : "#c7a8d4" }}>
-                    {isRed ? "NO DATA — TAP A LIST ITEM OR NAME IT" : "PICK WHICH LIST ITEM THIS IS"}
+                  <div style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    letterSpacing: "0.18em", textTransform: "uppercase",
+                    color: statusBg,
+                  }}>
+                    {isRed
+                      ? "No data — tap a list item, place it, or photo it"
+                      : isYellow
+                        ? "Tap a list item, place it, or photo it"
+                        : "Pick which list item this is"}
                   </div>
                   <div style={{
-                    fontSize: 14, fontStyle: "italic", color: "#fff",
+                    fontFamily: font.detail, fontStyle: "italic",
+                    fontSize: 16, color: theme.color.ink,
                     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                   }}>
                     {pending.productName || pending.brand || `UPC ${pending.barcodeUpc}`}
@@ -903,34 +1203,61 @@ export default function ShopMode({
                   onClick={() => { setPendingPairScanId(null); setRedNameDraft(""); }}
                   style={{
                     background: "transparent", border: "none",
-                    color: "#888", fontSize: 18, cursor: "pointer",
+                    color: theme.color.inkFaint, fontSize: 18, cursor: "pointer",
                     padding: "0 4px",
                   }}
                   aria-label="Skip"
                 >✕</button>
               </div>
-              {/* Optional name field for red scans — NOT required if
-                  the user taps a list item (we pull the name from
-                  that). Only required for an IMPULSE tap (no list
-                  target to borrow a name from). */}
-              {isRed && (
-                <input
-                  type="text"
-                  value={redNameDraft}
-                  onChange={e => setRedNameDraft(e.target.value)}
-                  placeholder="Or type it here (needed for impulse buys)"
-                  style={{
-                    width: "100%",
-                    padding: "10px 12px",
-                    background: "#0d0d0d",
-                    border: "1px solid #8a3030",
-                    borderRadius: 6,
-                    color: "#f0ece4",
-                    fontSize: 14,
-                    outline: "none",
-                    boxSizing: "border-box",
-                  }}
-                />
+              {/* No-typing escape hatches for red + yellow scans —
+                  two side-by-side affordances that solve the dead-end
+                  UPC without asking the user to type a name. The
+                  list-item tap (the parent row of this banner) is
+                  still the fastest path; these cover the case where
+                  the user doesn't want to pair to anything on the
+                  list. Yellow scans get the same treatment since they
+                  also lack a confident canonical bind. */}
+              {showMisfireActions && (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => setPlacementWizardScanId(pending.id)}
+                    style={{
+                      flex: 1,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      padding: "10px 12px",
+                      background: theme.color.glassFillHeavy,
+                      color: theme.color.ink,
+                      border: `1px solid ${theme.color.teal}`,
+                      borderRadius: radius.chip,
+                      fontFamily: font.detail, fontStyle: "italic", fontSize: 14,
+                      cursor: "pointer",
+                      backdropFilter: "blur(8px)",
+                      WebkitBackdropFilter: "blur(8px)",
+                    }}
+                  >
+                    <span style={{ fontSize: 16 }}>👆</span>
+                    Tap to place
+                  </button>
+                  <button
+                    onClick={() => setMemoryBookScanId(pending.id)}
+                    style={{
+                      flex: 1,
+                      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8,
+                      padding: "10px 12px",
+                      background: theme.color.glassFillHeavy,
+                      color: theme.color.ink,
+                      border: `1px solid ${theme.color.warmBrown}`,
+                      borderRadius: radius.chip,
+                      fontFamily: font.detail, fontStyle: "italic", fontSize: 14,
+                      cursor: "pointer",
+                      backdropFilter: "blur(8px)",
+                      WebkitBackdropFilter: "blur(8px)",
+                    }}
+                  >
+                    <span style={{ fontSize: 16 }}>📷</span>
+                    Photo it
+                  </button>
+                </div>
               )}
             </div>
           );
@@ -942,27 +1269,34 @@ export default function ShopMode({
             the list (which is RIGHT below it). Sits above flash via
             its own zIndex. */}
         {armedListItemId && !flashVisible && !pendingPairScanId && !addAnotherPrompt && (() => {
-          const armedItem = armedListItemId === "__impulse__"
-            ? { name: "Impulse buy (adds to list on scan)", emoji: "🛒" }
+          const armedItem = armedListItemId === "__addItem__"
+            ? { name: "Add Item + (adds to list on scan)", emoji: "🛒" }
             : listTargets.find(i => i.id === armedListItemId);
           if (!armedItem) return null;
           return (
             <div style={{
-              position: "absolute", bottom: 10, left: 10, right: 10, zIndex: 5,
+              position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 5,
               padding: "10px 12px",
-              background: "rgba(12, 22, 30, 0.94)",
-              border: "1px solid #7eb8d4",
-              borderRadius: 8,
+              background: theme.color.glassFillHeavy,
+              border: `1px solid ${theme.color.teal}`,
+              borderRadius: radius.field,
               display: "flex", alignItems: "center", gap: 10,
-              backdropFilter: "blur(4px)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              boxShadow: theme.shadow.soft,
             }}>
               <span style={{ fontSize: 18 }}>{armedItem.emoji || "🛒"}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#7eb8d4" }}>
-                  NEXT SCAN → {armedListItemId === "__impulse__" ? "IMPULSE ADD" : "PAIRS TO"}
+                <div style={{
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.18em", textTransform: "uppercase",
+                  color: theme.color.teal,
+                }}>
+                  Next scan → {armedListItemId === "__addItem__" ? "add to list" : "pairs to"}
                 </div>
                 <div style={{
-                  fontSize: 14, fontStyle: "italic", color: "#fff",
+                  fontFamily: font.detail, fontStyle: "italic",
+                  fontSize: 16, color: theme.color.ink,
                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                 }}>
                   {armedItem.name}
@@ -972,7 +1306,7 @@ export default function ShopMode({
                 onClick={() => setArmedListItemId(null)}
                 style={{
                   background: "transparent", border: "none",
-                  color: "#888", fontSize: 18, cursor: "pointer",
+                  color: theme.color.inkFaint, fontSize: 18, cursor: "pointer",
                   padding: "0 4px",
                 }}
                 aria-label="Disarm"
@@ -987,22 +1321,33 @@ export default function ShopMode({
         flex: "1 1 50%",
         minHeight: 0,
         display: "flex", flexDirection: "column",
-        background: "#0b0b0b",
+        background: theme.color.glassFillLite,
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
       }}>
         {/* Sticky summary / action bar */}
         <div style={{
           padding: "10px 14px",
           display: "flex", alignItems: "center", gap: 10,
-          borderBottom: "1px solid #1e1e1e",
-          background: "#0d0d0d",
+          borderBottom: `1px solid ${theme.color.hairline}`,
+          background: theme.color.glassFillHeavy,
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
         }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#f5c842" }}>
-              SHOPPING LIST · {listTargets.length} TO GO
+            <div style={{
+              fontFamily: font.mono, fontSize: 10,
+              letterSpacing: "0.18em", textTransform: "uppercase",
+              color: theme.color.teal,
+            }}>
+              Shopping list · {listTargets.length} to go
             </div>
-            <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+            <div style={{
+              fontFamily: font.sans, fontSize: 12,
+              color: theme.color.inkMuted, marginTop: 2,
+            }}>
               {armedListItemId
-                ? "NEXT SCAN WILL AUTO-PAIR"
+                ? "Next scan will auto-pair"
                 : scans.length === 0
                   ? "Tap an item to arm it for the next scan."
                   : `${scans.length} scan${scans.length === 1 ? "" : "s"} · ${pairedCount(scans)} paired`}
@@ -1012,39 +1357,45 @@ export default function ShopMode({
             onClick={handleCheckout}
             disabled={scans.length === 0}
             style={{
-              background: scans.length === 0 ? "#1a1a1a" : "#b8a878",
-              color: scans.length === 0 ? "#555" : "#111",
-              border: "none",
-              borderRadius: 8,
-              padding: "8px 14px",
-              fontSize: 12,
-              fontWeight: 700,
-              letterSpacing: 1,
+              background: scans.length === 0
+                ? theme.color.glassFillLite
+                : `linear-gradient(180deg, ${theme.color.ctaTop} 0%, ${theme.color.ctaBottom} 100%)`,
+              color: scans.length === 0 ? theme.color.inkFaint : theme.color.ctaText,
+              border: scans.length === 0
+                ? `1px solid ${theme.color.hairline}`
+                : "1px solid rgba(255,255,255,0.35)",
+              borderRadius: radius.pill,
+              padding: "8px 16px",
+              fontFamily: font.detail, fontStyle: "italic",
+              fontSize: 15, letterSpacing: "0.005em",
               cursor: scans.length === 0 ? "not-allowed" : "pointer",
               whiteSpace: "nowrap",
+              boxShadow: scans.length === 0 ? "none" : theme.shadow.cta,
             }}
-          >DONE →</button>
+          >Done →</button>
         </div>
 
         {/* Scrollable list body */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 10px 12px" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 12px 16px" }}>
           {/* Search bar — pinned above the list. Narrow by name as
               the user types. Sticky so it stays visible while
               scrolling a long list. */}
           <div style={{
             position: "sticky", top: 0, zIndex: 2,
-            background: "#0b0b0b",
             padding: "4px 0 8px",
             marginBottom: 4,
           }}>
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
               padding: "8px 12px",
-              background: "#141414",
-              border: "1px solid #242424",
-              borderRadius: 10,
+              background: theme.color.glassFillHeavy,
+              border: `1px solid ${theme.color.hairline}`,
+              borderRadius: radius.field,
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              boxShadow: theme.shadow.inputInset,
             }}>
-              <span style={{ fontSize: 13, color: "#666" }}>🔍</span>
+              <span style={{ fontSize: 13, color: theme.color.inkFaint }}>🔍</span>
               <input
                 type="text"
                 value={search}
@@ -1053,8 +1404,8 @@ export default function ShopMode({
                 style={{
                   flex: 1,
                   background: "transparent", border: "none", outline: "none",
-                  color: "#f0ece4",
-                  fontFamily: "'DM Sans',sans-serif", fontSize: 13,
+                  color: theme.color.ink,
+                  fontFamily: font.sans, fontSize: 14,
                 }}
               />
               {search && (
@@ -1063,56 +1414,64 @@ export default function ShopMode({
                   aria-label="Clear search"
                   style={{
                     background: "transparent", border: "none",
-                    color: "#666", fontSize: 13, cursor: "pointer",
+                    color: theme.color.inkFaint, fontSize: 13, cursor: "pointer",
                   }}
                 >✕</button>
               )}
             </div>
           </div>
 
-          {/* IMPULSE BUY — pinned near the top so a first-time user
+          {/* ADD ITEM + — pinned near the top so a first-time user
               doesn't have to scroll past the whole list to discover
               it. Same tap-to-arm model as list items; when pick-mode
               is active (pendingPairScanId set), tapping here routes
-              to impulse-add for the pending scan. */}
+              the pending scan into a fresh list row. */}
           {(() => {
-            const isArmedImpulse = armedListItemId === "__impulse__";
+            const isArmedAddItem = armedListItemId === "__addItem__";
             const isPickMode = !!pendingPairScanId;
             return (
               <button
-                onClick={() => handleListTap("__impulse__")}
+                onClick={() => handleListTap("__addItem__")}
                 style={{
                   display: "flex", width: "100%", alignItems: "center", gap: 10,
                   padding: "10px 12px",
-                  background: isArmedImpulse ? "#10202a" : "#141414",
-                  border: `${isArmedImpulse ? 2 : 1}px ${isArmedImpulse ? "solid" : "dashed"} ${isArmedImpulse ? "#7eb8d4" : "#555"}`,
-                  color: "#ddd",
-                  borderRadius: 10,
+                  background: isArmedAddItem ? theme.color.tealTint : theme.color.glassFillLite,
+                  border: `${isArmedAddItem ? 2 : 1}px ${isArmedAddItem ? "solid" : "dashed"} ${isArmedAddItem ? theme.color.teal : theme.color.hairline}`,
+                  color: theme.color.inkMuted,
+                  borderRadius: radius.field,
                   marginBottom: 8,
                   cursor: "pointer",
-                  fontSize: 13,
-                  letterSpacing: 0.6,
+                  fontFamily: font.sans, fontSize: 13,
+                  letterSpacing: "0.01em",
                   textAlign: "left",
                 }}
               >
                 <span style={{ fontSize: 18 }}>🛒</span>
                 <span style={{ flex: 1 }}>
                   {isPickMode
-                    ? "IMPULSE BUY — tap here to add this scan as a new entry"
-                    : "IMPULSE BUY — arm, then scan anything off-list"}
+                    ? "Add Item + — tap here to add this scan as a new entry"
+                    : "Add Item + — arm, then scan anything off-list"}
                 </span>
-                {isArmedImpulse && (
-                  <span style={{ fontSize: 10, color: "#7eb8d4", letterSpacing: 1.2 }}>ARMED</span>
+                {isArmedAddItem && (
+                  <span style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    letterSpacing: "0.18em", textTransform: "uppercase",
+                    color: theme.color.teal,
+                  }}>Armed</span>
                 )}
               </button>
             );
           })()}
 
           {listTargets.length === 0 && (
-            <div style={{ padding: 20, color: "#666", fontSize: 13, fontStyle: "italic", textAlign: "center" }}>
+            <div style={{
+              padding: 24,
+              color: theme.color.inkFaint, fontFamily: font.detail, fontStyle: "italic",
+              fontSize: 15, textAlign: "center",
+            }}>
               {search
-                ? `No list items match “${search}”.`
-                : "Your list is empty. Arm IMPULSE BUY above and every scan becomes a new entry."}
+                ? `No list items match "${search}".`
+                : "Your list is empty. Arm Add Item + above and every scan becomes a new entry."}
             </div>
           )}
           {listTargets.map(item => {
@@ -1124,15 +1483,15 @@ export default function ShopMode({
             const isArmed = !!item.id && armedListItemId === item.id;
             const isPickMode = !!pendingPairScanId;
             const bg = isArmed
-              ? "#10202a"
+              ? theme.color.tealTint
               : status
-                ? STATUS_TILE_BG[status]
-                : "#141414";
+                ? statusTileBg[status]
+                : theme.color.glassFillLite;
             const border = isArmed
-              ? "#7eb8d4"
+              ? theme.color.teal
               : status
-                ? FLASH_COLORS[status].bg
-                : "#1e1e1e";
+                ? flashColors[status].bg
+                : theme.color.hairline;
             return (
               <button
                 key={item.id}
@@ -1142,7 +1501,7 @@ export default function ShopMode({
                   padding: "10px 12px",
                   background: bg,
                   border: `${isArmed ? 2 : 1}px solid ${border}`,
-                  borderRadius: 10,
+                  borderRadius: radius.field,
                   marginBottom: 6,
                   textAlign: "left",
                   cursor: "pointer",
@@ -1156,21 +1515,36 @@ export default function ShopMode({
               >
                 <div style={{ fontSize: 20 }}>{item.emoji || "🛒"}</div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ color: "#f0ece4", fontSize: 14 }}>{item.name}</div>
+                  <div style={{
+                    fontFamily: font.detail, fontStyle: "italic",
+                    color: theme.color.ink, fontSize: 16,
+                  }}>{item.name}</div>
                   {paired.length > 0 && (
-                    <div style={{ fontSize: 10, color: border, marginTop: 2, letterSpacing: 0.6 }}>
-                      ✓ {paired.reduce((n, s) => n + (s.qty || 1), 0)} PAIRED · {FLASH_COLORS[status]?.label || status?.toUpperCase()}
+                    <div style={{
+                      fontFamily: font.mono, fontSize: 10,
+                      letterSpacing: "0.18em", textTransform: "uppercase",
+                      color: border, marginTop: 2,
+                    }}>
+                      ✓ {paired.reduce((n, s) => n + (s.qty || 1), 0)} paired · {flashColors[status]?.label?.toLowerCase() || status}
                     </div>
                   )}
                 </div>
                 {isArmed && (
-                  <div style={{ fontSize: 10, color: "#7eb8d4", letterSpacing: 1.2 }}>
-                    ARMED
+                  <div style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    letterSpacing: "0.18em", textTransform: "uppercase",
+                    color: theme.color.teal,
+                  }}>
+                    Armed
                   </div>
                 )}
                 {isPickMode && !isArmed && (
-                  <div style={{ fontSize: 10, color: "#c7a8d4", letterSpacing: 1.2 }}>
-                    PICK →
+                  <div style={{
+                    fontFamily: font.mono, fontSize: 10,
+                    letterSpacing: "0.18em", textTransform: "uppercase",
+                    color: theme.color.mustard,
+                  }}>
+                    Pick →
                   </div>
                 )}
               </button>
@@ -1181,9 +1555,16 @@ export default function ShopMode({
               users can scroll down to review/adjust qty without a
               floating chip strip competing for scanner focus. */}
           {scans.length > 0 && (
-            <div style={{ marginTop: 16, paddingTop: 10, borderTop: "1px solid #1a1a1a" }}>
-              <div style={{ fontSize: 10, letterSpacing: 1.2, color: "#555", margin: "0 2px 6px" }}>
-                RECENT SCANS
+            <div style={{
+              marginTop: 18, paddingTop: 12,
+              borderTop: `1px solid ${theme.color.hairline}`,
+            }}>
+              <div style={{
+                fontFamily: font.mono, fontSize: 10,
+                letterSpacing: "0.18em", textTransform: "uppercase",
+                color: theme.color.inkFaint, margin: "0 2px 8px",
+              }}>
+                Recent scans
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {scans.slice().reverse().map(scan => (
@@ -1193,6 +1574,8 @@ export default function ShopMode({
                     listName={nameForListId(shoppingList, scan.pairedShoppingListItemId)}
                     onAdjust={(next) => adjustScanQty(scan.id, next)}
                     onUnpair={() => handleUnpair(scan.id)}
+                    theme={theme}
+                    flashColors={flashColors}
                   />
                 ))}
               </div>
@@ -1200,6 +1583,29 @@ export default function ShopMode({
           )}
         </div>
       </div>
+
+      {/* Misfire escape hatches — mounted at the overlay's tail so
+          they paint above the scanner + list. Both close themselves
+          on completion via the corresponding handler clearing
+          their state id. */}
+      {placementWizardScanId && (
+        <ShopModePlacementWizard
+          onComplete={handleWizardComplete}
+          onCancel={() => setPlacementWizardScanId(null)}
+        />
+      )}
+      {memoryBookScanId && (() => {
+        const target = scans.find(s => s.id === memoryBookScanId);
+        if (!target) return null;
+        return (
+          <MemoryBookCapture
+            barcodeUpc={target.barcodeUpc}
+            offCategoryHints={null}
+            onComplete={handleMemoryBookComplete}
+            onCancel={() => setMemoryBookScanId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -1301,9 +1707,9 @@ function normalizeName(s) {
     .trim();
 }
 
-function ScanChip({ scan, listName, onAdjust, onUnpair }) {
+function ScanChip({ scan, listName, onAdjust, onUnpair, theme, flashColors }) {
   const [open, setOpen] = useState(false);
-  const color = FLASH_COLORS[scan.status]?.bg || "#444";
+  const color = flashColors[scan.status]?.bg || theme.color.inkFaint;
   const label = scan.productName || scan.brand || scan.barcodeUpc.slice(-6);
   return (
     <div style={{ position: "relative" }}>
@@ -1311,14 +1717,16 @@ function ScanChip({ scan, listName, onAdjust, onUnpair }) {
         onClick={() => setOpen(v => !v)}
         style={{
           flex: "none",
-          background: "#1a1a1a",
-          color: "#eee",
+          background: theme.color.glassFillHeavy,
+          color: theme.color.ink,
           border: `1px solid ${color}`,
-          borderRadius: 999,
-          padding: "4px 10px",
-          fontSize: 12,
+          borderRadius: radius.pill,
+          padding: "4px 12px",
+          fontFamily: font.sans, fontSize: 12,
           whiteSpace: "nowrap",
           cursor: "pointer",
+          backdropFilter: "blur(8px)",
+          WebkitBackdropFilter: "blur(8px)",
         }}
       >
         <span style={{ color }}>●</span>{" "}
@@ -1328,19 +1736,28 @@ function ScanChip({ scan, listName, onAdjust, onUnpair }) {
       </button>
       {open && (
         <div style={{
-          position: "absolute", top: 28, left: 0, zIndex: 365,
-          background: "#0d0d0d",
-          border: "1px solid #333",
-          borderRadius: 6,
+          position: "absolute", top: 30, left: 0, zIndex: 365,
+          background: theme.color.glassFillHeavy,
+          border: `1px solid ${theme.color.hairline}`,
+          borderRadius: radius.chip,
           padding: 8,
           display: "flex", gap: 6, alignItems: "center",
+          backdropFilter: "blur(14px)",
+          WebkitBackdropFilter: "blur(14px)",
+          boxShadow: theme.shadow.soft,
         }}>
-          <button onClick={() => onAdjust(Math.max(1, (scan.qty || 1) - 1))} style={pillBtn}>−</button>
-          <span style={{ color: "#eee", minWidth: 24, textAlign: "center" }}>{scan.qty || 1}</span>
-          <button onClick={() => onAdjust((scan.qty || 1) + 1)} style={pillBtn}>+</button>
+          <button onClick={() => onAdjust(Math.max(1, (scan.qty || 1) - 1))} style={pillBtnStyle(theme)}>−</button>
+          <span style={{
+            color: theme.color.ink, minWidth: 24, textAlign: "center",
+            fontFamily: font.mono, fontSize: 13,
+          }}>{scan.qty || 1}</span>
+          <button onClick={() => onAdjust((scan.qty || 1) + 1)} style={pillBtnStyle(theme)}>+</button>
           {scan.pairedShoppingListItemId && (
-            <button onClick={() => { onUnpair(); setOpen(false); }} style={{ ...pillBtn, background: "#2a1f1f" }}>
-              UNPAIR
+            <button
+              onClick={() => { onUnpair(); setOpen(false); }}
+              style={{ ...pillBtnStyle(theme), background: theme.color.burntTint, color: theme.color.burnt }}
+            >
+              Unpair
             </button>
           )}
         </div>
@@ -1349,37 +1766,14 @@ function ScanChip({ scan, listName, onAdjust, onUnpair }) {
   );
 }
 
-const overlayStyle = {
-  position: "fixed", inset: 0, zIndex: 340,
-  background: "#050505",
-  display: "flex", flexDirection: "column",
-};
-
-const headerStyle = {
-  padding: "20px 18px 10px",
-  display: "flex", alignItems: "center", gap: 10,
-  borderBottom: "1px solid #1e1e1e",
-  background: "#0b0b0b",
-};
-
-const headerTitle = {
-  color: "#fff", fontSize: 16, fontStyle: "italic", letterSpacing: 1.2,
-};
-
-const iconBtn = {
-  background: "transparent", border: "1px solid #333", color: "#eee",
-  width: 36, height: 36, borderRadius: 8, cursor: "pointer",
-};
-
-const primaryBtn = {
-  background: "#b8a878", color: "#111", border: "none",
-  borderRadius: 10, padding: "14px 20px",
-  fontSize: 16, fontWeight: 700, letterSpacing: 1.2,
-  cursor: "pointer",
-};
-
-const pillBtn = {
-  background: "#1a1a1a", color: "#eee",
-  border: "1px solid #333", borderRadius: 6,
-  padding: "2px 10px", cursor: "pointer", fontSize: 13,
-};
+function pillBtnStyle(theme) {
+  return {
+    background: theme.color.glassFillLite,
+    color: theme.color.ink,
+    border: `1px solid ${theme.color.hairline}`,
+    borderRadius: radius.chip,
+    padding: "2px 10px",
+    cursor: "pointer",
+    fontFamily: font.mono, fontSize: 13,
+  };
+}
