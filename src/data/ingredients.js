@@ -2867,8 +2867,21 @@ export const INGREDIENTS = [
       seed("kielbasa",       "Kielbasa",        "🥓", "meat", "sausage", SOLID(454),      "lb", { parentId: "pork_hub" }),
       seed("smoked_sausage", "Smoked Sausage",  "🥓", "meat", "sausage", SOLID(454),      "lb", { parentId: "pork_hub" }),
       seed("hot_dogs",       "Hot Dogs",        "🌭", "meat", "sausage", PIECES(50, 454), "package", { parentId: "pork_hub" }),
+      // Frank is its OWN canonical, NOT an alias of hot_dogs.
+      // Franks are traditionally all-pork; hot dogs can be any meat.
+      // The compositional-tier rule beats them BOTH against
+      // primitives (cheese, sugar) — "Cheese Frank" → frank canonical
+      // with cheese demoted to a claim chip.
+      seed("frank",          "Frank",           "🌭", "meat", "sausage", PIECES(50, 454), "package", { parentId: "pork_hub" }),
 
       // ── dairy — sliced & shredded cheese ────────────────────────
+      // Generic cheese (the building-block ingredient form). Specific
+      // cheeses (cheddar, mozzarella, swiss, etc.) are separate
+      // canonicals with subtype="cheese". Generic "cheese" exists so
+      // a productName like "Bar-S Cheese Frank" matches both `frank`
+      // (tier 3) and `cheese` (tier 2 default) — the tier-aware
+      // resolver picks frank, demotes cheese to a claim chip.
+      seed("cheese",          "Cheese",          "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
       seed("american_cheese", "American Cheese", "🧀", "dairy", "cheese", PIECES(21, 340), "package", { parentId: "cheese_hub" }),
       seed("swiss",           "Swiss",           "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
       seed("provolone",       "Provolone",       "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
@@ -3531,21 +3544,175 @@ function getCanonicalAliasMap() {
  * Pair with canonicalIdForType (foodTypes.js) — name-based wins when
  * it fires, type default fires otherwise.
  */
+// COMPOSITIONAL TIER — used by inferCanonicalFromName when multiple
+// canonicals match a productName. The architectural rule:
+//
+//   "Inserting cheese into meat does not make meat cheese.
+//    Sugar Cookie is not Sugar — it's a Cookie that contains sugar."
+//
+// Higher tier wins. Lower-tier matches are NOT the canonical; they
+// are claims / ingredients / inclusions stuck inside the higher-tier
+// product.
+//
+//   tier 1 — primitive / raw ingredient (sugar, salt, flour, eggs,
+//            milk, butter, oil, water, vinegar, baking soda, honey,
+//            sour cream). Almost never the actual product the user
+//            scanned; almost always a flavor or compositional
+//            ingredient inside something else.
+//   tier 2 — sub-product / assembled-but-still-an-ingredient
+//            (cheese, yogurt, sausage, dough, jam, sauce). Can be
+//            the product (a block of cheddar) OR an ingredient
+//            inside a higher-tier product (cheese in a cheese
+//            frank). Default when not specified.
+//   tier 3 — pre-built assembled product (cookie, candy_bar,
+//            beef_stick, frank, hot_dogs, ice_cream, pretzels,
+//            chips, mac_and_cheese, lunchables). What the user
+//            actually bought as a SKU. Wins over tiers 1 and 2.
+//
+// Default tier when not declared on the ingredient is 2 — most of
+// the registry is in the middle ground. The lookup below only needs
+// to set tier on canonicals that frequently collide with others
+// (the over-matched primitives like sugar/salt/honey, the sub-
+// product cheeses/yogurts that get stuffed into other products,
+// and the assembled snacks/cookies/etc. that should always win).
+const COMPOSITIONAL_TIER_OVERRIDES = {
+  // tier 1 — primitives that should NEVER win when something else
+  // matches. "Sugar Cookie" → cookie, "Honey Mustard Pretzels" →
+  // pretzels (then mustard demoted further), "Salt & Vinegar Chips"
+  // → chips.
+  sugar: 1, brown_sugar: 1, powdered_sugar: 1,
+  salt: 1, kosher_salt: 1, sea_salt: 1, table_salt: 1,
+  flour: 1, bread_flour: 1, cake_flour: 1, pastry_flour: 1,
+  eggs: 1, milk: 1, butter: 1,
+  honey: 1, maple_syrup: 1, molasses: 1,
+  baking_soda: 1, baking_powder: 1, yeast: 1, cornstarch: 1,
+  cocoa: 1, cocoa_powder: 1, chocolate_chips: 1,
+  vanilla: 1, vanilla_extract: 1,
+  sour_cream: 1,
+  // Spices and seasonings
+  black_pepper: 1, white_pepper: 1, cinnamon: 1, paprika: 1,
+  cumin: 1, ginger: 1, garlic: 1, onion: 1,
+  // Oils + vinegars
+  olive_oil: 1, vegetable_oil: 1, canola_oil: 1, sesame_oil: 1,
+  vinegar: 1, rice_vinegar: 1, balsamic_vinegar: 1, apple_cider_vinegar: 1,
+
+  // tier 3 — assembled products that should ALWAYS win when
+  // matched. "Cheese Frank" → frank (cheese demotes), "Strawberry
+  // Greek Yogurt" → greek_yogurt (strawberry demotes).
+  cookie: 3, chocolate_chip_cookie: 3, sandwich_cookie: 3, cookies_and_cream: 3,
+  candy: 3, candy_bar: 3, chocolate_candy: 3,
+  peanut_butter_candy: 3, peanut_butter_cup: 3,
+  cracker: 3, goldfish: 3,
+  beef_stick: 3, snack_stick: 3, beef_jerky: 3,
+  pork_stick: 3, pork_jerky: 3, turkey_jerky: 3,
+  hot_dogs: 3, frank: 3,
+  ice_cream: 3, ice_cream_bar: 3, frozen_yogurt: 3,
+  greek_yogurt: 3, yogurt_drink: 3,
+  mac_and_cheese: 3, lunchables: 3, cereal: 3,
+  bologna: 3, pastrami: 3, roast_beef: 3, mortadella: 3,
+  capicola: 3, kielbasa: 3, smoked_sausage: 3,
+  string_cheese: 3, shredded_cheese: 3, sliced_cheese: 3, cheese_singles: 3,
+  chicken_nuggets: 3, chicken_wings: 3,
+};
+
+export function tierForCanonical(canonicalId) {
+  if (!canonicalId) return 2;
+  return COMPOSITIONAL_TIER_OVERRIDES[canonicalId] ?? 2;
+}
+
+// Tier-aware canonical inference. Walks the alias map, collects ALL
+// matches, then picks the best from the HIGHEST TIER GROUP. Within a
+// tier, longest match wins (the existing rule). Returns just the id
+// for back-compat with existing callers; resolveCanonicalWithClaims
+// below returns id + claims if the caller wants both.
 export function inferCanonicalFromName(name) {
   const lower = (name || "").toLowerCase().trim();
   if (lower.length < 3) return null;
   const map = getCanonicalAliasMap();
-  let bestId = null;
-  let bestLen = 0;
+  // Collect every match, grouped by tier.
+  const byTier = { 1: [], 2: [], 3: [] };
   for (const [alias, id] of map) {
     if (alias.length < 3) continue;
     if (!lower.includes(alias)) continue;
-    if (alias.length > bestLen) {
-      bestId = id;
-      bestLen = alias.length;
+    const tier = tierForCanonical(id);
+    byTier[tier].push({ alias, id, len: alias.length });
+  }
+  // Highest tier with matches wins. Within tier, longest alias wins.
+  for (const t of [3, 2, 1]) {
+    if (byTier[t].length === 0) continue;
+    byTier[t].sort((a, b) => b.len - a.len);
+    return byTier[t][0].id;
+  }
+  return null;
+}
+
+// Same resolution as inferCanonicalFromName, but returns the
+// extracted claims (lower-tier matches that demoted out of the
+// canonical slot). Use this when the caller wants both the canonical
+// AND the flavor/inclusion tokens to surface as chips. "Cheese
+// Frank" → { canonicalId: "frank", claims: ["Cheese"] }.
+export function resolveCanonicalWithClaims(name) {
+  const lower = (name || "").toLowerCase().trim();
+  if (lower.length < 3) return { canonicalId: null, claims: [] };
+  const map = getCanonicalAliasMap();
+  const byTier = { 1: [], 2: [], 3: [] };
+  for (const [alias, id] of map) {
+    if (alias.length < 3) continue;
+    if (!lower.includes(alias)) continue;
+    const tier = tierForCanonical(id);
+    byTier[tier].push({ alias, id, len: alias.length });
+  }
+  let canonicalId = null;
+  let winningTier = 0;
+  for (const t of [3, 2, 1]) {
+    if (byTier[t].length === 0) continue;
+    byTier[t].sort((a, b) => b.len - a.len);
+    canonicalId = byTier[t][0].id;
+    winningTier = t;
+    break;
+  }
+  // Claims = matches at LOWER tiers than the winner. Same-tier
+  // runner-ups don't auto-demote (cheddar + cheese both at tier 2
+  // for example — only one wins the canonical slot, the other isn't
+  // a "claim" by virtue of losing alphabetically).
+  //
+  // Redundancy filter: if a lower-tier canonical's name is already
+  // contained in the winner's canonical name OR slug, skip it. "Beef
+  // Stick" canonical implicitly contains "beef" — surfacing "Beef"
+  // as a claim would be redundant. "Sliced Cheese" implicitly
+  // contains "cheese". Same idea for "Greek Yogurt" + "Yogurt".
+  const winningIng = canonicalId ? findIngredient(canonicalId) : null;
+  const winningTokens = new Set();
+  const collectTokens = (s) => {
+    if (!s) return;
+    String(s).toLowerCase().split(/[\s_\-,&'/]+/).forEach(t => {
+      if (t.length >= 3) winningTokens.add(t);
+    });
+  };
+  collectTokens(canonicalId);
+  collectTokens(winningIng?.name);
+  collectTokens(winningIng?.shortName);
+
+  const claims = [];
+  const seen = new Set();
+  for (const t of [3, 2, 1]) {
+    if (t >= winningTier) continue;   // skip winning + higher-tier (none higher exists)
+    for (const m of byTier[t]) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      // Use the canonical's display name as the claim label so a
+      // claim chip reads "Sugar" not "sugar" / "honey_mustard".
+      const ing = findIngredient(m.id);
+      const label = ing?.name || m.alias.replace(/_/g, " ");
+      // Skip redundant claims — words already represented in the
+      // winning canonical's name/slug.
+      const labelTokens = label.toLowerCase().split(/[\s_\-,&'/]+/).filter(t => t.length >= 3);
+      const allTokensRedundant = labelTokens.length > 0 && labelTokens.every(t => winningTokens.has(t));
+      if (allTokensRedundant) continue;
+      claims.push(label);
     }
   }
-  return bestId;
+  return { canonicalId, claims };
 }
 
 // Common freshness / prep / form modifiers the AI tends to prepend

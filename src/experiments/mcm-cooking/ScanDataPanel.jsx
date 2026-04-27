@@ -23,7 +23,11 @@ export function ScanDataPanel({ scanDebug, theme }) {
   const [showRaw, setShowRaw] = useState(false);
   if (!scanDebug) return null;
 
-  const { res, correction, finalCanonicalId, displayName, detectedBrand, upc, memoryBook } = scanDebug;
+  const { res, correction, finalCanonicalId, offTextForInference, displayName, detectedBrand, upc, memoryBook, scan } = scanDebug;
+  // `displayName` is a legacy field from before the rename to
+  // offTextForInference — fall back to it so older scanDebug
+  // payloads still render the OFF-text-for-inference row.
+  const offText = offTextForInference || displayName || null;
   const nutrition = res?.nutrition || null;
   const per       = nutrition?.per || null;
 
@@ -150,6 +154,57 @@ export function ScanDataPanel({ scanDebug, theme }) {
       )}
       {Array.isArray(res?.countryTags) && res.countryTags.length > 0 && (
         <Row theme={theme} label="Countries">{res.countryTags.join(" · ")}</Row>
+      )}
+
+      {/* SCAN PATH — what we extracted from the OFF lookup vs. the
+          USDA correction tier vs. detectBrand. Surfaces the merge
+          providers ("which source contributed each field") + the
+          flavor/variant claims stripped from OFF text. Critical for
+          debugging "why did this row land with brand X / no name /
+          tile Y" without having to dig into console.log noise. */}
+      {(scan?.flavorClaims?.length > 0 || offText || finalCanonicalId || detectedBrand) && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{
+            fontFamily: font.mono, fontSize: 9,
+            letterSpacing: "0.12em", textTransform: "uppercase",
+            color: theme.color.inkFaint,
+            marginBottom: 6,
+          }}>
+            Scan path · what we extracted
+          </div>
+          {finalCanonicalId && (
+            <Row theme={theme} label="Canonical bound">{finalCanonicalId}</Row>
+          )}
+          {!finalCanonicalId && (
+            <Row theme={theme} label="Canonical bound">
+              <span style={{ color: theme.color.burnt }}>none — name field stays empty</span>
+            </Row>
+          )}
+          {detectedBrand && (
+            <Row theme={theme} label="Brand">{detectedBrand}</Row>
+          )}
+          {offText && (
+            <Row theme={theme} label="OFF text (inference only)">
+              <span style={{ color: theme.color.inkFaint }}>{offText}</span>
+            </Row>
+          )}
+          {Array.isArray(scan?.flavorClaims) && scan.flavorClaims.length > 0 && (
+            <Row theme={theme} label="Claims extracted">
+              {scan.flavorClaims.map((c, i) => (
+                <span key={i} style={{
+                  display: "inline-block",
+                  padding: "1px 8px",
+                  marginRight: 4,
+                  borderRadius: 999,
+                  background: withAlpha(theme.color.mustard, 0.18),
+                  color: theme.color.mustard,
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.04em",
+                }}>{c}</span>
+              ))}
+            </Row>
+          )}
+        </div>
       )}
 
       {/* MEMORY BOOK — AI photo flow's canonical decision metadata.
