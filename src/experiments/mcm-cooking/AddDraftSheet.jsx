@@ -31,6 +31,7 @@ import { usePopularPackages } from "../../lib/usePopularPackages";
 import { FOOD_TYPES, inferFoodTypeFromName, typeIdForCanonical } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { createPendingCanonicalFromScan } from "../../lib/createPendingCanonicalFromScan";
+import { stripFlavors } from "../../lib/stripFlavors";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
@@ -851,6 +852,34 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         // canonical's display name (see the input onChange).
         setCanonicalOverridden(true);
       }
+      // Flavor / variant extraction — pulls "Fudge Swirl",
+      // "Cookies & Cream", "Salt & Vinegar", etc. out of the
+      // productName text and surfaces them as claims chips so
+      // they're persisted on the row instead of fossilizing into
+      // the display name. Mirrors what the categorize-product-photo
+      // edge function does on the photo path. Lexicon is curated
+      // strictly to flavor variants (see stripFlavors.js — milk
+      // chocolate / peanut butter cup deliberately NOT in the list
+      // because they're identity, not flavors).
+      const flavorScan = stripFlavors(res?.productName || "", {
+        brand: detectedBrand || res?.brand || null,
+        removeFromName: true,
+      });
+      // If the stripper meaningfully shortened the name AND the
+      // form's name field still equals the OFF productName (the
+      // user hasn't typed a custom override yet), swap in the
+      // cleaner remainingName so the header doesn't read "Milk
+      // Chocolate Truffles Fudge Swirl" when we already have
+      // "Fudge Swirl" as a claim chip below.
+      if (
+        flavorScan.claims.length > 0
+        && flavorScan.remainingName
+        && flavorScan.remainingName !== res?.productName
+        && (!name.trim() || name.trim() === res?.productName?.trim())
+      ) {
+        setName(flavorScan.remainingName);
+      }
+
       // Stash the raw + computed payload so the ScanDataPanel
       // below the form can render nutrition / source / etc.
       setScanDebug({
@@ -860,6 +889,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         finalCanonicalId,
         displayName: displayName || null,
         detectedBrand: detectedBrand || null,
+        // Flavor claims from the scan path. Read by the success-
+        // banner message + folded into the correction-write claims
+        // array on commit so the next scan of this UPC carries them.
+        scan: {
+          flavorClaims:    flavorScan.claims,
+          remainingName:   flavorScan.remainingName,
+        },
         at: new Date().toISOString(),
       });
 
@@ -1076,7 +1112,23 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // we use it in the future it's useful."
       const photoClaims  = Array.isArray(scanDebug?.memoryBook?.claims)
         ? scanDebug.memoryBook.claims
-        : null;
+        : [];
+      // Scan-path flavor claims from stripFlavors. Same shape as the
+      // photo path's claims, just sourced from the OFF productName
+      // sweep instead of Haiku's photo extraction. Merge case-
+      // insensitively so a token Haiku already pulled doesn't double.
+      const flavorClaims = Array.isArray(scanDebug?.scan?.flavorClaims)
+        ? scanDebug.scan.flavorClaims
+        : [];
+      const seenClaim = new Set();
+      const mergedClaims = [];
+      for (const c of [...photoClaims, ...flavorClaims]) {
+        const key = String(c).toLowerCase();
+        if (!seenClaim.has(key)) {
+          seenClaim.add(key);
+          mergedClaims.push(c);
+        }
+      }
       const photoMeta    = scanDebug?.memoryBook?.productMetadata || null;
       rememberBarcodeCorrection({
         userId,
@@ -1097,11 +1149,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         // here, plumb it the same way.
         name:  name?.trim() || null,
         state: state || null,
-        // Photo-extracted metadata. Lives at the UPC tier so a
-        // re-scan of the same product carries forward Organic /
-        // Grass-fed / "Refrigerate after opening" / servings-per-
-        // container / etc. without re-running the photo flow.
-        claims:           photoClaims,
+        // Extracted claims (photo + scan flavor sweep, deduped).
+        // Lives at the UPC tier so a re-scan of the same product
+        // carries forward Organic / Grass-fed / Fudge Swirl /
+        // Honey BBQ / etc. without re-running the photo flow or
+        // re-stripping the name.
+        claims:           mergedClaims.length > 0 ? mergedClaims : null,
         productMetadata:  photoMeta,
       }).catch(err => console.warn("[mcm-add] correction write failed:", err?.message || err));
     }
@@ -1404,6 +1457,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           const memBind  = scanDebug?.memoryBook?.bindConfidence || null;
           const memClaims = scanDebug?.memoryBook?.claims || [];
           const memName   = scanDebug?.memoryBook?.canonicalName || null;
+          // Scan-path flavor claims (from stripFlavors over the OFF
+          // productName). Merged with photo claims for the success-
+          // banner display so "Found chocolate · also tagged Fudge
+          // Swirl" works on both paths.
+          const scanClaims = scanDebug?.scan?.flavorClaims || [];
+          const allBannerClaims = (() => {
+            const seen = new Set();
+            const out = [];
+            for (const c of [...memClaims, ...scanClaims]) {
+              const key = String(c).toLowerCase();
+              if (!seen.has(key)) { seen.add(key); out.push(c); }
+            }
+            return out;
+          })();
           const tone =
             memBind === "stripped" || memBind === "guessed"
               ? theme.color.mustard
@@ -1421,12 +1488,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 : "We're guessing — tap the name to refine";
             }
             if (memBind === "stripped") {
-              return memClaims.length > 0
-                ? `Found ${memName || name.trim()} · also tagged ${memClaims.join(", ")}`
+              return allBannerClaims.length > 0
+                ? `Found ${memName || name.trim()} · also tagged ${allBannerClaims.join(", ")}`
                 : `Found ${memName || name.trim()} — confirm or tap to swap`;
             }
-            // exact (memory-book) or non-photo path
+            // exact (memory-book) or non-photo path. When scan-path
+            // flavor claims landed, surface them inline ("Got it ·
+            // Truffles · also tagged Fudge Swirl") so the user sees
+            // the extracted variant tokens without having to dig
+            // into the chip row.
             const display = memName || name.trim();
+            if (display && allBannerClaims.length > 0) {
+              return `Got it · ${display} · also tagged ${allBannerClaims.join(", ")}`;
+            }
             return display ? `Got it · ${display}` : "Got it — review the fields below.";
           })();
           return (
