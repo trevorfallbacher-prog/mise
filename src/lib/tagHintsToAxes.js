@@ -248,7 +248,17 @@ export function tagHintsToAxes(categoryHints) {
       /\b(candy|candies|confection)\b/.test(text)  ? "candy"     :
       /\b(chocolate|chocolates)\b/.test(text)      ? "chocolate" :
       null;
-    return { category: "pantry", tileId: "sweeteners", typeId: null, subtype: sweetSubtype };
+    // Tile routing: cookies stay in the "sweeteners" tile (where
+    // the cookie/cracker-style baked sweets historically lived);
+    // candy + chocolate route to the new candy_chocolate tile so
+    // they don't disappear into the misc catch-all. Identity-coded
+    // sweeteners (honey/maple/molasses) reach the sweeteners tile
+    // via the SWEETENERS branch above, not this one.
+    const tileId =
+      sweetSubtype === "candy"     ? "candy_chocolate" :
+      sweetSubtype === "chocolate" ? "candy_chocolate" :
+      "sweeteners";
+    return { category: "pantry", tileId, typeId: null, subtype: sweetSubtype };
   }
 
   return { category: null, tileId: null, typeId: null, subtype: null };

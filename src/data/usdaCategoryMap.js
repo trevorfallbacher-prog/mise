@@ -114,8 +114,8 @@ export const USDA_CATEGORY_TO_AXES = {
   "Snack, Energy & Granola Bars":                  { subtype: null,      category: "pantry" },
   "Cookies & Biscuits":                            { subtype: "cookie",  category: "pantry" },
   "Crackers":                                      { subtype: "cracker", category: "pantry" },
-  "Candy":                                         { subtype: "candy",   category: "pantry" },
-  "Chocolate":                                     { subtype: "chocolate", category: "pantry" },
+  "Candy":                                         { subtype: "candy",     category: "pantry", tileId: "candy_chocolate" },
+  "Chocolate":                                     { subtype: "chocolate", category: "pantry", tileId: "candy_chocolate" },
 
   // ── Frozen meals / pizza / desserts ────────────────────────
   "Frozen Dinners & Entrees":                      { subtype: "boxed_meal", category: "frozen" },

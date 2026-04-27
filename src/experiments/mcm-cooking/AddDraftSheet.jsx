@@ -32,6 +32,7 @@ import { FOOD_TYPES, inferFoodTypeFromName, typeIdForCanonical } from "../../dat
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { createPendingCanonicalFromScan } from "../../lib/createPendingCanonicalFromScan";
 import { stripFlavors } from "../../lib/stripFlavors";
+import { mergeBarcodeFields } from "../../lib/mergeBarcodeFields";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
@@ -634,6 +635,26 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           return null;
         }),
       ]);
+      // Field-aware OFF + USDA + correction merge. mergeBarcodeFields
+      // reads source_provenance off the correction row (jsonb,
+      // migration 0130) and picks the highest-priority non-empty
+      // value per field — USDA's structured `branded_food_category`
+      // hints win over OFF's free-form tags for categoryHints, USDA's
+      // regulated serving size wins for packageSize, OFF's marketing
+      // productName wins over USDA's clinical description, and so on.
+      // See FIELD_PRIORITIES in mergeBarcodeFields.js for the table.
+      // `merged.providers` shows which source actually contributed
+      // each field — useful for debugging "why did this brand land?"
+      const merged = mergeBarcodeFields({ correction, off: res });
+      console.log("[mcm-add] merged scan fields:", {
+        brand: merged.brand,
+        name:  merged.productName,
+        pkg:   merged.packageSizeAmount && merged.packageSizeUnit
+          ? `${merged.packageSizeAmount} ${merged.packageSizeUnit}` : null,
+        hints: merged.categoryHints?.length || 0,
+        providers: merged.providers,
+      });
+
       // Apply the correction's location whenever one was taught.
       // The user is initiating the scan, so they expect prior
       // teachings to win over the form's default seed. They can
@@ -647,24 +668,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         setTileId(correction.tileId);
         setTileOverridden(true);
       }
-      // Brand correction — the memory-book flow now persists brand
-      // when the AI extracts one, so a re-scan of the same UPC
-      // pre-fills the brand chip without re-opening the camera. OFF
-      // lookups also write brand to corrections at submit time, so
-      // this branch covers both paths. Empty-only guard so a manual
-      // brand edit in progress doesn't get stomped.
-      if (correction?.brand && !brand.trim()) {
-        setBrand(correction.brand);
+      // Brand backfill — uses the merged value (which already weighed
+      // OFF vs USDA vs admin per the field-priority table) instead of
+      // an OR-chain that ignored source provenance. Empty-only guard
+      // so a manual brand edit in progress doesn't get stomped.
+      if (merged.brand && !brand.trim()) {
+        setBrand(merged.brand);
       }
-      // Product-name correction — same rationale; the memory-book
-      // path teaches the OFF productName when scan resolved one. We
-      // don't pin it here because the canonical-driven name pin in
-      // the OFF/USDA pre-fill block below will overwrite anyway when
-      // a canonical resolves. This is the cold-start case where
-      // canonical didn't resolve and the only thing we know is the
-      // taught product name.
-      if (correction?.name && !name.trim()) {
-        setName(correction.name);
+      // Product-name backfill — same merge-driven approach. OFF's
+      // marketing copy outranks USDA's clinical description in the
+      // FIELD_PRIORITIES table for `name`, so this lands the
+      // human-readable form when both sources have something.
+      if (merged.productName && !name.trim()) {
+        setName(merged.productName);
       }
       // State correction — taught at handleSubmit / cascade-effect
       // / mid-scan write (migration 0144 added the column). Lock
@@ -693,8 +709,8 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // didn't pair to a canonical — the memory-book fallback below
       // uses them to bias Haiku's vision call so the AI starts with
       // whatever weak taxonomy signal OFF gave us.
-      if (Array.isArray(res?.categoryHints) && res.categoryHints.length > 0) {
-        setScanCategoryHints(res.categoryHints);
+      if (Array.isArray(merged.categoryHints) && merged.categoryHints.length > 0) {
+        setScanCategoryHints(merged.categoryHints);
       }
 
       // Best display name — productName when OFF gave us a clean
@@ -808,8 +824,8 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         setStateOverridden(true);
       }
       if (res?.found) setRemaining(1);
-      if (Array.isArray(res?.categoryHints) && res.categoryHints.length > 0) {
-        const axes = tagHintsToAxes(res.categoryHints);
+      if (Array.isArray(merged.categoryHints) && merged.categoryHints.length > 0) {
+        const axes = tagHintsToAxes(merged.categoryHints);
         if (!typeOverridden && axes.typeId) {
           setTypeId(axes.typeId);
           // Lock so the name-watching inference effect can't re-run
@@ -941,7 +957,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           canonicalId:   finalCanonicalId,
           // categoryHints seed the global tag-map on the admin tier
           // so similar UPCs resolve faster downstream.
-          categoryHints: Array.isArray(res?.categoryHints) ? res.categoryHints : null,
+          categoryHints: Array.isArray(merged.categoryHints) && merged.categoryHints.length > 0 ? merged.categoryHints : null,
           // Brand persists immediately when OFF / detectBrand
           // already resolved one. The handleSubmit write later
           // overwrites with whatever the user confirmed, but
@@ -1005,7 +1021,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         // landed that lets us populate the form. tagHintsToAxes
         // emits a non-null category/tileId/subtype when its OFF
         // pattern matches; if all three are null it really did fail.
-        const hintAxes = tagHintsToAxes(Array.isArray(res?.categoryHints) ? res.categoryHints : []);
+        const hintAxes = tagHintsToAxes(Array.isArray(merged.categoryHints) ? merged.categoryHints : []);
         const hasBrand        = !!(detectedBrand || res?.brand);
         const hasName         = !!(res?.productName && String(res.productName).trim());
         const hasHintAxes     = !!(hintAxes.category || hintAxes.tileId || hintAxes.subtype);
@@ -1032,7 +1048,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 userId,
                 productName:    res?.productName || null,
                 brand:          detectedBrand || res?.brand || null,
-                categoryHints:  Array.isArray(res?.categoryHints) ? res.categoryHints : [],
+                categoryHints:  Array.isArray(merged.categoryHints) ? merged.categoryHints : [],
                 state:          stateFromName || hintAxes.state || null,
                 emoji:          null,
               });

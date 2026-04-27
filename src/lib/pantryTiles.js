@@ -22,6 +22,11 @@ export const PANTRY_TILES = [
   { id: "cooking_alcohol",   emoji: "🍷", label: "Cooking Alcohol",     blurb: "White wine, red wine, sake, vermouth" },
   { id: "bread",             emoji: "🍞", label: "Bread",               blurb: "Tortillas, pita, naan, sandwich bread, bagels" },
   { id: "dried_chilies",     emoji: "🌶️", label: "Dried Chilies",      blurb: "Ancho, guajillo, pasilla, chipotle, árbol" },
+  { id: "jerky_snacks",      emoji: "🥩", label: "Jerky & Snack Meats", blurb: "Beef sticks, jerky, biltong, dried sausage, pepperoni sticks" },
+  { id: "dried_fruit",       emoji: "🍇", label: "Dried Fruit & Trail Mix", blurb: "Raisins, dates, apricots, cranberries, mango, trail mix" },
+  { id: "shelf_stable_dairy",emoji: "🥛", label: "Shelf-Stable Dairy",    blurb: "UHT milk, evaporated, sweetened condensed, powdered milk" },
+  { id: "pickles_ferments",  emoji: "🥒", label: "Pickles & Ferments",    blurb: "Pickles, sauerkraut, kimchi, olives, capers, hot ferments" },
+  { id: "candy_chocolate",   emoji: "🍬", label: "Candy & Chocolate",     blurb: "Candy bars, chocolate, peanut butter cups, gum, mints" },
   // Catch-all — anything the classifier couldn't place. Always
   // reachable so items don't vanish when moved here from another
   // location with a different tile taxonomy.
@@ -157,6 +162,20 @@ const COOKING_ALCOHOL_IDS = new Set([
   "beer", "brandy", "cognac", "rum", "sherry", "port", "marsala",
 ]);
 
+// Candy & chocolate — eaten-as-snack confections, distinct from
+// SWEETENER_IDS (cooking-grade honey/syrups) and BAKING_IDS (cocoa
+// powder, chocolate chips used as ingredients). The brand-classification
+// seed batch added these canonicals; without this set they all fell
+// through pantryTileIdForItem to the misc catch-all.
+const CANDY_CHOCOLATE_IDS = new Set([
+  "candy", "candy_bar",
+  "chocolate", "chocolate_candy",
+  "peanut_butter_candy", "peanut_butter_cup",
+  "gum", "mints", "lollipop", "caramels",
+  "gummy_bears", "gummies", "licorice",
+  "marshmallows", "taffy", "fudge",
+]);
+
 // Bread — actual bread products people store on the counter or in the
 // bread drawer. Tortillas, pita, and naan were falling through to the
 // canned_jarred catch-all; they live here now. Dry cracker-family items
@@ -189,6 +208,58 @@ export function pantryTileIdForItem(item, { findIngredient, hubForIngredient }) 
   if (item?.tileId) return item.tileId;
   if (item?.pantryTile) return item.pantryTile;
 
+  // State-axis preservation states win before canonical lookups.
+  // Routing splits by the canonical's underlying category so the
+  // same state ("dried", "cured") can land in different tiles based
+  // on what's BEEN dried/cured. Pre-resolve the canonical once for
+  // category-aware routing below.
+  const stateIng = item?.canonicalId
+    ? (findIngredient(item.canonicalId) || null)
+    : (item?.ingredientId ? (findIngredient(item.ingredientId) || null) : null);
+  const stateCat = stateIng?.category || null;
+
+  if (item?.state === "jerky" || item?.state === "cured") {
+    // Always meat-context — jerky / cured aren't ambiguous across
+    // food families. Slim Jim, biltong, salami sticks, etc.
+    return "jerky_snacks";
+  }
+  if (item?.state === "dried") {
+    // Dried meat → jerky_snacks; dried produce / unknown → dried_fruit.
+    // Default skews to dried_fruit because the meat-preserved forms
+    // typically trigger their own more-specific state ("jerky" /
+    // "cured") via the inference patterns — anything that lands as
+    // generic "dried" is almost always raisins / apricots / dates /
+    // sun-dried tomatoes / dried mushrooms.
+    if (stateCat === "meat" || stateCat === "seafood") {
+      return "jerky_snacks";
+    }
+    return "dried_fruit";
+  }
+  if (item?.state === "canned") {
+    // Canned meats / fish (SPAM, canned tuna / salmon / chicken,
+    // sardines) AND canned beans / tomatoes / soups all live in
+    // canned_jarred. Same shelf-stable logic applies regardless of
+    // canonical category: a row with state=canned has no business
+    // outside the canned aisle.
+    return "canned_jarred";
+  }
+  if (item?.state === "uht" || item?.state === "evaporated" ||
+      item?.state === "condensed" || item?.state === "powdered") {
+    // Shelf-stable dairy in any preservation form. UHT milk in a
+    // brik, evaporated / sweetened condensed cans, powdered milk
+    // tins — all room-temp until opened. Separate tile from
+    // canned_jarred so users find "milk in a tetra pak" by looking
+    // for milk, not by looking for canned goods.
+    return "shelf_stable_dairy";
+  }
+  if (item?.state === "pickled" || item?.state === "fermented") {
+    // Pickles, sauerkraut, kimchi, olives, capers — sealed jars
+    // are pantry-stable for years. The opened-flips-to-fridge
+    // transition is a separate flow (handled in the location effect
+    // when remaining < 1 ⇒ user manually re-locates).
+    return "pickles_ferments";
+  }
+
   const ing = item?.ingredientId ? findIngredient(item.ingredientId) : null;
   const hub = ing ? hubForIngredient(ing) : null;
 
@@ -205,6 +276,11 @@ export function pantryTileIdForItem(item, { findIngredient, hubForIngredient }) 
   if (ing && BEAN_LEGUME_IDS.has(ing.id))      return "beans_legumes";
   // Baking before canned_jarred so breadcrumbs / panko / crackers route
   // to their new home instead of hitting the free-text fallback below.
+  // Candy & chocolate — checked BEFORE BAKING_IDS so a Hershey's bar
+  // routes to candy_chocolate instead of baking (BAKING_IDS contains
+  // cocoa / chocolate_chips, which DO belong with flour and sugar
+  // because they're recipe ingredients, not eaten-as-snack candy).
+  if (ing && CANDY_CHOCOLATE_IDS.has(ing.id))  return "candy_chocolate";
   if (ing && BAKING_IDS.has(ing.id))           return "baking";
   if (ing && BREAD_IDS.has(ing.id))            return "bread";
   if (ing && CANNED_JARRED_IDS.has(ing.id))    return "canned_jarred";
