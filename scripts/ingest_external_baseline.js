@@ -16,10 +16,11 @@
  *   *.csv     — USDA's branded_food.csv (from the FDC CSV download
  *               bundle). Streams line-by-line, flat memory. The
  *               RECOMMENDED format for USDA — smaller, faster, and
- *               doesn't need jq preprocessing. Note: CSV rows don't
- *               carry the product description field (that lives in a
- *               separate food.csv), so ingested rows land with
- *               name=null — scan time fills it in as usual.
+ *               doesn't need jq preprocessing. Pass --food-csv=<path>
+ *               (or place food.csv next to branded_food.csv) to
+ *               also pull descriptions + ingredient declarations
+ *               from the joined food.csv. Without the join, name
+ *               stays null and the ingredients column is skipped.
  *   *.jsonl   — One product object per line. USDA JSON dump converted
  *               with `jq -c '.BrandedFoods[]' …` or OFF's native
  *               openfoodfacts-products.jsonl dump. Carries the
@@ -37,6 +38,7 @@
  *   node scripts/ingest_external_baseline.js \
  *     --source=usda \
  *     --input=./branded_food.csv \
+ *     [--food-csv=./food.csv] \
  *     [--batch=1000] [--limit=50000] [--dry-run]
  *
  *   SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required in env.
@@ -47,7 +49,8 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 
 // Deliberately does NOT import the scan-time canonical resolver. The
@@ -72,6 +75,13 @@ const INPUT   = args.input;
 const BATCH   = Number(args.batch) || 1000;
 const LIMIT   = args.limit ? Number(args.limit) : Infinity;
 const DRY_RUN = Boolean(args["dry-run"]);
+// Optional path to USDA's food.csv — joined to branded_food.csv on
+// fdc_id to pull the `description` field (USDA's product name).
+// Without this, USDA CSV ingest leaves `name` null and we have no
+// product identity for store-brand SKUs that OFF doesn't carry.
+// Auto-detected as `food.csv` in the same directory as the
+// branded_food.csv when not explicitly passed.
+const FOOD_CSV = args["food-csv"] || null;
 
 if (!SOURCE || !["usda", "off"].includes(SOURCE)) {
   console.error("Missing or invalid --source (usda|off)"); process.exit(1);
@@ -213,27 +223,123 @@ function normalizeUsda(rec) {
   };
 }
 
-// CSV variant of USDA — same output shape as normalizeUsda but
-// `rec` is an object keyed by the CSV's header column names. Name
-// stays null (description lives in a separate food.csv that we don't
-// join here — keeping the ingest streamable with flat memory; the
-// browser resolver fills name in at scan time from OFF / user input).
+// fdc_id → description map, populated from USDA's food.csv before
+// the main pass starts. Module-scoped so normalizeUsdaCsv can read
+// without prop-threading. Populated only when --food-csv is passed
+// or food.csv is auto-detected next to branded_food.csv. Keeping
+// it an empty Map by default means the original "name stays null"
+// behavior holds when food.csv isn't available — no regression.
+const fdcDescriptionMap = new Map();
+
+// Stream USDA's food.csv (~2GB) once into a Map<fdc_id, description>.
+// Only the two columns we need are kept; everything else gets
+// discarded as we read, so memory peaks at ~150MB for ~1.5M USDA
+// branded foods. Single hash-table pass; no joins after this.
+async function loadFoodCsv(path) {
+  if (!path || !existsSync(path)) {
+    console.log("[ingest] no food.csv at " + (path || "(none)") + " — names will stay null");
+    return;
+  }
+  console.log("[ingest] loading USDA food.csv → fdc_id → description map: " + path);
+  const t0 = Date.now();
+  const rl = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  let headers = null;
+  let count = 0;
+  for await (const line of rl) {
+    if (!line) continue;
+    const fields = splitCsvLine(line);
+    if (!fields) continue;
+    if (!headers) {
+      headers = fields.map(h => h.trim());
+      continue;
+    }
+    // Two columns only: fdc_id + description. Everything else
+    // gets dropped on the floor for memory.
+    const idIdx   = headers.indexOf("fdc_id");
+    const descIdx = headers.indexOf("description");
+    if (idIdx < 0 || descIdx < 0) {
+      console.warn("[ingest] food.csv missing fdc_id/description columns; skipping");
+      return;
+    }
+    const id   = fields[idIdx];
+    const desc = fields[descIdx];
+    if (id && desc) fdcDescriptionMap.set(String(id), desc);
+    count += 1;
+    if (count % 200000 === 0) console.log("  " + count.toLocaleString() + " food.csv rows read…");
+  }
+  console.log(
+    "[ingest] food.csv loaded " + fdcDescriptionMap.size.toLocaleString()
+    + " descriptions in " + ((Date.now() - t0) / 1000).toFixed(1) + "s",
+  );
+}
+
+// CSV variant of USDA — pulls every useful column USDA carries:
+//   - fdc_id → joined to food.csv for description (the product name)
+//   - brand_name + brand_owner (we already used) + subbrand_name (NEW)
+//   - ingredients (NEW — full ingredient declaration string)
+//   - serving_size + serving_size_unit (NEW — granular nutrition info)
+//   - household_serving_fulltext + package_weight (already used)
+//   - branded_food_category (already used)
+//
+// Returns the same shape as normalizeUsda PLUS productMetadata for
+// USDA-specific extras that don't have first-class columns:
+//   { subbrand_name, ingredients_text, serving_size_g, serving_size_unit }
 function normalizeUsdaCsv(rec) {
   const upc = cleanUpc(rec.gtin_upc);
   if (!upc) return null;
   const cat = rec.branded_food_category || "";
   if (!USDA_GROCERY_CATEGORIES.has(cat)) return null;
   const brand = stringOrNull(rec.brand_name) || stringOrNull(rec.brand_owner);
+
+  // Description from food.csv via fdc_id join. Fallback null when
+  // food.csv wasn't provided/loaded — original behavior preserved.
+  const fdcId = stringOrNull(rec.fdc_id);
+  const name  = fdcId ? (fdcDescriptionMap.get(String(fdcId)) || null) : null;
+
+  // Ingredients declaration — the load-bearing new field. Drives
+  // dietary warnings + claim extraction at scan time. Stored verbatim
+  // in product_metadata.ingredients_text; tokenization happens at
+  // read time so we can re-parse without a re-ingest.
+  const ingredientsText = stringOrNull(rec.ingredients);
+
+  // Subbrand (e.g. "Vlasic" + "Farmer's Garden" line). Useful for
+  // brand-classification on collab / line products. Stashed in
+  // product_metadata.subbrand_name.
+  const subbrand = stringOrNull(rec.subbrand_name);
+
+  // Serving size — USDA's regulated per-serving weight. Independent
+  // from package_weight (the whole container). Stashed in
+  // product_metadata for diet / nutrition lookups.
+  const servingSize     = stringOrNull(rec.serving_size);
+  const servingSizeUnit = stringOrNull(rec.serving_size_unit);
+
+  // Package size — same as before.
   const sizeRaw = rec.household_serving_fulltext || rec.package_weight || null;
   const size = sizeRaw ? parseSize(String(sizeRaw)) : null;
+
+  // product_metadata jsonb for everything that doesn't have a
+  // first-class column. Only included when we have at least one
+  // value; empty objects skipped to keep diffs clean.
+  const meta = {};
+  if (ingredientsText) meta.ingredients_text = ingredientsText;
+  if (subbrand)        meta.subbrand_name    = subbrand;
+  if (servingSize && servingSizeUnit) {
+    meta.serving_size      = Number(servingSize) || servingSize;
+    meta.serving_size_unit = servingSizeUnit;
+  }
+
   return {
     upc,
     brand: brand ? normalizeBrand(brand) : null,
-    name: null,
+    name,
     packageSizeAmount: size?.amount ?? null,
     packageSizeUnit:   size?.unit || null,
     imageUrl: null,
     categoryHints: cat ? [slugify(cat)] : [],
+    productMetadata: Object.keys(meta).length > 0 ? meta : null,
   };
 }
 
@@ -409,12 +515,55 @@ function mergeFields(existing, incoming) {
     }
     if (merged.length !== existingHints.length) patch.category_hints = merged;
   }
+
+  // product_metadata — JSONB merge. USDA fills in fields the AI /
+  // photo flow doesn't touch (ingredients_text, subbrand_name,
+  // serving_size, etc.). We MERGE rather than replace so an admin
+  // edit to one key doesn't get clobbered by an USDA re-ingest.
+  // Per-key provenance isn't tracked inside the JSONB today; if the
+  // same key lands from two sources, last-writer wins. That's fine
+  // for the fields we currently push (USDA is the only writer
+  // outside of the photo flow today, and the photo flow's fields
+  // don't overlap).
+  if (incoming.productMetadata && typeof incoming.productMetadata === "object") {
+    const existingMeta = (existing?.product_metadata && typeof existing.product_metadata === "object")
+      ? existing.product_metadata
+      : {};
+    const merged = { ...existingMeta };
+    let changed = false;
+    for (const [k, v] of Object.entries(incoming.productMetadata)) {
+      if (v == null || v === "") continue;
+      if (existingMeta[k] !== v) {
+        merged[k] = v;
+        changed = true;
+      }
+    }
+    if (changed) patch.product_metadata = merged;
+  }
+
   return { patch, prov };
 }
 
 // ── Main loop ──────────────────────────────────────────────────────
 async function main() {
   console.log(`[ingest] source=${SOURCE} input=${INPUT} batch=${BATCH}${DRY_RUN ? " DRY-RUN" : ""}`);
+
+  // USDA CSV mode — preload food.csv if available so the
+  // normalizer can pull `description` for each branded_food.csv row.
+  // Auto-detects food.csv next to the input when --food-csv isn't
+  // explicitly passed. Silently no-ops when food.csv isn't found —
+  // the ingest still completes, just with name=null on every row
+  // (the original behavior).
+  if (SOURCE === "usda" && IS_CSV) {
+    const explicitFood = FOOD_CSV;
+    const autoFood     = explicitFood
+      ? null
+      : join(dirname(INPUT), "food.csv");
+    const foodPath = explicitFood || (autoFood && existsSync(autoFood) ? autoFood : null);
+    if (foodPath) await loadFoodCsv(foodPath);
+    else console.log("[ingest] no food.csv found — pass --food-csv=<path> to enable name + ingredients pull");
+  }
+
   const rl = createInterface({
     input: createReadStream(INPUT, { encoding: "utf8" }),
     crlfDelay: Infinity,
@@ -432,7 +581,7 @@ async function main() {
     if (!DRY_RUN) {
       const { data, error } = await supabase
         .from("barcode_identity_corrections")
-        .select("id, barcode_upc, canonical_id, brand, name, package_size_amount, package_size_unit, image_url, category_hints, source_provenance")
+        .select("id, barcode_upc, canonical_id, brand, name, package_size_amount, package_size_unit, image_url, category_hints, source_provenance, product_metadata")
         .in("barcode_upc", upcs);
       if (error) {
         console.warn("[ingest] batch select failed:", error.message);
