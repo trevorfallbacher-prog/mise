@@ -232,6 +232,48 @@ surface a pantry item's identity.
    first" fallback. The answer is always: canonical name, or
    nothing.
 
+   **Compositional tier — assembled beats primitive.** When a
+   productName has multiple canonical matches, the resolver picks
+   the highest TIER. Lower-tier matches demote to claims:
+
+       tier 1  primitive raw ingredient
+                 (sugar, salt, flour, eggs, milk, butter, oil,
+                  water, vinegar, honey, cocoa, sour cream, etc.)
+       tier 2  sub-product / assembled-but-still-an-ingredient
+                 (cheese, yogurt, sausage, sauce, jam, dough)
+                 — default for unflagged canonicals
+       tier 3  pre-built assembled product
+                 (cookie, candy_bar, beef_stick, frank, hot_dogs,
+                  ice_cream, pretzels, chips, mac_and_cheese)
+
+   Examples that REGRESSED before this rule was encoded:
+
+       "Cheese Frank"      → frank wins;    claim "Cheese"
+       "Sugar Cookie"      → cookie wins;   claim "Sugar"
+       "Cheesy Beef Stick" → beef_stick;    no claim (redundant)
+       "Strawberry Yogurt" → greek_yogurt;  claim "Strawberry"
+       "Choc Chip Cookie"  → choc_chip_cookie; no redundant claim
+
+   "Inserting cheese into meat does not make meat cheese. Cheesy
+   Beef Stick will NEVER be a cheese. Sugar Cookie is not Sugar —
+   it's a Cookie that contains sugar."
+
+   The resolver lives in `src/data/ingredients.js`. Two functions:
+
+   - `inferCanonicalFromName(text)` returns just the canonical id,
+     tier-aware. Use this when you only care about the canonical.
+   - `resolveCanonicalWithClaims(text)` returns `{ canonicalId,
+     claims[] }`. Use this when you also want the demoted-to-claim
+     tokens to surface as chips on the row. Redundancy filter
+     drops claims already represented in the winning canonical's
+     name or slug.
+
+   Tier defaults to 2 for unflagged canonicals.
+   `COMPOSITIONAL_TIER_OVERRIDES` in `ingredients.js` holds the
+   explicit tier-1 (primitives) and tier-3 (assembled products)
+   sets. When adding a new canonical that's likely to collide
+   with others, set its tier explicitly.
+
    **Reading order to enforce the structured-composition rule:**
 
    1. **No flavors / variants in `name`, ever.** "Fudge Swirl" /
