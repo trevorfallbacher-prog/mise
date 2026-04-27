@@ -784,10 +784,25 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // "Chicken" in the header and has to retype every scan.
       // No-canonical fallback keeps the empty-only guard so we don't
       // stomp user-typed text when we have nothing better to offer.
+      //
+      // DEFENSE IN DEPTH — strip flavor tokens from BOTH paths
+      // before setting the name. Synthetic canonicals from the
+      // pending-canonical creator try to deliver flavor-free names
+      // (see createPendingCanonicalFromScan), but a stale row, a
+      // legacy synthetic, or a registry name with a baked-in variant
+      // could still leak "Fudge Swirl" / "Cookies & Cream" into the
+      // name field. Stripping at pin time is cheap and idempotent —
+      // a clean name passes through untouched. NEVER let a flavor
+      // word into the name field.
+      const stripIfFlavored = (s) => {
+        if (!s) return s;
+        const r = stripFlavors(s, { brand: detectedBrand || res?.brand || null, removeFromName: true });
+        return r.remainingName || s;
+      };
       if (canonicalDisplayName) {
-        setName(canonicalDisplayName);
+        setName(stripIfFlavored(canonicalDisplayName));
       } else if (!name.trim() && displayName) {
-        setName(displayName);
+        setName(stripIfFlavored(displayName));
       }
       if (!brand.trim() && detectedBrand)      setBrand(detectedBrand);
       // Package-size cascade for the scan path:

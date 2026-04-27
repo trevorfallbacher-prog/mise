@@ -43,6 +43,7 @@
 
 import { bindOrCreateCanonical } from "./bindOrCreateCanonical";
 import { tagHintsToAxes } from "./tagHintsToAxes";
+import { stripFlavors } from "./stripFlavors";
 import { inferCanonicalFromName, findIngredient } from "../data/ingredients";
 import { supabase } from "./supabase";
 
@@ -96,20 +97,30 @@ export async function createPendingCanonicalFromScan({
   const rawName = String(productName || "").trim();
   if (!rawName) return null;
 
-  // Tier 1 — registry alias / inference. Free, fast, deterministic.
-  // inferCanonicalFromName runs the full alias-map + token-match
-  // pipeline that scan resolution already uses. If it lands a hit,
-  // we're done; no new pending row needed.
-  const inferred = inferCanonicalFromName(rawName);
+  // FLAVOR-FREE NAME — strip variant/flavor tokens BEFORE everything
+  // else so the synthetic canonical's slug + display name never
+  // carry "Fudge Swirl" / "Honey BBQ" / "Cookies & Cream" / etc.
+  // Without this strip, a re-scan of the same UPC would set the
+  // form's name field to the full marketing string when the canonical
+  // pin fires, which violates the CLAUDE.md identity-stack rule:
+  // canonical IS the name; flavor lives on claims.
+  const flavorScan = stripFlavors(rawName, { brand, removeFromName: true });
+  const flavorFreeName = (flavorScan.remainingName || rawName).trim();
+
+  // Tier 1 — registry alias / inference. Run against the flavor-
+  // stripped name so "Milk Chocolate Truffles" hits the chocolate
+  // canonical instead of "...Fudge Swirl" failing the alias match.
+  const inferred = inferCanonicalFromName(flavorFreeName);
   if (inferred && inferred.id && findIngredient(inferred.id)) {
     return { canonicalId: inferred.id, source: "registry-infer" };
   }
 
-  // Tier 2 — fuzzy bind via bindOrCreateCanonical. Score ≥ 60 binds
-  // silently; we'd rather over-bind to a real canonical than spam
-  // the pending queue with near-duplicates. Admin can re-map a wrong
-  // bind later via the standard correction flow.
-  const decision = bindOrCreateCanonical(rawName);
+  // Tier 2 — fuzzy bind via bindOrCreateCanonical. Same — feed the
+  // flavor-stripped name. Score ≥ 60 binds silently; we'd rather
+  // over-bind to a real canonical than spam the pending queue with
+  // near-duplicates. Admin can re-map a wrong bind later via the
+  // standard correction flow.
+  const decision = bindOrCreateCanonical(flavorFreeName);
   if (decision.decision === "bind") {
     return { canonicalId: decision.canonicalId, source: "fuzzy-bind" };
   }
@@ -118,10 +129,11 @@ export async function createPendingCanonicalFromScan({
   }
 
   // Tier 3 — create a pending canonical. Slug from the brand-stripped
-  // name; admin queue sees "kosher_dill_pickles" not
-  // "vlasic_kosher_dill_pickles".
-  const cleanName = stripBrandPrefix(rawName, brand);
-  const slug = nameToSlug(cleanName) || nameToSlug(rawName);
+  // AND flavor-stripped name; admin queue sees "potato_chips" not
+  // "lays_sour_cream_and_onion_potato_chips" or
+  // "milk_chocolate_truffles_fudge_swirl".
+  const cleanName = stripBrandPrefix(flavorFreeName, brand);
+  const slug = nameToSlug(cleanName) || nameToSlug(flavorFreeName);
   if (!slug) return null;
 
   // Axes from OFF category hints. tagHintsToAxes returns
@@ -130,14 +142,26 @@ export async function createPendingCanonicalFromScan({
   // this synthetic canonical on the next scan.
   const axes = tagHintsToAxes(Array.isArray(categoryHints) ? categoryHints : []);
 
+  // info.name is the SYNTHETIC CANONICAL's display name. Per the
+  // CLAUDE.md identity-stack rule, the canonical IS the name —
+  // brand / state / flavor / package size compose around it. Use
+  // the flavor-stripped name so "Fudge Swirl" never lands here
+  // and the canonical-pin in the form reads "Milk Chocolate
+  // Truffles" instead of the full marketing copy.
   const info = {
-    name:     cleanName || rawName,
+    name:     cleanName || flavorFreeName,
     category: axes.category || null,
     tileId:   axes.tileId   || null,
     typeId:   axes.typeId   || null,
     subtype:  axes.subtype  || null,
     state:    state || axes.state || null,
     emoji:    emoji || null,
+    // Stash extracted flavor claims at the synthetic canonical so
+    // future scans of UPCs that bind to this same slug carry the
+    // flavor through correction memory without re-running the
+    // strip pipeline. Populated only when stripFlavors found
+    // something to extract.
+    extractedClaims: flavorScan.claims.length > 0 ? flavorScan.claims : undefined,
     source:   "scan_inferred",
   };
 
