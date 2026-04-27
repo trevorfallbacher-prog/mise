@@ -28,14 +28,22 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { color, font, radius, shadow, space, ctaButton, ghostButton } from "./tokens";
 import { compressImage } from "../../lib/compressImage";
 import { categorizeProductPhoto } from "../../lib/categorizeProductPhoto";
-import { findIngredient } from "../../data/ingredients";
+import { findIngredient, statesForIngredient } from "../../data/ingredients";
 import { typeIdForCanonical } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
-import { detectBrand } from "../../data/knownBrands";
+import { detectBrand, detectAllBrands } from "../../data/knownBrands";
+import { pickPrimaryBrand, classifyBrandMentions } from "../../lib/pickPrimaryBrand";
 import { supabase } from "../../lib/supabase";
 
-const MAX_DIM = 1280;
-const QUALITY  = 0.82;
+// Aggressive compression to keep edge-function payloads (base64
+// upload to Anthropic vision via scan-nutrition-label /
+// categorize-product-photo) small. Original 1280@0.82 was ~1.5-
+// 2.5MB per image — multiplied across users this was the single
+// biggest Supabase egress source. 800@0.70 cuts payload ~70% with
+// minimal effect on Haiku/Sonnet OCR accuracy. If a specific
+// scan misses, the user can retake; we'd rather be cheap by default.
+const MAX_DIM = 800;
+const QUALITY  = 0.70;
 
 // User-tier slug from a free-text canonical name. Mirrors the slug
 // rule in bindOrCreateCanonical's nameToSlug so the user-typed
@@ -345,11 +353,53 @@ export default function MemoryBookCapture({
         canonicalName = front.newCanonicalName;
       }
 
-      // Brand — Haiku's reading is the primary source, then the
-      // existing detectBrand vocabulary as a fallback when Haiku
-      // returned null but a known brand is hiding in productName.
+      // Brand resolution — multi-brand-aware. Haiku gives us ONE
+      // brand; co-branded SKUs ("Slim Jim Buffalo Wild Wings Beef
+      // Stick", "Boar's Head × Mike's Hot Honey Turkey") carry a
+      // second brand in the productName that the single-brand field
+      // hides. Sweep both with detectAllBrands, then weight by
+      // canonical-expertise (pickPrimaryBrand) so the right brand
+      // becomes primary even when Haiku read the licensing collab
+      // first. Fall back to detectBrand if nothing else lands.
+      const brandHaystack = [front.brand, front.productName].filter(Boolean).join(" ");
+      const detected = detectAllBrands(brandHaystack);
+      const detectedDisplays = detected.map(d => d.display);
+      // Always include Haiku's brand as a candidate even if it's not
+      // in the curated KNOWN_BRANDS list — it might be a real but
+      // less-common brand that picker can't weight, but should still
+      // surface as primary when no known brand outranks it.
+      const candidatePool = front.brand
+        ? [front.brand, ...detectedDisplays.filter(d => d.toLowerCase() !== front.brand.toLowerCase())]
+        : detectedDisplays;
       let brand = front.brand || null;
-      if (!brand && front.productName) {
+      let secondaryBrands = [];
+      // Brand mentions detected on a foreign-category product (M&M's
+      // on a cookie, Oreo on an ice cream) — folded into claims as
+      // inclusion tokens, NOT used as the brand pill.
+      let inclusionBrands = [];
+      // Run the multi-brand classifier when we have ≥2 candidates.
+      // canonicalId may be null when Haiku couldn't bind one — but
+      // the picker can still derive subtype/category from the OFF
+      // category hints (USDA-derived bridge in axesForCanonical), so
+      // we run the classifier whenever ANY identity signal exists.
+      if (candidatePool.length > 1 && (canonicalId || (Array.isArray(offCategoryHints) && offCategoryHints.length > 0))) {
+        const classified = classifyBrandMentions({
+          brandCandidates: candidatePool,
+          canonicalId,
+          typeId,
+          offCategoryHints,
+        });
+        if (classified) {
+          brand = classified.primary;
+          secondaryBrands = classified.secondary;
+          inclusionBrands = classified.ingredients;
+        }
+      } else if (!brand && candidatePool.length > 0) {
+        brand = candidatePool[0];
+      } else if (!brand && front.productName) {
+        // Cold path — fully unknown product, no candidates from the
+        // multi-brand sweep. Fall back to the original first-hit
+        // detector for any single-brand string that slipped through.
         const brandHit = detectBrand(front.productName);
         if (brandHit?.display) brand = brandHit.display;
       }
@@ -384,11 +434,51 @@ export default function MemoryBookCapture({
         // Display
         name:       front.productName || canonicalName || "",
         brand:      brand || null,
+        // Co-brand collaborators ranked below the primary brand by
+        // pickPrimaryBrand. Empty when the SKU has only one detected
+        // brand. Read by the AddDraftSheet to render a "× Buffalo
+        // Wild Wings" sub-pill below the primary brand pill.
+        secondaryBrands: Array.isArray(secondaryBrands) ? secondaryBrands : [],
         emoji:      ingredient?.emoji || "✨",
         category,
-        // Axes
-        state:      front.state || null,
-        claims:     Array.isArray(front.claims) ? front.claims : [],
+        // Axes — validate the AI's state against the canonical's
+        // vocabulary before forwarding. Haiku has been observed
+        // returning "whole" for cheese and other foods where "whole"
+        // isn't a valid state (cheese vocab is block / grated /
+        // shredded / sliced / cubed / crumbled). The prompt asks for
+        // null when no physical-form modifier is on the package, but
+        // the model sometimes hedges with "whole" anyway. Gating on
+        // statesForIngredient(canonical) means an out-of-vocab AI
+        // value drops to null, and AddDraftSheet's canonical-default
+        // useEffect will land "block" for cheese, "whole" for meats,
+        // etc. — matching the registry.
+        state:      (() => {
+          const raw = typeof front.state === "string" ? front.state.trim() : null;
+          if (!raw) return null;
+          const vocab = ingredient ? statesForIngredient(ingredient) : null;
+          if (!vocab) return raw;                 // no vocab to gate against; trust the AI
+          return vocab.includes(raw) ? raw : null;
+        })(),
+        // Claims — Haiku-extracted marketing/dietary tokens MERGED
+        // with brand mentions that classifyBrandMentions demoted to
+        // inclusion-licensors. Example: a Chips Ahoy M&M's cookie
+        // gets brand="Chips Ahoy" + claims=[…haiku claims…, "M&M's"]
+        // so the inclusion shows up in the row's claim chips but
+        // doesn't pollute the brand pill. De-duped case-insensitively
+        // so a claim Haiku already pulled doesn't get listed twice.
+        claims:     (() => {
+          const haikuClaims = Array.isArray(front.claims) ? front.claims : [];
+          if (!inclusionBrands.length) return haikuClaims;
+          const seen = new Set(haikuClaims.map(c => String(c).toLowerCase()));
+          const merged = [...haikuClaims];
+          for (const b of inclusionBrands) {
+            if (!seen.has(String(b).toLowerCase())) {
+              merged.push(b);
+              seen.add(String(b).toLowerCase());
+            }
+          }
+          return merged;
+        })(),
         typeId,
         tileId:     hintAxes.tileId || null,
         // Package — front-photo wins (it reads off the printed weight
@@ -411,6 +501,14 @@ export default function MemoryBookCapture({
         memoryBookNutritionPhoto: nutritionPhoto?.previewUrl || null,
         // Nutrition — when scan-nutrition-label landed, attach.
         nutrition: nutrition?.nutrition || null,
+        // Ingredients — verbatim ingredient declaration from the
+        // back-of-pack panel. Edge function returns this at the top
+        // level of its payload alongside nutrition; we forward both
+        // so AddDraftSheet's brand_nutrition write can persist the
+        // ingredient list to migration 0132's column. Without this
+        // the ingredient text was getting parsed by Haiku and then
+        // silently dropped on the floor.
+        ingredientsText: nutrition?.ingredients_text || null,
         // Source metadata
         scanSource: "memory_book",
         barcodeUpc,
@@ -424,6 +522,98 @@ export default function MemoryBookCapture({
           emoji:         ingredient?.emoji || null,
           ingredientIds: canonicalId ? [canonicalId] : [],
           categoryHints: Array.isArray(offCategoryHints) ? offCategoryHints : null,
+          brand:             brand || null,
+          name:              front.productName || null,
+          packageSizeAmount:
+            (Number.isFinite(Number(front.packageSize?.amount)) && Number(front.packageSize?.amount) > 0)
+              ? Number(front.packageSize.amount)
+              : (Number.isFinite(Number(nutrition?.net_weight?.amount)) && Number(nutrition?.net_weight?.amount) > 0)
+                ? Number(nutrition.net_weight.amount)
+                : null,
+          packageSizeUnit:
+            front.packageSize?.unit
+            || nutrition?.net_weight?.unit
+            || null,
+          // Migration 0144 — full-product capture. Whatever the AI
+          // pulled off the package photos lands at the correction
+          // tier so a re-scan carries it forward without re-running
+          // Haiku. State is vocab-validated against the canonical
+          // earlier in this fn (line ~390); claims is the marketing
+          // / dietary token list; productMetadata is the JSONB grab-
+          // bag for storage_instructions / container / servings_per_
+          // container / certifications / variant / country_of_origin
+          // / allergens / cooking_method / brand_color / front_of_
+          // pack_marks / date_format_hint / manufacturer. The edge
+          // functions don't yet return all of those fields — until
+          // they do, the corresponding keys land null/undefined and
+          // the lib's clean-empty-keys guard skips them on write.
+          state: (() => {
+            const raw = typeof front.state === "string" ? front.state.trim() : null;
+            if (!raw) return null;
+            const vocab = ingredient ? statesForIngredient(ingredient) : null;
+            if (!vocab) return raw;
+            return vocab.includes(raw) ? raw : null;
+          })(),
+          // Claims for the correction memory — same merge as the
+          // draft row's claims field. Inclusion-licensor brands get
+          // appended so the next scan of this UPC carries the M&M's
+          // / Oreo / Reese's mention as a claim chip without re-
+          // running the brand classifier.
+          claims: (() => {
+            const haikuClaims = Array.isArray(front.claims) ? front.claims : [];
+            if (!inclusionBrands.length && haikuClaims.length === 0) return null;
+            const seen = new Set(haikuClaims.map(c => String(c).toLowerCase()));
+            const merged = [...haikuClaims];
+            for (const b of inclusionBrands) {
+              if (!seen.has(String(b).toLowerCase())) {
+                merged.push(b);
+                seen.add(String(b).toLowerCase());
+              }
+            }
+            return merged.length > 0 ? merged : null;
+          })(),
+          productMetadata: (() => {
+            const meta = {};
+            // Front-photo extractables — present today only when
+            // the categorize-product-photo edge fn returns them.
+            if (front.storageInstructions) meta.storage_instructions = front.storageInstructions;
+            if (front.container)           meta.container            = front.container;
+            if (front.variant)             meta.variant              = front.variant;
+            if (Array.isArray(front.certifications) && front.certifications.length > 0) {
+              meta.certifications = front.certifications;
+            }
+            if (front.countryOfOrigin)     meta.country_of_origin    = front.countryOfOrigin;
+            if (front.cookingMethod)       meta.cooking_method       = front.cookingMethod;
+            if (front.brandColor)          meta.brand_color          = front.brandColor;
+            if (Array.isArray(front.frontOfPackMarks) && front.frontOfPackMarks.length > 0) {
+              meta.front_of_pack_marks = front.frontOfPackMarks;
+            }
+            if (front.manufacturer)        meta.manufacturer         = front.manufacturer;
+            // Co-brand / collaborator brands — when pickPrimaryBrand
+            // ranked a multi-brand productName, the runner-ups land
+            // here. Migration-light: stashed inside productMetadata
+            // (jsonb column already exists, migration 0144) until a
+            // dedicated `secondary_brands` column lands. Surfaces
+            // future "Slim Jim × Buffalo Wild Wings" UI without a
+            // schema change.
+            if (Array.isArray(secondaryBrands) && secondaryBrands.length > 0) {
+              meta.secondary_brands = secondaryBrands;
+            }
+            // Nutrition-photo extractables. Field names match
+            // scan-nutrition-label's response shape: the edge fn
+            // returns `servings_per_container` and `allergen_contains`
+            // verbatim. date_format_hint isn't yet emitted by the
+            // edge fn; lands as undefined → skipped by the
+            // empty-key guard.
+            if (Number.isFinite(Number(nutrition?.servings_per_container))) {
+              meta.servings_per_container = Number(nutrition.servings_per_container);
+            }
+            if (Array.isArray(nutrition?.allergen_contains) && nutrition.allergen_contains.length > 0) {
+              meta.allergens = nutrition.allergen_contains;
+            }
+            if (nutrition?.date_format_hint) meta.date_format_hint = nutrition.date_format_hint;
+            return Object.keys(meta).length > 0 ? meta : null;
+          })(),
         },
       };
 

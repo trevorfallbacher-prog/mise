@@ -288,7 +288,7 @@ export const INGREDIENTS = [
     // map, since "stick" as a unit is butter-specific — parmesan
     // sticks, cinnamon sticks, and celery sticks carry different
     // weights and must not collide.
-    id: "butter", name: "Unsalted Butter", emoji: "🧈", category: "dairy",
+    id: "butter", name: "Unsalted Butter", emoji: "🧈", category: "dairy", subtype: "butter",
     units: [
       { id: "stick", label: "sticks", toBase: 113.4, aliases: ["sticks"] },
       { id: "tbsp",  label: "tbsp",   toBase: 14.175 },
@@ -382,7 +382,7 @@ export const INGREDIENTS = [
   },
   {
     id: "parmesan", name: "Parmesan", shortName: "Parmesan",
-    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy", subtype: "cheese",
     units: [
       { id: "oz",    label: "oz",          toBase: 28.35 },
       { id: "wedge", label: "wedges",      toBase: 226 }, // ~8oz wedge
@@ -417,7 +417,7 @@ export const INGREDIENTS = [
   },
   {
     id: "mozzarella", name: "Fresh Mozzarella", shortName: "Mozzarella",
-    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy", subtype: "cheese",
     units: [
       { id: "oz",    label: "oz",    toBase: 28.35 },
       { id: "ball",  label: "balls", toBase: 226 }, // 8oz ball
@@ -428,7 +428,7 @@ export const INGREDIENTS = [
   },
   {
     id: "cheddar", name: "Cheddar", shortName: "Cheddar",
-    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy", subtype: "cheese",
     units: [
       { id: "oz",    label: "oz",          toBase: 28.35 },
       { id: "block", label: "blocks",      toBase: 226 },
@@ -462,7 +462,7 @@ export const INGREDIENTS = [
   },
   {
     id: "cream_cheese", name: "Cream Cheese", shortName: "Cream",
-    parentId: "cheese_hub", emoji: "🧀", category: "dairy",
+    parentId: "cheese_hub", emoji: "🧀", category: "dairy", subtype: "cheese",
     units: [
       { id: "oz",    label: "oz",    toBase: 28.35 },
       { id: "block", label: "blocks", toBase: 226 }, // 8oz brick
@@ -589,7 +589,7 @@ export const INGREDIENTS = [
   ]),
   {
     id: "yogurt", name: "Plain Yogurt", shortName: "Plain",
-    parentId: "yogurt_hub", emoji: "🥛", category: "dairy",
+    parentId: "yogurt_hub", emoji: "🥛", category: "dairy", subtype: "yogurt",
     units: [
       { id: "oz",    label: "oz",      toBase: 28.35 },
       { id: "cup",   label: "cups",    toBase: 245 },
@@ -603,7 +603,7 @@ export const INGREDIENTS = [
   },
   {
     id: "greek_yogurt", name: "Greek Yogurt", shortName: "Greek",
-    parentId: "yogurt_hub", emoji: "🥛", category: "dairy",
+    parentId: "yogurt_hub", emoji: "🥛", category: "dairy", subtype: "yogurt",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "cup",   label: "cups",   toBase: 245 },
@@ -612,7 +612,7 @@ export const INGREDIENTS = [
     defaultUnit: "oz",
   },
   {
-    id: "sour_cream", name: "Sour Cream", emoji: "🥛", category: "dairy",
+    id: "sour_cream", name: "Sour Cream", emoji: "🥛", category: "dairy", subtype: "sour_cream",
     units: [
       { id: "oz",   label: "oz",   toBase: 28.35 },
       { id: "tub",  label: "tubs", toBase: 454 }, // 16oz tub
@@ -677,7 +677,7 @@ export const INGREDIENTS = [
     // (whole)" which baked state into the name; shortName is now
     // empty so the registry isn't lying about its role.
     id: "chicken", name: "Chicken", shortName: null,
-    parentId: "chicken_hub", emoji: "🍗", category: "meat",
+    parentId: "chicken_hub", emoji: "🍗", category: "meat", subtype: "chicken_cut",
     // Full mass ladder with a count entry — count defaults to 200g
     // (middle of USDA 170–225g boneless-skinless breast range) but
     // cut-specific weights from CUT_WEIGHTS_G override this via
@@ -939,7 +939,7 @@ export const INGREDIENTS = [
   },
   {
     id: "sausage", name: "Sausage", shortName: "Sausage",
-    parentId: "pork_hub", emoji: "🌭", category: "meat",
+    parentId: "pork_hub", emoji: "🌭", category: "meat", subtype: "sausage",
     units: [
       { id: "count", label: "links", toBase: 85 },
       { id: "lb",    label: "lb",    toBase: 453.6 },
@@ -959,7 +959,7 @@ export const INGREDIENTS = [
   },
   {
     id: "bacon", name: "Bacon / Pancetta", shortName: "Bacon",
-    parentId: "pork_hub", emoji: "🥓", category: "meat",
+    parentId: "pork_hub", emoji: "🥓", category: "meat", subtype: "sausage",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 14 },
@@ -979,7 +979,7 @@ export const INGREDIENTS = [
   },
   {
     id: "ham", name: "Ham", shortName: "Ham",
-    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    parentId: "pork_hub", emoji: "🥩", category: "meat", subtype: "deli",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 15 },
@@ -989,7 +989,7 @@ export const INGREDIENTS = [
   },
   {
     id: "prosciutto", name: "Prosciutto", shortName: "Prosciutto",
-    parentId: "pork_hub", emoji: "🥓", category: "meat",
+    parentId: "pork_hub", emoji: "🥓", category: "meat", subtype: "deli",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 10 },
@@ -998,7 +998,7 @@ export const INGREDIENTS = [
   },
   {
     id: "salami", name: "Salami", shortName: "Salami",
-    parentId: "pork_hub", emoji: "🥩", category: "meat",
+    parentId: "pork_hub", emoji: "🥩", category: "meat", subtype: "deli",
     units: [
       { id: "oz",    label: "oz",     toBase: 28.35 },
       { id: "slice", label: "slices", toBase: 7 },
@@ -1012,7 +1012,7 @@ export const INGREDIENTS = [
     // BASE canonical for all turkey cuts / forms. See beef comment
     // above — same pattern. Aliased slugs: ground_turkey.
     id: "turkey", name: "Turkey", shortName: "Turkey",
-    parentId: "turkey_hub", emoji: "🦃", category: "meat",
+    parentId: "turkey_hub", emoji: "🦃", category: "meat", subtype: "deli",
     // Full mass ladder + count. Count default 3175g = ~7 lb (turkey
     // breast is the most common countable portion). CUT_WEIGHTS_G
     // overrides for thigh / leg / wing / whole bird.
@@ -1069,7 +1069,7 @@ export const INGREDIENTS = [
     defaultUnit: "lb",
   },
   {
-    id: "tuna", name: "Tuna (fresh)", shortName: "Tuna",
+    id: "tuna", name: "Tuna", shortName: "Tuna",
     parentId: "seafood_hub", emoji: "🐟", category: "meat",
     units: [
       { id: "lb",    label: "lb",     toBase: 453.6 },
@@ -1388,7 +1388,7 @@ export const INGREDIENTS = [
   // while keeping each as a first-class canonical for recipe matching.
   {
     id: "flour", name: "All-Purpose Flour", shortName: "All-Purpose",
-    parentId: "flour_hub", emoji: "🌾", category: "pantry",
+    parentId: "flour_hub", emoji: "🌾", category: "pantry", subtype: "baking",
     units: [
       { id: "cup",  label: "cups", toBase: 120 },
       { id: "tbsp", label: "tbsp", toBase: 7.5 },
@@ -1811,7 +1811,7 @@ export const INGREDIENTS = [
   // Bread ───────────────────
   {
     id: "bread", name: "Sandwich Bread", shortName: "Sandwich",
-    parentId: "bread_hub", emoji: "🍞", category: "pantry",
+    parentId: "bread_hub", emoji: "🍞", category: "pantry", subtype: "bread",
     units: [
       { id: "slice", label: "slices", toBase: 1 },
       { id: "loaf",  label: "loaves", toBase: 20 },
@@ -2106,7 +2106,7 @@ export const INGREDIENTS = [
     defaultUnit: "jar",
   },
   {
-    id: "honey", name: "Honey", emoji: "🍯", category: "pantry",
+    id: "honey", name: "Honey", emoji: "🍯", category: "pantry", subtype: "sweetener",
     units: [
       { id: "jar",  label: "jars", toBase: 340 }, // 12oz squeeze bottle
       { id: "tbsp", label: "tbsp", toBase: 21 },
@@ -2132,7 +2132,7 @@ export const INGREDIENTS = [
     nutrition: { per: "100g", kcal: 260, protein_g: 0, fat_g: 0.1, carb_g: 67, sodium_mg: 12 },
   },
   {
-    id: "coffee", name: "Coffee (whole bean)", emoji: "☕", category: "pantry",
+    id: "coffee", name: "Coffee (whole bean)", emoji: "☕", category: "pantry", subtype: "beverage",
     units: [
       { id: "oz",  label: "oz",   toBase: 28.35 },
       { id: "lb",  label: "lb",   toBase: 453.6 },
@@ -2413,7 +2413,7 @@ export const INGREDIENTS = [
     estCentsPerBase: 0.8, // ~$6–8 for a 30oz jar
   },
   {
-    id: "ketchup", name: "Ketchup", emoji: "🥫", category: "pantry",
+    id: "ketchup", name: "Ketchup", emoji: "🥫", category: "pantry", subtype: "sauce",
     units: [
       { id: "bottle", label: "bottles", toBase: 567 }, // 20oz squeeze bottle
       { id: "tbsp",   label: "tbsp",    toBase: 17 },
@@ -2438,7 +2438,7 @@ export const INGREDIENTS = [
     estCentsPerBase: 0.5, // ~$2–3 for a standard yellow mustard
   },
   {
-    id: "hot_sauce", name: "Hot Sauce", emoji: "🌶️", category: "pantry",
+    id: "hot_sauce", name: "Hot Sauce", emoji: "🌶️", category: "pantry", subtype: "sauce",
     units: [
       { id: "bottle", label: "bottles", toBase: 148 }, // ~5oz Tabasco-size bottle
       { id: "tbsp",   label: "tbsp",    toBase: 15 },
@@ -2782,6 +2782,147 @@ export const INGREDIENTS = [
         ["zaatar",              "Za'atar",                "🌿"],
         ["sumac",               "Sumac",                  "🟣"],
       ].map(([id, name, emoji]) => standardSpice(id, name, emoji)),
+    ];
+  })(),
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BRAND-EXPERTISE SEED BATCH
+  //
+  // Compact canonical seeds for SKUs that brand-expertise (src/data/
+  // brandExpertise.js) references — beef sticks, chicken wings,
+  // cookies, ice cream, candy, deli meats, sliced cheeses, sauces.
+  // These ensure findIngredient(id).category resolves correctly so
+  // the brand picker scores hub/category-level matches even when a
+  // canonical isn't yet a fully-fleshed-out pantry citizen with a
+  // unit ladder, recipe data, or nutrition.
+  //
+  // Unit math is PLACEHOLDER (every entry has a generic
+  // package/oz/g triple; toBase values reflect grams, but "package"
+  // toBase is set to a typical SKU weight per category as a rough
+  // default). Refine these when the canonical earns real recipe /
+  // pantry / receipt-commit usage.
+  //
+  // parentId is set to a real hub (chicken_hub, beef_hub, pork_hub,
+  // turkey_hub, cheese_hub, yogurt_hub) where the canonical clearly
+  // belongs to one — gives hubForIngredient a meaningful answer for
+  // picker scoring. Pantry-only canonicals (cookies, candy, sauces)
+  // have no parentId since the registry doesn't have a hub for them.
+  ...(() => {
+    // Builders. Three unit kits: SOLID (oz/lb/g + package), FLUID
+    // (fl_oz/cup/tbsp/bottle), and PIECES (piece/package + oz/g for
+    // candy bars, cookies, sticks).
+    const SOLID = (pkgGrams = 113) => [
+      { id: "package", label: "package", toBase: pkgGrams },
+      { id: "oz",      label: "oz",      toBase: 28.35 },
+      { id: "lb",      label: "lb",      toBase: 453.6 },
+      { id: "g",       label: "g",       toBase: 1 },
+    ];
+    const FLUID = (bottleMl = 355) => [
+      { id: "bottle",  label: "bottle",  toBase: bottleMl },
+      { id: "fl_oz",   label: "fl oz",   toBase: 29.57 },
+      { id: "cup",     label: "cups",    toBase: 240 },
+      { id: "tbsp",    label: "tbsp",    toBase: 15 },
+      { id: "ml",      label: "ml",      toBase: 1 },
+    ];
+    const PIECES = (pieceGrams = 28, pkgGrams = 200) => [
+      { id: "piece",   label: "pieces",  toBase: pieceGrams },
+      { id: "package", label: "package", toBase: pkgGrams },
+      { id: "oz",      label: "oz",      toBase: 28.35 },
+      { id: "g",       label: "g",       toBase: 1 },
+    ];
+
+    // Subtype helper — `subtype` is the load-bearing finer-grained
+    // axis for brand-expertise classification (see brandExpertise.js).
+    // Without it, "pantry" is too coarse: cookies and candy both
+    // route to "pantry" and the picker can't tell that M&M's on a
+    // cookie is an inclusion, not a co-brand. With subtype, the
+    // picker compares brand.subtypes vs canonical.subtype and demotes
+    // mismatches to ingredient.
+    const seed = (id, name, emoji, category, subtype, units, defaultUnit, extra = {}) => ({
+      id, name, emoji, category, subtype, units, defaultUnit, ...extra,
+    });
+
+    return [
+      // ── meat — snack meats / jerky ───────────────────────────────
+      seed("beef_stick",     "Beef Stick",      "🥩", "meat", "snack_meat", PIECES(28, 28),  "piece", { parentId: "beef_hub" }),
+      seed("beef_jerky",     "Beef Jerky",      "🥩", "meat", "snack_meat", SOLID(85),       "package", { parentId: "beef_hub" }),
+      seed("snack_stick",    "Snack Stick",     "🥩", "meat", "snack_meat", PIECES(28, 28),  "piece", { parentId: "beef_hub" }),
+      seed("pork_stick",     "Pork Stick",      "🥓", "meat", "snack_meat", PIECES(28, 28),  "piece", { parentId: "pork_hub" }),
+      seed("pork_jerky",     "Pork Jerky",      "🥓", "meat", "snack_meat", SOLID(85),       "package", { parentId: "pork_hub" }),
+      seed("turkey_jerky",   "Turkey Jerky",    "🦃", "meat", "snack_meat", SOLID(85),       "package", { parentId: "turkey_hub" }),
+
+      // ── meat — chicken cuts ──────────────────────────────────────
+      seed("chicken_wings",   "Chicken Wings",   "🍗", "meat", "wing",         SOLID(454),      "lb", { parentId: "chicken_hub" }),
+      seed("chicken_breast",  "Chicken Breast",  "🍗", "meat", "chicken_cut",  SOLID(454),      "lb", { parentId: "chicken_hub" }),
+      seed("chicken_thighs",  "Chicken Thighs",  "🍗", "meat", "chicken_cut",  SOLID(454),      "lb", { parentId: "chicken_hub" }),
+      seed("ground_chicken",  "Ground Chicken",  "🍗", "meat", "chicken_cut",  SOLID(454),      "lb", { parentId: "chicken_hub" }),
+      seed("chicken_nuggets", "Chicken Nuggets", "🍗", "meat", "nugget",       PIECES(20, 454), "package", { parentId: "chicken_hub" }),
+
+      // ── meat — deli ──────────────────────────────────────────────
+      seed("bologna",        "Bologna",         "🥩", "meat", "deli",    SOLID(454),      "lb", { parentId: "beef_hub" }),
+      seed("pastrami",       "Pastrami",        "🥩", "meat", "deli",    SOLID(227),      "package", { parentId: "beef_hub" }),
+      seed("roast_beef",     "Roast Beef",      "🥩", "meat", "deli",    SOLID(227),      "package", { parentId: "beef_hub" }),
+      seed("mortadella",     "Mortadella",      "🥓", "meat", "deli",    SOLID(227),      "package", { parentId: "pork_hub" }),
+      seed("capicola",       "Capicola",        "🥓", "meat", "deli",    SOLID(227),      "package", { parentId: "pork_hub" }),
+      seed("kielbasa",       "Kielbasa",        "🥓", "meat", "sausage", SOLID(454),      "lb", { parentId: "pork_hub" }),
+      seed("smoked_sausage", "Smoked Sausage",  "🥓", "meat", "sausage", SOLID(454),      "lb", { parentId: "pork_hub" }),
+      seed("hot_dogs",       "Hot Dogs",        "🌭", "meat", "sausage", PIECES(50, 454), "package", { parentId: "pork_hub" }),
+
+      // ── dairy — sliced & shredded cheese ────────────────────────
+      seed("american_cheese", "American Cheese", "🧀", "dairy", "cheese", PIECES(21, 340), "package", { parentId: "cheese_hub" }),
+      seed("swiss",           "Swiss",           "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
+      seed("provolone",       "Provolone",       "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
+      seed("muenster",        "Muenster",        "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
+      seed("string_cheese",   "String Cheese",   "🧀", "dairy", "cheese", PIECES(28, 340), "piece",   { parentId: "cheese_hub" }),
+      seed("shredded_cheese", "Shredded Cheese", "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
+      seed("sliced_cheese",   "Sliced Cheese",   "🧀", "dairy", "cheese", PIECES(21, 227), "package", { parentId: "cheese_hub" }),
+      seed("cheese_singles",  "Cheese Singles",  "🧀", "dairy", "cheese", PIECES(21, 340), "package", { parentId: "cheese_hub" }),
+      seed("irish_cheese",    "Irish Cheese",    "🧀", "dairy", "cheese", SOLID(227),      "package", { parentId: "cheese_hub" }),
+
+      // ── dairy — yogurt / frozen ─────────────────────────────────
+      seed("yogurt_drink",    "Yogurt Drink",    "🥤", "dairy", "yogurt",    FLUID(207),      "bottle",  { parentId: "yogurt_hub" }),
+      seed("frozen_yogurt",   "Frozen Yogurt",   "🍦", "dairy", "ice_cream", FLUID(473),      "bottle",  { parentId: "yogurt_hub" }),
+      seed("ice_cream",       "Ice Cream",       "🍨", "dairy", "ice_cream", FLUID(473),      "bottle"),
+      seed("ice_cream_bar",   "Ice Cream Bar",   "🍡", "dairy", "ice_cream", PIECES(80, 480), "piece"),
+
+      // ── pantry — cookies / crackers ─────────────────────────────
+      seed("cookie",                "Cookie",                "🍪", "pantry", "cookie",  PIECES(15, 340), "piece"),
+      seed("chocolate_chip_cookie", "Chocolate Chip Cookie", "🍪", "pantry", "cookie",  PIECES(15, 340), "piece"),
+      seed("sandwich_cookie",       "Sandwich Cookie",       "🍪", "pantry", "cookie",  PIECES(11, 432), "piece"),
+      seed("cookies_and_cream",     "Cookies & Cream",       "🍪", "pantry", "cookie",  PIECES(15, 340), "piece"),
+      seed("cracker",               "Cracker",               "🍘", "pantry", "cracker", PIECES(3, 200),  "package"),
+      seed("goldfish",              "Goldfish",              "🐟", "pantry", "cracker", SOLID(187),      "package"),
+
+      // ── pantry — candy / chocolate ──────────────────────────────
+      seed("candy",                "Candy",                "🍬", "pantry", "candy",     PIECES(5,   200), "package"),
+      seed("candy_bar",            "Candy Bar",            "🍫", "pantry", "candy",     PIECES(50,  50),  "piece"),
+      seed("chocolate",            "Chocolate",            "🍫", "pantry", "chocolate", SOLID(100),       "package"),
+      seed("chocolate_candy",      "Chocolate Candy",      "🍫", "pantry", "candy",     PIECES(5,   200), "package"),
+      seed("peanut_butter_candy",  "Peanut Butter Candy",  "🥜", "pantry", "candy",     PIECES(15,  200), "package"),
+      seed("peanut_butter_cup",    "Peanut Butter Cup",    "🥜", "pantry", "candy",     PIECES(20,  40),  "piece"),
+      seed("cocoa_powder",         "Cocoa Powder",         "🍫", "pantry", "chocolate", SOLID(227),       "package"),
+      seed("chocolate_chips",      "Chocolate Chips",      "🍫", "pantry", "chocolate", SOLID(340),       "package"),
+      seed("chocolate_spread",     "Chocolate Spread",     "🍫", "pantry", "spread",    SOLID(370),       "package"),
+      seed("hazelnut_spread",      "Hazelnut Spread",      "🌰", "pantry", "spread",    SOLID(370),       "package"),
+
+      // ── pantry — sauces / condiments / dressings ────────────────
+      seed("hot_honey",          "Hot Honey",            "🍯", "pantry", "sweetener", FLUID(355), "bottle"),
+      seed("buffalo_sauce",      "Buffalo Sauce",        "🌶️", "pantry", "sauce",     FLUID(355), "bottle"),
+      seed("wing_sauce",         "Wing Sauce",           "🌶️", "pantry", "sauce",     FLUID(355), "bottle"),
+      seed("bbq_sauce",          "BBQ Sauce",            "🍖", "pantry", "sauce",     FLUID(510), "bottle"),
+      seed("mayonnaise",         "Mayonnaise",           "🥚", "pantry", "condiment", FLUID(887), "bottle"),
+      seed("yellow_mustard",     "Yellow Mustard",       "🌭", "pantry", "condiment", FLUID(383), "bottle"),
+      seed("relish",             "Relish",               "🥒", "pantry", "condiment", FLUID(296), "bottle"),
+      seed("worcestershire",     "Worcestershire",       "🥩", "pantry", "sauce",     FLUID(296), "bottle"),
+      seed("ranch_dressing",     "Ranch Dressing",       "🥗", "pantry", "dressing",  FLUID(473), "bottle"),
+      seed("blue_cheese_dressing","Blue Cheese Dressing","🥗", "pantry", "dressing",  FLUID(473), "bottle"),
+      seed("italian_dressing",   "Italian Dressing",     "🥗", "pantry", "dressing",  FLUID(473), "bottle"),
+
+      // ── pantry — boxed / shelf-stable ───────────────────────────
+      seed("mac_and_cheese",  "Mac & Cheese", "🧀", "pantry", "boxed_meal", PIECES(206, 206), "package"),
+      seed("lunchables",      "Lunchables",   "🥪", "pantry", "boxed_meal", PIECES(95,  95),  "piece"),
+      seed("cereal",          "Cereal",       "🥣", "pantry", "cereal",     SOLID(454),       "package"),
+      seed("water",           "Water",        "💧", "pantry", "beverage",   FLUID(500),       "bottle"),
     ];
   })(),
 ];
@@ -6657,8 +6798,16 @@ const MEAT_STATES = [
   // Formed / reconstructed
   "patty", "meatball", "sausage", "links", "loaf", "nuggets",
   // Preserved / cured — structurally a separate axis but users
-  // shop for jerky as "meat in a state", not a separate canonical
-  "jerky",
+  // shop for jerky as "meat in a state", not a separate canonical.
+  // All shelf-stable: jerky and cured (salami, prosciutto, pepperoni
+  // in stick form) live at room temp sealed; "dried" covers air-dried
+  // / dehydrated meats (biltong, dried beef strips); "canned" covers
+  // tinned / pouched / shelf-stable retort packs (SPAM, Vienna
+  // sausages, canned chicken / pork, deviled ham). Adding any of
+  // these to a meat row forces the location cascade to pantry; jerky
+  // / cured / dried route to the jerky_snacks tile, canned routes to
+  // canned_jarred (see pantryTiles.js).
+  "jerky", "cured", "dried", "canned",
   // Cooking stage
   "raw", "cooked",
   // Legacy compound — retained for backward compatibility
@@ -6961,6 +7110,21 @@ export const INGREDIENT_STATES = {
   // path — its parentId is null — so it needs its own entry. Same
   // list; the chicken "whole" default covers the intact bird case.
   chicken:       MEAT_STATES,
+  // Seafood — own state vocabulary keyed off seafood_hub. Specific
+  // fish canonicals (tuna / salmon / cod / etc.) inherit via
+  // parentId. "canned" is what makes shelf-stable tuna / salmon /
+  // sardines route to pantry.canned_jarred instead of fridge.seafood.
+  // "smoked" covers cold/hot-smoked fish (still fridge-default in
+  // the location cascade — only canned forces pantry — since most
+  // smoked fish stays refrigerated until consumed).
+  seafood_hub:   ["whole", "fillet", "steak_cut", "raw", "cooked", "canned", "smoked", "cured", "dried"],
+  // Milk + dairy preservation. milk variants (whole / 2% / skim /
+  // half-and-half / heavy cream / buttermilk) all inherit. "uht"
+  // covers Parmalat-style aseptic packs; "evaporated" / "condensed"
+  // are the canned forms; "powdered" covers shelf-stable milk
+  // powder. Each forces pantry in the location cascade. Fresh /
+  // raw stay on fridge.
+  milk_hub:      ["uht", "evaporated", "condensed", "powdered"],
   salt:          ["fine", "coarse", "flaky"],
   kosher_salt:   ["coarse", "fine"],
   onion:         ["whole", "diced", "sliced", "minced"],
@@ -6989,6 +7153,15 @@ export const STATE_LABELS = {
   chunks: "chunks",     strips: "strips",   shaved: "shaved",
   patty: "patty",       meatball: "meatball", sausage: "sausage",
   links: "links",       nuggets: "nuggets",  jerky: "jerky",
+  cured: "cured",       dried: "dried",      canned: "canned",
+  smoked: "smoked",
+  // Shelf-stable dairy preservation states (uht / evaporated /
+  // condensed / powdered) — see seafood_hub + cheese_hub vocab in
+  // INGREDIENT_STATES. Force pantry routing.
+  uht: "UHT",                evaporated: "evaporated",
+  condensed: "condensed",    powdered: "powdered",
+  // Pickled / fermented produce — sealed pantry, opened fridge.
+  pickled: "pickled",        fermented: "fermented",
   // "loaf" already defined above (reused for meatloaf)
 };
 
@@ -7211,35 +7384,81 @@ export function stateLabel(state) {
 // { pattern: RegExp, state: stateId } entries, iterated top-down.
 export const STATE_ALIASES = [
   // dairy / cheese
-  { pattern: /\bshrd\b|\bshred\b|\bshredded\b/i, state: "shredded" },
-  { pattern: /\bslcd\b|\bsliced?\b/i,            state: "sliced"   },
-  { pattern: /\bgrt\b|\bgrated?\b/i,             state: "grated"   },
-  { pattern: /\bblk\b|\bblock\b/i,               state: "block"    },
-  { pattern: /\bcrmb\b|\bcrumbled?\b/i,          state: "crumbled" },
-  { pattern: /\bcubed?\b/i,                      state: "cubed"    },
+  // Patterns include plural-noun forms ("Slices" / "Cubes" /
+  // "Dices") because brands label pre-prepped cheese / produce
+  // that way ("Sargento Cheddar Slices", "Diced Tomatoes" but
+  // also "Tomato Dices"). Original `\bsliced?\b` only matched
+  // slice / sliced — not slices — so "Cheddar Slices" fell
+  // through state inference entirely.
+  { pattern: /\bshrd\b|\bshreds?\b|\bshredded\b/i, state: "shredded" },
+  { pattern: /\bslcd\b|\bslic(?:e|es|ed)\b/i,      state: "sliced"   },
+  { pattern: /\bgrt\b|\bgrat(?:e|es|ed)\b/i,       state: "grated"   },
+  { pattern: /\bblk\b|\bblocks?\b/i,               state: "block"    },
+  { pattern: /\bcrmb\b|\bcrumbl(?:e|es|ed)\b/i,    state: "crumbled" },
+  { pattern: /\bcub(?:e|es|ed)\b/i,                state: "cubed"    },
   // bread
   { pattern: /\bloaf\b/i,                        state: "loaf"     },
   { pattern: /\bcrumbs?\b|\bbrdcrmb\b/i,         state: "crumbs"   },
   { pattern: /\btoasted?\b/i,                    state: "toasted"  },
   // produce / aromatics
   { pattern: /\bwhl\b|\bwhole\b/i,               state: "whole"    },
-  { pattern: /\bdced\b|\bdiced?\b/i,             state: "diced"    },
-  { pattern: /\bmnc\b|\bminced?\b/i,             state: "minced"   },
-  { pattern: /\bjulienned?\b/i,                  state: "julienned" },
-  { pattern: /\bmashed\b/i,                      state: "mashed"   },
-  { pattern: /\bcrushed\b/i,                     state: "crushed"  },
-  { pattern: /\bjuiced?\b/i,                     state: "juiced"   },
-  { pattern: /\bzested?\b/i,                     state: "zested"   },
-  // meat — ordered most-specific first so compound patterns
-  // ("MEATBALL") win over general ones ("BALL"/"LOAF") where
-  // overlap is possible.
+  { pattern: /\bdced\b|\bdic(?:e|es|ed)\b/i,       state: "diced"    },
+  { pattern: /\bmnc\b|\bminc(?:e|es|ed)\b/i,       state: "minced"   },
+  { pattern: /\bjulienn(?:e|es|ed)\b/i,            state: "julienned" },
+  { pattern: /\bmash(?:e[ds])?\b/i,                state: "mashed"   },
+  { pattern: /\bcrush(?:e[ds])?\b/i,               state: "crushed"  },
+  { pattern: /\bjuic(?:e|es|ed)\b/i,               state: "juiced"   },
+  { pattern: /\bzest(?:e|es|ed)\b/i,               state: "zested"   },
+  // meat — ordered by SPECIFICITY of the physical form. The
+  // detector returns the FIRST in-vocab match, so this list is
+  // the precedence ladder. Three tiers:
+  //   1. Most-specific FORMED shapes (meatball / loaf / nuggets /
+  //      patty / links). When the package literally says "ground
+  //      beef patty", patty is the right read — the formed shape
+  //      is more identity-defining than the source-meat process.
+  //   2. `ground` — beats the more general `sausage` below. A
+  //      package that says "Mild Italian Ground Sausage" is bulk
+  //      ground meat in a tub, not link sausages; the user's
+  //      mental model of the product is "ground" with sausage
+  //      seasoning. Without this ordering, the loop hits
+  //      `sausage` first (which is also in vocab) and the ground
+  //      signal is dropped.
+  //   3. `sausage` and below — general form-words that should only
+  //      win when no more specific descriptor is present.
   { pattern: /\bmeatball(?:s)?\b|\bmtbl\b/i,     state: "meatball" },
   { pattern: /\bmeatloaf\b|\bmtlf\b/i,           state: "loaf"     },
   { pattern: /\bnuggets?\b|\bnggt\b/i,           state: "nuggets"  },
   { pattern: /\bpatt(?:y|ies)\b|\bptty\b/i,      state: "patty"    },
   { pattern: /\blinks?\b/i,                      state: "links"    },
+  { pattern: /\bgrnd\b|\bground\b/i,             state: "ground"   },
   { pattern: /\bsausages?\b|\bssg\b/i,           state: "sausage"  },
+  // Preservation states. "stick" / "snack stick" / "beef stick"
+  // catches Slim Jim, Jack Link's stick-form products, etc. that
+  // never use the word "jerky" in the productName but are
+  // structurally the same shelf-stable form. "biltong" / "salami
+  // stick" / "pepperoni stick" all reduce to cured. "canned" / "tin"
+  // / branded shelf-stable retort packs (SPAM, Vienna sausages,
+  // potted meat, deviled ham) reduce to canned. Ordering matters:
+  // most-specific first so "biltong" doesn't accidentally swallow
+  // a future "biltong-flavored" non-meat product, and SPAM-style
+  // brand names (single-word) don't gobble unrelated tokens.
   { pattern: /\bjerky\b|\bjrky\b/i,              state: "jerky"    },
+  { pattern: /\bbiltong\b/i,                     state: "dried"    },
+  { pattern: /\bsnack\s+sticks?\b|\bbeef\s+sticks?\b|\bmeat\s+sticks?\b/i, state: "jerky" },
+  { pattern: /\bsalami\s+sticks?\b|\bpepperoni\s+sticks?\b|\bdry\s+sausage\b|\bdried?\s+sausage\b/i, state: "cured" },
+  { pattern: /\bcanned?\b|\btinned?\b|\bin\s+(oil|water|brine|sauce)\b/i, state: "canned" },
+  { pattern: /\bspam\b|\bvienna\s+sausages?\b|\bpotted\s+meat\b|\bdeviled\s+ham\b/i, state: "canned" },
+  { pattern: /\bsmoked\b|\bsmkd\b/i,             state: "smoked"   },
+  // Shelf-stable dairy preservation — keyword-driven so a Parmalat
+  // / evaporated milk / powdered milk scan picks up the right
+  // pantry-forcing state even when OFF tags are sparse.
+  { pattern: /\bsweetened\s+condensed\b|\bcondensed\s+milk\b/i, state: "condensed"  },
+  { pattern: /\bevaporated\s+milk\b|\bevap\s+milk\b/i,          state: "evaporated" },
+  { pattern: /\buht\b|\baseptic\b|\bshelf[- ]stable\s+milk\b/i, state: "uht"        },
+  { pattern: /\bpowdered\s+milk\b|\bdry\s+milk\b|\bmilk\s+powder\b/i, state: "powdered" },
+  // Pickled / fermented produce — sealed pantry, opened fridge.
+  { pattern: /\bpickled\b|\bpckld\b/i,           state: "pickled"   },
+  { pattern: /\bfermented\b|\bsauerkraut\b|\bkimchi\b/i, state: "fermented" },
   { pattern: /\btenderloin\b|\btndrln\b|\btndr\b/i, state: "tenderloin" },
   { pattern: /\bfil(?:l)?ets?\b|\bfil\b/i,       state: "fillet"   },
   { pattern: /\bsteak(?:s)?\b|\bstk\b/i,         state: "steak_cut" },
@@ -7248,7 +7467,6 @@ export const STATE_ALIASES = [
   { pattern: /\bshaved\b|\bshvd\b/i,             state: "shaved"   },
   { pattern: /\bstrips?\b|\bstrp\b/i,            state: "strips"   },
   { pattern: /\bchunks?\b|\bchnk\b/i,            state: "chunks"   },
-  { pattern: /\bgrnd\b|\bground\b/i,             state: "ground"   },
   { pattern: /\bckd\b|\bcooked?\b/i,             state: "cooked"   },
   { pattern: /\braw\b|\bfresh\b/i,               state: "raw"      },
   // garlic

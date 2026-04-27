@@ -1,17 +1,167 @@
 # mise — development rules
 
+## Supabase egress discipline (LOAD-BEARING — the app dies past free tier)
+
+mise runs on Supabase free tier. We blew through 8.9 GB once and almost
+shipped a dead app. Treat every byte that leaves the server as money.
+Every new feature must answer: "what does this cost in egress?" before
+"what does this look like?"
+
+**Rules:**
+
+1. **No `select("*")` on a public/global table without a WHERE clause.**
+   Public-read tables like `brand_nutrition`, `ingredient_info`,
+   `off_category_tag_canonicals` accumulate rows from every user
+   globally. Fetching all of them on every boot was the single biggest
+   egress source we had.
+   - Default to a TTL-gated localStorage cache (24h) before falling
+     back to a network read. Pattern: `useBrandNutrition` and
+     `useIngredientInfo` are the canonical examples — copy that shape.
+   - Better: `lazy-load on demand` — a `get(id)` that fetches a single
+     row when asked beats a fetchAll. Use this for any data where the
+     consumer can tolerate an async lookup.
+
+2. **No realtime subscriptions on global tables.** Realtime broadcasts
+   every change to every connected client — that's N×N egress on a
+   hot table. Realtime is fine ONLY on user-scoped or family-scoped
+   channels (`rt:tablename:${userId}` etc.). When a public-read table
+   needs to surface its own writes back to the writing user, do a local
+   `setState` injection inside the upsert path — don't subscribe.
+   - The `brand_nutrition` global subscription was the worst offender;
+     that lesson cost us the free tier. Don't add another.
+
+3. **Compress every image before it crosses the network boundary.** Two
+   distinct paths, both required:
+   - **Storage uploads** — pipe through `src/lib/compressImage.js` with
+     explicit `{ maxDimension, jpegQuality }` options. NEVER upload a
+     raw `File`/`Blob` to a Supabase Storage bucket. The cook-photo
+     leak (3-5MB raw photos) was a 4-8 GB/month leak in one feature.
+   - **Edge-function payloads** — base64 photos sent to
+     `categorize-product-photo` / `scan-nutrition-label` / etc. count
+     as egress on the request body too. Compress to 800-1100px
+     depending on OCR sensitivity; quality 0.65-0.80. Specific
+     defaults live in `compressImage.js`.
+   - Quality bumps above 0.85 require an explicit comment justifying
+     why (typically OCR-critical: receipt thermals, fine-print labels).
+     "Just because" is not a reason.
+
+4. **Debounce DB writes from continuous-input controls.** Sliders, drag
+   handles, typed search inputs — anything that emits at >5 events/sec
+   must batch or debounce before hitting Supabase. Minimum 200ms
+   debounce on persistence; ideally `useSyncedList`'s diff path
+   coalesces multiple in-flight changes. Without this, dragging a
+   pantry-amount slider once fires 30+ realtime broadcasts to every
+   family member.
+
+5. **Don't re-fetch in `useEffect` without a dep gate.** Every
+   re-render that triggers a fetch is potential 100KB+ of egress per
+   user-action. Always check: does the cache cover this? Does my
+   `useEffect` actually need to re-run, or can I stage the result in a
+   ref/state and short-circuit subsequent runs?
+
+6. **Edge-function inputs count as egress.** Pre-compress, pre-trim,
+   pre-summarize anything you put in a request body. Don't paste an
+   entire JSON dump if a few fields would do. Don't send the system
+   prompt re-statement on every call — Anthropic prompt caching is
+   wired (`cache_control: ephemeral`) but only helps if the prompt is
+   stable; mutations to the prompt invalidate the cache.
+
+7. **Storage `getPublicUrl` serves are also egress.** Photos uploaded
+   to public buckets get downloaded by every viewer. If a photo is
+   served back to a user N times, that's N × payload-size egress.
+   Compress on the upload path so the served version is also small.
+   Cache-Control headers help downstream caches (we already set
+   `cacheControl: "3600"` on cook photos — keep that).
+
+8. **Audit on every new feature.** Before shipping any new
+   data-fetching pattern, ask:
+   - Is the WHERE clause as tight as it can be?
+   - Does this paginate / lazy-load / cache?
+   - Does this need realtime? Can it be fetched on demand instead?
+   - If it's a Storage upload: am I compressing?
+   - If it's an edge-function call: am I sending the smallest payload
+     that gets the job done?
+
+If the answer to any of those is "I didn't think about it," stop and
+think about it.
+
+**Default tool: `useCachedQuery` (`src/lib/useCachedQuery.js`).** For any
+new fetch hook backing slow-changing data (profile, recipes, family
+roster, catalog data, aggregates that don't update mid-session), wrap
+it in this helper. It hydrates from `localStorage` instantly and only
+hits the network on TTL expiry. The pattern is also exported as
+standalone helpers (`readCache` / `writeCache` / `cacheFresh`) for
+hooks that need finer control. Existing examples: `useProfile`,
+`useRelationships`, `useUserRecipes`, `useAvatars`, `useActivityFeed`,
+`useMonthlySpend`, `useBrandNutrition`, `useIngredientInfo`.
+
+**Pick TTLs by domain volatility:**
+   - 7 days — effectively-static catalogs (avatar catalog, badge
+     definitions, recipe registry).
+   - 24 hours — public-read enrichment tables (brand_nutrition,
+     ingredient_info).
+   - 6-12 hours — slow-changing user data (profile, relationships,
+     recipes).
+   - 30-60 min — moderately-fresh user data (activity feed, monthly
+     spend, badge counts).
+   - No cache — everything else; relies on realtime + scoped queries.
+
+**Mutations should `writeCache` directly** instead of invalidating —
+the user's own writes should appear instantly without a round-trip.
+`upsert()` paths in `useProfile`, `useBrandNutrition`, etc. all
+follow this pattern.
+
 ## Identity-field hierarchy (UNIVERSAL — never reorder)
 
 Every identity stack renders these rows in this exact order, top-down.
 Applies to ItemCard, AddItemModal, scan rows, and anywhere else we
 surface a pantry item's identity.
 
-1. **HEADER** — big italic title. DERIVED (not free-text) from
-   `[Brand] [Canonical]` when both are set, fallback to Canonical
-   name alone, fallback to `item.name` only for free-text /
-   pre-canonical rows. Brand and Canonical are each a clickable
-   segment of the header: brand → inline rename, canonical →
-   opens LinkIngredient picker.
+1. **HEADER** — big italic title. DERIVED (not free-text) from the
+   identity components in this exact composition order:
+
+   ```
+   [Brand] [State] [Canonical] [Cut] ([Package size])
+   ```
+
+   …falling back to canonical alone when only canonical is set,
+   falling back to `item.name` only for free-text / pre-canonical
+   rows. Empty axes are skipped (no leading whitespace, no empty
+   parens). Brand and Canonical are each a clickable segment of the
+   header: brand → inline rename, canonical → opens LinkIngredient
+   picker. Examples:
+   - `Slim Jim Ground Chicken (12 oz)` — full stack.
+   - `Ground Beef Chuck` — no brand, no package size.
+   - `Butter (8 oz)` — canonical + size only.
+   - `Prosciutto` — canonical only.
+
+   **Implementation rule (single source of truth):** every surface
+   that displays an item's title — pantry cards, success overlays,
+   shopping rows, scan-draft headers, anything — MUST go through
+   `buildDisplayName(row)` from
+   `src/experiments/mcm-cooking/helpers.js`. Do NOT hand-roll the
+   composition per surface; if you find yourself concatenating
+   `${brand} ${name}` or similar, stop and reach for the helper.
+
+   **Two-phase rule** — display-name behavior depends on whether
+   the row is in-progress or committed:
+
+   - **In the AddItem flow (in-progress row):** the `name` form
+     field MUST pin to the canonical's display name (`findIngredient
+     (canonicalId).name`) the moment a canonical resolves — even if
+     the user already typed something or OFF returned a long
+     marketing productName like "Slim Jim Buffalo Wild Wings Buffalo
+     Style." Canonical IS the name; brand / state / package size are
+     other axes that compose around it. This is unconditional, not
+     a "fill when empty" guard. The lock releases automatically only
+     when the user types text that diverges from the canonical's
+     name (intent-to-rename signal).
+   - **In the pantry (committed row):** the rendered title is
+     produced by `buildDisplayName(row)`, which composes the full
+     `[Brand] [State] [Canonical] [Cut] ([Package size])` string
+     from the row's stored axes. The form field's stored `name`
+     value is NOT what gets shown — the composed string is.
+
    - When brand is unset, render a small `+ ADD BRAND` affordance
      ABOVE the header (never as an inline prefix — empty brand
      slot inline reads as broken).
@@ -19,6 +169,10 @@ surface a pantry item's identity.
      displayed title when a canonical exists. Typo-tolerant by
      design: "Proscuitto" bound to `prosciutto` canonical
      displays as "Prosciutto".
+   - Package size in the suffix uses `row.max` (the size as sold),
+     not `row.amount` (current remaining). A half-eaten 16oz tub
+     still reads `(16 oz)` — partial-remaining is a gauge concern,
+     not an identity concern.
 2. **CANONICAL** — tan (`#b8a878`). Internal approved naming system,
    commonly-accepted identity.
 3. **CUT** — rust (`#a8553a`). Anatomical / butchery slot. Orthogonal
@@ -343,3 +497,128 @@ Before merging anything that shows / edits an item row, run through:
 
 Missing any of these = the user will type the same thing twice.
 That violates the minimal-data-entry goal.
+
+## Classification weights — three-tier curated/derived/bridge cascade
+
+The pattern that turns a string like "Slim Jim Buffalo Wild Wings
+Buffalo Cheddar Beef Stick" into `primary=Slim Jim, secondary=BWW`
+is the same shape we want for any future "which of these is most
+likely the right one" classification problem (brand priority today;
+canonical resolution, recipe match, etc. tomorrow).
+
+**The cascade — every classifier that resolves an identity axis
+should follow this tier order:**
+
+1. **Curated tier** — hand-tuned data committed to the repo. Small,
+   high-confidence, opinionated. Lives in `src/data/<axis>.js`.
+   Example: `BRAND_EXPERTISE` in `src/data/brandExpertise.js`.
+2. **Derived tier** — auto-generated from a known-shape data source
+   (USDA, OFF, ingested corrections). Re-runnable script writes a
+   stub-default file in `src/data/<axis>Derived.js`. Coverage is
+   broad but coarser than curated. Example:
+   `BRAND_EXPERTISE_FROM_USDA` in `src/data/brandExpertiseDerived.js`,
+   regenerated by `scripts/derive_brand_expertise.mjs`.
+3. **Bridge tier** — the resolver's "I don't know this exact entity
+   but I know its category" fallback. Translates external taxonomies
+   (USDA WWEIA, OFF tags) into our internal axes via static maps.
+   Example: `subtypeForTypeId()` in `src/data/subtypeMap.js` and the
+   subtype emission in `tagHintsToAxes()`.
+
+**The merge rule — curated wins on conflict, derived fills coverage,
+bridge handles unknowns:**
+
+```js
+function expertiseFor(brandDisplay) {
+  const slug = brandSlugify(brandDisplay);
+  return mergeRecords(
+    BRAND_EXPERTISE[slug] || null,    // curated
+    DERIVED[slug] || null,            // derived
+  );
+  // Bridge tier (subtype/category from typeId/categoryHints) is
+  // applied separately at scoring time in axesForCanonical().
+}
+```
+
+**Three properties that have to hold for this to keep working:**
+
+- **One read entry point.** Every consumer of the classifier reads
+  through one function (`expertiseFor`, `findIngredient`,
+  `findBarcodeCorrection`). Never let a caller bypass and read the
+  underlying tier directly — that breaks the merge contract.
+- **The derived file is regenerable.** Stale data is fine; lossy
+  data isn't. The script that produces it must be re-runnable from
+  scratch any time, with no manual edits in between. If you're
+  hand-editing a derived file, you're either editing the wrong tier
+  (move to curated) or breaking the regen pipeline.
+- **Bridge maps are STATIC.** They translate one taxonomy to another.
+  No counts, no probabilities, no "this looks kinda like a cookie."
+  When a bridge starts wanting weights, that's the signal it should
+  graduate to a derived tier sourced from real data.
+
+### When to add to which tier
+
+| Signal | Tier |
+| --- | --- |
+| You hand-curated 3 brands' subtype lists for a launch demo | Curated |
+| USDA released a new Branded Foods dataset, you want all brand counts refreshed | Derived (re-run the script) |
+| OFF added a new `en:vegan-cheeses` tag and we need to handle it | Bridge (`tagHintsToAxes` branch) |
+| User corrected "M&M's" from secondary → ingredient on a cookie SKU | Phase 2 — DB-tier learning loop (TODO) |
+
+### Phase 2 — DB-tier learning (planned, not yet built)
+
+When users correct a classification, the next person scanning the
+same brand on a similar product should benefit. The plan:
+
+- Migration adds `brand_classification_observations(brand_slug,
+  product_subtype, role, count, last_seen_at)` where `role ∈
+  {primary, secondary, ingredient}`.
+- Every user correction (manual primary↔secondary, ingredient
+  promote/demote) writes one row.
+- `expertiseFor` merges curated + derived + observed, with observed
+  weights eventually overtaking the static seed data as scan volume
+  grows.
+
+Build this once two conditions hold: (1) the curated table is stable
+enough that we know the right axes, (2) we have non-trivial scan
+volume worth learning from. Don't build it speculatively — premature
+learning loops on sparse data produce bad weights faster than no
+weights at all.
+
+### Subtype taxonomy — the load-bearing finer axis
+
+Brand-expertise lives across (canonical, hub, category, subtype).
+Subtype is what distinguishes "cookie" from "candy" within the
+"pantry" category — without it, the picker can't tell M&M's-on-a-
+cookie from M&M's-on-a-candy-bar, since both share `category:
+pantry`.
+
+**Rules for subtype:**
+
+- New canonicals in `src/data/ingredients.js` SHOULD set `subtype` if
+  they fall under a known bucket (cookie, candy, sauce, deli, cheese,
+  yogurt, ice_cream, sausage, snack_meat, etc.).
+- New brands in `BRAND_EXPERTISE` MUST list `subtypes: [...]` —
+  picking is what brand-expertise is FOR.
+- The full subtype list lives implicitly across the codebase today.
+  When adding a new subtype, grep
+  `src/data/brandExpertise.js src/data/subtypeMap.js src/lib/tagHintsToAxes.js`
+  to make sure the bridge tiers also recognize it.
+- A brand's `subtypes` array is the brand's EXPERTISE CLAIM — list
+  every subtype the brand credibly co-brands on, even if they don't
+  manufacture it (BWW lists `snack_meat` because they collab on
+  snack-meat SKUs even though their product line is wings).
+
+### Tripwires — when to refactor this pattern
+
+- **Static derived file > 1 MB.** Move to a Supabase table with
+  `useCachedQuery` (24h TTL).
+- **Subtype taxonomy hits ~30 unique values.** Promote to a constant
+  `SUBTYPES = [...]` in a dedicated file, type-check brand records
+  against it.
+- **Magic numbers in scoring (`100/50/10/1`) need tuning per
+  customer/region.** Promote to a `SCORING_WEIGHTS` constant, then
+  later to a config table.
+- **Three+ classifiers exist with the same cascade shape.** Extract
+  a generic `cascadeResolver({ tiers, mergeFn, bridgeFn })` helper.
+  Don't extract before you have three; one is hard-coded, two is
+  duplication, three is a pattern.

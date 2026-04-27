@@ -31,3 +31,9 @@ skills-lock.json
 .trae/
 .windsurf/
 .zencoder/
+
+# Local-only artifacts: empty placeholder files, git internals that
+# leaked into the working tree, Claude Code MCP config (per-developer).
+usda.jsonl
+FETCH_HEAD
+.mcp.json
