@@ -3620,6 +3620,29 @@ export function tierForCanonical(canonicalId) {
   return COMPOSITIONAL_TIER_OVERRIDES[canonicalId] ?? 2;
 }
 
+// Longest-match canonical resolver, NOT tier-aware. Use for token-
+// level lookups inside an ingredient declaration where each token
+// identifies itself ("BAKING SODA" → baking_soda, not the soda
+// beverage). Tier preference is the WRONG default for ingredient-
+// list parsing — "baking soda" SHOULD resolve to baking_soda even
+// though `soda` is at a higher tier.
+export function inferCanonicalFromNameLongestMatch(name) {
+  const lower = (name || "").toLowerCase().trim();
+  if (lower.length < 3) return null;
+  const map = getCanonicalAliasMap();
+  let bestId = null;
+  let bestLen = 0;
+  for (const [alias, id] of map) {
+    if (alias.length < 3) continue;
+    if (!lower.includes(alias)) continue;
+    if (alias.length > bestLen) {
+      bestId = id;
+      bestLen = alias.length;
+    }
+  }
+  return bestId;
+}
+
 // Tier-aware canonical inference. Walks the alias map, collects ALL
 // matches, then picks the best from the HIGHEST TIER GROUP. Within a
 // tier, longest match wins (the existing rule). Returns just the id

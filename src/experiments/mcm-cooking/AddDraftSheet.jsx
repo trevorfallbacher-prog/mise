@@ -33,6 +33,7 @@ import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { createPendingCanonicalFromScan } from "../../lib/createPendingCanonicalFromScan";
 import { stripFlavors } from "../../lib/stripFlavors";
 import { mergeBarcodeFields } from "../../lib/mergeBarcodeFields";
+import { parseIngredientsText } from "../../lib/parseIngredientsText";
 import { dietaryWarningsForRow } from "../../lib/dietaryWarnings";
 import { useProfile } from "../../lib/useProfile";
 import { lookupBarcode } from "../../lib/lookupBarcode";
@@ -957,6 +958,22 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           // ScanDataPanel for user visibility.
           tieredClaims:        tierResolved.claims,
           tieredClaimCanonicalIds: tierResolved.claimCanonicalIds,
+          // USDA ingredient declaration parsed into canonical ids.
+          // When the correction's product_metadata.ingredients_text
+          // is populated by the USDA ingest (via food.csv join),
+          // this surfaces every recognized ingredient — lets
+          // dairy / gluten / nut allergy checks fire on store-brand
+          // SKUs OFF doesn't carry. Empty when ingredients_text is
+          // missing. Deduped against the tiered claim ids on
+          // commit so the same canonical doesn't appear twice.
+          usdaIngredientIds: (() => {
+            const ingText = correction?.productMetadata?.ingredients_text
+              || correction?.product_metadata?.ingredients_text
+              || null;
+            if (!ingText) return [];
+            const r = parseIngredientsText(ingText);
+            return r.canonicalIds || [];
+          })(),
         },
         at: new Date().toISOString(),
       });
@@ -1265,9 +1282,23 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // Frank → ingredientIds=["cheese"], so a dairy-free user
       // gets a warning chip on the row from the cheese child's
       // existing diet metadata.
-      ingredientIds: Array.isArray(scanDebug?.scan?.tieredClaimCanonicalIds)
-        ? scanDebug.scan.tieredClaimCanonicalIds
-        : [],
+      ingredientIds: (() => {
+        // Union of: tier-resolved claim canonicals (from product
+        // name) + USDA ingredient-declaration canonicals (from
+        // correction.product_metadata.ingredients_text). Deduped.
+        const tiered = Array.isArray(scanDebug?.scan?.tieredClaimCanonicalIds)
+          ? scanDebug.scan.tieredClaimCanonicalIds : [];
+        const usda = Array.isArray(scanDebug?.scan?.usdaIngredientIds)
+          ? scanDebug.scan.usdaIngredientIds : [];
+        const seen = new Set();
+        const out = [];
+        for (const id of [...tiered, ...usda]) {
+          if (!id || seen.has(id)) continue;
+          seen.add(id);
+          out.push(id);
+        }
+        return out;
+      })(),
     });
   };
 
