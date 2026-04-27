@@ -189,7 +189,7 @@ export function ScanDataPanel({ scanDebug, theme }) {
             </Row>
           )}
           {Array.isArray(scan?.flavorClaims) && scan.flavorClaims.length > 0 && (
-            <Row theme={theme} label="Claims extracted">
+            <Row theme={theme} label="Flavor claims (lexicon)">
               {scan.flavorClaims.map((c, i) => (
                 <span key={i} style={{
                   display: "inline-block",
@@ -202,6 +202,30 @@ export function ScanDataPanel({ scanDebug, theme }) {
                   letterSpacing: "0.04em",
                 }}>{c}</span>
               ))}
+            </Row>
+          )}
+          {Array.isArray(scan?.tieredClaims) && scan.tieredClaims.length > 0 && (
+            <Row theme={theme} label="Compositional claims (tier-resolved)">
+              {scan.tieredClaims.map((c, i) => (
+                <span key={i} style={{
+                  display: "inline-block",
+                  padding: "1px 8px",
+                  marginRight: 4,
+                  borderRadius: 999,
+                  background: withAlpha(theme.color.mustard, 0.22),
+                  color: theme.color.mustard,
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.04em",
+                  fontWeight: 600,
+                }}>{c}</span>
+              ))}
+            </Row>
+          )}
+          {Array.isArray(scan?.tieredClaimCanonicalIds) && scan.tieredClaimCanonicalIds.length > 0 && (
+            <Row theme={theme} label="Child canonicals (→ ingredient_ids)">
+              <span style={{ fontFamily: font.mono, fontSize: 10, color: theme.color.inkFaint }}>
+                {scan.tieredClaimCanonicalIds.join(", ")}
+              </span>
             </Row>
           )}
         </div>

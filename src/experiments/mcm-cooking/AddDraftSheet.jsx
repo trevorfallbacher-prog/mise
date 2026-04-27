@@ -20,7 +20,7 @@ import {
 import { LOCATION_DOT } from "./FloatingLocationDock";
 import {
   findIngredient, hubForIngredient, INGREDIENTS,
-  inferCanonicalFromName, dbCanonicalsSnapshot,
+  inferCanonicalFromName, resolveCanonicalWithClaims, dbCanonicalsSnapshot,
   statesForIngredient, defaultStateFor, STATE_LABELS,
   detectStateFromText,
   getIngredientInfo,
@@ -33,6 +33,8 @@ import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { createPendingCanonicalFromScan } from "../../lib/createPendingCanonicalFromScan";
 import { stripFlavors } from "../../lib/stripFlavors";
 import { mergeBarcodeFields } from "../../lib/mergeBarcodeFields";
+import { dietaryWarningsForRow } from "../../lib/dietaryWarnings";
+import { useProfile } from "../../lib/useProfile";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
@@ -64,6 +66,11 @@ import { enrichIngredient } from "../../lib/enrichIngredient";
 // ─────────────────────────────────────────────────────────────
 export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, onClose, onSubmit }) {
   const { theme } = useTheme();
+  // User's dietary preferences from profile — drives the live
+  // dietary-warning chip strip below the name field. Reads through
+  // the cached useProfile hook (TTL'd, no extra network on each
+  // mount).
+  const { profile } = useProfile(userId);
   // Form state — seeded from `seed` so the same component
   // works for empty (manual) and pre-filled (scan) entry. The
   // useState initializer runs once per mount; keying the sheet
@@ -756,9 +763,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // raw productName like "Slim Jim Buffalo Wild Wings Buffalo
       // Style". Once we know the canonical is "chicken", the name
       // field lands as "Chicken" and brand as "Slim Jim".
-      const inferredFromDisplay = offTextForInference
-        ? inferCanonicalFromName(offTextForInference)
-        : null;
+      // Tier-aware canonical resolution. Returns the winning
+      // canonical (assembled-product wins over primitive ingredient)
+      // PLUS the demoted-to-claim canonicals for compositional
+      // children. "Cheese Frank" → canonical=frank, claims=["Cheese"],
+      // claimCanonicalIds=["cheese"]. The claim canonicals flow into
+      // ingredient_ids on commit so dietary checks (lactose / vegan /
+      // etc.) walk the row's full compositional tree without
+      // requiring relabeling of existing seed data.
+      const tierResolved = offTextForInference
+        ? resolveCanonicalWithClaims(offTextForInference)
+        : { canonicalId: null, claims: [], claimCanonicalIds: [] };
+      const inferredFromDisplay = tierResolved.canonicalId;
       const inferredFromGeneric = (!inferredFromDisplay && res?.genericName)
         ? inferCanonicalFromName(res.genericName)
         : null;
@@ -933,7 +949,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         // banner message + folded into the correction-write claims
         // array on commit so the next scan of this UPC carries them.
         scan: {
-          flavorClaims:    flavorScan.claims,
+          flavorClaims:        flavorScan.claims,
+          // Tier-resolved compositional children — claim text +
+          // their resolved canonical ids. The ids drive
+          // ingredient_ids on commit so diet checks have a tree
+          // to walk; the labels render as chips on the form +
+          // ScanDataPanel for user visibility.
+          tieredClaims:        tierResolved.claims,
+          tieredClaimCanonicalIds: tierResolved.claimCanonicalIds,
         },
         at: new Date().toISOString(),
       });
@@ -1234,6 +1257,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // of the same barcode pick up corrections via
       // findBarcodeCorrection.
       barcodeUpc: barcodeUpc || null,
+      // Compositional children — claim canonicals resolved by the
+      // tier-aware resolver (resolveCanonicalWithClaims). Lets
+      // dietary-warning / search / recipe-pairing surfaces walk the
+      // row's full ingredient tree without us relabeling each
+      // canonical with explicit dairy/gluten/etc. flags. Cheese
+      // Frank → ingredientIds=["cheese"], so a dairy-free user
+      // gets a warning chip on the row from the cheese child's
+      // existing diet metadata.
+      ingredientIds: Array.isArray(scanDebug?.scan?.tieredClaimCanonicalIds)
+        ? scanDebug.scan.tieredClaimCanonicalIds
+        : [],
     });
   };
 
@@ -1870,6 +1904,90 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             refreshPending={refreshPending}
           />
         </div>
+          );
+        })()}
+
+        {/* CLAIMS + DIETARY WARNINGS — visible chip strip showing
+            what the system extracted from the scan and any
+            ingredients in the row that violate the user's diet.
+            Closes the "I'm flying blind" gap: the user can SEE
+            on the form what's been registered as flavor / variant
+            tags AND get a dietary warning chip BEFORE committing.
+            Both surfaces use the same chip token from primitives.
+
+            Claims source — union of stripFlavors output ("Fudge
+            Swirl") and tier-resolved compositional claims from
+            resolveCanonicalWithClaims ("Cheese" demoted from a
+            "Cheese Frank" scan). Deduped case-insensitively.
+
+            Diet source — dietaryWarningsForRow walks the row's
+            canonicalId + ingredient_ids tree and flags any child
+            whose existing diet flags / category violate the user's
+            profile preference. No relabeling — the cheese child
+            already has category="dairy" in the seed data. */}
+        {(() => {
+          const flavorClaims = scanDebug?.scan?.flavorClaims || [];
+          const tieredClaims = scanDebug?.scan?.tieredClaims || [];
+          const seen = new Set();
+          const claims = [];
+          for (const c of [...tieredClaims, ...flavorClaims]) {
+            const key = String(c).toLowerCase();
+            if (!seen.has(key)) { seen.add(key); claims.push(c); }
+          }
+          const tieredIds = scanDebug?.scan?.tieredClaimCanonicalIds || [];
+          const dietWarnings = dietaryWarningsForRow(
+            { canonicalId, ingredientIds: tieredIds },
+            profile,
+          );
+          if (claims.length === 0 && dietWarnings.length === 0) return null;
+          return (
+            <div style={{
+              marginTop: 10,
+              padding: "8px 10px",
+              borderRadius: 10,
+              background: withAlpha(theme.color.ink, 0.02),
+              border: `1px dashed ${theme.color.hairline}`,
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 6,
+            }}>
+              <span style={{
+                fontFamily: font.mono, fontSize: 9,
+                letterSpacing: "0.14em", textTransform: "uppercase",
+                color: theme.color.inkFaint,
+                marginRight: 4,
+              }}>
+                Extracted
+              </span>
+              {claims.map((c, i) => (
+                <span key={`c${i}`} style={{
+                  display: "inline-block",
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: withAlpha(theme.color.mustard, 0.18),
+                  color: theme.color.mustard,
+                  border: `1px solid ${withAlpha(theme.color.mustard, 0.35)}`,
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.04em",
+                }}>{c}</span>
+              ))}
+              {dietWarnings.map((w, i) => (
+                <span key={`w${i}`} title={`${w.name} — ${w.reason}`} style={{
+                  display: "inline-block",
+                  padding: "2px 8px",
+                  borderRadius: 999,
+                  background: withAlpha(theme.color.burnt, 0.18),
+                  color: theme.color.burnt,
+                  border: `1px solid ${withAlpha(theme.color.burnt, 0.45)}`,
+                  fontFamily: font.mono, fontSize: 10,
+                  letterSpacing: "0.04em",
+                  fontWeight: 600,
+                }}>
+                  ⚠ {w.reason} · {w.name}
+                </span>
+              ))}
+            </div>
           );
         })()}
 

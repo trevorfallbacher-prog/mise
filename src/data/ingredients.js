@@ -3712,7 +3712,32 @@ export function resolveCanonicalWithClaims(name) {
       claims.push(label);
     }
   }
-  return { canonicalId, claims };
+  // Map each surfaced claim back to a canonical id when the claim
+  // text resolves through the alias map. "Cheese" claim → cheese
+  // canonical id. The resulting claimCanonicalIds list lets callers
+  // populate `pantry_items.ingredient_ids` so diet filters
+  // (isCompatibleWithDiet) can walk the row's actual composition —
+  // a Cheese Frank scan ends up with ingredient_ids=["cheese"] and
+  // a dairy-free user gets a warning chip on the row.
+  const claimCanonicalIds = [];
+  const claimSeen = new Set();
+  for (const t of [3, 2, 1]) {
+    if (t >= winningTier) continue;
+    for (const m of byTier[t]) {
+      if (claimSeen.has(m.id) || m.id === canonicalId) continue;
+      claimSeen.add(m.id);
+      // Reuse the redundancy filter from above — same rule, just
+      // applied to canonical ids instead of label strings.
+      const ing = findIngredient(m.id);
+      const label = ing?.name || m.alias.replace(/_/g, " ");
+      const labelTokens = label.toLowerCase().split(/[\s_\-,&'/]+/).filter(t => t.length >= 3);
+      const allTokensRedundant = labelTokens.length > 0 && labelTokens.every(t => winningTokens.has(t));
+      if (allTokensRedundant) continue;
+      claimCanonicalIds.push(m.id);
+    }
+  }
+
+  return { canonicalId, claims, claimCanonicalIds };
 }
 
 // Common freshness / prep / form modifiers the AI tends to prepend

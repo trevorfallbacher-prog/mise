@@ -30,13 +30,17 @@ import {
   statesForIngredient, STATE_LABELS, getIngredientInfo,
 } from "../../data/ingredients";
 import { useIngredientInfo } from "../../lib/useIngredientInfo";
+import { useProfile } from "../../lib/useProfile";
+import { dietaryWarningsForRow } from "../../lib/dietaryWarnings";
 import { canonicalImageUrlFor } from "../../lib/canonicalIcons";
 import { useBodyScrollLock } from "../../lib/useBodyScrollLock";
 import { useSheetDismissAtTop } from "../../lib/useSheetDismissAtTop";
 import {
   LOCATIONS, shelfLifeFor, formatDaysChip, daysChipColor,
   buildDisplayName, getItemClaims,
+  autoMigratePatchOnOpen, openedNounForState,
 } from "./helpers";
+import { useToast } from "../../lib/toast";
 import { LOCATION_DOT } from "./FloatingLocationDock";
 import { AddDraftHeaderPills } from "./AddDraftHeaderPills";
 import { AddDraftPickers } from "./AddDraftPickers";
@@ -54,6 +58,7 @@ export function MCMItemCard({
 }) {
   const { theme } = useTheme();
   const { dbMap } = useIngredientInfo();
+  const toast = useToast();
 
   // Local state mirrors the row. Each field's setter also fires
   // onUpdate immediately so the parent persists the change without
@@ -150,7 +155,42 @@ export function MCMItemCard({
   const setTileId      = (v) => { setTileIdState(v);      update({ tileId: v }); };
   const setLocation    = (v) => { setLocationState(v);    update({ location: v }); };
   const setStateAxis   = (v) => { setStateAxisState(v);   update({ state: v }); };
-  const setAmount      = (v) => { setAmountState(v);      update({ amount: v }); };
+  const setAmount      = (v) => {
+    // Seal-break detection routes through the shared predicate so
+    // gauge edits behave identically to consume / cook-mode decrements.
+    // See `autoMigratePatchOnOpen` in helpers.js for the full rule.
+    const migrate = autoMigratePatchOnOpen({
+      prevAmount: amount,
+      newAmount:  v,
+      max,
+      state:      stateAxis,
+      location,
+    });
+    setAmountState(v);
+    if (migrate) {
+      // Snapshot pre-migration values so the toast's Undo button can
+      // restore the user's original placement.
+      const prevLocation = location;
+      const prevTileId   = tileId;
+      setLocationState(migrate.location);
+      setTileIdState(migrate.tileId);
+      update({ amount: v, location: migrate.location, tileId: migrate.tileId });
+      toast.push(
+        `Moved to fridge — opened ${openedNounForState(stateAxis)} keep longer cold.`,
+        {
+          kind: "info",
+          emoji: "",
+          undo: () => {
+            setLocationState(prevLocation);
+            setTileIdState(prevTileId);
+            update({ location: prevLocation, tileId: prevTileId });
+          },
+        }
+      );
+    } else {
+      update({ amount: v });
+    }
+  };
   const setUnit        = (v) => { setUnitState(v);        update({ unit: v }); };
   const setExpiresAt   = (v) => { setExpiresAtState(v);   update({ expiresAt: v }); };
 
@@ -179,15 +219,25 @@ export function MCMItemCard({
   // bound (the genuine pre-canonical / scratch case).
   const derivedName = useMemo(
     () => buildDisplayName({
-      name, brand, canonicalId, state: stateAxis, cut,
+      name, brand, canonicalId, state: stateAxis, cut, max, unit,
     }),
-    [name, brand, canonicalId, stateAxis, cut]
+    [name, brand, canonicalId, stateAxis, cut, max, unit]
   );
 
   // Claims (Organic / Grass-fed / Made in Italy / etc.) read
   // straight off the raw row — these aren't editable here in
   // v1. Empty array hides the strip entirely.
   const claims = useMemo(() => getItemClaims(item), [item]);
+  // User's dietary preferences from profile — drives the dietary-
+  // warning chip below the claims row. Walks item's full
+  // compositional tree (canonicalId + ingredient_ids) and surfaces
+  // any child whose existing diet flags / category violate the
+  // user's preference.
+  const { profile } = useProfile(userId);
+  const dietWarnings = useMemo(
+    () => dietaryWarningsForRow(item, profile, dbMap),
+    [item, profile, dbMap],
+  );
 
   // Days-until-expiry display (chip-style, color follows freshness)
   const daysToExpiry = (() => {
@@ -206,10 +256,17 @@ export function MCMItemCard({
   const fmt = (n) => Number.isInteger(n) ? String(n) : Number(n).toFixed(1);
 
   return (
-    <div
+    <motion.div
       role="dialog"
       aria-modal="true"
       aria-label={`Edit ${item.name}`}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      // Backdrop fade matches the inner sheet's slide duration
+      // (~360 ms) so the room dims out at the same rhythm the sheet
+      // exits, instead of snapping dark before the slide finishes.
+      exit={{ opacity: 0, transition: { duration: 0.36, ease: [0.32, 0.72, 0.4, 1] } }}
+      transition={{ duration: 0.22, ease: [0.32, 0.72, 0.4, 1] }}
       style={{
         position: "fixed",
         inset: 0,
@@ -234,10 +291,15 @@ export function MCMItemCard({
     >
       <motion.div
         ref={sheetRef}
-        initial={{ y: 32, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 32, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 360, damping: 32 }}
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        // Exit uses a longer ease-out tween instead of the entrance
+        // spring — springs feel snappy on dismiss (the sheet flicks),
+        // a 420 ms ease-out curve glides the sheet off-screen at a
+        // pace that reads as "leaving" rather than "vanishing". The
+        // curve is the iOS-standard outgoing-content ease.
+        exit={{ y: "100%", transition: { duration: 0.42, ease: [0.32, 0.72, 0.4, 1] } }}
+        transition={{ type: "spring", stiffness: 360, damping: 36 }}
         // Two ways to dismiss:
         //   * Tap the grabber pill at the top and pull — framer
         //     drag-follows the finger, releases past 120 px / 500
@@ -283,12 +345,34 @@ export function MCMItemCard({
           borderRadius: radius.panel,
           background: theme.color.glassFillHeavy,
           border: `1px solid ${theme.color.glassBorder}`,
-          backdropFilter: "blur(24px) saturate(160%)",
-          WebkitBackdropFilter: "blur(24px) saturate(160%)",
+          // Sheet blur dropped 24 → 12 — radius² compositing cost is
+          // the dominant factor on iOS Safari, and the heavy
+          // glassFill alpha already carries the frosted look.
+          backdropFilter: "blur(12px) saturate(140%)",
+          WebkitBackdropFilter: "blur(12px) saturate(140%)",
           boxShadow: "0 24px 60px rgba(20,12,4,0.40), 0 4px 16px rgba(20,12,4,0.20)",
+          // Promote to its own compositor layer so the slide-in /
+          // slide-out animation doesn't force iOS Safari to re-run
+          // the backdrop-filter blur every frame against shifting
+          // input pixels. The static blur is rasterized once on this
+          // layer and the layer transforms via the GPU.
+          willChange: "transform",
           ...THEME_TRANSITION,
         }}
       >
+        {/* Top-right close affordance — small ✕ button so dismiss is
+            always one tap away regardless of card height or scroll
+            position. Sits above the grabber pill in stacking order;
+            stopPropagation on click prevents the backdrop's
+            close-on-self handler from double-firing. */}
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={(e) => { e.stopPropagation(); onClose && onClose(); }}
+          style={closeButtonStyle(theme)}
+        >
+          <span aria-hidden style={{ lineHeight: 1, fontSize: 18, marginTop: -1 }}>×</span>
+        </button>
         {/* Drag handle — small grabber pill at the top of the sheet,
             iOS modal pattern. The wrapping div is a 24 px touch zone
             so the handle is forgiving to thumb misses. touch-action
@@ -328,7 +412,6 @@ export function MCMItemCard({
                 alt=""
                 style={{
                   width: 56, height: 56, objectFit: "contain",
-                  filter: "drop-shadow(0 2px 4px rgba(30,30,30,0.10))",
                 }}
               />
             </div>
@@ -392,6 +475,35 @@ export function MCMItemCard({
                 letterSpacing: "0.005em",
               }}>
                 {claims.join(", ")}
+              </div>
+            )}
+            {/* Dietary-warning chip strip — fires when any of the
+                row's compositional ingredients (canonicalId +
+                ingredient_ids) violates the user's profile.dietary
+                preference. Inheritance via existing seed data: the
+                cheese ingredient already has category="dairy", so a
+                Cheese Frank row gets a "⚠ dairy · Cheese" chip for
+                a dairy-free user without us relabeling cheese. */}
+            {dietWarnings.length > 0 && (
+              <div style={{
+                marginTop: space.tight,
+                display: "flex", flexWrap: "wrap", gap: 4,
+              }}>
+                {dietWarnings.map((w, i) => (
+                  <span key={i} title={`${w.name} — ${w.reason}`} style={{
+                    display: "inline-block",
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    background: withAlpha(theme.color.burnt, 0.18),
+                    color: theme.color.burnt,
+                    border: `1px solid ${withAlpha(theme.color.burnt, 0.45)}`,
+                    fontFamily: font.mono, fontSize: 10,
+                    letterSpacing: "0.04em",
+                    fontWeight: 600,
+                  }}>
+                    ⚠ {w.reason} · {w.name}
+                  </span>
+                ))}
               </div>
             )}
           </div>
@@ -717,7 +829,7 @@ export function MCMItemCard({
           onClose={() => setBrandEditing(false)}
         />
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -894,6 +1006,32 @@ function formatGram(n) {
 
 function prettifySlug(id) {
   return String(id || "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+// Small ✕ in the top-right corner. Subtle by default — theme.inkFaint
+// on a translucent ink-tinted ground — so it doesn't compete with the
+// editable content; tap target is 32px even though the visual chip is
+// 26px so it stays forgiving on thumb misses.
+function closeButtonStyle(theme) {
+  return {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 32,
+    height: 32,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 999,
+    border: `1px solid ${withAlpha(theme.color.ink, 0.10)}`,
+    background: withAlpha(theme.color.ink, 0.06),
+    color: theme.color.inkMuted,
+    fontFamily: "system-ui, -apple-system, sans-serif",
+    fontWeight: 400,
+    cursor: "pointer",
+    padding: 0,
+    zIndex: 2,
+  };
 }
 
 function chipBtn(theme, tone, dashed) {
