@@ -15,12 +15,14 @@ import { MCMPickerSheet } from "./MCMPickerSheet";
 import {
   LOCATIONS, DEFAULT_UNIT_OPTIONS,
   defaultCategoryForLocation, shelfLifeFor,
+  needsFridgeAfterOpening,
 } from "./helpers";
 import { LOCATION_DOT } from "./FloatingLocationDock";
 import {
   findIngredient, hubForIngredient, INGREDIENTS,
   inferCanonicalFromName, dbCanonicalsSnapshot,
   statesForIngredient, defaultStateFor, STATE_LABELS,
+  detectStateFromText,
   getIngredientInfo,
 } from "../../data/ingredients";
 import { detectBrand } from "../../data/knownBrands";
@@ -31,7 +33,11 @@ import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
-import { rememberBarcodeCorrection, findBarcodeCorrection } from "../../lib/barcodeCorrections";
+import {
+  rememberBarcodeCorrection,
+  findBarcodeCorrection,
+  fetchPopularPackageSizeForUpc,
+} from "../../lib/barcodeCorrections";
 import { useBodyScrollLock } from "../../lib/useBodyScrollLock";
 import { useSheetDismissAtTop } from "../../lib/useSheetDismissAtTop";
 import { rememberCanonicalTypeCorrection, fetchCanonicalTypeVote } from "../../lib/canonicalCorrections";
@@ -217,9 +223,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   // tier or whether we just queried before brand_nutrition rows
   // arrived from Supabase.
   const {
-    rows:    brandNutritionRows,
-    loading: brandNutritionLoading,
-    upsert:  upsertBrandNutrition,
+    loading:         brandNutritionLoading,
+    upsert:          upsertBrandNutrition,
+    ensureByBarcode: ensureBrandNutritionByBarcode,
+    get:             getBrandNutrition,
   } = useBrandNutrition();
   // Hook into the IngredientInfoProvider so the canonical
   // typeahead and picker can see admin-approved + user-created
@@ -297,11 +304,11 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     if (!canonicalId) return null;
     const opened = remaining < 0.999;
     const dbOverride = getDbInfo(canonicalId);
-    const days = shelfLifeFor(canonicalId, location, { opened, dbOverride });
+    const days = shelfLifeFor(canonicalId, location, { opened, dbOverride, state });
     if (Number.isFinite(days)) return days;
-    if (opened) return shelfLifeFor(canonicalId, location, { opened: false, dbOverride });
+    if (opened) return shelfLifeFor(canonicalId, location, { opened: false, dbOverride, state });
     return null;
-  }, [canonicalId, location, remaining, getDbInfo]);
+  }, [canonicalId, location, remaining, state, getDbInfo]);
 
   const filteredBrandSuggestions = useMemo(() => {
     const q = brand.trim().toLowerCase();
@@ -420,13 +427,42 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   useEffect(() => {
     if (locationOverridden) return;
     if (!canonicalId) return;
+    // Preservation-grade STATES win before the canonical's own home.
+    // Any preservation state forces pantry regardless of what the
+    // canonical defaults to:
+    //   • jerky / cured / dried / smoked-shelf-stable meats and fish
+    //   • canned anything
+    //   • shelf-stable dairy: uht / evaporated / condensed / powdered
+    //   • pickled / fermented produce
+    // EXCEPT when the user is adding a row that's already opened
+    // (remaining < 1) AND that state's opened form belongs in the
+    // fridge (canned / uht / evaporated / condensed / pickled /
+    // fermented). In that case we route to fridge directly so the
+    // user doesn't have to commit to pantry first and then watch the
+    // MCMItemCard auto-migrate it five seconds later. Sealed cases
+    // still go pantry; the gauge-edit auto-migration in MCMItemCard
+    // handles the post-open transition for items added sealed.
+    const PRESERVATION_STATES = new Set([
+      "jerky", "cured", "dried", "canned",
+      "uht", "evaporated", "condensed", "powdered",
+      "pickled", "fermented",
+    ]);
+    if (state && PRESERVATION_STATES.has(state)) {
+      const openedAtAdd = remaining < 0.999;
+      if (openedAtAdd && needsFridgeAfterOpening(state)) {
+        setLocation("fridge");
+      } else {
+        setLocation("pantry");
+      }
+      return;
+    }
     const ing = findIngredient(canonicalId);
     const info = getIngredientInfo(ing, getDbInfo(canonicalId));
     const home = info?.storage?.location;
     if (home === "fridge" || home === "pantry" || home === "freezer") {
       setLocation(home);
     }
-  }, [canonicalId, locationOverridden, getDbInfo]);
+  }, [canonicalId, state, remaining, locationOverridden, getDbInfo]);
 
   // Resolve the Stored In tile via the location's classifier.
   // Synthesizes a draft item from the current axis state and
@@ -446,6 +482,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       name: name.trim(),
       ingredientId: canonicalId || null,
       typeId: typeId || null,
+      // Pass the STATE so preservation-grade states (jerky / cured /
+      // dried) can short-circuit the canonical-driven classification
+      // and route to the jerky_snacks tile instead of meat_poultry.
+      // Without this, a chicken-jerky row would land in fridge meat
+      // even after we forced location to pantry — the classifier
+      // wouldn't have the discriminating signal.
+      state: state || null,
       // Use the canonical's own category when we have one, so
       // the classifier's category-routing path (meat → meat_poultry,
       // produce → produce, etc.) fires for canonicals we know
@@ -456,7 +499,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     };
     const id = loc.classify(draft, { findIngredient, hubForIngredient });
     setTileId(id || null);
-  }, [name, canonicalId, typeId, location, tileOverridden]);
+  }, [name, canonicalId, typeId, state, location, tileOverridden]);
 
   // Canonical-level correction write — when the user picks a
   // category for a canonical (typeOverridden = true), teach
@@ -508,12 +551,16 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         typeId:   typeId   || null,
         tileId:   tileId   || null,
         location: location || null,
+        // State teaches the per-UPC physical-form so a re-scan
+        // pre-fills the chip without re-running detectStateFromText.
+        // Migration 0144 adds the column.
+        state:    state    || null,
       }).catch(err =>
         console.warn("[mcm-add] cascade correction-write failed:", err?.message || err),
       );
     }, 600);
     return () => clearTimeout(t);
-  }, [barcodeUpc, canonicalId, typeId, tileId, location, userId, isAdmin]);
+  }, [barcodeUpc, canonicalId, typeId, tileId, location, state, userId, isAdmin]);
 
   // Validation — required fields the row needs to be useful
   // downstream (recipe matching, freshness clock, fill gauge).
@@ -568,10 +615,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // is the higher tier per CLAUDE.md's resolution cascade
       // (family + global corrections beat raw OFF data), so its
       // values win when both surface a hint for the same axis.
-      const [res, correction] = await Promise.all([
-        lookupBarcode(upc, { brandNutritionRows }),
+      const [res, correction, popularPkgSize] = await Promise.all([
+        lookupBarcode(upc, { ensureByBarcode: ensureBrandNutritionByBarcode }),
         findBarcodeCorrection(upc).catch(err => {
           console.warn("[mcm-add] correction read failed:", err?.message || err);
+          return null;
+        }),
+        // UPC-keyed package-size consensus (migration 0142). Aggregates
+        // every household's committed pantry_items rows for this UPC
+        // and returns the most-frequent (max, unit). Voting model — a
+        // single fat-finger entry can't flip the consensus; majority
+        // observations win. Stale-tolerant: null on miss, on RPC
+        // failure, or pre-migration envs.
+        fetchPopularPackageSizeForUpc(upc).catch(err => {
+          console.warn("[mcm-add] popular pkg size read failed:", err?.message || err);
           return null;
         }),
       ]);
@@ -587,6 +644,38 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       if (correction?.tileId) {
         setTileId(correction.tileId);
         setTileOverridden(true);
+      }
+      // Brand correction — the memory-book flow now persists brand
+      // when the AI extracts one, so a re-scan of the same UPC
+      // pre-fills the brand chip without re-opening the camera. OFF
+      // lookups also write brand to corrections at submit time, so
+      // this branch covers both paths. Empty-only guard so a manual
+      // brand edit in progress doesn't get stomped.
+      if (correction?.brand && !brand.trim()) {
+        setBrand(correction.brand);
+      }
+      // Product-name correction — same rationale; the memory-book
+      // path teaches the OFF productName when scan resolved one. We
+      // don't pin it here because the canonical-driven name pin in
+      // the OFF/USDA pre-fill block below will overwrite anyway when
+      // a canonical resolves. This is the cold-start case where
+      // canonical didn't resolve and the only thing we know is the
+      // taught product name.
+      if (correction?.name && !name.trim()) {
+        setName(correction.name);
+      }
+      // State correction — taught at handleSubmit / cascade-effect
+      // / mid-scan write (migration 0144 added the column). Lock
+      // the override so the canonical-default useEffect can't
+      // overwrite this on the next render. Vocab-gated for
+      // defensive parity with the AI-derived state path.
+      if (correction?.state && !stateOverridden) {
+        const ing = correction.canonicalId ? findIngredient(correction.canonicalId) : null;
+        const vocab = ing ? statesForIngredient(ing) : null;
+        if (!vocab || vocab.includes(correction.state)) {
+          setState(correction.state);
+          setStateOverridden(true);
+        }
       }
 
       // Type correction beats the live name-inference. Same
@@ -622,15 +711,97 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         || (displayName ? detectBrand(displayName) : null)
         || null;
 
+      // Canonical cascade — correction → cached canonicalId →
+      // inference from displayName → inference from genericName.
+      // Computed synchronously (and BEFORE setName) so the name
+      // input can pin to the canonical's display name instead of
+      // the long OFF productName. Per CLAUDE.md identity hierarchy
+      // the HEADER is derived from [Brand] [Canonical] — never the
+      // raw productName like "Slim Jim Buffalo Wild Wings Buffalo
+      // Style". Once we know the canonical is "chicken", the name
+      // field lands as "Chicken" and brand as "Slim Jim".
+      const inferredFromDisplay = displayName
+        ? inferCanonicalFromName(displayName)
+        : null;
+      const inferredFromGeneric = (!inferredFromDisplay && res?.genericName)
+        ? inferCanonicalFromName(res.genericName)
+        : null;
+      const finalCanonicalId =
+        correction?.canonicalId
+        || res?.canonicalId
+        || inferredFromDisplay
+        || inferredFromGeneric
+        || null;
+      const canonicalIng = finalCanonicalId ? findIngredient(finalCanonicalId) : null;
+      const canonicalDisplayName = canonicalIng?.name || null;
+
+      // STATE inference from the scanned product name. detectStateFromText
+      // matches against STATE_ALIASES and gates by the canonical's
+      // vocabulary, so "snack stick" / "beef stick" / "jerky" etc. only
+      // fire on canonicals that have those preservation states (chicken,
+      // beef, pork, turkey today). Critical for the Slim Jim / Jack Link's
+      // class of products: their OFF productName rarely contains the word
+      // "jerky" but does contain "snack stick" / "beef stick" — without
+      // this inference, the row would default to state="whole" and route
+      // to fridge meat_poultry instead of pantry jerky_snacks.
+      const stateFromName = canonicalIng
+        ? detectStateFromText(displayName || res?.genericName || "", canonicalIng)
+        : null;
+
       // OFF / USDA payload pre-fill — apply whatever fields landed.
       // No outer `if (res.found)` gate: OFF doesn't return partial
       // payloads (it's all-or-nothing), but the per-field guards
       // below mean a `found:false` with no fields is a no-op anyway.
-      if (!name.trim() && displayName)         setName(displayName);
+      //
+      // Name preference: when a canonical is bound, the name field
+      // ALWAYS pins to the canonical's display name — even if the
+      // user already typed something or OFF returned a long marketing
+      // productName. New-item rule per CLAUDE.md: the canonical IS
+      // the name; the productName/brand/state/package-size are other
+      // axes that compose around it. Without this, the user sees
+      // "Slim Jim Buffalo Wild Wings Buffalo Style" instead of
+      // "Chicken" in the header and has to retype every scan.
+      // No-canonical fallback keeps the empty-only guard so we don't
+      // stomp user-typed text when we have nothing better to offer.
+      if (canonicalDisplayName) {
+        setName(canonicalDisplayName);
+      } else if (!name.trim() && displayName) {
+        setName(displayName);
+      }
       if (!brand.trim() && detectedBrand)      setBrand(detectedBrand);
+      // Package-size cascade for the scan path:
+      //   1. cross-family consensus from pantry_items (popular pkg
+      //      RPC) — the voting source. Majority observations win, so
+      //      a fat-finger value can't pin the UPC for everyone.
+      //   2. correction-tier package size — covers UPCs the USDA
+      //      baseline ingest pre-populated but no one has committed
+      //      to a pantry yet (so consensus has no rows).
+      //   3. OFF productSize — last resort.
+      // Each guarded behind the empty-form check so we never stomp
+      // a value the user already typed.
       const pkg = res?.quantity ? parsePackageSize(res.quantity) : null;
-      if (!packageSize && pkg?.amount != null) setPackageSize(String(pkg.amount));
-      if (!unit        && pkg?.unit)           setUnit(pkg.unit);
+      const consensusAmount =
+        popularPkgSize?.amount
+        ?? (correction?.packageSizeAmount ?? null)
+        ?? (pkg?.amount ?? null);
+      const consensusUnit =
+        popularPkgSize?.unit
+        || correction?.packageSizeUnit
+        || pkg?.unit
+        || null;
+      if (!packageSize && consensusAmount != null) setPackageSize(String(consensusAmount));
+      if (!unit        && consensusUnit)           setUnit(consensusUnit);
+
+      // Apply scan-inferred state when found. Locks the override so the
+      // canonical-default useEffect can't wipe it on the next render
+      // (chicken's default state is "whole" — without the lock, that
+      // would land a tick later and overwrite "jerky"). The lock
+      // releases automatically when the user manually picks a different
+      // state via the picker.
+      if (stateFromName && !stateOverridden) {
+        setState(stateFromName);
+        setStateOverridden(true);
+      }
       if (res?.found) setRemaining(1);
       if (Array.isArray(res?.categoryHints) && res.categoryHints.length > 0) {
         const axes = tagHintsToAxes(res.categoryHints);
@@ -649,25 +820,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           // on every render those change, overwriting the OFF tile.
           setTileOverridden(true);
         }
+        // OFF tag → STATE hint, currently emitted by the JERKY /
+        // SHELF-STABLE SNACK MEAT branch of tagHintsToAxes. Catches
+        // products whose categoryHints carry "dried-meat-products" /
+        // "meat-snacks" / "biltong" etc. even when the productName
+        // itself doesn't have the keyword for detectStateFromText to
+        // hit. Lock the override so the canonical-default useEffect
+        // (which would set "whole" for chicken/beef/pork/turkey) can't
+        // wipe the value on the next render.
+        if (!stateOverridden && axes.state) {
+          setState(axes.state);
+          setStateOverridden(true);
+        }
       }
 
-      // Canonical cascade — correction → cached canonicalId →
-      // inference from displayName → inference from genericName.
-      // Computed synchronously so we know whether a paired
-      // canonical landed without waiting on the React effect that
-      // re-runs inferCanonicalFromName when `name` changes.
-      const inferredFromDisplay = displayName
-        ? inferCanonicalFromName(displayName)
-        : null;
-      const inferredFromGeneric = (!inferredFromDisplay && res?.genericName)
-        ? inferCanonicalFromName(res.genericName)
-        : null;
-      const finalCanonicalId =
-        correction?.canonicalId
-        || res?.canonicalId
-        || inferredFromDisplay
-        || inferredFromGeneric
-        || null;
       if (finalCanonicalId && !canonicalOverridden) {
         setCanonicalId(finalCanonicalId);
         // Lock the override so the name-watching inference effect
@@ -736,6 +902,16 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           // categoryHints seed the global tag-map on the admin tier
           // so similar UPCs resolve faster downstream.
           categoryHints: Array.isArray(res?.categoryHints) ? res.categoryHints : null,
+          // Brand persists immediately when OFF / detectBrand
+          // already resolved one. The handleSubmit write later
+          // overwrites with whatever the user confirmed, but
+          // teaching mid-scan covers the case where the user
+          // dismisses the form without committing.
+          brand:         detectedBrand || null,
+          // Scan-inferred state — load-bearing for re-scans of the
+          // same UPC. detectStateFromText already validated this
+          // against the canonical's state vocabulary.
+          state:         stateFromName || null,
         }).catch(err =>
           console.warn("[mcm-add] barcode_correction scan-write failed:", err?.message || err),
         );
@@ -754,11 +930,14 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         }
       }
 
-      // Paired canonical is the success bar. Without one, the row
-      // can't pair to recipes, freshness windows, or nutrition —
-      // so we route the user into the photo flow to gather more
-      // info. NEVER framed as a failure ("couldn't find that one")
-      // — only ever as "tell us more." See feedback_scan_never_fails.md.
+      // Paired canonical is the IDEAL success bar. Without one, we
+      // historically dumped the user into MemoryBookCapture — but
+      // that's wrong when OFF/USDA already gave us brand + name +
+      // category hints (pickles is the canonical example: not in
+      // the bundled INGREDIENTS registry, but OFF tags it cleanly
+      // as `en:pickles` → category=pantry, tile=pickles_ferments,
+      // state=pickled. The form has plenty to render and the user
+      // can pick a canonical from the typeahead).
       //
       // Held off when EITHER cache is still hydrating:
       //   • brand_nutrition (useBrandNutrition) feeds the cached
@@ -768,18 +947,37 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // A scan that fires before either has loaded can mis-flag a
       // known UPC as needing more info — the second scan succeeds
       // only because the caches finished loading in the gap.
+      //
+      // The photo flow ONLY fires now when we have neither a
+      // canonical nor any other useful identity signal — the
+      // genuine "we know nothing" red scan. Anything that gave us
+      // a brand, a productName, or categoryHints that resolve to
+      // an axis lets the user finish the form without taking a
+      // photo. NEVER framed as failure either way — the photo flow
+      // is "tell us more about a brand-new product," not "we couldn't
+      // find that one." See feedback_scan_never_fails.md.
       if (!finalCanonicalId) {
         if (brandNutritionLoading || ingredientInfoLoading) {
-          // Caches are still hydrating — leave the form populated
-          // with whatever did land and let the user pick a canonical
-          // manually from the typeahead. The setName→useEffect
-          // chain will retry inference once dbMap finishes loading
-          // (the alias-map cache invalidates when registerCanonicalsFromDb
-          // fires from useIngredientInfo's mount effect), so the
-          // canonical typically pairs without a second scan anyway.
           setScanStatus("found");
           return;
         }
+        // Has-signal probe — anything OFF / USDA / detectBrand
+        // landed that lets us populate the form. tagHintsToAxes
+        // emits a non-null category/tileId/subtype when its OFF
+        // pattern matches; if all three are null it really did fail.
+        const hintAxes = tagHintsToAxes(Array.isArray(res?.categoryHints) ? res.categoryHints : []);
+        const hasBrand        = !!(detectedBrand || res?.brand);
+        const hasName         = !!(res?.productName && String(res.productName).trim());
+        const hasHintAxes     = !!(hintAxes.category || hintAxes.tileId || hintAxes.subtype);
+        const hasUsableSignal = hasBrand || hasName || hasHintAxes;
+        if (hasUsableSignal) {
+          // Form is populated enough — let the user pick canonical
+          // manually if they want, or just commit as-is. Don't
+          // hijack the flow with a photo prompt.
+          setScanStatus("found");
+          return;
+        }
+        // Truly nothing useful — fall back to the photo flow.
         setScanStatus(null);
         setMemoryBookOpen(true);
         return;
@@ -826,6 +1024,25 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     // Fire-and-forget per CLAUDE.md: a correction-write failure
     // must never block the add flow.
     if (barcodeUpc && userId) {
+      // Package size also gets taught at the correction tier so the
+      // USDA baseline / admin tooling has a value to fall back on
+      // when no household has committed this UPC yet (popular pkg
+      // RPC returns nothing). The cross-family vote is the primary
+      // source of truth — every pantry_items insert is a vote — but
+      // teaching the correction tier costs nothing and covers the
+      // cold-start case for newly-scanned UPCs.
+      const pkgForWrite = packageSize ? Number(packageSize) : null;
+      // Pull through any photo-derived metadata the memory-book
+      // flow stashed on scanDebug. AI may have extracted claims +
+      // product metadata (storage instructions, container, servings,
+      // certifications, etc.) — even if the form doesn't expose them
+      // as editable fields, persist them so the next scan + future
+      // analytics + future UI surfaces have access. "Store it. If
+      // we use it in the future it's useful."
+      const photoClaims  = Array.isArray(scanDebug?.memoryBook?.claims)
+        ? scanDebug.memoryBook.claims
+        : null;
+      const photoMeta    = scanDebug?.memoryBook?.productMetadata || null;
       rememberBarcodeCorrection({
         userId,
         isAdmin: !!isAdmin,
@@ -834,6 +1051,23 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         tileId: tileId || null,
         typeId: typeId || null,
         canonicalId: canonicalId || null,
+        packageSizeAmount:
+          Number.isFinite(pkgForWrite) && pkgForWrite > 0 ? pkgForWrite : null,
+        packageSizeUnit: unit?.trim() || null,
+        brand: brand?.trim() || null,
+        // Identity-axis fields the user has confirmed by submitting.
+        // state was committed via the chip; name is the canonical's
+        // display name (or the user's typed override). cut isn't
+        // editable in the AddDraftSheet yet but if/when it lands
+        // here, plumb it the same way.
+        name:  name?.trim() || null,
+        state: state || null,
+        // Photo-extracted metadata. Lives at the UPC tier so a
+        // re-scan of the same product carries forward Organic /
+        // Grass-fed / "Refrigerate after opening" / servings-per-
+        // container / etc. without re-running the photo flow.
+        claims:           photoClaims,
+        productMetadata:  photoMeta,
       }).catch(err => console.warn("[mcm-add] correction write failed:", err?.message || err));
     }
     // Convert package size + remaining fraction into the
@@ -897,10 +1131,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
   };
 
   return (
-    <div
+    <motion.div
       role="dialog"
       aria-modal="true"
       aria-label="Add an item to the kitchen"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      // Backdrop fade matches the inner sheet's slide duration
+      // (~360 ms) so the room dims out at the same rhythm the sheet
+      // exits, instead of snapping dark before the slide finishes.
+      exit={{ opacity: 0, transition: { duration: 0.36, ease: [0.32, 0.72, 0.4, 1] } }}
+      transition={{ duration: 0.22, ease: [0.32, 0.72, 0.4, 1] }}
       style={{
         position: "fixed",
         inset: 0,
@@ -928,10 +1169,15 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
     >
       <motion.div
         ref={sheetRef}
-        initial={{ y: 32, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 32, opacity: 0 }}
-        transition={{ type: "spring", stiffness: 360, damping: 32 }}
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        // Exit uses a longer ease-out tween instead of the entrance
+        // spring — springs feel snappy on dismiss (the sheet flicks),
+        // a 420 ms ease-out curve glides the sheet off-screen at a
+        // pace that reads as "leaving" rather than "vanishing". The
+        // curve is the iOS-standard outgoing-content ease.
+        exit={{ y: "100%", transition: { duration: 0.42, ease: [0.32, 0.72, 0.4, 1] } }}
+        transition={{ type: "spring", stiffness: 360, damping: 36 }}
         // Two dismiss paths matching MCMItemCard:
         //   * Grabber pill at the top — framer drag-follows the
         //     finger, releases past 120 px / 500 v/s closes
@@ -978,12 +1224,51 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           borderRadius: 20,
           background: theme.color.glassFillHeavy,
           border: `1px solid ${theme.color.glassBorder}`,
-          backdropFilter: "blur(24px) saturate(160%)",
-          WebkitBackdropFilter: "blur(24px) saturate(160%)",
+          // Sheet blur dropped 24 → 12 — radius² compositing cost is
+          // the dominant factor on iOS Safari, and the heavy
+          // glassFill alpha already carries the frosted look.
+          backdropFilter: "blur(12px) saturate(140%)",
+          WebkitBackdropFilter: "blur(12px) saturate(140%)",
           boxShadow: "0 24px 60px rgba(20,12,4,0.40), 0 4px 16px rgba(20,12,4,0.20)",
+          // Promote to its own compositor layer so the slide-in /
+          // slide-out animation doesn't force iOS Safari to re-run
+          // the backdrop-filter blur every frame against shifting
+          // input pixels. The static blur is rasterized once on this
+          // layer and the layer transforms via the GPU.
+          willChange: "transform",
           ...THEME_TRANSITION,
         }}
       >
+        {/* Top-right close affordance — small ✕ so dismiss is always
+            one tap away regardless of card height. Sits above the
+            grabber pill in stacking order; stopPropagation prevents
+            the backdrop's close-on-self handler from double-firing. */}
+        <button
+          type="button"
+          aria-label="Close"
+          onClick={(e) => { e.stopPropagation(); onClose && onClose(); }}
+          style={{
+            position: "absolute",
+            top: 10,
+            right: 10,
+            width: 32,
+            height: 32,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: 999,
+            border: `1px solid ${theme.color.hairline}`,
+            background: theme.color.glassFillHeavy,
+            color: theme.color.inkMuted,
+            fontFamily: "system-ui, -apple-system, sans-serif",
+            fontWeight: 400,
+            cursor: "pointer",
+            padding: 0,
+            zIndex: 2,
+          }}
+        >
+          <span aria-hidden style={{ lineHeight: 1, fontSize: 18, marginTop: -1 }}>×</span>
+        </button>
         {/* Drag handle — small grabber pill at the top of the sheet
             (iOS modal pattern). Wrapping div is a 22 px touch zone
             so the handle is forgiving to thumb misses; touch-action
@@ -1026,7 +1311,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           packageSize={packageSize}
           unit={unit}
           brand={brand}
-          brandNutritionRows={brandNutritionRows}
+          isBrandVerified={!!(canonicalId && brand?.trim() && getBrandNutrition?.(canonicalId, brand.trim()))}
         />
 
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
@@ -1766,8 +2051,8 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 borderRadius: 14,
                 background: theme.color.glassFillHeavy,
                 border: `1px solid ${theme.color.glassBorder}`,
-                backdropFilter: "blur(20px) saturate(150%)",
-                WebkitBackdropFilter: "blur(20px) saturate(150%)",
+                backdropFilter: "blur(10px) saturate(140%)",
+                WebkitBackdropFilter: "blur(10px) saturate(140%)",
                 boxShadow: "0 18px 36px rgba(20,12,4,0.28), 0 4px 12px rgba(20,12,4,0.16)",
                 ...THEME_TRANSITION,
               }}
@@ -1999,9 +2284,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           onComplete={(row) => {
             setMemoryBookOpen(false);
             // Merge the AI-extracted axes into the form state.
-            // Pre-fill ONLY empty slots so any user edits made
-            // before opening the memory book aren't stomped.
-            if (row?.name && !name.trim())            setName(row.name);
+            // Pre-fill ONLY empty slots for non-canonical-driven fields
+            // so any user edits made before opening the memory book
+            // aren't stomped. The NAME field is canonical-driven: when
+            // a canonicalId comes back, the name pins to the
+            // canonical's display name (registry name when known, AI's
+            // name for synthetic slugs). Same new-item rule as the
+            // OFF scan path — canonical IS the name.
+            const aiIng = row?.canonicalId ? findIngredient(row.canonicalId) : null;
+            const aiCanonicalName = aiIng?.name || row?.canonicalName || null;
+            if (aiCanonicalName) {
+              setName(aiCanonicalName);
+            } else if (row?.name && !name.trim()) {
+              setName(row.name);
+            }
             if (row?.brand && !brand.trim())          setBrand(row.brand);
             if (row?.canonicalId && !canonicalOverridden) {
               setCanonicalId(row.canonicalId);
@@ -2015,6 +2311,18 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             if (row?.tileId && !tileOverridden) {
               setTileId(row.tileId);
               setTileOverridden(true);
+            }
+            // STATE — was being dropped silently. The front-photo
+            // edge function returns `state` (sliced cheese, ground
+            // chicken, etc.) but AddDraftSheet's onComplete didn't
+            // apply it, so a "sliced cheese slices" capture would
+            // land with state=null and the chip rail wouldn't
+            // surface the value. Lock the override so the
+            // canonical-default useEffect (which fires "block" for
+            // cheese) can't wipe it on the next render.
+            if (row?.state && !stateOverridden) {
+              setState(row.state);
+              setStateOverridden(true);
             }
             if (row?.packageAmount && !packageSize) {
               setPackageSize(String(row.packageAmount));
@@ -2033,6 +2341,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
                 canonicalName:     row?.canonicalName     || null,
                 claims:            Array.isArray(row?.claims) ? row.claims : [],
                 aiConfidence:      row?.confidence        || null,
+                // Photo-extracted product metadata. Stashed here so
+                // handleSubmit's correction-tier write picks it up
+                // even if the user never opens an editor that
+                // surfaces the values directly. Migration 0144's
+                // product_metadata column is the durable home.
+                productMetadata:   row?.learnedCorrection?.productMetadata || null,
               },
               finalCanonicalId: row?.canonicalId || prev?.finalCanonicalId || null,
               at: new Date().toISOString(),
@@ -2089,13 +2403,20 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
               && typeof upsertBrandNutrition === "function"
             ) {
               upsertBrandNutrition({
-                canonicalId: row.canonicalId,
-                brand:       row.brand,
-                nutrition:   row.nutrition,
-                barcode:     row.barcodeUpc || barcodeUpc || null,
-                source:      "memory_book",
-                sourceId:    row.barcodeUpc || barcodeUpc || null,
-                confidence:  60,
+                canonicalId:     row.canonicalId,
+                brand:           row.brand,
+                nutrition:       row.nutrition,
+                barcode:         row.barcodeUpc || barcodeUpc || null,
+                source:          "memory_book",
+                sourceId:        row.barcodeUpc || barcodeUpc || null,
+                confidence:      60,
+                // Forward the verbatim ingredient declaration so the
+                // (canonical, brand) row in brand_nutrition picks up
+                // migration 0132's `ingredients_text` column. Future
+                // scans of this product hit the cache and the
+                // NutritionOverrideSheet's ingredient line renders
+                // automatically without re-OCR.
+                ingredientsText: row.ingredientsText || null,
               }).catch((err) =>
                 console.warn("[mcm-add] memory-book brand_nutrition write failed:", err?.message || err),
               );
@@ -2129,7 +2450,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         setCanonicalOverridden={setCanonicalOverridden}
         allCanonicals={allCanonicals}
       />
-    </div>
+    </motion.div>
   );
 }
 
