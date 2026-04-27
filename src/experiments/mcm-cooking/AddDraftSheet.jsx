@@ -30,6 +30,7 @@ import { useIngredientInfo } from "../../lib/useIngredientInfo";
 import { usePopularPackages } from "../../lib/usePopularPackages";
 import { FOOD_TYPES, inferFoodTypeFromName, typeIdForCanonical } from "../../data/foodTypes";
 import { tagHintsToAxes } from "../../lib/tagHintsToAxes";
+import { createPendingCanonicalFromScan } from "../../lib/createPendingCanonicalFromScan";
 import { lookupBarcode } from "../../lib/lookupBarcode";
 import { parsePackageSize } from "../../lib/canonicalResolver";
 import BarcodeScanner from "../../components/BarcodeScanner";
@@ -726,7 +727,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       const inferredFromGeneric = (!inferredFromDisplay && res?.genericName)
         ? inferCanonicalFromName(res.genericName)
         : null;
-      const finalCanonicalId =
+      // `let` because the auto-create-pending path below may
+      // reassign this when a scan with usable signal but no canonical
+      // bind mints a pending canonical from the OFF data.
+      let finalCanonicalId =
         correction?.canonicalId
         || res?.canonicalId
         || inferredFromDisplay
@@ -971,9 +975,40 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         const hasHintAxes     = !!(hintAxes.category || hintAxes.tileId || hintAxes.subtype);
         const hasUsableSignal = hasBrand || hasName || hasHintAxes;
         if (hasUsableSignal) {
-          // Form is populated enough — let the user pick canonical
-          // manually if they want, or just commit as-is. Don't
-          // hijack the flow with a photo prompt.
+          // We have enough to populate the form. Try to AUTO-CREATE
+          // a pending canonical from the scan so the row binds to
+          // SOMETHING — registry-infer / fuzzy-bind / new pending
+          // row, in that order. The pending row carries axes from
+          // tagHintsToAxes (subtype + category + tile) so the brand-
+          // classifier picker can read subtype on it from scan one,
+          // and useIngredientInfo's pendingMap merge registers the
+          // slug into the runtime registry on the next render.
+          // Admin can later promote the pending row into a real
+          // canonical or merge it onto an existing one — see
+          // migration 0047 + AdminPanel queue.
+          //
+          // Failure (RLS denial, network blip) returns null silently
+          // and we fall through to the original "form populated, no
+          // canonical" path. No regression.
+          if (userId) {
+            try {
+              const created = await createPendingCanonicalFromScan({
+                userId,
+                productName:    res?.productName || null,
+                brand:          detectedBrand || res?.brand || null,
+                categoryHints:  Array.isArray(res?.categoryHints) ? res.categoryHints : [],
+                state:          stateFromName || hintAxes.state || null,
+                emoji:          null,
+              });
+              if (created?.canonicalId) {
+                setCanonicalId(created.canonicalId);
+                finalCanonicalId = created.canonicalId;
+                console.log("[mcm-add] auto-created/bound canonical:", created);
+              }
+            } catch (e) {
+              console.warn("[mcm-add] createPendingCanonicalFromScan threw:", e?.message || e);
+            }
+          }
           setScanStatus("found");
           return;
         }
