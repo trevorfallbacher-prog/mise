@@ -173,6 +173,54 @@ surface a pantry item's identity.
      not `row.amount` (current remaining). A half-eaten 16oz tub
      still reads `(16 oz)` — partial-remaining is a gauge concern,
      not an identity concern.
+
+   **THE NAME FIELD CONTAINS *NOTHING* BUT THE CANONICAL'S NAME.**
+   This rule keeps regressing because every new scan path adds its
+   own way to leak marketing copy in. Reading order to enforce it:
+
+   1. **No flavors / variants in `name`, ever.** "Fudge Swirl" /
+      "Cookies & Cream" / "Sour Cream & Onion" / "Honey BBQ" /
+      "Original" / "Spicy" — these are CLAIMS, not identity. They
+      live on `attributes.claims` (yellow `INGREDIENTS` chips per
+      the axis table below) and NEVER inside the name string.
+      `src/lib/stripFlavors.js` is the canonical extractor —
+      every code path that lands a name MUST run it through
+      stripFlavors first if there's any chance the input carries
+      marketing copy (OFF productName, USDA description, AI-
+      extracted name, synthetic-canonical info.name).
+   2. **No brand in `name`, ever.** Brand is its own axis — it
+      composes via `buildDisplayName()`, doesn't fossilize into
+      the name string. "Lay's Potato Chips" stored as name is
+      a bug; the row should have `brand: "Lay's"` and
+      `name: "Potato Chips"` (or whatever the canonical's
+      display name resolves to).
+   3. **No state / cut / package size in `name`, either.** Same
+      principle. "Sliced Cheddar (8 oz)" is wrong; it's
+      `name: "Cheddar"` + `state: "sliced"` +
+      `packageSize: { amount: 8, unit: "oz" }`.
+   4. **The pin happens at WRITE time, not display time.** When a
+      canonical resolves during scan/edit, the form's `name` field
+      MUST be set to `findIngredient(canonicalId).name` (or the
+      `ingredient_info.display_name` for user-tier synthetics). Don't
+      "fill when empty" — overwrite. The user's intent-to-rename
+      signal is a setName driven by their typing, not by an OFF /
+      AI / correction value the resolver chose for them.
+   5. **Synthetic canonicals (pending_ingredient_info) hold the same
+      rule.** When `createPendingCanonicalFromScan` mints a slug
+      from a scan, it MUST stripFlavors AND stripBrandPrefix the
+      input before populating `info.name`. A synthetic
+      canonical whose display name is "Milk Chocolate Truffles
+      Fudge Swirl" leaks the regression on the next re-scan.
+   6. **Defense in depth at the form-pin site.** Even with all
+      upstream paths clean, the AddDraftSheet pin re-runs
+      stripFlavors before calling `setName`, so a stale row, a
+      legacy synthetic, or a registry name that accidentally
+      carries variant text still won't reach the name field.
+
+   **The litmus test before merging anything that writes a `name`
+   field:** would this code put a `claims`-eligible token in the
+   name? If yes, it's wrong. Strip first, claim second, name
+   third — never the reverse.
 2. **CANONICAL** — tan (`#b8a878`). Internal approved naming system,
    commonly-accepted identity.
 3. **CUT** — rust (`#a8553a`). Anatomical / butchery slot. Orthogonal
