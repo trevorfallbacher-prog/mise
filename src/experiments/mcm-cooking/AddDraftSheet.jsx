@@ -1512,12 +1512,21 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
             // flavor claims landed, surface them inline ("Got it ·
             // Truffles · also tagged Fudge Swirl") so the user sees
             // the extracted variant tokens without having to dig
-            // into the chip row.
+            // into the chip row. Brand inline when present so the
+            // confirmation reads as "registered THIS brand + name +
+            // tags" — closes the user-confidence loop on what got
+            // saved without needing a separate toast.
             const display = memName || name.trim();
-            if (display && allBannerClaims.length > 0) {
-              return `Got it · ${display} · also tagged ${allBannerClaims.join(", ")}`;
+            const brandTrim = brand?.trim();
+            const parts = ["Got it"];
+            if (display) parts.push(display);
+            if (brandTrim && (!display || !display.toLowerCase().includes(brandTrim.toLowerCase()))) {
+              parts.push(`by ${brandTrim}`);
             }
-            return display ? `Got it · ${display}` : "Got it — review the fields below.";
+            if (allBannerClaims.length > 0) {
+              parts.push(`tagged ${allBannerClaims.join(", ")}`);
+            }
+            return parts.length > 1 ? parts.join(" · ") : "Got it — review the fields below.";
           })();
           return (
             <div

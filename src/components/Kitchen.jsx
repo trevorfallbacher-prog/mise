@@ -10,6 +10,7 @@ import {
   inferCanonicalFromName, fuzzyMatchIngredient, parseIdentity,
 } from "../data/ingredients";
 import { detectBrand } from "../data/knownBrands";
+import { matchPantryRow } from "../lib/matchPantryRow";
 import { supabase } from "../lib/supabase";
 import { useMonthlySpend } from "../lib/useMonthlySpend";
 import { defaultLocationForCategory } from "../lib/usePantry";
@@ -265,7 +266,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
   // fallback-named row directly).
   const [canonicalCreatePrompt, setCanonicalCreatePrompt] = useState(null);
   //   { suggestedName, pendingRow, pendingBrandNutrition }
-  const { rows: brandNutritionRowsForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
+  const { ensureByBarcode: ensureBrandNutritionByBarcodeForScan, upsert: upsertBrandNutritionForScan } = useBrandNutrition();
   // Tier-1 learned tag map — OFF categoryHint → canonical_id. Empty
   // on cold start; admin rewires (AdminPanel) and scan-flow canonical
   // creations (CanonicalCreatePrompt) both seed it via
@@ -788,7 +789,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
       <div style={{ height:2, background:"#1a1a1a" }}>
         <div style={{ height:"100%", background:"#f5c842", width:`${({upload:5,ready:20,scanning:60,confirm:90,done:100}[phase]||5)}%`, transition:"width 0.4s ease" }} />
       </div>
-      <div style={{ padding:"20px 20px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+      <div style={{ padding:"calc(20px + env(safe-area-inset-top)) 20px 0", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <button onClick={onClose} style={{ background:"none", border:"none", color:"#555", fontSize:20, cursor:"pointer" }}>←</button>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em" }}>{activeMode.badge}</div>
         <div style={{ width:28 }} />
@@ -1092,7 +1093,7 @@ function Scanner({ userId, shoppingList = [], onItemsScanned, onManualEntry, onC
             setBarcodeBusy(true);
             setError(null);
             try {
-              const res = await lookupBarcode(barcode, { brandNutritionRows: brandNutritionRowsForScan });
+              const res = await lookupBarcode(barcode, { ensureByBarcode: ensureBrandNutritionByBarcodeForScan });
               dbg("[ramen-debug] 1/off-response", {
                 barcode,
                 found: res?.found,
@@ -2344,7 +2345,7 @@ function CanonicalCreatePrompt({ initialName, initialBrand, sourceHint, onCreate
         display:"flex", flexDirection:"column", flex:1,
         minHeight:"100%",
       }}>
-      <div style={{ padding:"24px 20px 12px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #1e1e1e" }}>
+      <div style={{ padding:"calc(24px + env(safe-area-inset-top)) 20px 12px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid #1e1e1e" }}>
         <button onClick={onCancel} style={promptIconBtn}>←</button>
         <div style={{ flex:1, fontFamily:"'DM Mono',monospace", fontSize:10, color:"#c7a8d4", letterSpacing:"0.12em" }}>
           NEW CANONICAL?
@@ -2625,7 +2626,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
   // stashed on a ref and written to `brand_nutrition` after the item
   // save resolves a canonical_id (brand_nutrition's PK requires it,
   // so we wait until we know what to key against).
-  const { upsert: upsertBrandNutrition, rows: brandNutritionRows } = useBrandNutrition();
+  const { upsert: upsertBrandNutrition, ensureByBarcode: ensureBrandNutritionByBarcode } = useBrandNutrition();
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannedPayload, setScannedPayload] = useState(null);
   //   { barcode, brand, nutrition, source, sourceId, productName } | null
@@ -3362,7 +3363,7 @@ function AddItemModal({ target, tileContext, userId, isAdmin = false, shoppingLi
                   setScannerOpen(false);
                   setScanBusy(true);
                   try {
-                    const res = await lookupBarcode(barcode, { brandNutritionRows });
+                    const res = await lookupBarcode(barcode, { ensureByBarcode: ensureBrandNutritionByBarcode });
                     if (!res?.found) {
                       // Distinguish failure modes so the user knows
                       // whether they have a deploy problem, a network
@@ -5184,7 +5185,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
   //                       has paired everything up.
   const [shopModeOpen, setShopModeOpen] = useState(false);
   const [pendingTripCtx, setPendingTripCtx] = useState(null); // { trip, scans }
-  const { rows: brandNutritionRowsForShop } = useBrandNutrition();
+  const { ensureByBarcode: ensureBrandNutritionByBarcodeForShop, get: getBrandNutritionForShop } = useBrandNutrition();
   const shopLearnedTagLookup = useCanonicalOffTags();
   // Admin bypass — viewer's role drives auto-approval on canonical
   // creation and hides the PENDING badge. Same signal Scanner reads.
@@ -5354,6 +5355,10 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     if (!pendingPantryAction) return;
     if (pendingPantryAction === "scan") setScanning(true);
     else if (pendingPantryAction === "add") setAddingTo("pantry");
+    // Bridge from MCMShoppingScreen: "Shop Mode" CTA flips the
+    // legacy gate on and dispatches this action, which lands here
+    // and opens ShopMode immediately (which lives in this file).
+    else if (pendingPantryAction === "shopMode") setShopModeOpen(true);
     onPendingActionConsumed?.();
   }, [pendingPantryAction, onPendingActionConsumed]);
 
@@ -5565,47 +5570,21 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
     // shortName from the registry, user-created canonical's
     // display_name from ingredient_info, brand, each ingredientId
     // tag's display name. Any hit counts.
+    // Multi-token matcher (src/lib/matchPantryRow.js). Builds a
+    // search-text bag from every row field that carries identity
+    // signal — name, brand, scanRaw, claims, flavors, canonical
+    // display, ingredient tags, etc. — then requires every token in
+    // the query to appear somewhere in that bag. Closes the
+    // "sour cream chips" gap where the legacy substring-per-field
+    // approach missed multi-word queries that span several fields.
     const itemMatchesSearch = (item) => {
       if (!q) return true;
-      if (matchesSearch(item.name)) return true;
-      if (matchesSearch(item.category)) return true;
-      if (matchesSearch(item.brand)) return true;
-      // scanRaw carries the ORIGINAL product text from the scan
-      // ("Pepsi Zero Sugar"), which persists even if name later gets
-      // derived to something shorter. Lets users find items by the
-      // words they saw on the package.
-      if (matchesSearch(item.scanRaw)) return true;
-      // Claims and flavor from attributes — scans stamp these (e.g.
-      // SCOOPS, ORIGINAL). User might search by the variant word
-      // ("original") rather than the full product name.
-      if (item.attributes) {
-        const claims = Array.isArray(item.attributes.claims) ? item.attributes.claims : [];
-        if (claims.some(c => matchesSearch(c))) return true;
-        const flavor = Array.isArray(item.attributes.flavor) ? item.attributes.flavor : [];
-        if (flavor.some(f => matchesSearch(f))) return true;
-      }
+      // Inject the admin-promoted display_name from kitchenDbMap
+      // so a query for the synthetic-canonical's curated name still
+      // matches even when the row's own .name is the OFF productName.
       const canonId = item.canonicalId || item.ingredientId;
-      if (canonId) {
-        if (matchesSearch(canonId)) return true;
-        if (matchesSearch(String(canonId).replace(/_/g, " "))) return true;
-        const canon = findIngredient(canonId);
-        if (canon) {
-          if (matchesSearch(canon.name)) return true;
-          if (matchesSearch(canon.shortName)) return true;
-        }
-        const dbInfo = kitchenDbMap?.[canonId];
-        if (matchesSearch(dbInfo?.display_name)) return true;
-      }
-      if (Array.isArray(item.ingredientIds)) {
-        for (const tagId of item.ingredientIds) {
-          if (!tagId) continue;
-          if (matchesSearch(tagId)) return true;
-          if (matchesSearch(String(tagId).replace(/_/g, " "))) return true;
-          const tag = findIngredient(tagId);
-          if (tag && (matchesSearch(tag.name) || matchesSearch(tag.shortName))) return true;
-        }
-      }
-      return false;
+      const dbDisplay = canonId ? kitchenDbMap?.[canonId]?.display_name : null;
+      return matchPantryRow(item, q, { displayName: dbDisplay });
     };
 
     const groups = new Map(); // hubId → { hub, items }
@@ -6529,11 +6508,11 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
                   const brandKey = String(item.brand).trim().toLowerCase();
                   const canonId  = item.canonicalId || item.ingredientId || null;
                   const verifiedByOverride = !!item.nutritionOverride;
-                  const verifiedByBrand = !!(canonId && Array.isArray(brandNutritionRowsForShop)
-                    && brandNutritionRowsForShop.some(r =>
-                         r?.canonicalId === canonId
-                         && String(r?.brand).toLowerCase() === brandKey
-                         && r?.source === "label_scan"));
+                  // Lazy-load: if the row isn't yet in the cache, badge
+                  // shows non-verified until the background fetch
+                  // completes. Soft UX cue, not load-bearing.
+                  const cachedRow = canonId ? getBrandNutritionForShop(canonId, brandKey) : null;
+                  const verifiedByBrand = !!(cachedRow && cachedRow.source === "label_scan");
                   const isBrandVerified = verifiedByOverride || verifiedByBrand;
                   return (
                     <span
@@ -7176,7 +7155,7 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
       userId={userId}
       shoppingList={shoppingList}
       setShoppingList={setShoppingList}
-      brandNutritionRows={brandNutritionRowsForShop}
+      ensureBrandNutritionByBarcode={ensureBrandNutritionByBarcodeForShop}
       learnedTagLookup={shopLearnedTagLookup}
       onClose={() => setShopModeOpen(false)}
       onCheckoutRequest={({ trip, scans }) => {
@@ -7217,7 +7196,14 @@ export default function Kitchen({ userId, pantry, setPantry, shoppingList, setSh
 
   return (
     <div style={{ minHeight:"100vh", paddingBottom:100 }}>
-      <div style={{ padding:"24px 20px 0" }}>
+      {/* Top padding now accounts for env(safe-area-inset-top). With
+          the iOS PWA shipping in standalone + viewport-fit=cover, the
+          page paints edge-to-edge and the system status bar floats as
+          a translucent overlay. Without this offset the YOUR kicker
+          and the Kitchen / Shopping h1 collide with the Dynamic
+          Island / notch area. env() returns 0px on non-notch devices
+          so desktop and pre-notch iPhones see no change. */}
+      <div style={{ padding:"calc(24px + env(safe-area-inset-top)) 20px 0" }}>
         <div style={{ fontFamily:"'DM Mono',monospace", fontSize:10, color:"#555", letterSpacing:"0.12em", marginBottom:6 }}>YOUR</div>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-end" }}>
           <h1 style={{ fontFamily:"'Fraunces',serif", fontSize:38, fontWeight:300, fontStyle:"italic", color:"#f0ece4", letterSpacing:"-0.03em" }}>

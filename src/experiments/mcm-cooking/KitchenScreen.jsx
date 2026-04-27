@@ -21,6 +21,7 @@ import {
 } from "./primitives";
 import { useTheme, THEME_TRANSITION } from "./theme";
 import { font } from "./tokens";
+import { matchPantryRow } from "../../lib/matchPantryRow";
 
 // Tile system — re-using the exact same classifier the classic
 // Kitchen tile view uses, so an item that lives under "Dairy & Eggs"
@@ -265,16 +266,17 @@ export default function KitchenScreen({
   // name, brand, food-type label, and broad category label so a
   // user typing "kerrygold", "cheese", or "dairy" all surface
   // useful hits — not just exact name substrings.
+  // Multi-token matcher (src/lib/matchPantryRow.js) — same shared
+  // helper Kitchen.jsx uses. Builds a search-text bag from every
+  // row field carrying identity signal (name, brand, claims,
+  // flavors, canonical name, ingredient tags) and requires every
+  // query token to appear in the bag. "sour cream chips" hits a
+  // Lay's row whose claims contain "Sour Cream & Onion" because
+  // the tokens "sour", "cream", "chips" all live somewhere in the
+  // row's bag — even though no single field has the full phrase.
   const searchHits = useMemo(() => {
     if (!query) return null;
-    const q = query.toLowerCase();
-    return cards.filter(it => {
-      if (it.name && it.name.toLowerCase().includes(q)) return true;
-      if (it.brand && it.brand.toLowerCase().includes(q)) return true;
-      if (it.typeLabel && it.typeLabel.toLowerCase().includes(q)) return true;
-      if (it.location && it.location.toLowerCase().includes(q)) return true;
-      return false;
-    });
+    return cards.filter(it => matchPantryRow(it, query));
   }, [cards, query]);
 
   const goodCount = cards.filter((i) => i.status === "ok").length;
@@ -373,12 +375,9 @@ export default function KitchenScreen({
     return map;
   }, [cardsByLocTile]);
 
-  // Live clock for the kicker. Ticks once a minute — no need to
-  // re-render every second for a "TUESDAY · 4:12 PM" readout,
-  // the minute edge is the visible resolution. Initial value is
-  // `new Date()` so the first paint shows the correct time, no
-  // hardcoded fallback.
-  const now = useNow();
+  // Clock ticks live in <ClockKicker /> below — isolating useNow
+  // there means the once-a-minute setState only re-renders that
+  // leaf, not the whole KitchenScreen and its card grid.
   const warnCount = cards.length - goodCount;
 
   return (
@@ -414,88 +413,31 @@ export default function KitchenScreen({
           0%, 100% { opacity: 0.35; }
           50%      { opacity: 0.65; }
         }
-        /* Dust-mote drift — three soft specks float slowly across
-           the pantry backdrop in different arcs. Adds a sense of
-           "this is a real room, air moves in it" without any of
-           the processing cost of a canvas/particle system. Each
-           mote uses a different keyframe + duration so they never
-           sync up and read as an animation loop. The motes are
-           parked at 12% opacity on warm tokens so they blend into
-           whatever time-of-day backdrop is underneath. */
-        @keyframes mcm-mote-0 {
-          0%   { transform: translate(0, 0);     opacity: 0; }
-          15%  { opacity: 1; }
-          50%  { transform: translate(30vw, -18vh); opacity: 1; }
-          85%  { opacity: 1; }
-          100% { transform: translate(60vw, 4vh);  opacity: 0; }
+        @keyframes mcm-warn-aura-pulse {
+          0%, 100% { opacity: 0.55; }
+          50%      { opacity: 1; }
         }
-        @keyframes mcm-mote-1 {
-          0%   { transform: translate(0, 0);     opacity: 0; }
-          20%  { opacity: 1; }
-          55%  { transform: translate(-22vw, 28vh); opacity: 1; }
-          90%  { opacity: 1; }
-          100% { transform: translate(-44vw, -6vh); opacity: 0; }
+        .mcm-warn-aura {
+          animation: mcm-warn-aura-pulse 3.6s ease-in-out infinite;
         }
-        @keyframes mcm-mote-2 {
-          0%   { transform: translate(0, 0);     opacity: 0; }
-          25%  { opacity: 1; }
-          60%  { transform: translate(18vw, 32vh); opacity: 1; }
-          90%  { opacity: 1; }
-          100% { transform: translate(-10vw, 60vh); opacity: 0; }
+        @keyframes mcm-warn-pill-pulse {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.06); }
+        }
+        .mcm-warn-pill {
+          animation: mcm-warn-pill-pulse 2.4s ease-in-out infinite;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .mcm-warn-aura, .mcm-warn-pill { animation: none; }
         }
         /* On very narrow phones (<420px) hide the tile blurb and
-           tighten the card's vertical gap. The tile label + count
-           carry enough information at that size; the blurb is
-           secondary and eats ~16px of vertical space per card,
-           which is 160+px over 10 tiles — meaningful on a short
-           iPhone mini viewport. */
+           tighten the card's vertical gap. */
         @media (max-width: 420px) {
           .mcm-tile-blurb { display: none !important; }
-          /* Hide the desktop "esc" hint on narrow phones — there's
-             no physical keyboard there, so the chip is just visual
-             noise crowding the search bar's right edge. */
           .mcm-kbd-hint { display: none !important; }
         }
       `}</style>
       <WarmBackdrop />
-
-      {/* Dust motes — three tiny circular dots that drift across
-          the viewport on independent arc keyframes. Placed
-          ABOVE WarmBackdrop but below the content wrapper so
-          they float behind the glass cards. aria-hidden because
-          they're purely ambient; screen readers should ignore
-          them. Long durations (30–48s) so motion is subliminal,
-          not distracting. */}
-      <div aria-hidden style={{
-        position: "absolute", inset: 0,
-        pointerEvents: "none",
-        overflow: "hidden",
-        zIndex: 1,
-      }}>
-        <span style={{
-          position: "absolute", top: "18%", left: "8%",
-          width: 4, height: 4, borderRadius: "50%",
-          background: withAlpha(theme.color.skyInkMuted, 0.35),
-          filter: "blur(0.5px)",
-          animation: "mcm-mote-0 36s linear infinite",
-        }} />
-        <span style={{
-          position: "absolute", top: "42%", left: "72%",
-          width: 3, height: 3, borderRadius: "50%",
-          background: withAlpha(theme.color.skyInkMuted, 0.30),
-          filter: "blur(0.5px)",
-          animation: "mcm-mote-1 44s linear infinite",
-          animationDelay: "-12s",
-        }} />
-        <span style={{
-          position: "absolute", top: "65%", left: "30%",
-          width: 5, height: 5, borderRadius: "50%",
-          background: withAlpha(theme.color.skyInkMuted, 0.25),
-          filter: "blur(0.8px)",
-          animation: "mcm-mote-2 48s linear infinite",
-          animationDelay: "-24s",
-        }} />
-      </div>
 
       <div style={{
         // Content column. On phones (≤640 CSS px) this is the full
@@ -507,13 +449,16 @@ export default function KitchenScreen({
         position: "relative",
         maxWidth: "min(960px, 100%)",
         margin: "0 auto",
+        // Top padding adds env(safe-area-inset-top) so the hero
+        // kicker clears the iOS notch / Dynamic Island when the
+        // page renders edge-to-edge under viewport-fit=cover.
         // Bottom padding leaves runway so the scroll content
         // never ends up UNDER the FloatingLocationDock (dock sits
         // at bottom: 96, ~44px tall → reserves ~140px at the
         // bottom; the app-level nav below the dock adds ~80px
         // more). 180px total covers both without leaving a huge
         // dead gap when the dock is hidden (search mode).
-        padding: "28px 20px 180px",
+        padding: "calc(28px + env(safe-area-inset-top)) 20px 180px",
       }}
       >
         {/* Top-right toolbar cluster — Receipt + Cart only.
@@ -524,7 +469,7 @@ export default function KitchenScreen({
         {(onGoToShopping || onOpenReceipts) && (
           <div style={{
             position: "absolute",
-            top: 22,
+            top: "calc(22px + env(safe-area-inset-top))",
             right: 20,
             zIndex: 4,
             display: "inline-flex",
@@ -551,9 +496,7 @@ export default function KitchenScreen({
              once — a small moment that makes first-paint feel
              intentional. */}
         <FadeIn>
-          <Kicker tone={theme.color.skyInkMuted}>
-            {formatClock(now)}
-          </Kicker>
+          <ClockKicker tone={theme.color.skyInkMuted} />
         </FadeIn>
 
         <FadeIn delay={0.07}>
@@ -647,33 +590,88 @@ export default function KitchenScreen({
             scrolls back up and the sentinel comes into view. */}
         <div style={{
           position: "sticky",
+          // Pin to the absolute viewport top and absorb the safe-area
+          // zone with INTERNAL padding. One continuous backdrop-
+          // filter surface — covers from y=0 (under the Dynamic
+          // Island) through the input pill — so there's no boundary
+          // for a sub-pixel seam to show through. Two-element
+          // approaches (fixed cap + sticky bar) always produced a
+          // visible seam because each backdrop-filter is its own
+          // stacking context sampling content independently; one
+          // element makes the question vanish.
+          //
+          // Tradeoff: in non-scrolled state the bar's bg extends env
+          // pixels above the input pill (the paddingTop space), so
+          // the gap between the hero and the input pill reads
+          // slightly larger than before. Acceptable visual quirk —
+          // any user actually scrolling the kitchen sees this padding
+          // become the cap zone and the bar reads correctly. env()
+          // returns 0px on non-notch devices, so desktop / older
+          // iPhones see no change at all.
           top: 0,
           zIndex: 5,
+          // Negative marginTop compensates the safe-area paddingTop
+          // in NON-stuck state — without it the natural-flow layout
+          // pushes the input pill down by env(safe-area-inset-top)
+          // (~59px on Dynamic-Island iPhones), creating a big empty
+          // gap between the hero and the search bar. With the
+          // negative margin, the wrapper's top edge starts env
+          // pixels higher and the internal paddingTop puts the
+          // pill at the same visual position as if there were no
+          // padding at all. When the bar STICKS, sticky positioning
+          // pins it to viewport y=0; the negative margin gets
+          // absorbed into the sticky offset and the env paddingTop
+          // becomes the morphism cap covering the iOS safe-area
+          // zone. Best of both worlds.
+          marginTop: "calc(-1 * env(safe-area-inset-top, 0px) + 20px)",
           marginLeft: -20,
           marginRight: -20,
           paddingLeft: 20,
           paddingRight: 20,
+          paddingTop: "env(safe-area-inset-top, 0px)",
           paddingBottom: 6,
-          backdropFilter: "blur(12px) saturate(140%)",
-          WebkitBackdropFilter: "blur(12px) saturate(140%)",
-          background: withAlpha(theme.color.cream, 0.35),
+          // Sticky-only morphism. When the bar's at its natural
+          // position (page top, not yet stuck), the wrapper is
+          // transparent — hero + sky read clean. The moment the
+          // user scrolls past the sentinel and the bar sticks, the
+          // wrapper picks up `blur(8px)` + a soft glass wash, and
+          // because paddingTop = env(safe-area-inset-top) the
+          // morphism extends UP through the iOS meta-color zone
+          // (under the Dynamic Island), giving a single continuous
+          // frosted strip that covers status-bar-overlapping content
+          // and the input pill beneath it. `scrolled` flips via the
+          // IntersectionObserver on `sentinelRef` above.
+          backdropFilter: scrolled ? "blur(8px)" : "none",
+          WebkitBackdropFilter: scrolled ? "blur(8px)" : "none",
+          background: scrolled ? theme.color.glassFillLite : "transparent",
           boxShadow: scrolled
-            ? "0 8px 20px rgba(30,20,8,0.12), 0 1px 0 rgba(30,20,8,0.06)"
-            : "0 0 0 rgba(30,20,8,0)",
-          transition: "box-shadow 200ms ease",
+            ? "0 8px 20px rgba(30,20,8,0.10), 0 1px 0 rgba(30,20,8,0.06)"
+            : "none",
+          transition: "backdrop-filter 200ms ease, background 200ms ease, box-shadow 200ms ease",
         }}>
         <FadeIn delay={0.06}>
           <GlassPanel
+            flat
             tone="input"
             variant="input"
             padding={14}
             style={{
-              marginTop: 20,
+              // Negative margin pulls the input pill UP into the safe-
+              // area zone — past the bar's env(safe-area-inset-top)
+              // paddingTop. The pill's top edge ends up overlapping
+              // the Dynamic Island slightly. The bar's matched cream
+              // wash + blur still extends to the viewport top so the
+              // visual remains continuous.
+              marginTop: -7,
               display: "flex", alignItems: "center", gap: 12,
-              // Focus ring — border brightens to the theme's teal
-              // accent and a subtle halo shadow expands around the
-              // panel when the input takes focus. Transitions so
-              // focus/blur feels continuous, not a hard toggle.
+              // Light glass morphism — modest blur, no saturate.
+              // Bg overridden to a more transparent tint so stars
+              // / blobs / sky behind the pill stay visible (default
+              // input tone is glassFillHeavy ~75% alpha, which
+              // blocked them entirely).
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              background: theme.color.glassFillLite,
               border: searchFocused
                 ? `1px solid ${theme.color.teal}`
                 : undefined,
@@ -845,8 +843,10 @@ export default function KitchenScreen({
                 borderRadius: 999,
                 background: theme.color.glassFillHeavy,
                 border: `1px solid ${theme.color.glassBorder}`,
-                backdropFilter: "blur(16px) saturate(150%)",
-                WebkitBackdropFilter: "blur(16px) saturate(150%)",
+                // Modest blur, no saturate — same treatment as the
+                // tiles below + the search bar above.
+                backdropFilter: "blur(8px)",
+                WebkitBackdropFilter: "blur(8px)",
                 fontFamily: font.mono,
                 fontSize: 10,
                 fontWeight: 500,
@@ -1005,6 +1005,14 @@ export default function KitchenScreen({
   );
 }
 
+
+// Leaf component that owns the once-a-minute clock tick. Keeps the
+// setState scope to this 3-line component instead of cascading a
+// re-render through the KitchenScreen and every memoized card.
+function ClockKicker({ tone }) {
+  const now = useNow();
+  return <Kicker tone={tone}>{formatClock(now)}</Kicker>;
+}
 
 // MCMAddDraftSheet lives in its own file but App.jsx imports it
 // alongside the default export, so re-export here for back-compat.
