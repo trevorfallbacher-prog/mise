@@ -174,9 +174,65 @@ surface a pantry item's identity.
      still reads `(16 oz)` — partial-remaining is a gauge concern,
      not an identity concern.
 
-   **THE NAME FIELD CONTAINS *NOTHING* BUT THE CANONICAL'S NAME.**
-   This rule keeps regressing because every new scan path adds its
-   own way to leak marketing copy in. Reading order to enforce it:
+   **THE DISPLAY NAME IS NEVER FREE TEXT. EVER.**
+
+   The displayed identity is ALWAYS a structured composition of
+   axes via `buildDisplayName(row)`: `[Brand] [State] [Canonical]
+   [Cut] ([Package size])`. The form's `name` field is one of those
+   axes — it stores the canonical's name, NOT free text. Any code
+   path that puts free text into a name field (OFF productName,
+   USDA description, AI raw output, user-typed marketing copy) is
+   wrong by construction. This has regressed enough times that the
+   rule needs naming explicitly:
+
+   **DATA-SOURCE RANKING for the `name` axis (canonical resolution):**
+
+   | Source | Use as INFERENCE INPUT? | Use as NAME OUTPUT? |
+   |---|---|---|
+   | Bundled `INGREDIENTS` registry | yes | YES — canonical wins |
+   | Admin-promoted `ingredient_info` | yes | YES — canonical wins |
+   | USDA correction (`source_provenance.name === "usda"`) | yes — fuzzy-bind to a canonical | NEVER as raw text |
+   | OFF `productName` | yes — `inferCanonicalFromName(off)` | **BANNED. NEVER. NOT EVEN ONCE.** |
+   | OFF `genericName` | yes | NEVER |
+   | AI photo extraction (Haiku) | yes — produces canonicalId | YES — canonical wins |
+
+   **Resolution cascade — "what name lands in the form?":**
+
+   1. Try to BIND a canonical from any signal (OFF text, USDA
+      description, category hints, learned tag map, alias map).
+      Inference can read OFF productName freely; that's INPUT.
+   2. **Canonical bound** → set `name` to the canonical's display
+      name (`findIngredient(canonicalId).name`). Done.
+   3. **Canonical not bound** → name field STAYS EMPTY. Other axes
+      (brand, tile, state, claims) populate from OFF/USDA freely;
+      they're not the name.
+   4. The user routes to MemoryBookCapture (photo) when they want
+      to mint a new canonical. Haiku reads the package, returns a
+      canonicalId or proposes a newCanonicalName — that's the only
+      sanctioned way for new free-text-derived names to enter the
+      registry, and even then they go through the
+      `pending_ingredient_info` review queue.
+
+   **OFF productName is BANNED as a `name` source.** The user keeps
+   having to remind us about this — it has regressed repeatedly
+   across pickup-and-fill paths, stripFlavors-based fallbacks, and
+   synthetic-canonical creators. OFF data is community-contributed
+   marketing copy: noisy, often wrong, often carrying flavor /
+   variant / brand text that doesn't belong in the canonical's
+   identity. Never use it as a fallback name. Never minc a synthetic
+   canonical from it. **Never. Even. Once.**
+
+   **The litmus test for any code that writes a `name`-related
+   field:** trace the value back to its source. If the trail ends
+   at `res.productName` / `off.productName` / `off.genericName` /
+   correction.name where source_provenance is "off" / any OFF-
+   derived API response — STOP. Reroute through canonical
+   resolution or photo capture. Don't add an "if empty" fallback,
+   don't add an "if shorter" fallback, don't add a "stripFlavors-
+   first" fallback. The answer is always: canonical name, or
+   nothing.
+
+   **Reading order to enforce the structured-composition rule:**
 
    1. **No flavors / variants in `name`, ever.** "Fudge Swirl" /
       "Cookies & Cream" / "Sour Cream & Onion" / "Honey BBQ" /

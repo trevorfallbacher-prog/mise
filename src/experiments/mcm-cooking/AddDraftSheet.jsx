@@ -718,15 +718,33 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // productName is null or just brand/SKU noise. The edge
       // fn comments call this out explicitly: generic_name is
       // often a better fuzz-match target than product_name.
-      const displayName = (res?.productName && res.productName.trim())
+      // OFF productName is for INFERENCE / BRAND EXTRACTION ONLY —
+      // never for the name field. Renamed from `displayName` so its
+      // role can't be confused with "the name we display to users."
+      // See CLAUDE.md identity-stack rule: OFF productName is BANNED
+      // as a display source — too inaccurate. Canonical name wins;
+      // USDA correction.name is the only allowed fallback.
+      const offTextForInference = (res?.productName && res.productName.trim())
         || (res?.genericName && res.genericName.trim())
         || "";
+      // USDA-derived correction name. correction.name is filled by
+      // the ingest pipeline when USDA's `description` field landed
+      // (JSON ingest path) — clean, regulated, and far more accurate
+      // than OFF marketing copy. Only honored when source_provenance
+      // confirms the name came from USDA or admin (not OFF).
+      const usdaCorrectionName =
+        correction?.name && (
+          correction?.sourceProvenance?.name === "usda"
+          || correction?.sourceProvenance?.name === "admin"
+        )
+          ? correction.name.trim()
+          : null;
       // Brand recovery — when OFF didn't surface a brand but the
       // productName starts with one (e.g. "Kerrygold Pure Irish
       // Butter"), pull it out via the curated knownBrands table.
       // Same path the memory-book Haiku flow uses.
       const detectedBrand = res?.brand
-        || (displayName ? detectBrand(displayName) : null)
+        || (offTextForInference ? detectBrand(offTextForInference) : null)
         || null;
 
       // Canonical cascade — correction → cached canonicalId →
@@ -738,8 +756,8 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // raw productName like "Slim Jim Buffalo Wild Wings Buffalo
       // Style". Once we know the canonical is "chicken", the name
       // field lands as "Chicken" and brand as "Slim Jim".
-      const inferredFromDisplay = displayName
-        ? inferCanonicalFromName(displayName)
+      const inferredFromDisplay = offTextForInference
+        ? inferCanonicalFromName(offTextForInference)
         : null;
       const inferredFromGeneric = (!inferredFromDisplay && res?.genericName)
         ? inferCanonicalFromName(res.genericName)
@@ -766,7 +784,7 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // this inference, the row would default to state="whole" and route
       // to fridge meat_poultry instead of pantry jerky_snacks.
       const stateFromName = canonicalIng
-        ? detectStateFromText(displayName || res?.genericName || "", canonicalIng)
+        ? detectStateFromText(offTextForInference || res?.genericName || "", canonicalIng)
         : null;
 
       // OFF / USDA payload pre-fill — apply whatever fields landed.
@@ -785,15 +803,19 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       // No-canonical fallback keeps the empty-only guard so we don't
       // stomp user-typed text when we have nothing better to offer.
       //
-      // DEFENSE IN DEPTH — strip flavor tokens from BOTH paths
-      // before setting the name. Synthetic canonicals from the
-      // pending-canonical creator try to deliver flavor-free names
-      // (see createPendingCanonicalFromScan), but a stale row, a
-      // legacy synthetic, or a registry name with a baked-in variant
-      // could still leak "Fudge Swirl" / "Cookies & Cream" into the
-      // name field. Stripping at pin time is cheap and idempotent —
-      // a clean name passes through untouched. NEVER let a flavor
-      // word into the name field.
+      // STRICT NAME RULE — the form's `name` field is ONLY EVER set
+      // to the canonical's display name. Never to OFF productName,
+      // never to USDA description, never to any free text. Per the
+      // CLAUDE.md identity-stack rule: display name is a structured
+      // composition (brand + state + canonical + cut + size), not a
+      // free-text store.
+      //
+      // When canonical resolves → set name to canonical's name
+      //   (passed through stripIfFlavored as defense-in-depth against
+      //   a stale synthetic that might have variant text baked in).
+      // When canonical does NOT resolve → leave name field empty.
+      //   The user routes to photo capture (MemoryBookCapture below)
+      //   when they want a canonical for this UPC.
       const stripIfFlavored = (s) => {
         if (!s) return s;
         const r = stripFlavors(s, { brand: detectedBrand || res?.brand || null, removeFromName: true });
@@ -801,9 +823,10 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       };
       if (canonicalDisplayName) {
         setName(stripIfFlavored(canonicalDisplayName));
-      } else if (!name.trim() && displayName) {
-        setName(stripIfFlavored(displayName));
       }
+      // NO ELSE BRANCH. OFF productName is BANNED as a name source.
+      // If canonical didn't resolve, the name field stays empty and
+      // the photo-capture flow below picks up the slack.
       if (!brand.trim() && detectedBrand)      setBrand(detectedBrand);
       // Package-size cascade for the scan path:
       //   1. cross-family consensus from pantry_items (popular pkg
@@ -885,31 +908,17 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       }
       // Flavor / variant extraction — pulls "Fudge Swirl",
       // "Cookies & Cream", "Salt & Vinegar", etc. out of the
-      // productName text and surfaces them as claims chips so
-      // they're persisted on the row instead of fossilizing into
-      // the display name. Mirrors what the categorize-product-photo
-      // edge function does on the photo path. Lexicon is curated
-      // strictly to flavor variants (see stripFlavors.js — milk
-      // chocolate / peanut butter cup deliberately NOT in the list
-      // because they're identity, not flavors).
-      const flavorScan = stripFlavors(res?.productName || "", {
+      // productName text and surfaces them as CLAIMS CHIPS only.
+      // remainingName is DISCARDED — per the strict name rule, the
+      // form's name field never receives free text, even cleaned-up
+      // free text. Only the claims output is consumed downstream.
+      const flavorScan = stripFlavors(offTextForInference || "", {
         brand: detectedBrand || res?.brand || null,
         removeFromName: true,
       });
-      // If the stripper meaningfully shortened the name AND the
-      // form's name field still equals the OFF productName (the
-      // user hasn't typed a custom override yet), swap in the
-      // cleaner remainingName so the header doesn't read "Milk
-      // Chocolate Truffles Fudge Swirl" when we already have
-      // "Fudge Swirl" as a claim chip below.
-      if (
-        flavorScan.claims.length > 0
-        && flavorScan.remainingName
-        && flavorScan.remainingName !== res?.productName
-        && (!name.trim() || name.trim() === res?.productName?.trim())
-      ) {
-        setName(flavorScan.remainingName);
-      }
+      // (No setName call. The name field stays whatever the canonical-
+      // pin block above set it to — canonical name when canonical
+      // resolved, empty otherwise.)
 
       // Stash the raw + computed payload so the ScanDataPanel
       // below the form can render nutrition / source / etc.
@@ -918,14 +927,13 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
         res: res || null,
         correction: correction || null,
         finalCanonicalId,
-        displayName: displayName || null,
+        offTextForInference: offTextForInference || null,
         detectedBrand: detectedBrand || null,
         // Flavor claims from the scan path. Read by the success-
         // banner message + folded into the correction-write claims
         // array on commit so the next scan of this UPC carries them.
         scan: {
           flavorClaims:    flavorScan.claims,
-          remainingName:   flavorScan.remainingName,
         },
         at: new Date().toISOString(),
       });
@@ -996,7 +1004,12 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
       if (finalCanonicalId) {
         const ing = findIngredient(finalCanonicalId);
         if (ing) {
-          if (!name.trim() && !displayName && ing.name) setName(ing.name);
+          // Always pin canonical name when canonical resolved and
+          // name is empty. The previous `!displayName` guard was
+          // backwards — it skipped this when OFF returned text,
+          // which is the OPPOSITE of what we want. Canonical name
+          // is the ONLY allowed name source.
+          if (!name.trim() && ing.name) setName(ing.name);
           if (!unit && ing.defaultUnit) setUnit(ing.defaultUnit);
         }
       }
@@ -1032,50 +1045,38 @@ export function MCMAddDraftSheet({ seed = { mode: "blank" }, userId, isAdmin, on
           setScanStatus("found");
           return;
         }
-        // Has-signal probe — anything OFF / USDA / detectBrand
-        // landed that lets us populate the form. tagHintsToAxes
-        // emits a non-null category/tileId/subtype when its OFF
-        // pattern matches; if all three are null it really did fail.
+        // Has-signal probe — counts ONLY non-name axes. Per the
+        // strict identity-stack rule, the form's name field never
+        // receives free text — not from OFF productName, not from
+        // USDA description, never. So OFF returning a productName
+        // is NOT a "useful signal" that lets us skip photo capture
+        // by itself. The signals that count: brand, tile/category/
+        // subtype from category hints, and the canonical-resolution
+        // pass that already ran (whose miss is what landed us here).
+        //
+        // When we have brand or hint-axes, we let the user keep
+        // editing the form (tile / state / brand / size / etc. are
+        // all populated). Name field stays empty. The user can
+        // commit as-is or tap photo capture to teach a canonical.
+        //
+        // When we have NEITHER brand NOR hint axes — genuinely no
+        // useful signal — route to photo capture immediately.
         const hintAxes = tagHintsToAxes(Array.isArray(merged.categoryHints) ? merged.categoryHints : []);
         const hasBrand        = !!(detectedBrand || res?.brand);
-        const hasName         = !!(res?.productName && String(res.productName).trim());
         const hasHintAxes     = !!(hintAxes.category || hintAxes.tileId || hintAxes.subtype);
-        const hasUsableSignal = hasBrand || hasName || hasHintAxes;
+        const hasUsableSignal = hasBrand || hasHintAxes;
         if (hasUsableSignal) {
-          // We have enough to populate the form. Try to AUTO-CREATE
-          // a pending canonical from the scan so the row binds to
-          // SOMETHING — registry-infer / fuzzy-bind / new pending
-          // row, in that order. The pending row carries axes from
-          // tagHintsToAxes (subtype + category + tile) so the brand-
-          // classifier picker can read subtype on it from scan one,
-          // and useIngredientInfo's pendingMap merge registers the
-          // slug into the runtime registry on the next render.
-          // Admin can later promote the pending row into a real
-          // canonical or merge it onto an existing one — see
-          // migration 0047 + AdminPanel queue.
-          //
-          // Failure (RLS denial, network blip) returns null silently
-          // and we fall through to the original "form populated, no
-          // canonical" path. No regression.
-          if (userId) {
-            try {
-              const created = await createPendingCanonicalFromScan({
-                userId,
-                productName:    res?.productName || null,
-                brand:          detectedBrand || res?.brand || null,
-                categoryHints:  Array.isArray(merged.categoryHints) ? merged.categoryHints : [],
-                state:          stateFromName || hintAxes.state || null,
-                emoji:          null,
-              });
-              if (created?.canonicalId) {
-                setCanonicalId(created.canonicalId);
-                finalCanonicalId = created.canonicalId;
-                console.log("[mcm-add] auto-created/bound canonical:", created);
-              }
-            } catch (e) {
-              console.warn("[mcm-add] createPendingCanonicalFromScan threw:", e?.message || e);
-            }
-          }
+          // Form is populated enough to commit without a canonical.
+          // We do NOT auto-create a pending canonical from OFF /
+          // USDA free text — that would let marketing copy fossilize
+          // as a canonical's display name, violating the strict rule.
+          // The user can:
+          //   (a) commit as-is — header composes from brand / tile /
+          //       size and renders fine without a name string
+          //   (b) tap "Photo it" → MemoryBookCapture extracts a
+          //       canonical via Haiku reading the package
+          // Path (b) is the only sanctioned way to mint a new
+          // canonical when OFF/USDA can't bind to an existing one.
           setScanStatus("found");
           return;
         }
